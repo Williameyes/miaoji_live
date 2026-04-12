@@ -1,0 +1,283 @@
+<view class="page-root" style="padding-top: {{statusBarHeight}}px;">
+
+  <!-- ===== 头部 ===== -->
+  <view class="header">
+  
+    <view class="logo-text">
+        秒<text class="italic-text">记</text>篮场
+    </view>
+        <text class="header-sub">MATCH CENTER</text>
+  </view>
+
+  <!-- ===== 比赛场次区 ===== -->
+  <view class="section">
+    <view class="section-header">
+      <text class="section-label">比赛场次</text>
+      <text class="match-count-badge" wx:if="{{matches.length > 0}}">{{matches.length}} 场</text>
+    </view>
+
+    <!-- 比赛卡片列表 -->
+    <view
+      class="match-card"
+      wx:for="{{matches}}"
+      wx:key="id"
+      style="animation-delay: {{index * 55}}ms"
+    >
+      <!-- 队伍行 -->
+      <view class="card-teams-row">
+        <view class="card-team card-team--left">
+          <view class="color-dot" style="background-color: {{item.teamA.bgColor}}"></view>
+          <text class="card-team-name">{{item.teamA.name || '主队'}}</text>
+        </view>
+        <view class="card-vs">
+          <text class="card-vs-text">VS</text>
+        </view>
+        <view class="card-team card-team--right">
+          <text class="card-team-name">{{item.teamB.name || '客队'}}</text>
+          <view class="color-dot" style="background-color: {{item.teamB.bgColor}}"></view>
+        </view>
+      </view>
+
+      <!-- 比分行（仅已有数据时展示） -->
+      <view class="card-score-row" wx:if="{{item.teamA.score > 0 || item.teamB.score > 0}}">
+        <text class="card-score-num" style="color: {{item.teamA.bgColor}}">{{item.teamA.score}}</text>
+        <text class="card-score-sep">—</text>
+        <text class="card-score-num" style="color: {{item.teamB.bgColor}}">{{item.teamB.score}}</text>
+      </view>
+
+      <!-- 比赛名 -->
+      <text class="card-match-name" wx:if="{{item.matchName}}">{{item.matchName}}</text>
+
+      <!-- 操作栏 -->
+      <view class="card-actions">
+        <view class="btn-card-edit" hover-class="btn-card-hover" bindtap="onEditMatch" data-id="{{item.id}}">
+          <text>编辑资料</text>
+        </view>
+        <view class="btn-card-delete" hover-class="btn-card-hover" bindtap="onDeleteMatch" data-id="{{item.id}}">
+          <text>删除</text>
+        </view>
+        <view class="btn-card-live" hover-class="btn-card-live-hover" bindtap="onGoToLive" data-id="{{item.id}}">
+          <text>▶ 进入计分</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 空状态 -->
+    <view class="empty-state" wx:if="{{matches.length === 0}}">
+      <text class="empty-icon">🏀</text>
+      <text class="empty-text">还没有比赛记录</text>
+      <text class="empty-hint">点击下方按钮创建第一场</text>
+    </view>
+
+    <!-- 新增按钮 -->
+    <view class="btn-add-match" hover-class="btn-add-hover" bindtap="onAddMatch">
+      <text class="btn-add-icon">＋</text>
+      <text class="btn-add-text">新增比赛场次</text>
+    </view>
+  </view>
+
+  <!-- ===== 高光录像区 ===== -->
+  <view class="section highlights-section">
+    <view class="section-header">
+      <text class="section-label">历史高光</text>
+      <view
+        class="btn-clear"
+        hover-class="btn-clear-hover"
+        bindtap="clearAllHighlights"
+        wx:if="{{highlightList.length > 0}}"
+      >
+        <text>一键清理</text>
+      </view>
+    </view>
+
+    <view wx:if="{{groupedHighlights.length > 0}}">
+      <view class="match-group" wx:for="{{groupedHighlights}}" wx:key="matchId">
+        <view class="match-group-header">
+          <text class="match-group-title">{{item.matchTitle}}</text>
+          <text class="match-group-score" wx:if="{{item.scoreInfo}}">{{item.scoreInfo}}</text>
+        </view>
+        <scroll-view scroll-x class="highlights-scroll" show-scrollbar="{{false}}">
+          <view
+            class="highlight-item"
+            wx:for="{{item.videos}}"
+            wx:for-item="video"
+            wx:key="id"
+            bindtap="playHighlight"
+            bindlongpress="onDeleteHighlight"
+            data-id="{{video.id}}"
+          >
+            <view class="video-placeholder">
+              <video
+                wx:if="{{video.videoPath}}"
+                class="cover"
+                src="{{video.videoPath}}"
+                controls="{{false}}"
+                show-play-btn="{{false}}"
+                show-center-play-btn="{{false}}"
+                enable-progress-gesture="{{false}}"
+                object-fit="fill"
+                muted="{{true}}"
+              ></video>
+              <image wx:else class="cover" mode="aspectFill" src="{{video.cover}}"></image>
+              <view class="play-icon-wrap">
+                <text class="play-icon">▶</text>
+              </view>
+              <!-- 视觉提示标签 -->
+              <view class="video-tag" wx:if="{{item.dateStr}}">{{item.dateStr}}</view>
+            </view>
+            <view class="item-footer">
+              <text class="time-text">{{video.timeText}}</text>
+              <text class="download-btn" catchtap="onDownloadHighlight" data-id="{{video.id}}">下载</text>
+            </view>
+          </view>
+        </scroll-view>
+      </view>
+    </view>
+
+    <view class="empty-highlights" wx:else>
+      <text>暂无高光录像，在计分页长按「节次」可保存</text>
+    </view>
+  </view>
+
+  <!-- ===== 编辑/新增比赛浮层 ===== -->
+  <view class="modal-overlay" wx:if="{{showEditModal}}" bindtap="closeEditModal">
+    <view class="modal-panel" catchtap="stopBubbling">
+
+      <!-- 浮层标题栏 -->
+      <view class="modal-header">
+        <text class="modal-title">{{editingId ? '编辑比赛' : '新增比赛'}}</text>
+        <view class="modal-close-btn" bindtap="closeEditModal">×</view>
+      </view>
+
+      <!-- 表单内容 -->
+      <view class="modal-body">
+
+        <!-- 比赛名称（选填）+ 直播颜色 -->
+        <view class="form-group">
+          <text class="form-label">比赛名称（选填）</text>
+          <view class="team-input-row">
+            <input
+              class="form-input team-name-input"
+              placeholder="例：2026 社区杯总决赛"
+              placeholder-class="input-placeholder"
+              value="{{editingMatch.matchName}}"
+              bindinput="onEditInputChange"
+              data-field="matchName"
+            />
+            <view
+              class="color-pick-btn"
+              style="background-color: {{editingMatch.matchNameColor}}"
+              hover-class="color-pick-btn-hover"
+              bindtap="openColorPicker"
+              data-target="matchName"
+            ></view>
+          </view>
+          <text class="form-hint">右侧色块为直播页赛名文字颜色</text>
+        </view>
+
+        <!-- 主队 -->
+        <view class="form-group">
+          <text class="form-label">主队名称</text>
+          <view class="team-input-row">
+            <input
+              class="form-input team-name-input"
+              placeholder="队名"
+              placeholder-class="input-placeholder"
+              value="{{editingMatch.teamA.name}}"
+              bindinput="onEditInputChange"
+              data-field="teamA.name"
+            />
+            <view
+              class="color-pick-btn"
+              style="background-color: {{editingMatch.teamA.bgColor}}"
+              hover-class="color-pick-btn-hover"
+              bindtap="openColorPicker"
+              data-target="teamA"
+            ></view>
+          </view>
+        </view>
+
+        <!-- 客队 -->
+        <view class="form-group">
+          <text class="form-label">客队名称</text>
+          <view class="team-input-row">
+            <input
+              class="form-input team-name-input"
+              placeholder="队名"
+              placeholder-class="input-placeholder"
+              value="{{editingMatch.teamB.name}}"
+              bindinput="onEditInputChange"
+              data-field="teamB.name"
+            />
+            <view
+              class="color-pick-btn"
+              style="background-color: {{editingMatch.teamB.bgColor}}"
+              hover-class="color-pick-btn-hover"
+              bindtap="openColorPicker"
+              data-target="teamB"
+            ></view>
+          </view>
+        </view>
+
+      </view>
+
+      <!-- 底部按钮 -->
+      <view class="modal-footer">
+        <view class="btn-cancel" hover-class="btn-cancel-hover" bindtap="closeEditModal">取消</view>
+        <view class="btn-save" hover-class="btn-save-hover" bindtap="saveEditMatch">保 存</view>
+      </view>
+
+    </view>
+  </view>
+
+  <!-- ===== 颜色选择器浮层（在 modal 之上） ===== -->
+  <view class="color-picker-overlay" wx:if="{{showColorPicker}}" bindtap="closeColorPicker">
+    <view class="color-picker-panel" catchtap="stopBubbling">
+
+      <view class="picker-header">
+        <text class="picker-title">选择颜色</text>
+        <view class="close-icon" bindtap="closeColorPicker">×</view>
+      </view>
+
+      <view class="picker-presets-label">常用色</view>
+      <view class="picker-presets">
+        <view
+          class="picker-preset-dot-wrap"
+          wx:for="{{colorPresets}}"
+          wx:key="*this"
+          bindtap="onModalPresetColorTap"
+          data-color="{{item}}"
+        >
+          <view
+            class="picker-preset-dot {{tempSelectedColor === item ? 'active' : ''}}"
+            style="background-color: {{item}}"
+          ></view>
+        </view>
+      </view>
+
+      <scroll-view scroll-y class="color-grid-scroll" show-scrollbar="{{false}}">
+        <view class="color-grid">
+          <view
+            wx:for="{{extendedColors}}"
+            wx:key="*this"
+            class="grid-color-dot {{tempSelectedColor === item ? 'active' : ''}}"
+            style="background-color: {{item}}"
+            bindtap="onColorGridSelect"
+            data-color="{{item}}"
+          ></view>
+        </view>
+      </scroll-view>
+
+      <view class="picker-footer">
+        <view class="current-selection">
+          <text>当前选择:</text>
+          <view class="selected-dot" style="background-color: {{tempSelectedColor}}"></view>
+          <text class="color-hex">{{tempSelectedColor}}</text>
+        </view>
+        <view class="confirm-btn" hover-class="confirm-btn-hover" bindtap="confirmColorSelection">确定</view>
+      </view>
+
+    </view>
+  </view>
+
+</view>

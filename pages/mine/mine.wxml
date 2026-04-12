@@ -1,0 +1,49 @@
+<view class="mine-page" style="padding-top: {{statusBarHeight}}px;">
+  <view class="nav-title-wrap">
+    <text class="nav-title">我的</text>
+  </view>
+
+  <view class="profile-card">
+    <view wx:if="{{!loggedIn}}" class="profile-row profile-row-guest">
+      <image class="avatar" src="{{defaultAvatar}}" mode="aspectFill" />
+      <view class="profile-text">
+        <text class="nick">{{displayNick}}</text>
+      </view>
+    </view>
+
+    <view wx:else class="profile-row profile-logged">
+      <view class="avatar-wrap">
+        <image class="avatar" src="{{displayAvatarSrc || defaultAvatar}}" mode="aspectFill" />
+      </view>
+      <view class="profile-text">
+        <input
+          class="nick-input"
+          type="nickname"
+          value="{{displayNick}}"
+          placeholder="填写昵称"
+          bindblur="onNicknameConfirm"
+        />
+      </view>
+    </view>
+
+    <view class="login-actions" wx:if="{{!loggedIn}}">
+      <button class="btn-login" type="primary" bindtap="handleLogin">微信登录</button>
+    </view>
+
+    <view class="logout-actions" wx:if="{{loggedIn}}">
+      <button class="btn-logout" bindtap="handleLogout">退出登录</button>
+    </view>
+  </view>
+
+  <view class="list-card">
+    <view class="list-item" hover-class="list-item-hover" bindtap="onAboutTap">
+      <text class="list-label">关于秒记</text>
+      <text class="list-arrow">›</text>
+    </view>
+    <view class="list-divider"></view>
+    <view class="list-item" hover-class="list-item-hover" bindtap="onFeedbackTap">
+      <text class="list-label">使用反馈</text>
+      <text class="list-arrow">›</text>
+    </view>
+  </view>
+</view>

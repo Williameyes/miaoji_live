@@ -1,0 +1,16 @@
+<!-- 自定义 TabBar：SVG 矢量遮罩图标，46rpx 容器 -->
+<view class="tab-bar">
+  <view
+    wx:for="{{list}}"
+    wx:key="index"
+    class="tab-bar-item"
+    data-page-path="{{item.pagePath}}"
+    data-index="{{index}}"
+    bindtap="switchTab"
+  >
+    <view class="tab-bar-item__icon-wrap">
+      <view class="tab-bar-icon tab-bar-icon--{{item.iconKey}} {{selected === index ? 'tab-bar-icon--selected' : ''}}"></view>
+    </view>
+    <view class="tab-bar-item__text {{selected === index ? 'tab-bar-item__text--selected' : ''}}">{{item.text}}</view>
+  </view>
+</view>

@@ -1,0 +1,28 @@
+/**
+ * 颜色比较（忽略 HEX 大小写）
+ * @param {string} a
+ * @param {string} b
+ * @returns {boolean}
+ */
+function eqColor(a, b) {
+  return (a || '').toLowerCase() === (b || '').toLowerCase();
+}
+
+/**
+ * 当前选中队伍下，色球是否为该队当前颜色
+ * @param {string} sel teamA | teamB
+ * @param {string} teamA
+ * @param {string} teamB
+ * @param {string} ball
+ * @returns {boolean}
+ */
+function ballActive(sel, teamA, teamB, ball) {
+  if (sel === 'teamA') return eqColor(teamA, ball);
+  if (sel === 'teamB') return eqColor(teamB, ball);
+  return false;
+}
+
+module.exports = {
+  eqColor: eqColor,
+  ballActive: ballActive
+};

@@ -1,0 +1,39 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/live/live",
+    "pages/mine/mine"
+  ],
+  "window": {
+    "backgroundTextStyle": "light",
+    "navigationBarBackgroundColor": "#000000",
+    "navigationBarTitleText": "秒记篮场助手",
+    "navigationBarTextStyle": "white",
+    "navigationStyle": "custom",
+    "backgroundColor": "#000000",
+    "backgroundColorTop": "#000000",
+    "backgroundColorBottom": "#F8FAFC"
+  },
+  "tabBar": {
+    "custom": true,
+    "color": "#64748B",
+    "selectedColor": "#2563EB",
+    "backgroundColor": "#FFFFFF",
+    "borderStyle": "black",
+    "list": [
+      {
+        "pagePath": "pages/index/index",
+        "text": "计分",
+        "iconPath": "assets/tab/tab-score.png",
+        "selectedIconPath": "assets/tab/tab-score-active.png"
+      },
+      {
+        "pagePath": "pages/mine/mine",
+        "text": "我的",
+        "iconPath": "assets/tab/tab-mine.png",
+        "selectedIconPath": "assets/tab/tab-mine-active.png"
+      }
+    ]
+  },
+  "sitemapLocation": "sitemap.json"
+}

@@ -1,0 +1,298 @@
+<page-meta background-color="#000000" background-color-top="#000000" background-color-bottom="#000000" page-style="background: #000000;"></page-meta>
+<wxs module="c" src="./live.wxs"></wxs>
+<view class="container landscape">
+  <!-- Level 0: 全屏相机预览 -->
+  <camera 
+    device-position="back" 
+    flash="off" 
+    frame-size="max" 
+    resolution="high"
+    class="camera-bg"
+    mode="normal"
+    zoom="{{zoom}}"
+    bindinitdone="onCameraInit">
+  </camera>
+
+  <!-- Level 0.5: 透明手势层 (专门处理双指缩放) -->
+  <view class="gesture-layer"
+    bindtouchstart="onTouchStart" 
+    bindtouchmove="onTouchMove"
+    bindtouchend="onTouchEnd"
+    bindlongpress="onBackgroundLongPress">
+  </view>
+
+  <!-- Level 1: 计分 UI 遮罩层 (沉浸式，不避让状态栏) -->
+  <view class="overlay immersive">
+
+    <!-- 核心计分区域：位于正下方居中 -->
+    <view class="bottom-center-board">
+      <!-- 比赛名称与迷你回放按钮 -->
+      <view class="match-name-row">
+        <view class="match-name-banner" style="color: {{matchConfig.matchNameColor}}">
+          {{matchConfig.matchName || 'HoopsLive Assistant'}}
+        </view>
+      </view>
+
+      <!-- 计分条主体：左右等宽且比分固定 -->
+      <view class="main-score-bar">
+        <!-- 球队 A 容器 -->
+        <view class="team-group team-a-group" 
+          style="background-color: {{matchConfig.teamA.rgbaBg || 'rgba(230, 67, 64, 0.7)'}}; {{teamGroupWidthPx > 0 ? ('width:' + teamGroupWidthPx + 'px;') : ''}}">
+          <!-- 队名部分：点击+1，长按快速+1 -->
+          <view class="team-name" 
+            catchtap="onScoreTap" 
+            bindlongpress="onScoreLongPress" 
+            bindtouchend="onScoreTouchEnd"
+            data-team="teamA" 
+            data-type="plus"
+            style="color: {{matchConfig.teamA.textColor}}">
+            {{matchConfig.teamA.name || '队A'}}
+          </view>
+          <!-- 比分部分：点击-1，长按快速-1 -->
+          <view class="score-value" 
+            catchtap="onScoreTap" 
+            bindlongpress="onScoreLongPress" 
+            bindtouchend="onScoreTouchEnd"
+            data-team="teamA" 
+            data-type="minus"
+            style="color: {{matchConfig.teamA.textColor}}">
+            {{matchConfig.teamA.score}}
+          </view>
+        </view>
+
+        <!-- 中间节次 -->
+        <view class="period-center-block" bindtap="onPeriodTap" bindlongpress="onPeriodLongPress">
+          <view class="period-text" style="color: {{periodFlash ? '#000000' : '#fff'}}">{{periods[matchConfig.period]}}</view>
+        </view>
+
+        <!-- 球队 B 容器 -->
+        <view class="team-group team-b-group" 
+          style="background-color: {{matchConfig.teamB.rgbaBg || 'rgba(16, 174, 255, 0.7)'}}; {{teamGroupWidthPx > 0 ? ('width:' + teamGroupWidthPx + 'px;') : ''}}">
+          <!-- 比分部分：点击-1，长按快速-1 -->
+          <view class="score-value" 
+            catchtap="onScoreTap" 
+            bindlongpress="onScoreLongPress" 
+            bindtouchend="onScoreTouchEnd"
+            data-team="teamB" 
+            data-type="minus"
+            style="color: {{matchConfig.teamB.textColor}}">
+            {{matchConfig.teamB.score}}
+          </view>
+          <!-- 队名部分：点击+1，长按快速+1 -->
+          <view class="team-name" 
+            catchtap="onScoreTap" 
+            bindlongpress="onScoreLongPress" 
+            bindtouchend="onScoreTouchEnd"
+            data-team="teamB" 
+            data-type="plus"
+            style="color: {{matchConfig.teamB.textColor}}">
+            {{matchConfig.teamB.name || '队B'}}
+          </view>
+        </view>
+      </view>
+      <view class="team-name-measure">{{matchConfig.teamA.name || '队A'}}</view>
+      <view class="team-name-measure">{{matchConfig.teamB.name || '队B'}}</view>
+    </view>
+
+  </view>
+
+  <!-- Level 2: 导播回放遮罩与播放层 -->
+  <view class="replay-mask replay-mask--{{replayMaskKind}}" wx:if="{{showReplayMask}}">
+    <view class="replay-mask-text">{{replayMaskText}}</view>
+  </view>
+
+  <view class="replay-overlay" wx:if="{{isReplaying}}">
+    <video 
+      id="replayVideo"
+      src="{{replaySrc}}" 
+      class="replay-video-fullscreen" 
+      autoplay 
+      controls="{{false}}"
+      show-center-play-btn="{{false}}"
+      show-play-btn="{{false}}"
+      enable-progress-gesture="{{false}}"
+      playbackRate="{{replayPlaybackRate}}"
+      loop="{{false}}"
+      bindplay="onReplayVideoPlay"
+      bindloadedmetadata="onReplayVideoPlay"
+      bindended="onReplayEnded">
+    </video>
+    <view class="replay-interaction-layer" catchtap="onReplayInterruptTap">
+      <view class="replay-hint-badge">实时回看</view>
+    </view>
+  </view>
+
+  <!-- Level 3: 操作指南弹窗 (极简风格) -->
+  <view class="guide-overlay" wx:if="{{showGuide}}">
+    <view class="guide-card">
+      <view class="guide-close" bindtap="dismissGuide">×</view>
+      <scroll-view scroll-y class="guide-scroll">
+        <view class="guide-list">
+          <view class="guide-item">
+            <text class="guide-key">加分：</text>
+            <text class="guide-desc">单击队名+1，长按队名连续+1</text>
+          </view>
+          <view class="guide-item">
+            <text class="guide-key">减分：</text>
+            <text class="guide-desc">单击得分-1，长按得分连续-1</text>
+          </view>
+          <view class="guide-item">
+            <text class="guide-key">保存：</text>
+            <text class="guide-desc">长按“节次”区域（自动记录前8秒）</text>
+          </view>
+          <view class="guide-item">
+            <text class="guide-key">回放：</text>
+            <text class="guide-desc">长按屏幕空白处（点缩略图回放）</text>
+          </view>
+          <view class="guide-item">
+            <text class="guide-key">换节：</text>
+            <text class="guide-desc">单击“节次”区域（如：第一节）</text>
+          </view>
+          <view class="guide-item">
+            <text class="guide-key">退出：</text>
+            <text class="guide-desc">长按屏幕（点左上方返回）</text>
+          </view>
+        </view>
+      </scroll-view>
+    </view>
+  </view>
+
+  <!-- Level 3: 管理抽屉 (drawerMode 0=隐藏 1=打开) -->
+  <view wx:if="{{drawerMode === 1}}">
+
+    <!-- 遮罩：点击关闭（z-index 低于面板，不拦截面板内点击） -->
+    <view class="drawer-mode-backdrop" catchtap="closeAllDrawers"></view>
+
+    <!-- 左侧：比赛卡片列表（与右侧高光缩略图完全一致的矩形） -->
+    <view class="left-drawer" catchtap="stopLeftDrawerBubbling">
+      <view class="match-list-view">
+        <scroll-view 
+          scroll-y 
+          class="left-drawer-scroll" 
+          show-scrollbar="{{false}}"
+          enable-passive="{{true}}"
+          enhanced="{{true}}"
+        >
+          <view
+            class="lm-card drawer-list-thumb {{item.isCurrent ? 'lm-card--current' : ''}}"
+            wx:for="{{matchList}}"
+            wx:key="id"
+            catchtap="openColorModal"
+            data-id="{{item.id}}"
+          >
+            <text class="lm-name">{{item.teamA.name || 'A'}}</text>
+            <text class="lm-vs">vs</text>
+            <text class="lm-name">{{item.teamB.name || 'B'}}</text>
+          </view>
+        </scroll-view>
+      </view>
+    </view>
+
+    <!-- 右侧：高光缩略图（与原有样式完全一致） -->
+    <view class="drawer-panel" catchtap="stopDrawerBubbling">
+      <view class="clip-list-view">
+        <scroll-view 
+          scroll-y 
+          class="drawer-scroll" 
+          show-scrollbar="{{false}}"
+          enable-passive="{{true}}"
+          enhanced="{{true}}"
+        >
+          <view
+            class="drawer-item drawer-list-thumb"
+            wx:for="{{drawerHighlights}}"
+            wx:key="id"
+            bindtap="onDrawerSelect"
+            bindlongpress="onDeleteHighlight"
+            data-id="{{item.id}}"
+          >
+            <video
+              wx:if="{{item.videoPath}}"
+              class="drawer-cover"
+              src="{{item.videoPath}}"
+              controls="{{false}}"
+              show-play-btn="{{false}}"
+              show-center-play-btn="{{false}}"
+              enable-progress-gesture="{{false}}"
+              object-fit="cover"
+              muted="{{true}}"
+            ></video>
+            <image
+              wx:else
+              class="drawer-cover"
+              mode="aspectFill"
+              src="{{item.cover || defaultCover}}"
+              binderror="onDrawerImageError"
+              data-id="{{item.id}}"
+            ></image>
+          </view>
+        </scroll-view>
+      </view>
+    </view>
+
+    <!-- 返回/退出：矢量遮罩箭头 -->
+    <view class="drawer-back-btn" bindtap="onBackTap">
+      <view class="live-toolbar-icon live-toolbar-icon--back"></view>
+    </view>
+
+  </view>
+
+  <!-- ── 颜色设置浮层：极致透明、动态占比 ── -->
+  <view class="color-modal-overlay" wx:if="{{showColorModal}}" catchtap="closeColorModal">
+    <view class="color-modal-container" catchtap="stopColorModalBubbling">
+
+      <!-- 队名显示层 -->
+      <view class="cm-teams-header">
+        <view
+          class="cm-team-item cm-team-item--left {{colorModalTeam === 'teamA' ? 'cm-team-item--active' : ''}}"
+          style="border-color: {{colorModalTeam === 'teamA' ? colorModalMatch.teamA.bgColor : 'rgba(255, 255, 255, 0.15)'}}"
+          catchtap="onSelectModalTeam"
+          data-team="teamA"
+        >
+          <text class="cm-team-name cm-team-name--left">{{colorModalMatch.teamA.name || '主队'}}</text>
+          <view
+            class="cm-color-swatch cm-color-swatch--left"
+            style="background-color: {{colorModalMatch.teamA.bgColor}};"
+          ></view>
+        </view>
+        <text class="cm-vs-divider">VS</text>
+        <view
+          class="cm-team-item cm-team-item--right {{colorModalTeam === 'teamB' ? 'cm-team-item--active' : ''}}"
+          style="border-color: {{colorModalTeam === 'teamB' ? colorModalMatch.teamB.bgColor : 'rgba(255, 255, 255, 0.15)'}}"
+          catchtap="onSelectModalTeam"
+          data-team="teamB"
+        >
+          <view
+            class="cm-color-swatch cm-color-swatch--right"
+            style="background-color: {{colorModalMatch.teamB.bgColor}};"
+          ></view>
+          <text class="cm-team-name cm-team-name--right">{{colorModalMatch.teamB.name || '客队'}}</text>
+        </view>
+      </view>
+
+      <!-- 24色无滚动矩阵：12列 x 2行 -->
+      <view class="cm-matrix-palette">
+        <view
+          class="cm-matrix-ball {{c.ballActive(colorModalTeam, colorModalMatch.teamA.bgColor, colorModalMatch.teamB.bgColor, b) ? 'cm-matrix-ball--active' : ''}}"
+          wx:for="{{colorBalls}}"
+          wx:for-item="b"
+          wx:key="*this"
+          style="background-color: {{b}}; border-color: {{b === '#FFFFFF' ? '#E2E8F0' : b}}"
+          catchtap="onChangeTeamColor"
+          data-color="{{b}}"
+        ></view>
+      </view>
+
+      <!-- 切换按钮 -->
+      <view class="cm-action-row">
+        <view
+          class="cm-btn-switch {{colorModalMatch.isCurrent ? 'cm-btn-switch--disabled' : ''}}"
+          catchtap="onSwitchMatchFromModal"
+        >
+          <text>{{colorModalMatch.isCurrent ? '当前场次' : '切换'}}</text>
+        </view>
+      </view>
+
+    </view>
+  </view>
+</view>
