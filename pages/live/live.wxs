@@ -23,14 +23,14 @@ function ballActive(sel, teamA, teamB, ball) {
 }
 
 /**
- * 队名截断：最多保留前 10 个字符，不追加省略号。
+ * 队名截断：最多保留前 12 个字符，不追加省略号（与计分栏固定宽度一致）。
  * @param {string} name
  * @returns {string}
  */
 function limitTeamName(name) {
   var safe = name || '';
-  if (safe.length <= 10) return safe;
-  return safe.slice(0, 10);
+  if (safe.length <= 12) return safe;
+  return safe.slice(0, 12);
 }
 
 module.exports = {

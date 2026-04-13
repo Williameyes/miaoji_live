@@ -105,13 +105,12 @@ Page({
     }
 
     const latestConfig = this.normalizeMatchConfig(sourceConfig);
-    const wA = this.computeTeamGroupWidthPx(this.getDisplayTeamNameCharCount(latestConfig.teamA && latestConfig.teamA.name));
-    const wB = this.computeTeamGroupWidthPx(this.getDisplayTeamNameCharCount(latestConfig.teamB && latestConfig.teamB.name));
+    const wSide = this.computeTeamGroupWidthPx();
     this.setData({
       matchConfig: latestConfig,
       cameraContext: cameraContext,
-      teamGroupWidthPxA: wA,
-      teamGroupWidthPxB: wB
+      teamGroupWidthPxA: wSide,
+      teamGroupWidthPxB: wSide
     });
     app.globalData.matchConfig = latestConfig;
     wx.setStorageSync('matchConfig', latestConfig);
@@ -324,16 +323,11 @@ Page({
       }
     }
     const latestConfig = this.normalizeMatchConfig(sourceConfig);
-    const wA = this.computeTeamGroupWidthPx(
-      this.getDisplayTeamNameCharCount(latestConfig.teamA && latestConfig.teamA.name)
-    );
-    const wB = this.computeTeamGroupWidthPx(
-      this.getDisplayTeamNameCharCount(latestConfig.teamB && latestConfig.teamB.name)
-    );
+    const wSide = this.computeTeamGroupWidthPx();
     this.setData({
       matchConfig: latestConfig,
-      teamGroupWidthPxA: wA,
-      teamGroupWidthPxB: wB
+      teamGroupWidthPxA: wSide,
+      teamGroupWidthPxB: wSide
     });
     app.globalData.matchConfig = latestConfig;
     wx.setStorageSync('matchConfig', latestConfig);
@@ -409,36 +403,43 @@ Page({
   },
 
   /**
-   * 与 WXS `limitTeamName` 一致：参与布局的队名字符数最多计 10 个。
+   * 与 WXS `limitTeamName`（最多 12 字）一致，用于非宽度逻辑时可读展示长度。
    *
    * @param {string} name 原始队名
    * @returns {number}
    */
   getDisplayTeamNameCharCount: function(name) {
     const s = String(name || '');
-    return Math.min(Array.from(s).length, 10);
+    return Math.min(Array.from(s).length, 12);
   },
 
   /**
-   * 按显示字符数估算单侧球队区宽度（px），含比分与内边距；避免过小的 cap 导致只显示半行字。
+   * 单侧球队区（队名+比分）固定宽度：按 12 个中文字符占位 + 左右边距估算，与队名实际长短无关。
    *
-   * @param {number} displayCharCount 展示用字符数 1～10
-   * @returns {number}
+   * @returns {number} 宽度（px）
    */
-  computeTeamGroupWidthPx: function(displayCharCount) {
+  computeTeamGroupWidthPx: function() {
+    const DISPLAY_CHAR_SLOTS = 12;
     const sys = wx.getSystemInfoSync();
     const ww = sys.windowWidth || 375;
     const rpxToPx = ww / 750;
-    const CHAR_RPX = 28;
-    const EXTRA_RPX = 96;
+    /** 队名区宽度 = 12 字槽位 + 分数固定槽位 + 二者间距 + 左右内边距。 */
+    const NAME_CHAR_RPX = 20;
+    const SCORE_SLOT_RPX = 40;
+    const CONTENT_GAP_RPX = 8;
+    const ROW_PADDING_RPX = 20;
     const MIN_RPX = 108;
-    const chars = Math.max(Math.floor(displayCharCount) || 0, 1);
-    let needRpx = chars * CHAR_RPX + EXTRA_RPX;
+    let needRpx =
+      DISPLAY_CHAR_SLOTS * NAME_CHAR_RPX
+      + SCORE_SLOT_RPX
+      + CONTENT_GAP_RPX
+      + ROW_PADDING_RPX;
     needRpx = Math.max(needRpx, MIN_RPX);
     let widthPx = needRpx * rpxToPx;
-    const boardPx = ww * 0.96;
-    const centerRpx = 100;
-    const maxSidePx = Math.max(72, (boardPx - centerRpx * rpxToPx) / 2 - 6);
+    const boardPx = ww * 0.98;
+    /** 需与 `.period-center-outer` 的最小宽度 + padding 保持一致。 */
+    const centerRpx = 80;
+    const maxSidePx = Math.max(72, (boardPx - centerRpx * rpxToPx) / 2 - 4);
     widthPx = Math.min(widthPx, maxSidePx);
     return Math.round(widthPx);
   },
@@ -450,19 +451,15 @@ Page({
    * @returns {void}
    */
   updateTeamGroupWidth: function(force) {
-    const cfg = this.data.matchConfig || {};
-    const a = this.getDisplayTeamNameCharCount(cfg.teamA && cfg.teamA.name);
-    const b = this.getDisplayTeamNameCharCount(cfg.teamB && cfg.teamB.name);
-    const wA = this.computeTeamGroupWidthPx(a);
-    const wB = this.computeTeamGroupWidthPx(b);
+    const wSide = this.computeTeamGroupWidthPx();
     if (
       !force &&
-      Math.abs(wA - (this.data.teamGroupWidthPxA || 0)) < 0.5 &&
-      Math.abs(wB - (this.data.teamGroupWidthPxB || 0)) < 0.5
+      Math.abs(wSide - (this.data.teamGroupWidthPxA || 0)) < 0.5 &&
+      Math.abs(wSide - (this.data.teamGroupWidthPxB || 0)) < 0.5
     ) {
       return;
     }
-    this.setData({ teamGroupWidthPxA: wA, teamGroupWidthPxB: wB });
+    this.setData({ teamGroupWidthPxA: wSide, teamGroupWidthPxB: wSide });
   },
 
   onUnload: function() {
