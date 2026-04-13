@@ -22,7 +22,19 @@ function ballActive(sel, teamA, teamB, ball) {
   return false;
 }
 
+/**
+ * 队名截断：最多保留前 10 个字符，不追加省略号。
+ * @param {string} name
+ * @returns {string}
+ */
+function limitTeamName(name) {
+  var safe = name || '';
+  if (safe.length <= 10) return safe;
+  return safe.slice(0, 10);
+}
+
 module.exports = {
   eqColor: eqColor,
-  ballActive: ballActive
+  ballActive: ballActive,
+  limitTeamName: limitTeamName
 };

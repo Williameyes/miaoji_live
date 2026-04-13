@@ -33,65 +33,90 @@
         </view>
       </view>
 
-      <!-- 计分条主体：左右等宽且比分固定 -->
+      <!-- 计分条主体：左右等宽且比分固定（色条视觉约 50% 高度，操作热区保持原 min-height） -->
       <view class="main-score-bar">
         <!-- 球队 A 容器 -->
-        <view class="team-group team-a-group" 
-          style="background-color: {{matchConfig.teamA.rgbaBg || 'rgba(230, 67, 64, 0.7)'}}; {{teamGroupWidthPx > 0 ? ('width:' + teamGroupWidthPx + 'px;') : ''}}">
-          <!-- 队名部分：点击+1，长按快速+1 -->
-          <view class="team-name" 
-            catchtap="onScoreTap" 
-            bindlongpress="onScoreLongPress" 
-            bindtouchend="onScoreTouchEnd"
-            data-team="teamA" 
-            data-type="plus"
-            style="color: {{matchConfig.teamA.textColor}}">
-            {{matchConfig.teamA.name || '队A'}}
-          </view>
-          <!-- 比分部分：点击-1，长按快速-1 -->
-          <view class="score-value" 
-            catchtap="onScoreTap" 
-            bindlongpress="onScoreLongPress" 
-            bindtouchend="onScoreTouchEnd"
-            data-team="teamA" 
-            data-type="minus"
-            style="color: {{matchConfig.teamA.textColor}}">
-            {{matchConfig.teamA.score}}
+        <view
+          class="team-group team-a-group"
+          style="width: {{teamGroupWidthPxA}}px; max-width: {{teamGroupWidthPxA}}px;"
+        >
+          <view
+            class="team-group-bg team-group-bg--left"
+            style="background-color: {{matchConfig.teamA.rgbaBg || 'rgba(230, 67, 64, 0.7)'}}"
+          ></view>
+          <view class="team-group-row">
+            <!-- 队名部分：点击+1，长按快速+1 -->
+            <view
+              class="team-name team-name--a"
+              catchtap="onScoreTap"
+              bindlongpress="onScoreLongPress"
+              bindtouchend="onScoreTouchEnd"
+              data-team="teamA"
+              data-type="plus"
+              style="color: {{matchConfig.teamA.textColor}}"
+            >
+              <text class="team-name-inner">{{c.limitTeamName(matchConfig.teamA.name || '队A')}}</text>
+            </view>
+            <!-- 比分部分：点击-1，长按快速-1 -->
+            <view
+              class="score-value"
+              catchtap="onScoreTap"
+              bindlongpress="onScoreLongPress"
+              bindtouchend="onScoreTouchEnd"
+              data-team="teamA"
+              data-type="minus"
+              style="color: {{matchConfig.teamA.textColor}}"
+            >
+              {{matchConfig.teamA.score}}
+            </view>
           </view>
         </view>
 
         <!-- 中间节次 -->
-        <view class="period-center-block" bindtap="onPeriodTap" bindlongpress="onPeriodLongPress">
-          <view class="period-text" style="color: {{periodFlash ? '#000000' : '#fff'}}">{{periods[matchConfig.period]}}</view>
+        <view class="period-center-outer" bindtap="onPeriodTap" bindlongpress="onPeriodLongPress">
+          <view class="period-strip"></view>
+          <view class="period-text" style="color: {{periodFlash ? '#000000' : '#fff'}}">
+            {{periods[matchConfig.period]}}
+          </view>
         </view>
 
         <!-- 球队 B 容器 -->
-        <view class="team-group team-b-group" 
-          style="background-color: {{matchConfig.teamB.rgbaBg || 'rgba(16, 174, 255, 0.7)'}}; {{teamGroupWidthPx > 0 ? ('width:' + teamGroupWidthPx + 'px;') : ''}}">
-          <!-- 比分部分：点击-1，长按快速-1 -->
-          <view class="score-value" 
-            catchtap="onScoreTap" 
-            bindlongpress="onScoreLongPress" 
-            bindtouchend="onScoreTouchEnd"
-            data-team="teamB" 
-            data-type="minus"
-            style="color: {{matchConfig.teamB.textColor}}">
-            {{matchConfig.teamB.score}}
-          </view>
-          <!-- 队名部分：点击+1，长按快速+1 -->
-          <view class="team-name" 
-            catchtap="onScoreTap" 
-            bindlongpress="onScoreLongPress" 
-            bindtouchend="onScoreTouchEnd"
-            data-team="teamB" 
-            data-type="plus"
-            style="color: {{matchConfig.teamB.textColor}}">
-            {{matchConfig.teamB.name || '队B'}}
+        <view
+          class="team-group team-b-group"
+          style="width: {{teamGroupWidthPxB}}px; max-width: {{teamGroupWidthPxB}}px;"
+        >
+          <view
+            class="team-group-bg team-group-bg--right"
+            style="background-color: {{matchConfig.teamB.rgbaBg || 'rgba(16, 174, 255, 0.7)'}}"
+          ></view>
+          <view class="team-group-row">
+            <!-- 比分部分：点击-1，长按快速-1 -->
+            <view
+              class="score-value"
+              catchtap="onScoreTap"
+              bindlongpress="onScoreLongPress"
+              bindtouchend="onScoreTouchEnd"
+              data-team="teamB"
+              data-type="minus"
+              style="color: {{matchConfig.teamB.textColor}}"
+            >
+              {{matchConfig.teamB.score}}
+            </view>
+            <!-- 队名部分：点击+1，长按快速+1 -->
+            <view
+              class="team-name team-name--b"
+              catchtap="onScoreTap"
+              bindlongpress="onScoreLongPress"
+              bindtouchend="onScoreTouchEnd"
+              data-team="teamB"
+              data-type="plus"
+              style="color: {{matchConfig.teamB.textColor}}"
+            >
+              <text class="team-name-inner">{{c.limitTeamName(matchConfig.teamB.name || '队B')}}</text>
+            </view>
           </view>
         </view>
       </view>
-      <view class="team-name-measure">{{matchConfig.teamA.name || '队A'}}</view>
-      <view class="team-name-measure">{{matchConfig.teamB.name || '队B'}}</view>
     </view>
 
   </view>

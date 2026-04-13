@@ -51,7 +51,9 @@ Page({
     maxZoom: 10,
     distance: 0,
     lastZoom: 1,
-    teamGroupWidthPx: 0,
+    /** 左右球队色块宽度（px），按队名字符数估算，避免 flex:1 拉满半屏 */
+    teamGroupWidthPxA: 0,
+    teamGroupWidthPxB: 0,
     showGuide: false
   },
 
@@ -69,6 +71,8 @@ Page({
   rollingSessionId: 0,
   lastHighlightRequestAt: 0,
   lastHighlightSignature: '',
+  /** 已落盘为高光的上一条滚动片段序号；避免多次长按反复拷贝同一段 rolling 文件 */
+  lastHighlightConsumedSegNo: 0,
   lastSegmentAt: 0,
   lastRecordStartAt: 0,
   startRecordFailStreak: 0,
@@ -80,6 +84,9 @@ Page({
   replayOutroDurationMs: 720,
 
   onLoad: function() {
+    /** 相机 bindinitdone 完成前禁止 startRecord，否则部分机型预览一直黑屏 */
+    this._cameraInitDone = false;
+    this._rollingKickoffTimer = null;
     const cameraContext = wx.createCameraContext();
 
     // 优先从 MIAOXIE_MATCHES 中按 currentMatchId 定位当前场次数据
@@ -95,9 +102,13 @@ Page({
     }
 
     const latestConfig = this.normalizeMatchConfig(sourceConfig);
+    const wA = this.computeTeamGroupWidthPx(this.getDisplayTeamNameCharCount(latestConfig.teamA && latestConfig.teamA.name));
+    const wB = this.computeTeamGroupWidthPx(this.getDisplayTeamNameCharCount(latestConfig.teamB && latestConfig.teamB.name));
     this.setData({
       matchConfig: latestConfig,
-      cameraContext: cameraContext
+      cameraContext: cameraContext,
+      teamGroupWidthPxA: wA,
+      teamGroupWidthPxB: wB
     });
     app.globalData.matchConfig = latestConfig;
     wx.setStorageSync('matchConfig', latestConfig);
@@ -130,19 +141,29 @@ Page({
     });
   },
 
-  onReady: function() {
-    if (wx.nextTick) {
-      wx.nextTick(() => this.updateTeamGroupWidth());
-    } else {
-      setTimeout(() => this.updateTeamGroupWidth(), 0);
-    }
-  },
-
   // 相机初始化完成回调
   onCameraInit: function(e) {
     const maxZoom = e.detail.maxZoom || 5;
     this.setData({ maxZoom: maxZoom });
     this.updateZoom(1.0);
+    if (this._rollingKickoffTimer) {
+      clearTimeout(this._rollingKickoffTimer);
+      this._rollingKickoffTimer = null;
+    }
+    this._cameraInitDone = true;
+    this.tryStartRollingWhenCameraReady();
+  },
+
+  /**
+   * 在相机预览就绪后再启动滚动分段，避免首屏即 startRecord 导致预览黑屏。
+   * 注意：不可因 isRecording 直接 return——会话切换后旧段 stopOneSegment 会早退且不置 false，
+   * 会遗留「假 true」，此处若拦截则永远无法 startRollingRecording，高光永远无片段。
+   * @returns {void}
+   */
+  tryStartRollingWhenCameraReady: function() {
+    if (!this.rollingActive || !this._cameraInitDone) return;
+    if (!this.data.cameraContext) return;
+    this.startRollingRecording();
   },
 
   updateZoom: function(zoomVal) {
@@ -275,8 +296,15 @@ Page({
   },
 
   onShow: function() {
+    /**
+     * 从后台返回、或系统/其他 App（如手游录屏直播）占用相机管线时，原生录制常被挂起，
+     * 但 data.isRecording 仍为 true。startRollingRecording 首行会因「正在录制」直接 return，
+     * 片段永不写入 segmentBuffer，长按高光会一直「未捕捉到可用片段」。
+     * 故每次展示页面前先结束残留分段，并在 stopRecord 完成后再拉起新一轮滚动录制。
+     */
     this.rollingActive = true;
     this.rollingSessionId += 1;
+    const sessionIdForRolling = this.rollingSessionId;
     this.lastSegmentAt = Date.now();
     this.lastRecordStartAt = 0;
     this.startRecordFailStreak = 0;
@@ -293,7 +321,17 @@ Page({
       }
     }
     const latestConfig = this.normalizeMatchConfig(sourceConfig);
-    this.setData({ matchConfig: latestConfig });
+    const wA = this.computeTeamGroupWidthPx(
+      this.getDisplayTeamNameCharCount(latestConfig.teamA && latestConfig.teamA.name)
+    );
+    const wB = this.computeTeamGroupWidthPx(
+      this.getDisplayTeamNameCharCount(latestConfig.teamB && latestConfig.teamB.name)
+    );
+    this.setData({
+      matchConfig: latestConfig,
+      teamGroupWidthPxA: wA,
+      teamGroupWidthPxB: wB
+    });
     app.globalData.matchConfig = latestConfig;
     wx.setStorageSync('matchConfig', latestConfig);
 
@@ -325,53 +363,120 @@ Page({
       }
     });
 
-    // 启动滚动录制（用于导播高光）
-    this.startRollingRecording();
+    /**
+     * 每次展示都必须走 stopRollingRecording：无录制时不会调用相机 stopRecord（见实现），
+     * 仅清理定时器并回调；有录制时收口原生 startRecord，避免 rollingSessionId 递增后
+     * 旧会话 stopOneSegment 早退导致 isRecording 永久为 true、滚动永远无法重启。
+     * 分段启动仍放在相机 initdone 之后（tryStartRollingWhenCameraReady），避免首屏黑屏。
+     */
+    const kickoffRolling = () => {
+      if (!this.rollingActive || sessionIdForRolling !== this.rollingSessionId) return;
+      if (this._rollingKickoffTimer) {
+        clearTimeout(this._rollingKickoffTimer);
+        this._rollingKickoffTimer = null;
+      }
+      if (this._cameraInitDone) {
+        this.tryStartRollingWhenCameraReady();
+        return;
+      }
+      this._rollingKickoffTimer = setTimeout(() => {
+        this._rollingKickoffTimer = null;
+        if (!this.rollingActive || sessionIdForRolling !== this.rollingSessionId) return;
+        if (!this._cameraInitDone) {
+          this._cameraInitDone = true;
+        }
+        this.tryStartRollingWhenCameraReady();
+      }, 900);
+    };
+    this.stopRollingRecording(kickoffRolling);
     if (this.data.drawerMode === 1) {
       this.refreshDrawerHighlights();
     }
     if (wx.nextTick) {
-      wx.nextTick(() => this.updateTeamGroupWidth());
+      wx.nextTick(() => this.updateTeamGroupWidth(true));
     } else {
-      setTimeout(() => this.updateTeamGroupWidth(), 0);
+      setTimeout(() => this.updateTeamGroupWidth(true), 0);
     }
   },
 
-  updateTeamGroupWidth: function() {
-    const sysInfo = wx.getSystemInfoSync();
-    const windowWidth = sysInfo.windowWidth || 375;
-    const rpxToPx = windowWidth / 750;
+  onReady: function() {
+    if (wx.nextTick) {
+      wx.nextTick(() => this.updateTeamGroupWidth(true));
+    } else {
+      setTimeout(() => this.updateTeamGroupWidth(true), 0);
+    }
+  },
 
-    const query = wx.createSelectorQuery().in(this);
-    query.selectAll('.team-name-measure').boundingClientRect((rects) => {
-      if (!rects || rects.length < 2) return;
-      const nameWidthPx = Math.max(rects[0]?.width || 0, rects[1]?.width || 0);
+  /**
+   * 与 WXS `limitTeamName` 一致：参与布局的队名字符数最多计 10 个。
+   *
+   * @param {string} name 原始队名
+   * @returns {number}
+   */
+  getDisplayTeamNameCharCount: function(name) {
+    const s = String(name || '');
+    return Math.min(Array.from(s).length, 10);
+  },
 
-      const paddingRpx = 30;
-      const gapRpx = 8;
-      const scoreAreaRpx = 42;
-      const extraPx = (paddingRpx + gapRpx + scoreAreaRpx) * rpxToPx;
+  /**
+   * 按显示字符数估算单侧球队区宽度（px），含比分与内边距；避免过小的 cap 导致只显示半行字。
+   *
+   * @param {number} displayCharCount 展示用字符数 1～10
+   * @returns {number}
+   */
+  computeTeamGroupWidthPx: function(displayCharCount) {
+    const sys = wx.getSystemInfoSync();
+    const ww = sys.windowWidth || 375;
+    const rpxToPx = ww / 750;
+    const CHAR_RPX = 28;
+    const EXTRA_RPX = 96;
+    const MIN_RPX = 108;
+    const chars = Math.max(Math.floor(displayCharCount) || 0, 1);
+    let needRpx = chars * CHAR_RPX + EXTRA_RPX;
+    needRpx = Math.max(needRpx, MIN_RPX);
+    let widthPx = needRpx * rpxToPx;
+    const boardPx = ww * 0.96;
+    const centerRpx = 100;
+    const maxSidePx = Math.max(72, (boardPx - centerRpx * rpxToPx) / 2 - 6);
+    widthPx = Math.min(widthPx, maxSidePx);
+    return Math.round(widthPx);
+  },
 
-      const periodMinRpx = 60;
-      const maxTeamPx = Math.max(0, (windowWidth * 0.86 - periodMinRpx * rpxToPx) / 2);
-      const minTeamPx = 120 * rpxToPx;
-
-      const targetPx = Math.min(Math.max(nameWidthPx + extraPx, minTeamPx), maxTeamPx);
-      const widthPx = Math.round(targetPx);
-
-      if (widthPx > 0 && widthPx !== this.data.teamGroupWidthPx) {
-        this.setData({ teamGroupWidthPx: widthPx });
-      }
-    }).exec();
+  /**
+   * 根据当前 `matchConfig` 刷新左右色块宽度（横竖屏切换时也会重算）。
+   *
+   * @param {boolean} [force] 为 true 时跳过「数值接近则跳过」优化，避免 onShow 只改 matchConfig 时宽度未刷新
+   * @returns {void}
+   */
+  updateTeamGroupWidth: function(force) {
+    const cfg = this.data.matchConfig || {};
+    const a = this.getDisplayTeamNameCharCount(cfg.teamA && cfg.teamA.name);
+    const b = this.getDisplayTeamNameCharCount(cfg.teamB && cfg.teamB.name);
+    const wA = this.computeTeamGroupWidthPx(a);
+    const wB = this.computeTeamGroupWidthPx(b);
+    if (
+      !force &&
+      Math.abs(wA - (this.data.teamGroupWidthPxA || 0)) < 0.5 &&
+      Math.abs(wB - (this.data.teamGroupWidthPxB || 0)) < 0.5
+    ) {
+      return;
+    }
+    this.setData({ teamGroupWidthPxA: wA, teamGroupWidthPxB: wB });
   },
 
   onUnload: function() {
     this.rollingActive = false;
+    this._cameraInitDone = false;
+    if (this._rollingKickoffTimer) {
+      clearTimeout(this._rollingKickoffTimer);
+      this._rollingKickoffTimer = null;
+    }
     if (this.pendingHighlight && this.pendingHighlight.timeout) {
       clearTimeout(this.pendingHighlight.timeout);
     }
     this.pendingHighlight = null;
     this.segmentBuffer = [];
+    this.lastHighlightConsumedSegNo = 0;
     if (this.rollingWatchdogTimer) {
       clearInterval(this.rollingWatchdogTimer);
       this.rollingWatchdogTimer = null;
@@ -547,7 +652,9 @@ Page({
   },
 
   startRollingRecording: function() {
-    if (!this.data.cameraContext || this.data.isRecording) return;
+    if (!this.data.cameraContext) return;
+    /** 已在录时勿重复拉起，避免双 startRecord；假阳性 isRecording 由 onShow 的 stopRollingRecording 收口 */
+    if (this.data.isRecording) return;
     const sessionId = this.rollingSessionId;
     Promise.all([this.ensureHighlightDir(), this.ensureRollingDir()]).then(() => {
       if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
@@ -649,7 +756,12 @@ Page({
     });
   },
 
-  stopRollingRecording: function() {
+  /**
+   * 停止滚动分段录制并清理定时器。
+   * @param {function(): void} [onStopped] 在录制状态已释放后调用（无录制时下一 tick 调用）
+   * @returns {void}
+   */
+  stopRollingRecording: function(onStopped) {
     if (this.rollingWatchdogTimer) {
       clearInterval(this.rollingWatchdogTimer);
       this.rollingWatchdogTimer = null;
@@ -658,22 +770,40 @@ Page({
       clearTimeout(this.segmentStopTimer);
       this.segmentStopTimer = null;
     }
+    let finishOnce = false;
+    /**
+     * 将 isRecording 置 false 后再执行 onStopped，避免 setData 未完成时 startRollingRecording
+     * 仍读到 isRecording === true 而直接 return。
+     */
+    const finish = () => {
+      if (finishOnce) return;
+      finishOnce = true;
+      this.lastRecordStartAt = 0;
+      let stoppedRan = false;
+      const runStopped = () => {
+        if (stoppedRan || typeof onStopped !== 'function') return;
+        stoppedRan = true;
+        if (wx.nextTick) wx.nextTick(onStopped);
+        else setTimeout(onStopped, 0);
+      };
+      if (this.data.isRecording) {
+        this.setData({ isRecording: false }, runStopped);
+        setTimeout(runStopped, 120);
+      } else {
+        runStopped();
+      }
+    };
     if (this.data.cameraContext && this.data.isRecording) {
       try {
         this.data.cameraContext.stopRecord({
-          success: () => {
-            this.lastRecordStartAt = 0;
-            this.setData({ isRecording: false });
-          },
-          fail: () => {
-            this.lastRecordStartAt = 0;
-            this.setData({ isRecording: false });
-          }
+          success: finish,
+          fail: finish
         });
       } catch (e) {
-        this.lastRecordStartAt = 0;
-        this.setData({ isRecording: false });
+        finish();
       }
+    } else {
+      finish();
     }
   },
 
@@ -703,9 +833,16 @@ Page({
           });
         }
 
-        // 缓冲尚空时用户已触发保存：等第一段录制完成后再落盘（仍是一段 8s）
+        // 缓冲尚空时用户已触发保存：等「尚未保存过」的片段落盘。
+        // minSegNoExclusive：只接受 segNo 严格大于该值，避免与上一条高光重复；
+        // 同时 segNo >= startSegNo：兼容「counter 已加一但 copy 未完成」时 startSegNo 与当前段相等。
         if (this.pendingHighlight && !this.pendingHighlight.finalizing && this.pendingHighlight.waitNext) {
-          if (segNo > this.pendingHighlight.startSegNo) {
+          const minEx =
+            typeof this.pendingHighlight.minSegNoExclusive === 'number'
+              ? this.pendingHighlight.minSegNoExclusive
+              : 0;
+          const startSegNo = this.pendingHighlight.startSegNo;
+          if (segNo > minEx && segNo >= startSegNo) {
             const waitPending = this.pendingHighlight;
             this.pendingHighlight = null;
             if (waitPending.timeout) {
@@ -717,8 +854,10 @@ Page({
               createdAt: waitPending.createdAt,
               startSegNo: waitPending.startSegNo,
               matchName: waitPending.matchName,
+              matchId: waitPending.matchId,
               cover: waitPending.cover,
               finalizing: false,
+              sourceSegNo: segNo,
               preSegments: [savedPath],
               postSegments: []
             });
@@ -781,6 +920,9 @@ Page({
       return;
     }
 
+    /** 再次尝试拉起滚动分段（补救 init 与 onShow 竞态；与 tryStart 内聚，不重复判断 isRecording 误杀） */
+    this.tryStartRollingWhenCameraReady();
+
     /** 判定成功，立即触发震动反馈（不再显示视觉标记，避免被录屏） */
     this.vibrate('heavy');
 
@@ -789,10 +931,16 @@ Page({
     const currentMatchId = wx.getStorageSync('currentMatchId') || app.globalData.currentMatchId || '';
     const id = `${now}`;
     const startSegNo = this.segmentCounter;
-    const lastEntry = this.segmentBuffer.length > 0      ? this.segmentBuffer[this.segmentBuffer.length - 1]
-      : null;
+    const consumed = this.lastHighlightConsumedSegNo || 0;
+    const lastEntry =
+      this.segmentBuffer.length > 0 ? this.segmentBuffer[this.segmentBuffer.length - 1] : null;
+    /** 缓冲尾部即最新段；若其序号未大于已保存序号，说明仍在沿用同一条 rolling，不得再存 */
+    const freshEntry =
+      lastEntry && lastEntry.path && typeof lastEntry.segNo === 'number' && lastEntry.segNo > consumed
+        ? lastEntry
+        : null;
 
-    if (lastEntry && lastEntry.path) {
+    if (freshEntry) {
       this.finalizeHighlight({
         id,
         createdAt: now,
@@ -801,7 +949,8 @@ Page({
         matchId: currentMatchId,
         cover: this.data.defaultCover,
         finalizing: false,
-        preSegments: [lastEntry.path],
+        sourceSegNo: freshEntry.segNo,
+        preSegments: [freshEntry.path],
         postSegments: []
       });
       return;
@@ -811,6 +960,7 @@ Page({
       id,
       createdAt: now,
       startSegNo,
+      minSegNoExclusive: consumed,
       matchName,
       matchId: currentMatchId,
       cover: this.data.defaultCover,
@@ -823,7 +973,7 @@ Page({
         this.pendingHighlight = null;
         wx.showToast({ title: '未捕捉到可用片段', icon: 'none' });
       }
-    }, this.segmentDurationMs * 2 + 3000);
+    }, this.segmentDurationMs * 3 + 5000);
     this.pendingHighlight = waitPending;
   },
 
@@ -909,7 +1059,13 @@ Page({
         return;
       }
       this.lastHighlightSignature = signature;
-      
+      if (typeof pending.sourceSegNo === 'number' && pending.sourceSegNo > 0) {
+        this.lastHighlightConsumedSegNo = Math.max(
+          this.lastHighlightConsumedSegNo || 0,
+          pending.sourceSegNo
+        );
+      }
+
       // 重构：根据 matchId 存储高光
       const clipsMap = wx.getStorageSync('MIAOXIE_CLIPS') || {};
       const matchId = pending.matchId || 'default';
@@ -1079,6 +1235,7 @@ Page({
     app.globalData.matchConfig = normalizedConfig;
     wx.setStorageSync('matchConfig', normalizedConfig);
     this.setData({ matchConfig: normalizedConfig });
+    this.updateTeamGroupWidth(true);
     this.closeColorModal();
     this.loadMatchList();
     this.refreshDrawerHighlights(); // 切换后立即刷新高光列表
@@ -1116,6 +1273,7 @@ Page({
     if (matchId === currentMatchId) {
       const updated = this.normalizeMatchConfig(raw[idx]);
       this.setData({ matchConfig: updated });
+      this.updateTeamGroupWidth(true);
       app.globalData.matchConfig = updated;
       wx.setStorageSync('matchConfig', updated);
     }
@@ -1154,6 +1312,7 @@ Page({
     app.globalData.matchConfig = normalizedConfig;
     wx.setStorageSync('matchConfig', normalizedConfig);
     this.setData({ matchConfig: normalizedConfig });
+    this.updateTeamGroupWidth(true);
     this.closeAllDrawers();
     this.refreshDrawerHighlights(); // 切换后立即刷新高光列表
     this.vibrate('medium');
