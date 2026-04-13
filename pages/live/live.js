@@ -41,6 +41,10 @@ Page({
     replayMaskKind: 'replay',
     /** 回放倍速（与直播区分观感） */
     replayPlaybackRate: 0.75,
+    /** 回放视频是否需要旋转 90 度（竖屏素材在横屏页中的适配） */
+    replayVideoNeedRotate: false,
+    /** 回放视频旋转角度：仅在需要旋转时生效（90 或 -90） */
+    replayVideoRotateDeg: 90,
     isReplaying: false,
     replaySrc: '',
     replayQueue: [],
@@ -141,6 +145,11 @@ Page({
         setTimeout(() => wx.setKeepScreenOn({ keepScreenOn: true }), 1000);
       }
     });
+
+    // 强制横屏（需要 pageOrientation: "auto"）
+    if (wx.setPageOrientation) {
+      wx.setPageOrientation({ orientation: 'landscape' });
+    }
   },
 
   // 相机初始化完成回调
@@ -359,6 +368,11 @@ Page({
         setTimeout(() => wx.setKeepScreenOn({ keepScreenOn: true }), 1000);
       }
     });
+
+    // 每次展示时重新强制横屏（防止从其他竖屏页返回后方向被重置）
+    if (wx.setPageOrientation) {
+      wx.setPageOrientation({ orientation: 'landscape' });
+    }
 
     /**
      * 每次展示都必须走 stopRollingRecording：无录制时不会调用相机 stopRecord（见实现），
@@ -1485,6 +1499,11 @@ Page({
       return;
     }
     
+    // 回放前确保横屏（防止相机录制时方向切换导致回放竖屏）
+    if (wx.setPageOrientation) {
+      wx.setPageOrientation({ orientation: 'landscape' });
+    }
+
     // 总时长 1.0s (1000ms)
      // 1. 0.35s 快速进场 (遮罩全黑)
      // 2. 0.65s 优雅淡出 (视频开始播放)
@@ -1497,7 +1516,9 @@ Page({
        replayMaskKind: 'replay',
        replayQueue: [],
        replayIndex: 0,
-       replaySrc: ''
+       replaySrc: '',
+       replayVideoNeedRotate: false,
+       replayVideoRotateDeg: 90
      });
 
      // 在 0.35s 强制执行播放逻辑
@@ -1550,7 +1571,7 @@ Page({
   },
 
   /**
-   * 确保回放以较慢倍速播放（部分机型仅属性不生效，需 VideoContext）。
+   * 确保回放以当前设定倍速播放（部分机型仅属性不生效，需 VideoContext）。
    */
   onReplayVideoPlay: function() {
     const rate = this.data.replayPlaybackRate || 0.75;
@@ -1558,6 +1579,59 @@ Page({
       const ctx = wx.createVideoContext('replayVideo', this);
       if (ctx && ctx.playbackRate) ctx.playbackRate(rate);
     } catch (e) {}
+  },
+
+  /**
+   * 回放元信息加载完成后，根据视频宽高判断是否需要旋转。
+   * @param {WechatMiniprogram.CustomEvent} e
+   * @returns {void}
+   */
+  onReplayVideoLoadedMeta: function(e) {
+    const detail = (e && e.detail) || {};
+    const width = Number(detail.width || 0);
+    const height = Number(detail.height || 0);
+    const needRotate = width > 0 && height > 0 && height > width;
+    const rotateDeg = needRotate ? this.getReplayRotateDegForDevice() : 90;
+    this.setData({
+      replayVideoNeedRotate: needRotate,
+      replayVideoRotateDeg: rotateDeg
+    });
+    this.onReplayVideoPlay();
+  },
+
+  /**
+   * 根据设备品牌选择回放旋转方向。
+   * 仅对小米系设备做反向旋转修正，避免影响 iPhone 与其他安卓机型。
+   * @returns {number} 90 或 -90
+   */
+  getReplayRotateDegForDevice: function() {
+    try {
+      const sys = wx.getSystemInfoSync();
+      const brand = String((sys && sys.brand) || '').toLowerCase();
+      const model = String((sys && sys.model) || '').toLowerCase();
+      const isXiaomi =
+        brand.indexOf('xiaomi') >= 0
+        || brand.indexOf('redmi') >= 0
+        || model.indexOf('xiaomi') >= 0
+        || model.indexOf('redmi') >= 0;
+      return isXiaomi ? -90 : 90;
+    } catch (err) {
+      return 90;
+    }
+  },
+
+  /**
+   * 切换回放倍速，立即通过 VideoContext 生效。
+   * @param {WechatMiniprogram.TouchEvent} e data-rate: 0.5 | 0.75 | 1.0
+   */
+  onReplaySpeedChange: function(e) {
+    const rate = parseFloat(e.currentTarget.dataset.rate);
+    if (!rate || isNaN(rate)) return;
+    this.setData({ replayPlaybackRate: rate });
+    try {
+      const ctx = wx.createVideoContext('replayVideo', this);
+      if (ctx && ctx.playbackRate) ctx.playbackRate(rate);
+    } catch (err) {}
   },
 
   flashPeriod: function() {

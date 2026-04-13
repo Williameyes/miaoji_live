@@ -130,7 +130,8 @@
     <video 
       id="replayVideo"
       src="{{replaySrc}}" 
-      class="replay-video-fullscreen" 
+      class="replay-video-fullscreen {{replayVideoNeedRotate ? 'replay-video-fullscreen--rotated' : ''}}" 
+      style="{{replayVideoNeedRotate ? 'transform: translate(-50%, -50%) rotate(' + replayVideoRotateDeg + 'deg);' : 'transform: translate(-50%, -50%);'}}"
       autoplay 
       controls="{{false}}"
       show-center-play-btn="{{false}}"
@@ -139,11 +140,30 @@
       playbackRate="{{replayPlaybackRate}}"
       loop="{{false}}"
       bindplay="onReplayVideoPlay"
-      bindloadedmetadata="onReplayVideoPlay"
+      bindloadedmetadata="onReplayVideoLoadedMeta"
       bindended="onReplayEnded">
     </video>
     <view class="replay-interaction-layer" catchtap="onReplayInterruptTap">
-      <view class="replay-hint-badge">实时回看</view>
+      <view class="replay-top-bar">
+        <view class="replay-hint-badge">实时回看</view>
+        <view class="replay-speed-group">
+          <view
+            class="replay-speed-btn {{replayPlaybackRate === 0.5 ? 'replay-speed-btn--active' : ''}}"
+            catchtap="onReplaySpeedChange"
+            data-rate="0.5"
+          >0.5</view>
+          <view
+            class="replay-speed-btn {{replayPlaybackRate === 0.75 ? 'replay-speed-btn--active' : ''}}"
+            catchtap="onReplaySpeedChange"
+            data-rate="0.75"
+          >0.75</view>
+          <view
+            class="replay-speed-btn {{replayPlaybackRate === 1.0 ? 'replay-speed-btn--active' : ''}}"
+            catchtap="onReplaySpeedChange"
+            data-rate="1.0"
+          >1.0</view>
+        </view>
+      </view>
     </view>
   </view>
 

@@ -271,13 +271,23 @@ page {
   box-sizing: border-box;
 }
 
-/* 实时回看提示：调小尺寸，使其更精致协调 */
-.replay-hint-badge {
+/* 回放顶部控制行：绝对定位在左上角，横排排列徽标与倍速按钮 */
+.replay-top-bar {
   position: absolute;
-  left: 16rpx;
+  left: calc(16rpx + env(safe-area-inset-left));
+  left: calc(16rpx + constant(safe-area-inset-left));
   top: calc(10rpx + env(safe-area-inset-top));
   top: calc(10rpx + constant(safe-area-inset-top));
-  height: 42rpx; /* 进一步调小，使之更加精致 */
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12rpx;
+  pointer-events: none;
+}
+
+/* 实时回看提示徽标：精致胶囊样式 */
+.replay-hint-badge {
+  height: 42rpx;
   padding: 0 16rpx;
   border-radius: 21rpx;
   font-size: 18rpx;
@@ -291,6 +301,41 @@ page {
   align-items: center;
   justify-content: center;
   letter-spacing: 0.5rpx;
+  flex-shrink: 0;
+}
+
+/* 倍速按钮组 */
+.replay-speed-group {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6rpx;
+  pointer-events: auto;
+}
+
+/* 单个倍速按钮：默认半透明胶囊 */
+.replay-speed-btn {
+  height: 42rpx;
+  min-width: 64rpx;
+  padding: 0 14rpx;
+  border-radius: 21rpx;
+  font-size: 18rpx;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.5);
+  background: rgba(0, 0, 0, 0.15);
+  border: 1rpx solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+/* 当前激活倍速：高亮白色 */
+.replay-speed-btn--active {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.45);
 }
 
 .replay-hint-badge::before {
@@ -655,9 +700,20 @@ page {
 
 
 .replay-video-fullscreen {
+  position: absolute;
+  left: 50%;
+  top: 50%;
   width: 100vw;
   height: 100vh;
   object-fit: contain;
+  transform: translate(-50%, -50%);
+}
+
+/* 竖屏录像在横屏回放时旋转 90 度铺满可视区域 */
+.replay-video-fullscreen--rotated {
+  width: 100vh;
+  height: 100vw;
+  transform: translate(-50%, -50%) rotate(90deg);
 }
 
 /* 操作指南弹窗 (专业导播风格) */

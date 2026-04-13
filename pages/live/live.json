@@ -1,7 +1,7 @@
 {
   "navigationBarTitleText": "计分直播中",
   "disableScroll": true,
-  "pageOrientation": "landscape",
+  "pageOrientation": "auto",
   "navigationStyle": "custom",
   "backgroundColor": "#000000",
   "backgroundColorTop": "#000000",
