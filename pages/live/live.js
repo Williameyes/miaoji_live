@@ -76,8 +76,10 @@ Page({
   lastSegmentAt: 0,
   lastRecordStartAt: 0,
   startRecordFailStreak: 0,
-  /** rolling 缓冲最多保留的段数；抖音/外录等场景下 copy 较慢，过小易在第三次保存时丢段 */
-  rollingBufferMax: 6,
+  /** rolling 缓冲最多保留的段数；抖音/外录等场景下 copy 较慢，过小易丢段 */
+  rollingBufferMax: 10,
+  /** 正在将分段写入本地 rolling（copyFile 等），此时禁止看门狗误启新段，避免长直播后写盘变慢导致管线错乱 */
+  rollingFsBusy: false,
   /** 进入回放前 REPLAY 全屏转场总时长（需与 WXSS 中 replayBadgeMotion 时长一致） */
   replayIntroDurationMs: 1000,
   /** 回到直播转场总时长（需与 WXSS 中 liveBadgeMotion 时长一致） */
@@ -87,6 +89,7 @@ Page({
     /** 相机 bindinitdone 完成前禁止 startRecord，否则部分机型预览一直黑屏 */
     this._cameraInitDone = false;
     this._rollingKickoffTimer = null;
+    this.rollingFsBusy = false;
     const cameraContext = wx.createCameraContext();
 
     // 优先从 MIAOXIE_MATCHES 中按 currentMatchId 定位当前场次数据
@@ -379,14 +382,12 @@ Page({
         this.tryStartRollingWhenCameraReady();
         return;
       }
+      /** 绝不伪造 initdone：未触发时强行 startRecord 会打断预览导致黑屏；仅延后重试 */
       this._rollingKickoffTimer = setTimeout(() => {
         this._rollingKickoffTimer = null;
         if (!this.rollingActive || sessionIdForRolling !== this.rollingSessionId) return;
-        if (!this._cameraInitDone) {
-          this._cameraInitDone = true;
-        }
         this.tryStartRollingWhenCameraReady();
-      }, 900);
+      }, 1800);
     };
     this.stopRollingRecording(kickoffRolling);
     if (this.data.drawerMode === 1) {
@@ -477,6 +478,7 @@ Page({
     this.pendingHighlight = null;
     this.segmentBuffer = [];
     this.lastHighlightConsumedSegNo = 0;
+    this.rollingFsBusy = false;
     if (this.rollingWatchdogTimer) {
       clearInterval(this.rollingWatchdogTimer);
       this.rollingWatchdogTimer = null;
@@ -666,6 +668,8 @@ Page({
        */
       this.rollingWatchdogTimer = setInterval(() => {
         if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
+        /** copy 尚未完成时不能认为「空闲」，否则会在长直播、磁盘变慢时并行 startRecord */
+        if (this.rollingFsBusy) return;
         const now = Date.now();
         const isStuckRecording = this.data.isRecording
           && this.lastRecordStartAt > 0
@@ -736,6 +740,8 @@ Page({
         this.setData({ isRecording: false });
         this.lastRecordStartAt = 0;
         const tempPath = res && res.tempVideoPath ? res.tempVideoPath : '';
+        /** 在 copy 完成前就刷新心跳，避免仅依赖 finalize 时写盘慢导致看门狗误判空闲 */
+        this.lastSegmentAt = Date.now();
         this.segmentCounter += 1;
         if (tempPath) {
           // 关键时序修复：
@@ -815,14 +821,14 @@ Page({
    */
   onSegmentRecorded: function(tempPath, segNo) {
     // 关键修复：把每个 segment 立刻保存到本地 rolling 目录，避免 tempVideoPath 后续失效。
+    this.rollingFsBusy = true;
     return this.ensureRollingDir().then(() => new Promise((resolve) => {
       const fs = wx.getFileSystemManager();
       const rollingDir = this.getRollingDir();
       const rollingPath = `${rollingDir}/seg_${segNo}.mp4`;
       const finalizeSegment = (savedPath) => {
         this.segmentBuffer.push({ path: savedPath, segNo });
-        this.lastSegmentAt = Date.now();
-        const maxBuf = this.rollingBufferMax || 3;
+        const maxBuf = this.rollingBufferMax || 10;
         if (this.segmentBuffer.length > maxBuf) {
           const removed = this.segmentBuffer.splice(0, this.segmentBuffer.length - maxBuf);
           // 清理被淘汰的 rolling 文件（不影响已保存为高光的副本）
@@ -891,7 +897,42 @@ Page({
         success: (r) => finalizeSegment((r && r.savedFilePath) ? r.savedFilePath : rollingPath),
         fail: () => finalizeSegment(tempPath)
       });
-    })).catch(() => Promise.resolve());
+    }))
+      .catch(() => Promise.resolve())
+      .finally(() => {
+        this.rollingFsBusy = false;
+      });
+  },
+
+  /**
+   * 高光等待超时或长期无新段时，尝试结束异常分段并重新拉起滚动录制（外录/磁盘慢场景）。
+   * copy 进行中时延后执行，避免与相机分段并发冲突。
+   *
+   * @param {function(): void} [onDone] 恢复尝试结束后的回调
+   * @param {number} [busyRetries] 内部参数：等待 rollingFsBusy 解除的重试次数
+   * @returns {void}
+   */
+  recoverRollingPipelineForHighlight: function(onDone, busyRetries) {
+    const maxBusyWait = 40;
+    const n = typeof busyRetries === 'number' ? busyRetries : 0;
+    if (this.rollingFsBusy && n < maxBusyWait) {
+      setTimeout(() => {
+        this.recoverRollingPipelineForHighlight(onDone, n + 1);
+      }, 200);
+      return;
+    }
+    /**
+     * 高光超时只做「软恢复」：重置失败计数并 tryStart。
+     * 禁止此处调用 stopRollingRecording→stopRecord：预览正常时中断分段录制极易整屏黑屏。
+     * 会话级假死仍由 onShow 的 stopRollingRecording 收口。
+     */
+    this.startRecordFailStreak = 0;
+    const kick = () => {
+      this.tryStartRollingWhenCameraReady();
+      if (typeof onDone === 'function') onDone();
+    };
+    if (wx.nextTick) wx.nextTick(kick);
+    else setTimeout(kick, 0);
   },
 
   /**
@@ -982,12 +1023,15 @@ Page({
       waitNext: true,
       timeout: null
     };
+    const waitHighlightMs = this.segmentDurationMs * 5 + 12000;
     waitPending.timeout = setTimeout(() => {
       if (this.pendingHighlight && this.pendingHighlight.id === id) {
         this.pendingHighlight = null;
-        wx.showToast({ title: '未捕捉到可用片段', icon: 'none' });
+        this.recoverRollingPipelineForHighlight(() => {
+          wx.showToast({ title: '未捕捉到可用片段', icon: 'none' });
+        });
       }
-    }, this.segmentDurationMs * 3 + 5000);
+    }, waitHighlightMs);
     this.pendingHighlight = waitPending;
   },
 
