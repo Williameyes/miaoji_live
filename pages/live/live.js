@@ -76,8 +76,8 @@ Page({
   lastSegmentAt: 0,
   lastRecordStartAt: 0,
   startRecordFailStreak: 0,
-  /** rolling 缓冲最多保留的段数（每段 {@link segmentDurationMs}），仅用于最近一段高光取样与少量冗余。 */
-  rollingBufferMax: 3,
+  /** rolling 缓冲最多保留的段数；抖音/外录等场景下 copy 较慢，过小易在第三次保存时丢段 */
+  rollingBufferMax: 6,
   /** 进入回放前 REPLAY 全屏转场总时长（需与 WXSS 中 replayBadgeMotion 时长一致） */
   replayIntroDurationMs: 1000,
   /** 回到直播转场总时长（需与 WXSS 中 liveBadgeMotion 时长一致） */
@@ -834,15 +834,14 @@ Page({
         }
 
         // 缓冲尚空时用户已触发保存：等「尚未保存过」的片段落盘。
-        // minSegNoExclusive：只接受 segNo 严格大于该值，避免与上一条高光重复；
-        // 同时 segNo >= startSegNo：兼容「counter 已加一但 copy 未完成」时 startSegNo 与当前段相等。
+        // 仅用 segNo > minSegNoExclusive：若再要求 segNo >= startSegNo，在 copy 乱序或
+        // segmentCounter 已前进时，会先来的较小 seg 被永久跳过，大序号若未落盘则一直超时。
         if (this.pendingHighlight && !this.pendingHighlight.finalizing && this.pendingHighlight.waitNext) {
           const minEx =
             typeof this.pendingHighlight.minSegNoExclusive === 'number'
               ? this.pendingHighlight.minSegNoExclusive
               : 0;
-          const startSegNo = this.pendingHighlight.startSegNo;
-          if (segNo > minEx && segNo >= startSegNo) {
+          if (segNo > minEx) {
             const waitPending = this.pendingHighlight;
             this.pendingHighlight = null;
             if (waitPending.timeout) {
@@ -896,6 +895,26 @@ Page({
   },
 
   /**
+   * 在滚动缓冲中选取 segNo 最大且严格大于 consumed 的条目。
+   * copyFile 完成顺序可能与录制顺序不一致，不能仅用数组最后一项作为「最新段」。
+   *
+   * @param {number} consumed 已保存为高光的最大 segNo
+   * @returns {{ path: string, segNo: number } | null}
+   */
+  pickBestRollingEntryAfterConsumed: function(consumed) {
+    const minExclusive = typeof consumed === 'number' ? consumed : 0;
+    let best = null;
+    const buf = this.segmentBuffer || [];
+    for (let i = 0; i < buf.length; i += 1) {
+      const it = buf[i];
+      if (!it || !it.path || typeof it.segNo !== 'number') continue;
+      if (it.segNo <= minExclusive) continue;
+      if (!best || it.segNo > best.segNo) best = it;
+    }
+    return best;
+  },
+
+  /**
    * 长按节次：保存「刚结束的一段」完整滚动片段（时长约 {@link segmentDurationMs}，默认 8s）。
    * 不额外拍照封面，避免与录制并行增加相机压力与闪屏。
    */
@@ -932,13 +951,8 @@ Page({
     const id = `${now}`;
     const startSegNo = this.segmentCounter;
     const consumed = this.lastHighlightConsumedSegNo || 0;
-    const lastEntry =
-      this.segmentBuffer.length > 0 ? this.segmentBuffer[this.segmentBuffer.length - 1] : null;
-    /** 缓冲尾部即最新段；若其序号未大于已保存序号，说明仍在沿用同一条 rolling，不得再存 */
-    const freshEntry =
-      lastEntry && lastEntry.path && typeof lastEntry.segNo === 'number' && lastEntry.segNo > consumed
-        ? lastEntry
-        : null;
+    /** 取 segNo 最大的可用段，避免异步落盘乱序时误把「尾部元素」当成最新段 */
+    const freshEntry = this.pickBestRollingEntryAfterConsumed(consumed);
 
     if (freshEntry) {
       this.finalizeHighlight({
