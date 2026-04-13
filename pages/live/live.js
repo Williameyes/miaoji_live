@@ -12,6 +12,15 @@ Page({
     periods: app.globalData.periods,
     statusBarHeight: 0,
     cameraContext: null,
+    cameraMounted: true,
+    isRecovering: false,
+    pipelineHealth: 'ok',
+    opsControlText: 'OK',
+    opsControlActionable: false,
+    opsControlAck: false,
+    /** 恢复圆环进度 0–100，与 recoveryConicEndDeg 同步供 conic-gradient 使用 */
+    recoveryProgress: 0,
+    recoveryConicEndDeg: 0,
     isRecording: false,
     longPressTimer: null,
     periodFlash: false,
@@ -88,12 +97,24 @@ Page({
   replayIntroDurationMs: 1000,
   /** 回到直播转场总时长（需与 WXSS 中 liveBadgeMotion 时长一致） */
   replayOutroDurationMs: 720,
+  /** 连续高光未命中计数；用于触发自动硬恢复。 */
+  highlightMissStreak: 0,
 
   onLoad: function() {
     /** 相机 bindinitdone 完成前禁止 startRecord，否则部分机型预览一直黑屏 */
     this._cameraInitDone = false;
     this._rollingKickoffTimer = null;
+    this._opsToolsTimer = null;
+    this._opsAckTimer = null;
+    this._healthTimer = null;
     this.rollingFsBusy = false;
+    this._recoveryLock = false;
+    this._hardRecoverAwaitingCamera = false;
+    this._recoveryGuardTimer = null;
+    this._recoverProgTimer = null;
+    this._recoverProgressResetTimer = null;
+    /** 长按状态钮后通常会跟一次 tap，需吞掉避免误触保存/二次恢复 */
+    this._recoveryFabLongPressConsumed = false;
     const cameraContext = wx.createCameraContext();
 
     // 优先从 MIAOXIE_MATCHES 中按 currentMatchId 定位当前场次数据
@@ -162,6 +183,21 @@ Page({
       this._rollingKickoffTimer = null;
     }
     this._cameraInitDone = true;
+    if (this._hardRecoverAwaitingCamera) {
+      this._hardRecoverAwaitingCamera = false;
+      if (this._recoveryGuardTimer) {
+        clearTimeout(this._recoveryGuardTimer);
+        this._recoveryGuardTimer = null;
+      }
+      this.stopRecoveryProgressAnim(true);
+      this.setData({ isRecovering: false });
+      this._recoveryLock = false;
+      if (this._manualRecoveryPendingAck) {
+        this._manualRecoveryPendingAck = false;
+        this.emitRecoverySuccessFeedback();
+      }
+      this.updatePipelineHealth();
+    }
     this.tryStartRollingWhenCameraReady();
   },
 
@@ -319,6 +355,7 @@ Page({
     this.lastSegmentAt = Date.now();
     this.lastRecordStartAt = 0;
     this.startRecordFailStreak = 0;
+    this.startHealthMonitor();
 
     // 优先从 MIAOXIE_MATCHES 读取当前场次，保持与 index 页数据同步
     const currentMatchId =
@@ -434,9 +471,23 @@ Page({
    */
   computeTeamGroupWidthPx: function() {
     const DISPLAY_CHAR_SLOTS = 12;
-    const sys = wx.getSystemInfoSync();
-    const ww = sys.windowWidth || 375;
-    const rpxToPx = ww / 750;
+    const getShortEdge = () => {
+      try {
+        if (wx.getWindowInfo) {
+          const w = wx.getWindowInfo();
+          const ww = w.windowWidth || 375;
+          const wh = w.windowHeight || ww;
+          return Math.min(ww, wh);
+        }
+      } catch (e) {}
+      const sys = wx.getSystemInfoSync();
+      const ww = sys.windowWidth || 375;
+      const wh = sys.windowHeight || ww;
+      return Math.min(ww, wh);
+    };
+    /** 使用短边做基准，避免横竖屏时机差异导致计分条忽长忽短。 */
+    const shortEdge = getShortEdge();
+    const rpxToPx = shortEdge / 750;
     /** 队名区宽度 = 12 字槽位 + 分数固定槽位 + 二者间距 + 左右内边距。 */
     const NAME_CHAR_RPX = 20;
     const SCORE_SLOT_RPX = 40;
@@ -450,7 +501,7 @@ Page({
       + ROW_PADDING_RPX;
     needRpx = Math.max(needRpx, MIN_RPX);
     let widthPx = needRpx * rpxToPx;
-    const boardPx = ww * 0.98;
+    const boardPx = shortEdge * 0.98;
     /** 需与 `.period-center-outer` 的最小宽度 + padding 保持一致。 */
     const centerRpx = 80;
     const maxSidePx = Math.max(72, (boardPx - centerRpx * rpxToPx) / 2 - 4);
@@ -478,6 +529,14 @@ Page({
 
   onUnload: function() {
     this.rollingActive = false;
+    this.stopHealthMonitor();
+    this.clearRecoveryFabAck();
+    this.stopRecoveryProgressAnim(false);
+    if (this._recoveryGuardTimer) {
+      clearTimeout(this._recoveryGuardTimer);
+      this._recoveryGuardTimer = null;
+    }
+    this._hardRecoverAwaitingCamera = false;
     this._cameraInitDone = false;
     if (this._rollingKickoffTimer) {
       clearTimeout(this._rollingKickoffTimer);
@@ -488,6 +547,7 @@ Page({
     }
     this.pendingHighlight = null;
     this.segmentBuffer = [];
+    this.highlightMissStreak = 0;
     this.lastHighlightConsumedSegNo = 0;
     this.rollingFsBusy = false;
     if (this.rollingWatchdogTimer) {
@@ -495,6 +555,267 @@ Page({
       this.rollingWatchdogTimer = null;
     }
     this.stopRollingRecording();
+  },
+
+  onHide: function() {
+    this.rollingActive = false;
+    this.stopHealthMonitor();
+    this.clearRecoveryFabAck();
+    this.stopRecoveryProgressAnim(false);
+    if (this._recoveryGuardTimer) {
+      clearTimeout(this._recoveryGuardTimer);
+      this._recoveryGuardTimer = null;
+    }
+    this._hardRecoverAwaitingCamera = false;
+    this._recoveryLock = false;
+    this._manualRecoveryPendingAck = false;
+    if (this.data.isRecovering) {
+      this.setData({ isRecovering: false });
+    }
+    this.stopRollingRecording();
+  },
+
+  /**
+   * 清除恢复按钮成功闪烁状态（页面隐藏/卸载时调用）。
+   * @returns {void}
+   */
+  clearRecoveryFabAck: function() {
+    if (this._opsAckTimer) {
+      clearTimeout(this._opsAckTimer);
+      this._opsAckTimer = null;
+    }
+    if (this.data.opsControlAck) {
+      this.setData({ opsControlAck: false });
+    }
+  },
+
+  /**
+   * 触发恢复成功的隐式反馈：一次短震 + 恢复按钮外环轻微闪烁，不显示文字提示。
+   * @returns {void}
+   */
+  emitRecoverySuccessFeedback: function() {
+    this.vibrate('light');
+    if (this._opsAckTimer) {
+      clearTimeout(this._opsAckTimer);
+      this._opsAckTimer = null;
+    }
+    this.setData({ opsControlAck: true });
+    this._opsAckTimer = setTimeout(() => {
+      this._opsAckTimer = null;
+      this.setData({ opsControlAck: false });
+    }, 820);
+  },
+
+  /**
+   * 刷新管线健康状态（低干扰状态灯）。
+   * @returns {void}
+   */
+  updatePipelineHealth: function() {
+    let health = 'ok';
+    let text = 'OK';
+    let actionable = false;
+    const now = Date.now();
+    const pendingAgeMs = this.pendingHighlight
+      ? (now - (this.pendingHighlight.createdAt || now))
+      : 0;
+    const idleTooLong =
+      this.rollingActive
+      && this._cameraInitDone
+      && (now - (this.lastSegmentAt || 0) > this.segmentDurationMs * 3.5)
+      && !this.data.isRecording
+      && !this.rollingFsBusy;
+    const captureLikelyBlocked =
+      this.highlightMissStreak > 0
+      || this.startRecordFailStreak >= 3
+      || (this.pendingHighlight && pendingAgeMs > this.segmentDurationMs * 2.2)
+      || idleTooLong;
+    if (this.data.isRecovering) {
+      health = 'recovering';
+      text = '...';
+    } else if (captureLikelyBlocked) {
+      health = 'warn';
+      text = '↻';
+      actionable = true;
+    } else if (this.data.isRecording) {
+      health = 'recording';
+      text = 'REC';
+    }
+    if (
+      health !== this.data.pipelineHealth
+      || text !== this.data.opsControlText
+      || actionable !== this.data.opsControlActionable
+    ) {
+      this.setData({
+        pipelineHealth: health,
+        opsControlText: text,
+        opsControlActionable: actionable
+      });
+    }
+  },
+
+  /**
+   * 启动健康状态监控定时器。
+   * @returns {void}
+   */
+  startHealthMonitor: function() {
+    this.stopHealthMonitor();
+    this.updatePipelineHealth();
+    this._healthTimer = setInterval(() => this.updatePipelineHealth(), 1200);
+  },
+
+  /**
+   * 停止健康状态监控定时器。
+   * @returns {void}
+   */
+  stopHealthMonitor: function() {
+    if (!this._healthTimer) return;
+    clearInterval(this._healthTimer);
+    this._healthTimer = null;
+  },
+
+  /**
+   * 启动恢复进度圆环动画（在 isRecovering 期间爬升至约 88%，就绪后由 stopRecoveryProgressAnim(true) 拉满）。
+   * @returns {void}
+   */
+  startRecoveryProgressAnim: function() {
+    if (this._recoverProgTimer) {
+      clearInterval(this._recoverProgTimer);
+      this._recoverProgTimer = null;
+    }
+    if (this._recoverProgressResetTimer) {
+      clearTimeout(this._recoverProgressResetTimer);
+      this._recoverProgressResetTimer = null;
+    }
+    this.setData({ recoveryProgress: 0, recoveryConicEndDeg: 0 });
+    this._recoverProgTimer = setInterval(() => {
+      if (!this.data.isRecovering) {
+        clearInterval(this._recoverProgTimer);
+        this._recoverProgTimer = null;
+        return;
+      }
+      const next = Math.min(88, this.data.recoveryProgress + 3);
+      this.setData({
+        recoveryProgress: next,
+        recoveryConicEndDeg: next * 3.6
+      });
+      if (next >= 88) {
+        clearInterval(this._recoverProgTimer);
+        this._recoverProgTimer = null;
+      }
+    }, 110);
+  },
+
+  /**
+   * 停止恢复进度动画；成功时短暂显示满环再归零。
+   * @param {boolean} complete 是否视为恢复成功
+   * @returns {void}
+   */
+  stopRecoveryProgressAnim: function(complete) {
+    if (this._recoverProgTimer) {
+      clearInterval(this._recoverProgTimer);
+      this._recoverProgTimer = null;
+    }
+    if (this._recoverProgressResetTimer) {
+      clearTimeout(this._recoverProgressResetTimer);
+      this._recoverProgressResetTimer = null;
+    }
+    if (!complete) {
+      this.setData({ recoveryProgress: 0, recoveryConicEndDeg: 0 });
+      return;
+    }
+    this.setData({ recoveryProgress: 100, recoveryConicEndDeg: 360 });
+    this._recoverProgressResetTimer = setTimeout(() => {
+      this._recoverProgressResetTimer = null;
+      if (!this.data.isRecovering) {
+        this.setData({ recoveryProgress: 0, recoveryConicEndDeg: 0 });
+      }
+    }, 480);
+  },
+
+  /**
+   * 页面内一键恢复：硬重建 camera 与 rolling 管线，避免必须退回微信。
+   * @param {string} trigger 触发来源（manual/auto）
+   * @returns {void}
+   */
+  hardRecoverLivePipeline: function(trigger) {
+    if (this._recoveryLock) return;
+    this._recoveryLock = true;
+    if (this._recoveryGuardTimer) {
+      clearTimeout(this._recoveryGuardTimer);
+      this._recoveryGuardTimer = null;
+    }
+    const source = trigger || 'manual';
+    this._manualRecoveryPendingAck = source === 'manual';
+    this._hardRecoverAwaitingCamera = true;
+    this._recoveryGuardTimer = setTimeout(() => {
+      this._recoveryGuardTimer = null;
+      this._hardRecoverAwaitingCamera = false;
+      this._manualRecoveryPendingAck = false;
+      this.stopRecoveryProgressAnim(false);
+      this.setData({ isRecovering: false });
+      this._recoveryLock = false;
+      this.updatePipelineHealth();
+    }, 6000);
+    this.rollingActive = false;
+    this.rollingSessionId += 1;
+    if (this.pendingHighlight && this.pendingHighlight.timeout) {
+      clearTimeout(this.pendingHighlight.timeout);
+    }
+    this.pendingHighlight = null;
+    this.rollingFsBusy = false;
+    this.lastRecordStartAt = 0;
+    this.startRecordFailStreak = 0;
+    this.setData({ isRecovering: true });
+    this.startRecoveryProgressAnim();
+    this.stopRollingRecording(() => {
+      this.setData({ cameraMounted: false, isRecording: false });
+      setTimeout(() => {
+        this._cameraInitDone = false;
+        this.segmentBuffer = [];
+        this.lastSegmentAt = Date.now();
+        this.setData({ cameraMounted: true }, () => {
+          const bindCameraContext = () => {
+            const nextCameraContext = wx.createCameraContext();
+            this.setData({ cameraContext: nextCameraContext }, () => {
+              this.rollingActive = true;
+              this.rollingSessionId += 1;
+              this.highlightMissStreak = 0;
+            });
+          };
+          if (wx.nextTick) wx.nextTick(bindCameraContext);
+          else setTimeout(bindCameraContext, 0);
+        });
+      }, 120);
+    });
+  },
+
+  /**
+   * 右下角状态钮单击：REC 时保存高光，否则执行硬恢复。
+   * @returns {void}
+   */
+  onRecoveryFabTap: function() {
+    if (this.data.isRecovering) return;
+    if (this._recoveryFabLongPressConsumed) {
+      this._recoveryFabLongPressConsumed = false;
+      return;
+    }
+    if (this.data.pipelineHealth === 'recording') {
+      this.requestHighlightCapture();
+      return;
+    }
+    this.vibrate('light');
+    this.hardRecoverLivePipeline('manual');
+  },
+
+  /**
+   * 长按状态钮：硬恢复相机与滚动管线（与 REC 下单击保存区分）。
+   * @returns {void}
+   */
+  onRecoveryFabLongPress: function() {
+    if (this.data.isRecovering) return;
+    this._recoveryFabLongPressConsumed = true;
+    this.vibrate('light');
+    this.hardRecoverLivePipeline('manual');
   },
 
   // 节次切换
@@ -535,10 +856,6 @@ Page({
     this.closeAllDrawers();
     this.stopRollingRecording();
     wx.navigateBack();
-  },
-
-  onPeriodLongPress: function() {
-    this.requestHighlightCapture();
   },
 
   // 长按连续计分
@@ -757,7 +1074,8 @@ Page({
         if (tempPath) {
           // 关键时序修复：
           // 先固定当前片段，再开始下一段录制，避免 tempPath 被后续录制复用/覆盖。
-          this.onSegmentRecorded(tempPath, this.segmentCounter).finally(() => {
+          // 传入 recordSessionId：copy 异步完成时若已 onShow/恢复导致 rollingSessionId 变化，则不得写入缓冲，否则会指向错文件、保存必败。
+          this.onSegmentRecorded(tempPath, this.segmentCounter, sessionId).finally(() => {
             setTimeout(() => this.startOneSegment(sessionId), 0);
           });
           return;
@@ -828,16 +1146,50 @@ Page({
    * 将单段录制结果写入滚动缓存。
    * @param {string} tempPath 临时视频路径
    * @param {number} segNo 片段序号
+   * @param {number} recordSessionId 本段录制开始时的 {@link rollingSessionId}，异步落盘完成时必须一致才入缓冲
    * @returns {Promise<void>}
    */
-  onSegmentRecorded: function(tempPath, segNo) {
+  onSegmentRecorded: function(tempPath, segNo, recordSessionId) {
     // 关键修复：把每个 segment 立刻保存到本地 rolling 目录，避免 tempVideoPath 后续失效。
     this.rollingFsBusy = true;
     return this.ensureRollingDir().then(() => new Promise((resolve) => {
       const fs = wx.getFileSystemManager();
       const rollingDir = this.getRollingDir();
       const rollingPath = `${rollingDir}/seg_${segNo}.mp4`;
+      const sessionOk = () => recordSessionId === this.rollingSessionId;
+      /**
+       * 将临时文件读入内存再写入 rolling（部分机型 copyFile/saveFile 失败时仍可用）。
+       * @param {function(string): void} onDone 落盘后的物理路径
+       * @returns {void}
+       */
+      const tryTempToRollingReadWrite = (onDone) => {
+        fs.readFile({
+          filePath: tempPath,
+          success: (readRes) => {
+            const raw = readRes && readRes.data;
+            if (!raw) {
+              onDone('');
+              return;
+            }
+            fs.writeFile({
+              filePath: rollingPath,
+              data: raw,
+              success: () => onDone(rollingPath),
+              fail: () => onDone('')
+            });
+          },
+          fail: () => onDone('')
+        });
+      };
       const finalizeSegment = (savedPath) => {
+        if (!sessionOk()) {
+          resolve();
+          return;
+        }
+        if (!savedPath) {
+          resolve();
+          return;
+        }
         this.segmentBuffer.push({ path: savedPath, segNo });
         const maxBuf = this.rollingBufferMax || 10;
         if (this.segmentBuffer.length > maxBuf) {
@@ -894,8 +1246,10 @@ Page({
               filePath: rollingPath,
               success: (r) => finalizeSegment((r && r.savedFilePath) ? r.savedFilePath : rollingPath),
               fail: () => {
-                // 最后兜底：至少使用当次 temp 路径，避免 segmentBuffer 长时间卡在旧片段。
-                finalizeSegment(tempPath);
+                tryTempToRollingReadWrite((rwPath) => {
+                  if (rwPath) finalizeSegment(rwPath);
+                  else finalizeSegment(tempPath);
+                });
               }
             });
           }
@@ -906,7 +1260,12 @@ Page({
         tempFilePath: tempPath,
         filePath: rollingPath,
         success: (r) => finalizeSegment((r && r.savedFilePath) ? r.savedFilePath : rollingPath),
-        fail: () => finalizeSegment(tempPath)
+        fail: () => {
+          tryTempToRollingReadWrite((rwPath) => {
+            if (rwPath) finalizeSegment(rwPath);
+            else finalizeSegment(tempPath);
+          });
+        }
       });
     }))
       .catch(() => Promise.resolve())
@@ -967,7 +1326,8 @@ Page({
   },
 
   /**
-   * 长按节次：保存「刚结束的一段」完整滚动片段（时长约 {@link segmentDurationMs}，默认 8s）。
+   * 保存高光：由右下角状态钮在管线为「录制中」（界面显示 REC）时单击触发。
+   * 保存「刚结束的一段」完整滚动片段（时长约 {@link segmentDurationMs}，默认 8s）。
    * 不额外拍照封面，避免与录制并行增加相机压力与闪屏。
    */
   requestHighlightCapture: function() {
@@ -1038,6 +1398,8 @@ Page({
     waitPending.timeout = setTimeout(() => {
       if (this.pendingHighlight && this.pendingHighlight.id === id) {
         this.pendingHighlight = null;
+        this.highlightMissStreak += 1;
+        /** 不在此处自动硬恢复相机：易与 onShow/手动恢复叠加，打断分段并污染缓冲，反而使保存成功率骤降。 */
         this.recoverRollingPipelineForHighlight(() => {
           wx.showToast({ title: '未捕捉到可用片段', icon: 'none' });
         });
@@ -1061,27 +1423,51 @@ Page({
     const fs = wx.getFileSystemManager();
     const dir = this.getHighlightDir();
 
+    /**
+     * 将源视频复制到高光目录；copyFile 失败时用 readFile+writeFile 兜底（部分基础库/路径组合下更稳）。
+     * @param {string} srcPath 源路径
+     * @param {number} idx 片段序号
+     * @returns {Promise<string>} 成功时为目标路径，失败为空串
+     */
     const copyOne = (srcPath, idx) => new Promise((resolve) => {
       const filePath = `${dir}/${pending.id}_${idx}.mp4`;
+      const tryReadWrite = () => {
+        fs.readFile({
+          filePath: srcPath,
+          success: (readRes) => {
+            const raw = readRes && readRes.data;
+            if (!raw) {
+              resolve('');
+              return;
+            }
+            fs.writeFile({
+              filePath,
+              data: raw,
+              success: () => resolve(filePath),
+              fail: () => resolve('')
+            });
+          },
+          fail: () => resolve('')
+        });
+      };
       if (fs.copyFile) {
         fs.copyFile({
           srcPath,
           destPath: filePath,
           success: () => resolve(filePath),
-          fail: () => resolve('')
+          fail: () => tryReadWrite()
         });
         return;
       }
-      // 兼容性兜底：没有 copyFile 的情况下，尽量用 saveFile（但它通常只支持 tempFilePath）
       fs.saveFile({
         tempFilePath: srcPath,
         filePath,
         success: (r) => resolve((r && r.savedFilePath) ? r.savedFilePath : filePath),
-        fail: () => resolve('')
+        fail: () => tryReadWrite()
       });
     });
 
-    Promise.all(segments.map((p, i) => copyOne(p, i))).then((saved) => {
+    this.ensureHighlightDir().then(() => Promise.all(segments.map((p, i) => copyOne(p, i)))).then((saved) => {
       const savedPaths = saved.filter(Boolean);
       if (savedPaths.length === 0) {
         wx.showToast({ title: '保存失败，请稍后重试', icon: 'none' });
@@ -1128,6 +1514,7 @@ Page({
         return;
       }
       this.lastHighlightSignature = signature;
+      this.highlightMissStreak = 0;
       if (typeof pending.sourceSegNo === 'number' && pending.sourceSegNo > 0) {
         this.lastHighlightConsumedSegNo = Math.max(
           this.lastHighlightConsumedSegNo || 0,

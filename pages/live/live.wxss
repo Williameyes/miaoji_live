@@ -45,6 +45,105 @@ page {
   pointer-events: none;
 }
 
+/* 常驻状态钮：更小、更通透，内盘显示 OK / REC / ↻ */
+.recover-fab {
+  position: absolute;
+  right: 10rpx;
+  bottom: calc(10rpx + env(safe-area-inset-bottom));
+  z-index: 24;
+  width: 40rpx;
+  height: 40rpx;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  opacity: 0.62;
+}
+
+.recover-fab-ring {
+  position: relative;
+  width: 40rpx;
+  height: 40rpx;
+  border-radius: 50%;
+  overflow: hidden;
+  box-shadow: 0 0 0 1rpx rgba(255, 255, 255, 0.1);
+}
+
+.recover-fab-progress {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+}
+
+.recover-fab-inner {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 30rpx;
+  height: 30rpx;
+  margin-left: -15rpx;
+  margin-top: -15rpx;
+  border-radius: 50%;
+  background: rgba(10, 12, 16, 0.42);
+  border: 1rpx solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+.recover-fab-text {
+  font-size: 10rpx;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.82);
+  text-align: center;
+}
+
+.recover-fab--ok .recover-fab-ring {
+  box-shadow: 0 0 0 1rpx rgba(95, 217, 95, 0.28);
+}
+
+.recover-fab--recording .recover-fab-ring {
+  box-shadow: 0 0 0 1rpx rgba(70, 190, 255, 0.32);
+}
+
+.recover-fab--recovering .recover-fab-ring {
+  box-shadow: 0 0 0 1rpx rgba(255, 208, 74, 0.35);
+}
+
+.recover-fab--warn .recover-fab-ring {
+  box-shadow: 0 0 0 1rpx rgba(255, 114, 114, 0.32);
+}
+
+.recover-fab--actionable .recover-fab-inner {
+  background: rgba(52, 18, 18, 0.48);
+}
+
+.recover-fab--busy {
+  opacity: 0.78;
+}
+
+.recover-fab--recording.recover-fab {
+  opacity: 0.72;
+}
+
+.recover-fab--ack .recover-fab-ring {
+  animation: recoverFabAckFlash 0.75s ease-out;
+}
+
+@keyframes recoverFabAckFlash {
+  0% {
+    box-shadow: 0 0 0 0 rgba(95, 217, 95, 0.45);
+  }
+  100% {
+    box-shadow: 0 0 0 10rpx rgba(95, 217, 95, 0);
+  }
+}
+
 /* 透明手势层 */
 .gesture-layer {
   position: absolute;

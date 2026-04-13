@@ -135,7 +135,7 @@
     </view>
 
     <view class="empty-highlights" wx:else>
-      <text>暂无高光录像，在计分页长按「节次」可保存</text>
+      <text>暂无高光录像，在计分页右下角显示 REC 时单击可保存</text>
     </view>
   </view>
 

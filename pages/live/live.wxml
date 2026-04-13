@@ -2,7 +2,8 @@
 <wxs module="c" src="./live.wxs"></wxs>
 <view class="container landscape">
   <!-- Level 0: 全屏相机预览 -->
-  <camera 
+  <camera
+    wx:if="{{cameraMounted}}"
     device-position="back" 
     flash="off" 
     frame-size="max" 
@@ -23,6 +24,21 @@
 
   <!-- Level 1: 计分 UI 遮罩层 (沉浸式，不避让状态栏) -->
   <view class="overlay immersive">
+    <view
+      class="recover-fab recover-fab--{{pipelineHealth}} {{isRecovering ? 'recover-fab--busy' : ''}} {{opsControlActionable ? 'recover-fab--actionable' : ''}} {{opsControlAck ? 'recover-fab--ack' : ''}}"
+      catchtap="onRecoveryFabTap"
+      catchlongpress="onRecoveryFabLongPress"
+    >
+      <view class="recover-fab-ring">
+        <view
+          class="recover-fab-progress"
+          style="background: conic-gradient(from -90deg, rgba(74, 222, 128, 0.5) 0deg, rgba(74, 222, 128, 0.5) {{recoveryConicEndDeg}}deg, rgba(48, 52, 58, 0.38) 0deg);"
+        ></view>
+        <view class="recover-fab-inner">
+          <text class="recover-fab-text">{{opsControlText}}</text>
+        </view>
+      </view>
+    </view>
 
     <!-- 核心计分区域：位于正下方居中 -->
     <view class="bottom-center-board">
@@ -73,7 +89,7 @@
         </view>
 
         <!-- 中间节次 -->
-        <view class="period-center-outer" bindtap="onPeriodTap" bindlongpress="onPeriodLongPress">
+        <view class="period-center-outer" bindtap="onPeriodTap">
           <view class="period-strip"></view>
           <view class="period-text" style="color: {{periodFlash ? '#000000' : '#fff'}}">
             {{periods[matchConfig.period]}}
@@ -183,7 +199,7 @@
           </view>
           <view class="guide-item">
             <text class="guide-key">保存：</text>
-            <text class="guide-desc">长按“节次”区域（自动记录前8秒）</text>
+            <text class="guide-desc">显示 REC 时单击右下角圆钮保存片段；长按该钮可恢复相机</text>
           </view>
           <view class="guide-item">
             <text class="guide-key">回放：</text>
