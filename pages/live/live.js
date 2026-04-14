@@ -2,7 +2,7 @@ const app = getApp();
 
 const { get, getToken, STORAGE_USER_INFO_KEY } = require('../../utils/request.js');
 const { parseExpireAtToMs } = require('../../utils/referral.js');
-const SHARE_IMAGE_URL = '/assets/images/global_share_card.svg';
+const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
 
 Page({
   data: {
@@ -163,7 +163,7 @@ Page({
     }
     const now = Date.now();
     if (expMs < now) {
-      return deny('权益续杯', '权益已到期', `到期时间：${this.formatExpireForDisplay(expireRaw)}`, false);
+      return deny('权益续杯', '权益已到期，邀请好友完成登录可续期 5 天', `到期时间：${this.formatExpireForDisplay(expireRaw)}`, false);
     }
     return deny(
       '权益续杯',

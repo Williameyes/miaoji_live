@@ -1161,7 +1161,7 @@ page {
   display: flex;
   flex-direction: row;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   gap: 16rpx;
 }
 
@@ -1169,6 +1169,11 @@ page {
   font-size: 22rpx;
   color: #5c9cf2;
   padding: 8rpx 4rpx;
+}
+
+.vip-gate-link--sep {
+  color: #4a6fa8;
+  padding: 8rpx 0;
 }
 
 @media screen and (orientation: landscape) {
@@ -1214,6 +1219,7 @@ page {
   }
 
   .vip-gate-row {
+    justify-content: center;
     gap: 12rpx;
   }
 

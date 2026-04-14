@@ -16,6 +16,9 @@ const {
   getToken
 } = require('../../utils/request.js');
 
+/** 与首页、Live 一致的全局分享卡片（5:4 PNG） */
+const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
+
 const {
   readPendingReferrer,
   clearPendingReferrer,
@@ -156,6 +159,21 @@ function findMissingLoginCryptoField(body) {
 }
 
 /**
+ * 已登录用户头像展示：无 URL 或仍为微信默认灰头像 CDN 时使用蓝色占位图。
+ * @param {string} avatarUrl
+ * @param {string} loggedInPlaceholderDataUri
+ * @param {number} cacheBustMs
+ * @returns {string}
+ */
+function pickLoggedInAvatarDisplaySrc(avatarUrl, loggedInPlaceholderDataUri, cacheBustMs) {
+  const av = typeof avatarUrl === 'string' ? avatarUrl.trim() : '';
+  if (av.length > 0 && !isLikelyDefaultWechatAvatarUrl(av)) {
+    return `${av}?v=${cacheBustMs}`;
+  }
+  return loggedInPlaceholderDataUri;
+}
+
+/**
  * 从 PUT /api/user/update 成功响应中取出用户对象。
  * @param {unknown} body
  * @returns {Record<string, unknown> | null}
@@ -189,6 +207,8 @@ Page({
     vipStatusText: '尚未登录',
     vipStatusExpired: false,
     vipStatusRenewHintVisible: false,
+    /** 去续期自定义弹窗 */
+    showRenewModal: false,
     defaultAvatar:
       'data:image/svg+xml;utf8,' +
       encodeURIComponent(
@@ -196,6 +216,16 @@ Page({
           '<circle cx="60" cy="60" r="60" fill="#E2E8F0"/>' +
           '<circle cx="60" cy="46" r="18" fill="#94A3B8"/>' +
           '<path d="M30 102c4-18 18-28 30-28s26 10 30 28" fill="#94A3B8"/>' +
+        '</svg>'
+      ),
+    /** 已登录且无有效自定义头像时的蓝色占位（与微信主色协调） */
+    loggedInPlaceholderAvatar:
+      'data:image/svg+xml;utf8,' +
+      encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120">' +
+          '<circle cx="60" cy="60" r="60" fill="#3B82F6"/>' +
+          '<circle cx="60" cy="46" r="18" fill="#EFF6FF"/>' +
+          '<path d="M30 102c4-18 18-28 30-28s26 10 30 28" fill="#EFF6FF"/>' +
         '</svg>'
       )
   },
@@ -210,8 +240,46 @@ Page({
     if (typeof this.getTabBar === 'function' && this.getTabBar()) {
       this.getTabBar().setData({ selected: 1 });
     }
+    try {
+      wx.showShareMenu({ withShareTicket: true, menus: ['shareAppMessage'] });
+    } catch (e) {
+      // 低版本基础库忽略
+    }
     this.syncUserState();
     this.refreshVipStatusFromServer();
+  },
+
+  /**
+   * 「我的」页分享：与首页、Live 使用同一分享图，路径携带 referrerId。
+   * @returns {WechatMiniprogram.Page.ICustomShareContent}
+   */
+  onShareAppMessage: function () {
+    let raw = app.globalData.userInfo;
+    if (!raw || typeof raw !== 'object') {
+      try {
+        const cached = wx.getStorageSync(STORAGE_USER_INFO_KEY);
+        if (cached && typeof cached === 'object') {
+          raw = cached;
+        }
+      } catch (e) {
+        raw = null;
+      }
+    }
+    let openid = '';
+    if (raw && typeof raw === 'object') {
+      const o = /** @type {Record<string, unknown>} */ (raw);
+      const v = o.openid;
+      openid = typeof v === 'string' ? v.trim() : '';
+    }
+    const path =
+      openid.length > 0
+        ? `/pages/index/index?referrerId=${encodeURIComponent(openid)}`
+        : '/pages/index/index';
+    return {
+      title: '秒记篮球场助手 — 邀你免费试用直播计分',
+      path,
+      imageUrl: SHARE_IMAGE_URL
+    };
   },
 
   /**
@@ -325,6 +393,9 @@ Page({
     const av = n.avatarUrl || '';
     const hasToken = !!getToken();
     const needCompleteProfile = hasToken && shouldShowProfileHint(/** @type {MineUserInfo} */ (info));
+    const displayAvatarSrc = hasToken
+      ? pickLoggedInAvatarDisplaySrc(av, this.data.loggedInPlaceholderAvatar, ts)
+      : this.data.defaultAvatar;
     this.setData({
       userInfo: /** @type {MineUserInfo} */ (info),
       loggedIn: hasToken,
@@ -332,7 +403,7 @@ Page({
       displayNick: n.nickName || PLACEHOLDER_NICK,
       avatarUrl: av,
       avatarCacheKey: ts,
-      displayAvatarSrc: av ? `${av}?v=${ts}` : this.data.defaultAvatar
+      displayAvatarSrc
     });
   },
 
@@ -377,11 +448,10 @@ Page({
     }
 
     const defaultAvatar = this.data.defaultAvatar;
+    const loggedInPh = this.data.loggedInPlaceholderAvatar;
     let displayAvatarSrc = defaultAvatar;
-    if (loggedIn && avatarUrl) {
-      displayAvatarSrc = `${avatarUrl}${avatarCacheKey ? `?v=${avatarCacheKey}` : ''}`;
-    } else if (loggedIn && !avatarUrl) {
-      displayAvatarSrc = defaultAvatar;
+    if (loggedIn) {
+      displayAvatarSrc = pickLoggedInAvatarDisplaySrc(avatarUrl, loggedInPh, avatarCacheKey || Date.now());
     }
 
     if (!loggedIn) {
@@ -477,11 +547,25 @@ Page({
                 }
 
                 clearPendingReferrer();
-                writeVipExpireSnapshotMs(
-                  pickExpireAtFromUser(/** @type {Record<string, unknown>} */ (userInfoRaw))
-                );
 
-                this.applyUserInfoToView(/** @type {Record<string, unknown>} */ (userInfoRaw));
+                // 若后端 userInfo 没有返回 avatarUrl，以 getUserProfile 的 URL 补全本地展示
+                // （不影响后端存储，避免覆盖用户已自定义的头像）
+                const profileAvatarUrl =
+                  profileRes.userInfo && typeof profileRes.userInfo.avatarUrl === 'string'
+                    ? profileRes.userInfo.avatarUrl
+                    : '';
+                const mergedRaw = /** @type {Record<string, unknown>} */ ({ ...userInfoRaw });
+                if (
+                  profileAvatarUrl.length > 0 &&
+                  !mergedRaw.avatarUrl &&
+                  !mergedRaw.avatar_url
+                ) {
+                  mergedRaw.avatarUrl = profileAvatarUrl;
+                }
+
+                writeVipExpireSnapshotMs(pickExpireAtFromUser(mergedRaw));
+
+                this.applyUserInfoToView(mergedRaw);
                 wx.showToast({ title: '登录成功', icon: 'success' });
               })
               .catch((err) => {
@@ -547,25 +631,37 @@ Page({
   },
 
   /**
-   * 会员不足时的续期引导：提示用户通过分享邀请好友完成续期。
+   * 会员不足时的续期引导：展示自定义弹窗。
    * @returns {void}
    */
   onVipRenewTap: function () {
-    wx.showModal({
-      title: '去续期',
-      content: '邀请好友登录可续期 5 天。请点击右上角“...”将小程序分享给球友。',
-      confirmText: '我知道了',
-      showCancel: false
-    });
+    this.setData({ showRenewModal: true });
     try {
-      wx.showShareMenu({
-        withShareTicket: true,
-        menus: ['shareAppMessage']
-      });
+      wx.showShareMenu({ withShareTicket: true, menus: ['shareAppMessage'] });
     } catch (e) {
       // 低版本基础库忽略
     }
   },
+
+  /**
+   * 关闭续期引导弹窗。
+   * @returns {void}
+   */
+  closeRenewModal: function () {
+    this.setData({ showRenewModal: false });
+  },
+
+  /**
+   * 阻止弹窗内部点击事件冒泡到遮罩。
+   * @returns {void}
+   */
+  stopRenewModalBubble: function () {},
+
+  /**
+   * 拦截弹窗区域的滑动穿透。
+   * @returns {void}
+   */
+  onRenewModalCatchMove: function () {},
 
   /**
    * 昵称失焦 → PUT /api/user/update；支持清空（传 ""）；昵称 ≤64 字。

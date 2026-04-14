@@ -1,7 +1,7 @@
 const app = getApp();
 
 const { STORAGE_USER_INFO_KEY } = require('../../utils/request.js');
-const SHARE_IMAGE_URL = '/assets/images/global_share_card.svg';
+const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
 
 /** @const {string} 比赛列表 Storage 主键 */
 const STORAGE_KEY = 'MIAOXIE_MATCHES';
