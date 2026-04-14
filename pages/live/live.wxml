@@ -3,7 +3,7 @@
 <view class="container landscape">
   <!-- Level 0: 全屏相机预览 -->
   <camera
-    wx:if="{{cameraMounted}}"
+    wx:if="{{cameraMounted && liveStreamAllowed}}"
     device-position="back" 
     flash="off" 
     frame-size="max" 
@@ -135,6 +135,22 @@
       </view>
     </view>
 
+  </view>
+
+  <!-- 权益拦截：全屏引导（风格对齐 guide-overlay） -->
+  <view class="vip-gate-root" wx:if="{{showVipGate}}" catchtouchmove="onVipGateCatchMove">
+    <view class="vip-gate-bg"></view>
+    <view class="vip-gate-card" catchtap="stopVipGateInnerBubble">
+      <view class="vip-gate-kicker">HoopsLive</view>
+      <view class="vip-gate-title">{{vipGateTitle}}</view>
+      <view class="vip-gate-sub">{{vipGateSubtext}}</view>
+      <view class="vip-gate-minor" wx:if="{{vipGateMinor}}">{{vipGateMinor}}</view>
+      <button class="vip-gate-share-btn" open-type="share">分享给球友，立即免费使用</button>
+      <view class="vip-gate-row">
+        <view class="vip-gate-link" bindtap="onVipGateSwitchMine">去「我的」登录</view>
+        <view class="vip-gate-link" wx:if="{{vipGateRetryVisible}}" bindtap="onVipGateRetryTap">重试</view>
+      </view>
+    </view>
   </view>
 
   <!-- Level 2: 导播回放遮罩与播放层 -->

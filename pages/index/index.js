@@ -1,5 +1,8 @@
 const app = getApp();
 
+const { STORAGE_USER_INFO_KEY } = require('../../utils/request.js');
+const SHARE_IMAGE_URL = '/assets/images/global_share_card.svg';
+
 /** @const {string} 比赛列表 Storage 主键 */
 const STORAGE_KEY = 'MIAOXIE_MATCHES';
 
@@ -69,8 +72,49 @@ Page({
     if (typeof this.getTabBar === 'function' && this.getTabBar()) {
       this.getTabBar().setData({ selected: 0 });
     }
+    try {
+      wx.showShareMenu({
+        withShareTicket: true,
+        menus: ['shareAppMessage']
+      });
+    } catch (e) {
+      // 低版本基础库忽略
+    }
     this.loadMatches();
     this.loadHighlights();
+  },
+
+  /**
+   * 首页分享：路径携带当前用户 openid，供被邀请方启动时写入 pending_referrer。
+   * @returns {WechatMiniprogram.Page.ICustomShareContent}
+   */
+  onShareAppMessage() {
+    let raw = app.globalData.userInfo;
+    if (!raw || typeof raw !== 'object') {
+      try {
+        const cached = wx.getStorageSync(STORAGE_USER_INFO_KEY);
+        if (cached && typeof cached === 'object') {
+          raw = cached;
+        }
+      } catch (e) {
+        raw = null;
+      }
+    }
+    let openid = '';
+    if (raw && typeof raw === 'object') {
+      const o = /** @type {Record<string, unknown>} */ (raw);
+      const v = o.openid;
+      openid = typeof v === 'string' ? v.trim() : '';
+    }
+    const path =
+      openid.length > 0
+        ? `/pages/index/index?referrerId=${encodeURIComponent(openid)}`
+        : '/pages/index/index';
+    return {
+      title: '秒记篮球场助手 — 邀你免费试用直播计分',
+      path,
+      imageUrl: SHARE_IMAGE_URL
+    };
   },
 
   // ─────────────────────────────────────────────

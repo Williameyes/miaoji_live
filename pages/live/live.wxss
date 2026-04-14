@@ -1060,3 +1060,165 @@ page {
   font-weight: bold;
   opacity: 1;
 }
+
+/* ── 权益续杯全屏层（高于 guide-overlay 500） ── */
+.vip-gate-root {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 540;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32rpx;
+  box-sizing: border-box;
+}
+
+.vip-gate-bg {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 120% 80% at 50% 20%, rgba(37, 99, 235, 0.35), transparent 55%),
+    radial-gradient(ellipse 90% 70% at 80% 70%, rgba(16, 174, 255, 0.22), transparent 50%),
+    linear-gradient(165deg, #0b1220 0%, #030712 48%, #0f172a 100%);
+  filter: saturate(1.08);
+}
+
+.vip-gate-bg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(18px);
+}
+
+.vip-gate-card {
+  position: relative;
+  z-index: 1;
+  width: 88%;
+  max-width: 560rpx;
+  padding: 36rpx 32rpx 28rpx;
+  box-sizing: border-box;
+  border-radius: 24rpx;
+  background: rgba(30, 31, 35, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 24rpx 80rpx rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(22rpx);
+}
+
+.vip-gate-kicker {
+  font-size: 18rpx;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.95);
+  margin-bottom: 12rpx;
+}
+
+.vip-gate-title {
+  font-size: 34rpx;
+  font-weight: 700;
+  color: #f8fafc;
+  margin-bottom: 16rpx;
+  line-height: 1.25;
+}
+
+.vip-gate-sub {
+  font-size: 24rpx;
+  line-height: 1.65;
+  color: rgba(226, 232, 240, 0.95);
+  margin-bottom: 12rpx;
+}
+
+.vip-gate-minor {
+  font-size: 20rpx;
+  line-height: 1.5;
+  color: rgba(148, 163, 184, 0.95);
+  margin-bottom: 28rpx;
+}
+
+.vip-gate-share-btn {
+  width: 100%;
+  height: 88rpx;
+  line-height: 88rpx;
+  border-radius: 999rpx;
+  border: none;
+  padding: 0;
+  margin: 0 0 20rpx;
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #ffffff;
+  background: linear-gradient(120deg, #2563eb 0%, #0ea5e9 55%, #22d3ee 100%);
+  box-shadow: 0 12rpx 36rpx rgba(37, 99, 235, 0.35);
+}
+
+.vip-gate-share-btn::after {
+  border: none;
+}
+
+.vip-gate-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+
+.vip-gate-link {
+  font-size: 22rpx;
+  color: #5c9cf2;
+  padding: 8rpx 4rpx;
+}
+
+@media screen and (orientation: landscape) {
+  .vip-gate-root {
+    padding: 18rpx 40rpx;
+  }
+
+  .vip-gate-card {
+    width: 62%;
+    max-width: 700rpx;
+    min-width: 500rpx;
+    padding: 24rpx 26rpx 18rpx;
+    border-radius: 20rpx;
+  }
+
+  .vip-gate-kicker {
+    font-size: 14rpx;
+    margin-bottom: 8rpx;
+  }
+
+  .vip-gate-title {
+    font-size: 28rpx;
+    margin-bottom: 10rpx;
+  }
+
+  .vip-gate-sub {
+    font-size: 20rpx;
+    line-height: 1.45;
+    margin-bottom: 8rpx;
+  }
+
+  .vip-gate-minor {
+    font-size: 17rpx;
+    line-height: 1.4;
+    margin-bottom: 14rpx;
+  }
+
+  .vip-gate-share-btn {
+    height: 72rpx;
+    line-height: 72rpx;
+    font-size: 24rpx;
+    margin-bottom: 10rpx;
+  }
+
+  .vip-gate-row {
+    gap: 12rpx;
+  }
+
+  .vip-gate-link {
+    font-size: 19rpx;
+    padding: 4rpx 2rpx;
+  }
+}

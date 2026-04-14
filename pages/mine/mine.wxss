@@ -92,6 +92,57 @@
   color: #94a3b8;
 }
 
+.vip-status-row {
+  margin-top: 18rpx;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8rpx;
+}
+
+.vip-status-icon {
+  font-size: 18rpx;
+  line-height: 1;
+  color: #fbbf24;
+  opacity: 0.92;
+}
+
+.vip-status-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 22rpx;
+  font-weight: 400;
+  color: #b6892d;
+  letter-spacing: 0.2rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vip-status-text--expired {
+  color: #9ca3af;
+}
+
+.vip-renew-entry {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 4rpx 0 4rpx 8rpx;
+}
+
+.vip-renew-text {
+  font-size: 22rpx;
+  font-weight: 400;
+  color: #94a3b8;
+}
+
+.vip-renew-arrow {
+  margin-left: 4rpx;
+  font-size: 24rpx;
+  line-height: 1;
+  color: #94a3b8;
+}
+
 .nick {
   font-size: 36rpx;
   font-weight: 700;

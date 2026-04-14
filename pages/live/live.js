@@ -1,5 +1,9 @@
 const app = getApp();
 
+const { get, getToken, STORAGE_USER_INFO_KEY } = require('../../utils/request.js');
+const { parseExpireAtToMs } = require('../../utils/referral.js');
+const SHARE_IMAGE_URL = '/assets/images/global_share_card.svg';
+
 Page({
   data: {
     matchConfig: {
@@ -12,7 +16,7 @@ Page({
     periods: app.globalData.periods,
     statusBarHeight: 0,
     cameraContext: null,
-    cameraMounted: true,
+    cameraMounted: false,
     isRecovering: false,
     pipelineHealth: 'ok',
     opsControlText: 'OK',
@@ -67,7 +71,294 @@ Page({
     /** 左右球队色块宽度（px），按队名字符数估算，避免 flex:1 拉满半屏 */
     teamGroupWidthPxA: 0,
     teamGroupWidthPxB: 0,
-    showGuide: false
+    showGuide: false,
+
+    /** 是否通过 GET /api/auth/check-status 且 isVip 为 true */
+    liveStreamAllowed: false,
+    /** 首次进入 Live 时尚未完成权益校验 */
+    liveEntitlementChecking: true,
+    /** 权益不足时的全屏引导层 */
+    showVipGate: false,
+    vipGateTitle: '',
+    vipGateSubtext: '',
+    vipGateMinor: '',
+    vipGateRetryVisible: false
+  },
+
+  /**
+   * 从全局与 Storage 同步当前场次计分配置（与 index、onShow 逻辑一致）。
+   * @returns {void}
+   */
+  syncMatchConfigFromPageSources: function() {
+    const currentMatchId =
+      wx.getStorageSync('currentMatchId') || app.globalData.currentMatchId || '';
+    let sourceConfig = app.globalData.matchConfig || wx.getStorageSync('matchConfig');
+    if (currentMatchId) {
+      const matches = wx.getStorageSync('MIAOXIE_MATCHES');
+      if (Array.isArray(matches)) {
+        const found = matches.find((m) => m.id === currentMatchId);
+        if (found) {
+          sourceConfig = found;
+        }
+      }
+    }
+    const latestConfig = this.normalizeMatchConfig(sourceConfig);
+    const wSide = this.computeTeamGroupWidthPx();
+    this.setData({
+      matchConfig: latestConfig,
+      teamGroupWidthPxA: wSide,
+      teamGroupWidthPxB: wSide
+    });
+    app.globalData.matchConfig = latestConfig;
+    wx.setStorageSync('matchConfig', latestConfig);
+  },
+
+  /**
+   * 将权益到期时间格式化为本地可读字符串。
+   * @param {unknown} expireRaw
+   * @returns {string}
+   */
+  formatExpireForDisplay: function(expireRaw) {
+    const ms = parseExpireAtToMs(expireRaw);
+    if (Number.isNaN(ms)) {
+      return typeof expireRaw === 'string' || typeof expireRaw === 'number' ? String(expireRaw) : '';
+    }
+    const d = new Date(ms);
+    const pad = (n) => `${n}`.padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(
+      d.getMinutes()
+    )}`;
+  },
+
+  /**
+   * 解析 check-status 响应，得到是否允许进入直播与拦截文案。
+   * @param {unknown} body
+   * @returns {{ allow: boolean, title: string, sub: string, minor: string, showRetry: boolean }}
+   */
+  buildVipGateStateFromCheckStatus: function(body) {
+    const deny = (title, sub, minor, showRetry) => ({
+      allow: false,
+      title,
+      sub,
+      minor: minor || '',
+      showRetry: !!showRetry
+    });
+    if (!body || typeof body !== 'object') {
+      return deny('权益续杯', '校验失败，请稍后重试', '', true);
+    }
+    const res = /** @type {Record<string, unknown>} */ (body);
+    if (res.code !== 0 || !res.data || typeof res.data !== 'object') {
+      const msg = typeof res.message === 'string' && res.message.length > 0 ? res.message : '权益校验失败';
+      return deny('权益续杯', msg, '', true);
+    }
+    const d = /** @type {Record<string, unknown>} */ (res.data);
+    const isVip = d.isVip === true;
+    const expireRaw = d.expireAt !== undefined && d.expireAt !== null ? d.expireAt : d.expire_at;
+    if (isVip) {
+      return { allow: true, title: '', sub: '', minor: '', showRetry: false };
+    }
+    const expMs = parseExpireAtToMs(expireRaw);
+    if (expireRaw == null || expireRaw === '' || Number.isNaN(expMs)) {
+      return deny('权益续杯', '尚未获得试用期', '完成登录或邀请好友成功登录可获得试用与续期', false);
+    }
+    const now = Date.now();
+    if (expMs < now) {
+      return deny('权益续杯', '权益已到期', `到期时间：${this.formatExpireForDisplay(expireRaw)}`, false);
+    }
+    return deny(
+      '权益续杯',
+      '当前账号暂不可使用直播功能',
+      `参考到期时间：${this.formatExpireForDisplay(expireRaw)}`,
+      true
+    );
+  },
+
+  /**
+   * 调用服务端校验权益；拒绝时收起相机并展示引导层。
+   * @param {function(): void} [onAllowed] 仅在 isVip 为 true 时调用
+   * @returns {void}
+   */
+  refreshLiveEntitlementAndResume: function(onAllowed) {
+    const token = getToken();
+    if (!token) {
+      this.rollingActive = false;
+      this.stopRollingRecording();
+      this.setData({
+        liveEntitlementChecking: false,
+        liveStreamAllowed: false,
+        cameraMounted: false,
+        cameraContext: null,
+        showVipGate: true,
+        vipGateTitle: '需要登录',
+        vipGateSubtext: '请先到「我的」完成微信登录，再使用直播计分与录像。',
+        vipGateMinor: '',
+        vipGateRetryVisible: false
+      });
+      return;
+    }
+
+    this.setData({ liveEntitlementChecking: true });
+
+    get('/api/auth/check-status', {}, {})
+      .then((body) => {
+        const gate = this.buildVipGateStateFromCheckStatus(body);
+        if (!gate.allow) {
+          this.rollingActive = false;
+          this.stopRollingRecording(() => {
+            this.setData({
+              liveEntitlementChecking: false,
+              liveStreamAllowed: false,
+              cameraMounted: false,
+              cameraContext: null,
+              showVipGate: true,
+              vipGateTitle: gate.title,
+              vipGateSubtext: gate.sub,
+              vipGateMinor: gate.minor,
+              vipGateRetryVisible: gate.showRetry
+            });
+          });
+          return;
+        }
+
+        const nextCtx = this.data.cameraContext || wx.createCameraContext();
+        this.setData(
+          {
+            liveEntitlementChecking: false,
+            liveStreamAllowed: true,
+            cameraMounted: true,
+            cameraContext: nextCtx,
+            showVipGate: false,
+            vipGateTitle: '',
+            vipGateSubtext: '',
+            vipGateMinor: '',
+            vipGateRetryVisible: false
+          },
+          () => {
+            if (typeof onAllowed === 'function') {
+              onAllowed();
+            }
+          }
+        );
+      })
+      .catch(() => {
+        this.rollingActive = false;
+        this.stopRollingRecording(() => {
+          this.setData({
+            liveEntitlementChecking: false,
+            liveStreamAllowed: false,
+            cameraMounted: false,
+            cameraContext: null,
+            showVipGate: true,
+            vipGateTitle: '网络异常',
+            vipGateSubtext: '无法校验权益，请检查网络后重试。',
+            vipGateMinor: '',
+            vipGateRetryVisible: true
+          });
+        });
+      });
+  },
+
+  /**
+   * 权益门「重试」：重新请求 check-status。
+   * @returns {void}
+   */
+  onVipGateRetryTap: function() {
+    this.refreshLiveEntitlementAndResume(() => {
+      this._liveCoreOnShowAfterEntitlement();
+    });
+  },
+
+  /**
+   * 权益门：跳转「我的」登录。
+   * @returns {void}
+   */
+  onVipGateSwitchMine: function() {
+    wx.switchTab({ url: '/pages/mine/mine' });
+  },
+
+  /**
+   * 拦截权益层下意外滚动穿透。
+   * @returns {void}
+   */
+  onVipGateCatchMove: function() {},
+
+  /**
+   * 阻止卡片内点击冒泡到根（预留）。
+   * @returns {void}
+   */
+  stopVipGateInnerBubble: function() {},
+
+  /**
+   * onShow 中在权益通过后执行的相机与滚动分段恢复逻辑。
+   * @returns {void}
+   */
+  _liveCoreOnShowAfterEntitlement: function() {
+    this.rollingActive = true;
+    this.rollingSessionId += 1;
+    const sessionIdForRolling = this.rollingSessionId;
+    this.lastSegmentAt = Date.now();
+    this.lastRecordStartAt = 0;
+    this.startRecordFailStreak = 0;
+    this.startHealthMonitor();
+
+    const hasReadGuide = wx.getStorageSync('hasReadGuide');
+    if (!hasReadGuide) {
+      this.setData({ showGuide: true });
+    }
+
+    wx.getSetting({
+      success: (res) => {
+        if (!res.authSetting['scope.camera'] || !res.authSetting['scope.record']) {
+          wx.authorize({
+            scope: 'scope.camera',
+            success: () => {
+              wx.authorize({ scope: 'scope.record' });
+            }
+          });
+        }
+      }
+    });
+
+    wx.setKeepScreenOn({
+      keepScreenOn: true,
+      fail: () => {
+        setTimeout(() => wx.setKeepScreenOn({ keepScreenOn: true }), 1000);
+      }
+    });
+
+    if (wx.setPageOrientation) {
+      wx.setPageOrientation({ orientation: 'landscape' });
+    }
+
+    const kickoffRolling = () => {
+      if (!this.rollingActive || sessionIdForRolling !== this.rollingSessionId) {
+        return;
+      }
+      if (this._rollingKickoffTimer) {
+        clearTimeout(this._rollingKickoffTimer);
+        this._rollingKickoffTimer = null;
+      }
+      if (this._cameraInitDone) {
+        this.tryStartRollingWhenCameraReady();
+        return;
+      }
+      this._rollingKickoffTimer = setTimeout(() => {
+        this._rollingKickoffTimer = null;
+        if (!this.rollingActive || sessionIdForRolling !== this.rollingSessionId) {
+          return;
+        }
+        this.tryStartRollingWhenCameraReady();
+      }, 1800);
+    };
+    this.stopRollingRecording(kickoffRolling);
+    if (this.data.drawerMode === 1) {
+      this.refreshDrawerHighlights();
+    }
+    if (wx.nextTick) {
+      wx.nextTick(() => this.updateTeamGroupWidth(true));
+    } else {
+      setTimeout(() => this.updateTeamGroupWidth(true), 0);
+    }
   },
 
   // 辅助变量
@@ -115,30 +406,8 @@ Page({
     this._recoverProgressResetTimer = null;
     /** 长按状态钮后通常会跟一次 tap，需吞掉避免误触保存/二次恢复 */
     this._recoveryFabLongPressConsumed = false;
-    const cameraContext = wx.createCameraContext();
 
-    // 优先从 MIAOXIE_MATCHES 中按 currentMatchId 定位当前场次数据
-    const currentMatchId =
-      wx.getStorageSync('currentMatchId') || app.globalData.currentMatchId || '';
-    let sourceConfig = app.globalData.matchConfig || wx.getStorageSync('matchConfig');
-    if (currentMatchId) {
-      const matches = wx.getStorageSync('MIAOXIE_MATCHES');
-      if (Array.isArray(matches)) {
-        const found = matches.find((m) => m.id === currentMatchId);
-        if (found) sourceConfig = found;
-      }
-    }
-
-    const latestConfig = this.normalizeMatchConfig(sourceConfig);
-    const wSide = this.computeTeamGroupWidthPx();
-    this.setData({
-      matchConfig: latestConfig,
-      cameraContext: cameraContext,
-      teamGroupWidthPxA: wSide,
-      teamGroupWidthPxB: wSide
-    });
-    app.globalData.matchConfig = latestConfig;
-    wx.setStorageSync('matchConfig', latestConfig);
+    this.syncMatchConfigFromPageSources();
     
     // 1. 隐藏小程序左上角的返回/主页按钮（沉浸式第一步）
     if (wx.hideHomeButton) {
@@ -171,6 +440,17 @@ Page({
     if (wx.setPageOrientation) {
       wx.setPageOrientation({ orientation: 'landscape' });
     }
+
+    try {
+      wx.showShareMenu({
+        withShareTicket: true,
+        menus: ['shareAppMessage']
+      });
+    } catch (e) {
+      // 低版本基础库忽略
+    }
+
+    this.refreshLiveEntitlementAndResume(null);
   },
 
   // 相机初始化完成回调
@@ -343,106 +623,64 @@ Page({
   },
 
   onShow: function() {
-    /**
-     * 从后台返回、或系统/其他 App（如手游录屏直播）占用相机管线时，原生录制常被挂起，
-     * 但 data.isRecording 仍为 true。startRollingRecording 首行会因「正在录制」直接 return，
-     * 片段永不写入 segmentBuffer，长按高光会一直「未捕捉到可用片段」。
-     * 故每次展示页面前先结束残留分段，并在 stopRecord 完成后再拉起新一轮滚动录制。
-     */
-    this.rollingActive = true;
-    this.rollingSessionId += 1;
-    const sessionIdForRolling = this.rollingSessionId;
-    this.lastSegmentAt = Date.now();
-    this.lastRecordStartAt = 0;
-    this.startRecordFailStreak = 0;
-    this.startHealthMonitor();
-
-    // 优先从 MIAOXIE_MATCHES 读取当前场次，保持与 index 页数据同步
-    const currentMatchId =
-      wx.getStorageSync('currentMatchId') || app.globalData.currentMatchId || '';
-    let sourceConfig = app.globalData.matchConfig || wx.getStorageSync('matchConfig');
-    if (currentMatchId) {
-      const matches = wx.getStorageSync('MIAOXIE_MATCHES');
-      if (Array.isArray(matches)) {
-        const found = matches.find((m) => m.id === currentMatchId);
-        if (found) sourceConfig = found;
-      }
-    }
-    const latestConfig = this.normalizeMatchConfig(sourceConfig);
-    const wSide = this.computeTeamGroupWidthPx();
-    this.setData({
-      matchConfig: latestConfig,
-      teamGroupWidthPxA: wSide,
-      teamGroupWidthPxB: wSide
-    });
-    app.globalData.matchConfig = latestConfig;
-    wx.setStorageSync('matchConfig', latestConfig);
-
-    // 检查是否已读操作指南
-    const hasReadGuide = wx.getStorageSync('hasReadGuide');
-    if (!hasReadGuide) {
-      this.setData({ showGuide: true });
+    try {
+      wx.showShareMenu({
+        withShareTicket: true,
+        menus: ['shareAppMessage']
+      });
+    } catch (e) {
+      // 低版本基础库忽略
     }
 
-    // 权限检查
-    wx.getSetting({
-      success: (res) => {
-        if (!res.authSetting['scope.camera'] || !res.authSetting['scope.record']) {
-          wx.authorize({
-            scope: 'scope.camera',
-            success: () => {
-              wx.authorize({ scope: 'scope.record' });
-            }
-          });
-        }
-      }
-    });
+    this.syncMatchConfigFromPageSources();
 
-    // 再次确保常亮（部分机型进入页后需要重复设置）
-    wx.setKeepScreenOn({ 
+    wx.setKeepScreenOn({
       keepScreenOn: true,
       fail: () => {
         setTimeout(() => wx.setKeepScreenOn({ keepScreenOn: true }), 1000);
       }
     });
 
-    // 每次展示时重新强制横屏（防止从其他竖屏页返回后方向被重置）
     if (wx.setPageOrientation) {
       wx.setPageOrientation({ orientation: 'landscape' });
     }
 
-    /**
-     * 每次展示都必须走 stopRollingRecording：无录制时不会调用相机 stopRecord（见实现），
-     * 仅清理定时器并回调；有录制时收口原生 startRecord，避免 rollingSessionId 递增后
-     * 旧会话 stopOneSegment 早退导致 isRecording 永久为 true、滚动永远无法重启。
-     * 分段启动仍放在相机 initdone 之后（tryStartRollingWhenCameraReady），避免首屏黑屏。
-     */
-    const kickoffRolling = () => {
-      if (!this.rollingActive || sessionIdForRolling !== this.rollingSessionId) return;
-      if (this._rollingKickoffTimer) {
-        clearTimeout(this._rollingKickoffTimer);
-        this._rollingKickoffTimer = null;
+    this.refreshLiveEntitlementAndResume(() => {
+      this._liveCoreOnShowAfterEntitlement();
+    });
+  },
+
+  /**
+   * 分享给好友：路径携带当前用户 openid，供新用户登录时上报邀请关系。
+   * @returns {WechatMiniprogram.Page.ICustomShareContent}
+   */
+  onShareAppMessage: function() {
+    let raw = app.globalData.userInfo;
+    if (!raw || typeof raw !== 'object') {
+      try {
+        const cached = wx.getStorageSync(STORAGE_USER_INFO_KEY);
+        if (cached && typeof cached === 'object') {
+          raw = cached;
+        }
+      } catch (e) {
+        raw = null;
       }
-      if (this._cameraInitDone) {
-        this.tryStartRollingWhenCameraReady();
-        return;
-      }
-      /** 绝不伪造 initdone：未触发时强行 startRecord 会打断预览导致黑屏；仅延后重试 */
-      this._rollingKickoffTimer = setTimeout(() => {
-        this._rollingKickoffTimer = null;
-        if (!this.rollingActive || sessionIdForRolling !== this.rollingSessionId) return;
-        this.tryStartRollingWhenCameraReady();
-      }, 1800);
+    }
+    let openid = '';
+    if (raw && typeof raw === 'object') {
+      const o = /** @type {Record<string, unknown>} */ (raw);
+      const v = o.openid;
+      openid = typeof v === 'string' ? v.trim() : '';
+    }
+    const path =
+      openid.length > 0
+        ? `/pages/index/index?referrerId=${encodeURIComponent(openid)}`
+        : '/pages/index/index';
+    return {
+      title: '秒记篮球场助手 — 邀你免费试用直播计分',
+      path,
+      imageUrl: SHARE_IMAGE_URL
     };
-    this.stopRollingRecording(kickoffRolling);
-    if (this.data.drawerMode === 1) {
-      this.refreshDrawerHighlights();
-    }
-    if (wx.nextTick) {
-      wx.nextTick(() => this.updateTeamGroupWidth(true));
-    } else {
-      setTimeout(() => this.updateTeamGroupWidth(true), 0);
-    }
   },
 
   onReady: function() {

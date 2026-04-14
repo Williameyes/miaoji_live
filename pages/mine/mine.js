@@ -9,11 +9,20 @@ const { API_PATH_USER_UPDATE } = require('../../config/api.js');
 const {
   post,
   put,
+  get,
   clearAuthStorage,
   STORAGE_TOKEN_KEY,
   STORAGE_USER_INFO_KEY,
   getToken
 } = require('../../utils/request.js');
+
+const {
+  readPendingReferrer,
+  clearPendingReferrer,
+  writeVipExpireSnapshotMs,
+  pickExpireAtFromUser,
+  parseExpireAtToMs
+} = require('../../utils/referral.js');
 
 /** 后端占位昵称，需引导用户完善 */
 const PLACEHOLDER_NICK = '微信用户';
@@ -177,6 +186,9 @@ Page({
     displayNick: '点击登录',
     avatarCacheKey: 0,
     displayAvatarSrc: '',
+    vipStatusText: '尚未登录',
+    vipStatusExpired: false,
+    vipStatusRenewHintVisible: false,
     defaultAvatar:
       'data:image/svg+xml;utf8,' +
       encodeURIComponent(
@@ -199,6 +211,100 @@ Page({
       this.getTabBar().setData({ selected: 1 });
     }
     this.syncUserState();
+    this.refreshVipStatusFromServer();
+  },
+
+  /**
+   * 将输入时间格式化为 YYYY-MM-DD。
+   * @param {unknown} expireAt
+   * @returns {string}
+   */
+  formatExpireDate10: function (expireAt) {
+    if (typeof expireAt === 'string' && expireAt.length >= 10) {
+      return expireAt.slice(0, 10);
+    }
+    const ms = parseExpireAtToMs(expireAt);
+    if (Number.isNaN(ms)) {
+      return '';
+    }
+    const d = new Date(ms);
+    const pad = (n) => `${n}`.padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  },
+
+  /**
+   * 将会员状态写入页面文案与引导展示。
+   * @param {boolean} isVip
+   * @param {unknown} expireAt
+   * @returns {void}
+   */
+  applyVipStatusToView: function (isVip, expireAt) {
+    if (isVip) {
+      const d = this.formatExpireDate10(expireAt);
+      this.setData({
+        vipStatusText: d ? `试用权益：${d} 到期` : '试用权益：有效期内',
+        vipStatusExpired: false,
+        vipStatusRenewHintVisible: false
+      });
+      return;
+    }
+
+    const ms = parseExpireAtToMs(expireAt);
+    const hasExpire = !Number.isNaN(ms);
+    const isExpired = hasExpire && ms < Date.now();
+    this.setData({
+      vipStatusText: hasExpire && isExpired ? '当前试用已过期' : '尚未获得试用权益',
+      vipStatusExpired: true,
+      vipStatusRenewHintVisible: true
+    });
+  },
+
+  /**
+   * 每次进入「我的」页刷新会员状态，确保文案与后端一致。
+   * @returns {void}
+   */
+  refreshVipStatusFromServer: function () {
+    if (!getToken()) {
+      this.setData({
+        vipStatusText: '尚未登录',
+        vipStatusExpired: false,
+        vipStatusRenewHintVisible: false
+      });
+      return;
+    }
+
+    get('/api/auth/check-status', {}, {})
+      .then((body) => {
+        if (!body || typeof body !== 'object') {
+          this.setData({
+            vipStatusText: '权益状态获取失败',
+            vipStatusExpired: false,
+            vipStatusRenewHintVisible: false
+          });
+          return;
+        }
+        const res = /** @type {Record<string, unknown>} */ (body);
+        if (res.code !== 0 || !res.data || typeof res.data !== 'object') {
+          this.setData({
+            vipStatusText: '权益状态获取失败',
+            vipStatusExpired: false,
+            vipStatusRenewHintVisible: false
+          });
+          return;
+        }
+        const d = /** @type {Record<string, unknown>} */ (res.data);
+        const isVip = d.isVip === true;
+        const expireAt = d.expireAt !== undefined ? d.expireAt : d.expire_at;
+        this.applyVipStatusToView(isVip, expireAt);
+        writeVipExpireSnapshotMs(expireAt);
+      })
+      .catch(() => {
+        this.setData({
+          vipStatusText: '权益状态获取失败',
+          vipStatusExpired: false,
+          vipStatusRenewHintVisible: false
+        });
+      });
   },
 
   /**
@@ -328,6 +434,12 @@ Page({
               return;
             }
 
+            const pendingRef = readPendingReferrer();
+            if (pendingRef.length > 0) {
+              /** 后端兼容 referrerId / referrer_id */
+              loginPayload.referrerId = pendingRef;
+            }
+
             post('/api/auth/login', loginPayload, { skipAuth: true })
               .then((body) => {
                 wx.hideLoading();
@@ -363,6 +475,11 @@ Page({
                   wx.showToast({ title: '用户信息格式异常', icon: 'none' });
                   return;
                 }
+
+                clearPendingReferrer();
+                writeVipExpireSnapshotMs(
+                  pickExpireAtFromUser(/** @type {Record<string, unknown>} */ (userInfoRaw))
+                );
 
                 this.applyUserInfoToView(/** @type {Record<string, unknown>} */ (userInfoRaw));
                 wx.showToast({ title: '登录成功', icon: 'success' });
@@ -427,6 +544,27 @@ Page({
       showCancel: false,
       confirmText: '好的'
     });
+  },
+
+  /**
+   * 会员不足时的续期引导：提示用户通过分享邀请好友完成续期。
+   * @returns {void}
+   */
+  onVipRenewTap: function () {
+    wx.showModal({
+      title: '去续期',
+      content: '邀请好友登录可续期 5 天。请点击右上角“...”将小程序分享给球友。',
+      confirmText: '我知道了',
+      showCancel: false
+    });
+    try {
+      wx.showShareMenu({
+        withShareTicket: true,
+        menus: ['shareAppMessage']
+      });
+    } catch (e) {
+      // 低版本基础库忽略
+    }
   },
 
   /**
