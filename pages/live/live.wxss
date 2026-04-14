@@ -359,15 +359,34 @@ page {
   background: #000;
 }
 
-/* 透明点击层：盖住 video，任意位置点击可中断回放 */
-.replay-interaction-layer {
+/* 可拖拽缩放区域：全屏铺满，承载 movable-view */
+.replay-movable-area {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 1;
+  overflow: hidden;
+}
+
+/* 可拖拽缩放视图：与 movable-area 等大，内部视频居中 */
+.replay-movable-view {
+  width: 100vw;
+  height: 100vh;
+  position: relative;
+}
+
+/* 独立控制层：整体 pointer-events:none，手势穿透到 movable-view */
+.replay-control-overlay {
   position: absolute;
   left: 0;
   top: 0;
   width: 100%;
   height: 100%;
-  z-index: 2;
+  z-index: 3;
   box-sizing: border-box;
+  pointer-events: none;
 }
 
 /* 回放顶部控制行：绝对定位在左上角，横排排列徽标与倍速按钮 */

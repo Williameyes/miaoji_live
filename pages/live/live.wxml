@@ -160,25 +160,47 @@
   </view>
 
   <view class="replay-overlay" wx:if="{{isReplaying}}">
-    <video 
-      id="replayVideo"
-      src="{{replaySrc}}" 
-      class="replay-video-fullscreen {{replayVideoNeedRotate ? 'replay-video-fullscreen--rotated' : ''}}" 
-      style="{{replayVideoNeedRotate ? 'transform: translate(-50%, -50%) rotate(' + replayVideoRotateDeg + 'deg);' : 'transform: translate(-50%, -50%);'}}"
-      autoplay 
-      controls="{{false}}"
-      show-center-play-btn="{{false}}"
-      show-play-btn="{{false}}"
-      enable-progress-gesture="{{false}}"
-      playbackRate="{{replayPlaybackRate}}"
-      loop="{{false}}"
-      bindplay="onReplayVideoPlay"
-      bindloadedmetadata="onReplayVideoLoadedMeta"
-      bindended="onReplayEnded">
-    </video>
-    <view class="replay-interaction-layer" catchtap="onReplayInterruptTap">
+    <!-- 可拖拽缩放视频容器：双指缩放 + 全向拖动 -->
+    <movable-area class="replay-movable-area">
+      <movable-view
+        class="replay-movable-view"
+        direction="all"
+        scale="{{true}}"
+        scale-min="1"
+        scale-max="4"
+        x="{{replayViewX}}"
+        y="{{replayViewY}}"
+        scale-value="{{replayViewScale}}"
+        bindscale="onReplayViewScale"
+        out-of-bounds="{{false}}"
+        damping="20"
+        friction="2"
+      >
+        <video 
+          id="replayVideo"
+          src="{{replaySrc}}" 
+          class="replay-video-fullscreen {{replayVideoNeedRotate ? 'replay-video-fullscreen--rotated' : ''}}" 
+          style="{{replayVideoNeedRotate ? 'transform: translate(-50%, -50%) rotate(' + replayVideoRotateDeg + 'deg);' : 'transform: translate(-50%, -50%);'}}"
+          autoplay 
+          controls="{{false}}"
+          show-center-play-btn="{{false}}"
+          show-play-btn="{{false}}"
+          enable-progress-gesture="{{false}}"
+          playbackRate="{{replayPlaybackRate}}"
+          muted="{{replayMuted}}"
+          loop="{{false}}"
+          bindplay="onReplayVideoPlay"
+          bindloadedmetadata="onReplayVideoLoadedMeta"
+          bindended="onReplayEnded">
+        </video>
+      </movable-view>
+    </movable-area>
+
+    <!-- 独立控制层：pointer-events:none 整体透传，仅按钮热区可点击 -->
+    <view class="replay-control-overlay">
       <view class="replay-top-bar">
         <view class="replay-hint-badge">实时回看</view>
+        <!-- 所有操作按钮统一收入同一胶囊组，保持风格一致 -->
         <view class="replay-speed-group">
           <view
             class="replay-speed-btn {{replayPlaybackRate === 0.5 ? 'replay-speed-btn--active' : ''}}"
@@ -195,6 +217,14 @@
             catchtap="onReplaySpeedChange"
             data-rate="1.0"
           >1.0</view>
+          <!-- 重置缩放：仅放大后出现，与倍速按钮同排同样式 -->
+          <view
+            class="replay-speed-btn"
+            catchtap="onReplayResetView"
+            wx:if="{{replayViewScale > 1}}"
+          >↺</view>
+          <!-- 退出回放：固定在行末，与倍速按钮同排同样式 -->
+          <view class="replay-speed-btn" catchtap="onReplayClose">✕</view>
         </view>
       </view>
     </view>

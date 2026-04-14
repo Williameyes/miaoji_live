@@ -62,6 +62,14 @@ Page({
     replaySrc: '',
     replayQueue: [],
     replayIndex: 0,
+    /** 慢速播放（0.5x / 0.75x）时自动静音，避免变调恐怖感；默认倍速 0.75 故初始为 true */
+    replayMuted: true,
+    /** movable-view 当前缩放比例（1 = 原始大小），用于控制重置按钮显隐 */
+    replayViewScale: 1,
+    /** movable-view 水平偏移（px），重置时归零 */
+    replayViewX: 0,
+    /** movable-view 垂直偏移（px），重置时归零 */
+    replayViewY: 0,
 
     // 相机焦距相关
     zoom: 1,
@@ -2143,7 +2151,11 @@ Page({
        replayIndex: 0,
        replaySrc: '',
        replayVideoNeedRotate: false,
-       replayVideoRotateDeg: 90
+       replayVideoRotateDeg: 90,
+       replayMuted: true,
+       replayViewScale: 1,
+       replayViewX: 0,
+       replayViewY: 0
      });
 
      // 在 0.35s 强制执行播放逻辑
@@ -2174,6 +2186,10 @@ Page({
       replaySrc: '',
       replayQueue: [],
       replayIndex: 0,
+      replayMuted: false,
+      replayViewScale: 1,
+      replayViewX: 0,
+      replayViewY: 0,
       showReplayMask: true,
       replayMaskText: 'LIVE',
       replayMaskKind: 'live'
@@ -2247,16 +2263,46 @@ Page({
 
   /**
    * 切换回放倍速，立即通过 VideoContext 生效。
+   * 慢速（0.5x / 0.75x）时自动静音，避免音频降频产生的变调恐怖感；
+   * 恢复 1.0x 时自动解除静音。
    * @param {WechatMiniprogram.TouchEvent} e data-rate: 0.5 | 0.75 | 1.0
    */
   onReplaySpeedChange: function(e) {
     const rate = parseFloat(e.currentTarget.dataset.rate);
     if (!rate || isNaN(rate)) return;
-    this.setData({ replayPlaybackRate: rate });
+    const muted = rate < 1.0;
+    this.setData({ replayPlaybackRate: rate, replayMuted: muted });
     try {
       const ctx = wx.createVideoContext('replayVideo', this);
       if (ctx && ctx.playbackRate) ctx.playbackRate(rate);
     } catch (err) {}
+  },
+
+  /**
+   * 专用退出键：中断回放并进入直播转场。
+   * @returns {void}
+   */
+  onReplayClose: function() {
+    if (!this.data.isReplaying) return;
+    this.finishReplayToLive(true);
+  },
+
+  /**
+   * 一键重置 movable-view 的缩放与位置至初始状态（scale=1，x=0，y=0）。
+   * @returns {void}
+   */
+  onReplayResetView: function() {
+    this.setData({ replayViewScale: 1, replayViewX: 0, replayViewY: 0 });
+  },
+
+  /**
+   * 监听 movable-view 缩放变化，同步 replayViewScale 以控制重置按钮显隐。
+   * @param {WechatMiniprogram.CustomEvent} e detail.scale 当前缩放比例
+   * @returns {void}
+   */
+  onReplayViewScale: function(e) {
+    const scale = (e && e.detail && typeof e.detail.scale === 'number') ? e.detail.scale : 1;
+    this.setData({ replayViewScale: scale });
   },
 
   flashPeriod: function() {
