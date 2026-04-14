@@ -566,6 +566,8 @@ Page({
                 writeVipExpireSnapshotMs(pickExpireAtFromUser(mergedRaw));
 
                 this.applyUserInfoToView(mergedRaw);
+                // 登录成功后立即刷新权益状态，确保 vipStatusText 不再停留在"尚未登录"
+                this.refreshVipStatusFromServer();
                 wx.showToast({ title: '登录成功', icon: 'success' });
               })
               .catch((err) => {

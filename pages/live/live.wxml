@@ -145,7 +145,7 @@
       <view class="vip-gate-title">{{vipGateTitle}}</view>
       <view class="vip-gate-sub">{{vipGateSubtext}}</view>
       <view class="vip-gate-minor" wx:if="{{vipGateMinor}}">{{vipGateMinor}}</view>
-      <button class="vip-gate-share-btn" open-type="share">立即分享，延续试用权益</button>
+      <button class="vip-gate-share-btn" open-type="share">立即分享，继续试用</button>
       <view class="vip-gate-row">
         <view class="vip-gate-link" bindtap="onVipGateSwitchMine">返回「我的」</view>
         <view class="vip-gate-link vip-gate-link--sep" wx:if="{{vipGateRetryVisible}}">·</view>
