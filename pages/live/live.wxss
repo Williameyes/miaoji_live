@@ -843,6 +843,21 @@ page {
 }
 
 
+/* 双 slot 容器：绝对定位叠放，通过 z-index 切换前后层 */
+.replay-slot {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+}
+.replay-slot--active {
+  z-index: 2;
+}
+.replay-slot--back {
+  z-index: 1;
+}
+
 .replay-video-fullscreen {
   position: absolute;
   left: 50%;

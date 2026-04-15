@@ -181,23 +181,54 @@
         damping="20"
         friction="2"
       >
-        <video 
-          id="replayVideo"
-          src="{{replaySrc}}" 
-          class="replay-video-fullscreen {{replayVideoNeedRotate ? 'replay-video-fullscreen--rotated' : ''}}" 
-          style="{{replayVideoNeedRotate ? 'transform: translate(-50%, -50%) rotate(' + replayVideoRotateDeg + 'deg);' : 'transform: translate(-50%, -50%);'}}"
-          autoplay 
-          controls="{{false}}"
-          show-center-play-btn="{{false}}"
-          show-play-btn="{{false}}"
-          enable-progress-gesture="{{false}}"
-          playbackRate="{{replayPlaybackRate}}"
-          muted="{{replayMuted}}"
-          loop="{{false}}"
-          bindplay="onReplayVideoPlay"
-          bindloadedmetadata="onReplayVideoLoadedMeta"
-          bindended="onReplayEnded">
-        </video>
+        <!--
+          双 slot 无缝切换：slot-a / slot-b 始终在 DOM 中，避免 src 切换触发重新加载。
+          活跃 slot 通过 z-index 置顶；非活跃 slot 在后台静默预加载下一段。
+        -->
+
+        <!-- Slot A -->
+        <view class="replay-slot {{replayActiveSlot === 0 ? 'replay-slot--active' : 'replay-slot--back'}}">
+          <video
+            id="replayVideoA"
+            src="{{replaySlotASrc}}"
+            class="replay-video-fullscreen {{replayVideoNeedRotate ? 'replay-video-fullscreen--rotated' : ''}}"
+            style="{{replayVideoNeedRotate ? 'transform: translate(-50%, -50%) rotate(' + replayVideoRotateDeg + 'deg);' : 'transform: translate(-50%, -50%);'}}"
+            autoplay="{{replayActiveSlot === 0}}"
+            initial-time="{{replaySlotAInitialTime}}"
+            controls="{{false}}"
+            show-center-play-btn="{{false}}"
+            show-play-btn="{{false}}"
+            enable-progress-gesture="{{false}}"
+            playbackRate="{{replayPlaybackRate}}"
+            muted="{{replayActiveSlot !== 0 ? true : replayMuted}}"
+            loop="{{false}}"
+            bindplay="onReplayVideoAPlay"
+            bindloadedmetadata="onReplayVideoALoadedMeta"
+            bindended="onReplayVideoAEnded">
+          </video>
+        </view>
+
+        <!-- Slot B：预加载第二段，切换时瞬间置顶 -->
+        <view class="replay-slot {{replayActiveSlot === 1 ? 'replay-slot--active' : 'replay-slot--back'}}">
+          <video
+            id="replayVideoB"
+            src="{{replaySlotBSrc}}"
+            class="replay-video-fullscreen {{replayVideoNeedRotate ? 'replay-video-fullscreen--rotated' : ''}}"
+            style="{{replayVideoNeedRotate ? 'transform: translate(-50%, -50%) rotate(' + replayVideoRotateDeg + 'deg);' : 'transform: translate(-50%, -50%);'}}"
+            autoplay="{{replayActiveSlot === 1}}"
+            initial-time="{{replaySlotBInitialTime}}"
+            controls="{{false}}"
+            show-center-play-btn="{{false}}"
+            show-play-btn="{{false}}"
+            enable-progress-gesture="{{false}}"
+            playbackRate="{{replayPlaybackRate}}"
+            muted="{{replayActiveSlot !== 1 ? true : replayMuted}}"
+            loop="{{false}}"
+            bindplay="onReplayVideoBPlay"
+            bindloadedmetadata="onReplayVideoBLoadedMeta"
+            bindended="onReplayVideoBEnded">
+          </video>
+        </view>
       </movable-view>
     </movable-area>
 

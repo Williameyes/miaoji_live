@@ -27,6 +27,8 @@ Page({
     /** 恢复圆环进度 0–100，与 recoveryConicEndDeg 同步供 conic-gradient 使用 */
     recoveryProgress: 0,
     recoveryConicEndDeg: 0,
+    /** 是否正在保存高光（事务锁：覆盖 stopRecord→落盘→copy→入库 全链路） */
+    isSavingHighlight: false,
     isRecording: false,
     longPressTimer: null,
     periodFlash: false,
@@ -72,6 +74,29 @@ Page({
     replayViewX: 0,
     /** movable-view 垂直偏移（px），重置时归零 */
     replayViewY: 0,
+    /** 高光回放起播时间（秒），配合长切片逻辑偏移 */
+    replayInitialTime: 0,
+    /** 高光跨文件链式回放：是否启用 */
+    replayHighlightChain: false,
+    /** 链式回放路径列表（与 segments 顺序一致） */
+    replayHighlightPaths: [],
+    /** 链式回放当前索引 */
+    replayHighlightIndex: 0,
+
+    /**
+     * 双 slot 无缝切换回放。slot-a/b 同时在 DOM，非活跃 slot 在后台预加载。
+     * 切换时只改 z-index，避免 src 变更触发重新加载造成黑帧。
+     */
+    /** 活跃播放 slot：0 = slot-a，1 = slot-b */
+    replayActiveSlot: 0,
+    /** slot-a 视频路径 */
+    replaySlotASrc: '',
+    /** slot-a 起播秒数 */
+    replaySlotAInitialTime: 0,
+    /** slot-b 视频路径（预加载第二段） */
+    replaySlotBSrc: '',
+    /** slot-b 起播秒数 */
+    replaySlotBInitialTime: 0,
 
     // 相机焦距相关
     zoom: 1,
@@ -420,12 +445,42 @@ Page({
   // 辅助变量
   lastSetZoomTime: 0,
   suppressScoreTap: false,
-  /** 滚动录制单段时长（毫秒）。8s 与单次高光时长一致，显著减少 start/stop 次数与资源占用。 */
-  segmentDurationMs: 8000,
+  /**
+   * 滚动录制单段时长（毫秒）。16s 在稳定性与响应速度之间做平衡。
+   * 高光「体感窗口」仍由 {@link highlightPlaybackWindowMs} 控制（默认 8s 起播逻辑）。
+   */
+  segmentDurationMs: 16000,
+  /** 用户点击保存后，回放时希望覆盖的精彩窗口长度（毫秒），可与物理切片时长解耦 */
+  highlightPlaybackWindowMs: 8000,
+  /** stopRecord 完成后再启动下一段 startRecord / 相机重启前的冷却（毫秒），硬件隔离硬约束 */
+  recordCooldownAfterStopMs: 500,
   segmentStopTimer: null,
   rollingWatchdogTimer: null,
   segmentCounter: 0,
   pendingHighlight: null,
+  /**
+   * 用户点击「保存高光」且将立即 stopRecord 时写入：落盘完成后按 expectedSegNo 与 {@link onSegmentRecorded} 对齐。
+   * @type {{
+   *   expectedSegNo: number,
+   *   recordSessionId: number,
+   *   id: string,
+   *   createdAt: number,
+   *   startSegNo: number,
+   *   matchName: string,
+   *   matchId: string,
+   *   cover: string,
+   *   clickWallMs: number
+   * } | null}
+   */
+  _highlightAfterStopMeta: null,
+  /** 为 true 时 UI 锁需等待 finalize 与下一段 startRecord 成功两道闸门 */
+  _highlightSaveAwaitingResume: false,
+  _highlightPipelineDoneFinalize: false,
+  _highlightPipelineDoneResume: false,
+  /** 当前等待恢复录制的会话 id；避免清空 meta 后无法释放保存锁 */
+  _highlightSaveSessionId: 0,
+  _highlightResumeGuardTimer: null,
+  _highlightSaveHardTimeoutTimer: null,
   segmentBuffer: [],
   rollingActive: false,
   rollingSessionId: 0,
@@ -436,8 +491,8 @@ Page({
   lastSegmentAt: 0,
   lastRecordStartAt: 0,
   startRecordFailStreak: 0,
-  /** rolling 缓冲最多保留的段数；抖音/外录等场景下 copy 较慢，过小易丢段 */
-  rollingBufferMax: 10,
+  /** rolling 缓冲最多保留的段数；长切片下单段更大，略减段数以控制磁盘水位 */
+  rollingBufferMax: 8,
   /** 正在将分段写入本地 rolling（copyFile 等），此时禁止看门狗误启新段，避免长直播后写盘变慢导致管线错乱 */
   rollingFsBusy: false,
   /** 进入回放前 REPLAY 全屏转场总时长（需与 WXSS 中 replayBadgeMotion 时长一致） */
@@ -479,6 +534,10 @@ Page({
     this._cameraRebuildQueue = [];
     /** 回放期间是否已主动暂停滚动录制。 */
     this._rollingPausedForReplay = false;
+    /** 当前 rolling 段开始录制的墙钟时间（ms），用于高光逻辑起播偏移 */
+    this._currentRollingSegmentRecordStartMs = 0;
+    /** isRecovering UI 兜底定时器（与 camera init 超时分离） */
+    this._recoverUiFailsafeTimer = null;
     this.initHealthLogs();
 
     this.syncMatchConfigFromPageSources();
@@ -615,6 +674,83 @@ Page({
     });
   },
 
+  /**
+   * 保存高光的事务开始：快速反馈 + UI 锁，防止重复点击引发 I/O 冲突。
+   * @returns {void}
+   */
+  beginHighlightSaving: function() {
+    if (this.data.isSavingHighlight) return;
+    this.setData({ isSavingHighlight: true });
+    if (this._highlightSaveHardTimeoutTimer) {
+      clearTimeout(this._highlightSaveHardTimeoutTimer);
+      this._highlightSaveHardTimeoutTimer = null;
+    }
+    const hardTimeoutMs = Math.max(18000, Math.floor(this.segmentDurationMs * 1.6));
+    this._highlightSaveHardTimeoutTimer = setTimeout(() => {
+      if (!this.data.isSavingHighlight) return;
+      this.appendHealthLog('highlight_hard_timeout_unlock', {});
+      this.clearHighlightSavePipelineState();
+      this.endHighlightSaving();
+      this.recoverRollingPipelineForHighlight();
+    }, hardTimeoutMs);
+  },
+
+  /**
+   * 保存高光的事务结束：关闭 loading + 释放锁。
+   * @returns {void}
+   */
+  endHighlightSaving: function() {
+    if (this.data.isSavingHighlight) {
+      this.setData({ isSavingHighlight: false });
+    }
+    if (this._highlightSaveHardTimeoutTimer) {
+      clearTimeout(this._highlightSaveHardTimeoutTimer);
+      this._highlightSaveHardTimeoutTimer = null;
+    }
+  },
+
+  /**
+   * 重置「截断保存」双闸门状态（出错、会话失效、页面离开时调用）。
+   * @returns {void}
+   */
+  clearHighlightSavePipelineState: function() {
+    this._highlightSaveAwaitingResume = false;
+    this._highlightPipelineDoneFinalize = false;
+    this._highlightPipelineDoneResume = false;
+    this._highlightSaveSessionId = 0;
+    if (this._highlightResumeGuardTimer) {
+      clearTimeout(this._highlightResumeGuardTimer);
+      this._highlightResumeGuardTimer = null;
+    }
+    this._highlightAfterStopMeta = null;
+  },
+
+  /**
+   * finalize 与下一段录制均完成时释放 {@link data.isSavingHighlight}。
+   * @returns {void}
+   */
+  maybeReleaseHighlightSaveLock: function() {
+    if (!this._highlightSaveAwaitingResume) return;
+    if (this._highlightPipelineDoneFinalize && this._highlightPipelineDoneResume) {
+      this.clearHighlightSavePipelineState();
+      this.endHighlightSaving();
+    }
+  },
+
+  /**
+   * stopRecord 未产出文件或失败时，取消本次高光截断并解锁 UI。
+   * @param {number} sessionId 发起 stop 时的 rolling 会话 id
+   * @param {string} reason 诊断用原因码
+   * @returns {void}
+   */
+  abortHighlightAfterStopIfNeeded: function(sessionId, reason) {
+    const hm = this._highlightAfterStopMeta;
+    if (!hm || hm.recordSessionId !== sessionId) return;
+    this.appendHealthLog('highlight_after_stop_abort', { reason });
+    this.clearHighlightSavePipelineState();
+    this.endHighlightSaving();
+  },
+
   // 相机初始化完成回调
   onCameraInit: function(e) {
     const maxZoom = e.detail.maxZoom || 5;
@@ -630,6 +766,10 @@ Page({
       if (this._recoveryGuardTimer) {
         clearTimeout(this._recoveryGuardTimer);
         this._recoveryGuardTimer = null;
+      }
+      if (this._recoverUiFailsafeTimer) {
+        clearTimeout(this._recoverUiFailsafeTimer);
+        this._recoverUiFailsafeTimer = null;
       }
       if (this._recoveryFailSafeTimer) {
         clearTimeout(this._recoveryFailSafeTimer);
@@ -734,8 +874,68 @@ Page({
           });
         }
       };
-      setTimeout(kick, 120);
+      setTimeout(kick, this.recordCooldownAfterStopMs || 500);
     });
+  },
+
+  /**
+   * stopRecord 完成后延迟再启动下一段录制，避免 Native 句柄未释放即 startRecord。
+   * @param {function(): void} fn
+   * @returns {void}
+   */
+  scheduleAfterStopRecord: function(fn) {
+    const ms = this.recordCooldownAfterStopMs || 500;
+    setTimeout(() => {
+      if (typeof fn === 'function') fn();
+    }, ms);
+  },
+
+  /**
+   * 取 rolling 缓冲中与 segNo 紧邻的前一段（用于 8s 窗口跨文件）。
+   * @param {number} segNo 当前段序号
+   * @returns {{ path: string, segNo: number, recordStartMs?: number } | null}
+   */
+  pickPrevRollingEntry: function(segNo) {
+    const want = (typeof segNo === 'number' ? segNo : 0) - 1;
+    if (want < 1) return null;
+    const buf = this.segmentBuffer || [];
+    for (let i = 0; i < buf.length; i += 1) {
+      const it = buf[i];
+      if (it && it.segNo === want && it.path) return it;
+    }
+    return null;
+  },
+
+  /**
+   * 根据点击时刻与段元数据，计算高光复制列表与首段起播秒数（逻辑 8s 窗口）。
+   * @param {{ path: string, segNo: number, recordStartMs?: number }} freshEntry 当前用于保存的 rolling 段
+   * @param {number} clickWallMs 用户点击墙钟时间
+   * @param {{ path: string, segNo: number, recordStartMs?: number } | null} prevEntry 前一段（可空）
+   * @returns {{ preSegments: string[], replayInitialTimeSec: number, replayUseChain: boolean }}
+   */
+  buildHighlightPlaybackPlan: function(freshEntry, clickWallMs, prevEntry) {
+    const segLenSec = this.segmentDurationMs / 1000;
+    const windowSec = (this.highlightPlaybackWindowMs || 8000) / 1000;
+    const rs =
+      typeof freshEntry.recordStartMs === 'number' && freshEntry.recordStartMs > 0
+        ? freshEntry.recordStartMs
+        : clickWallMs;
+    const offsetSec = Math.max(0, Math.min(segLenSec, (clickWallMs - rs) / 1000));
+    const initialSingle = Math.max(0, offsetSec - windowSec);
+    if (offsetSec < windowSec && prevEntry && prevEntry.path) {
+      const needFromPrev = windowSec - offsetSec;
+      const prevInitial = Math.max(0, segLenSec - needFromPrev);
+      return {
+        preSegments: [prevEntry.path, freshEntry.path],
+        replayInitialTimeSec: prevInitial,
+        replayUseChain: true
+      };
+    }
+    return {
+      preSegments: [freshEntry.path],
+      replayInitialTimeSec: initialSingle,
+      replayUseChain: false
+    };
   },
 
   /**
@@ -1037,6 +1237,10 @@ Page({
       clearTimeout(this._recoveryFailSafeTimer);
       this._recoveryFailSafeTimer = null;
     }
+    if (this._recoverUiFailsafeTimer) {
+      clearTimeout(this._recoverUiFailsafeTimer);
+      this._recoverUiFailsafeTimer = null;
+    }
     this._hardRecoverAwaitingCamera = false;
     this._cameraInitDone = false;
     if (this._rollingKickoffTimer) {
@@ -1047,6 +1251,7 @@ Page({
       clearTimeout(this.pendingHighlight.timeout);
     }
     this.pendingHighlight = null;
+    this.clearHighlightSavePipelineState();
     this.segmentBuffer = [];
     this.highlightMissStreak = 0;
     this.lastHighlightConsumedSegNo = 0;
@@ -1063,6 +1268,8 @@ Page({
   onHide: function() {
     this.rollingActive = false;
     this._rollingPausedForReplay = false;
+    this.clearHighlightSavePipelineState();
+    this.endHighlightSaving();
     this.stopHealthMonitor();
     this.clearRecoveryFabAck();
     this.stopRecoveryProgressAnim(false);
@@ -1073,6 +1280,10 @@ Page({
     if (this._recoveryFailSafeTimer) {
       clearTimeout(this._recoveryFailSafeTimer);
       this._recoveryFailSafeTimer = null;
+    }
+    if (this._recoverUiFailsafeTimer) {
+      clearTimeout(this._recoverUiFailsafeTimer);
+      this._recoverUiFailsafeTimer = null;
     }
     this._hardRecoverAwaitingCamera = false;
     this._recoveryLock = false;
@@ -1249,6 +1460,10 @@ Page({
    * @returns {void}
    */
   finalizeRecoveryAsFailed: function(reason) {
+    if (this._recoverUiFailsafeTimer) {
+      clearTimeout(this._recoverUiFailsafeTimer);
+      this._recoverUiFailsafeTimer = null;
+    }
     if (this._recoveryFailSafeTimer) {
       clearTimeout(this._recoveryFailSafeTimer);
       this._recoveryFailSafeTimer = null;
@@ -1307,10 +1522,21 @@ Page({
       clearTimeout(this.pendingHighlight.timeout);
     }
     this.pendingHighlight = null;
+    this.clearHighlightSavePipelineState();
     this.rollingFsBusy = false;
     this.lastRecordStartAt = 0;
     this.startRecordFailStreak = 0;
     this.setData({ isRecovering: true });
+    if (this._recoverUiFailsafeTimer) {
+      clearTimeout(this._recoverUiFailsafeTimer);
+      this._recoverUiFailsafeTimer = null;
+    }
+    this._recoverUiFailsafeTimer = setTimeout(() => {
+      this._recoverUiFailsafeTimer = null;
+      if (this.data.isRecovering) {
+        this.finalizeRecoveryAsFailed('recovering_ui_5s_failsafe');
+      }
+    }, 5000);
     this.startRecoveryProgressAnim();
     this.stopRollingRecording(() => {
       this.rebuildCameraComponent(() => {
@@ -1341,6 +1567,9 @@ Page({
    */
   onRecoveryFabTap: function() {
     if (this.data.isRecovering) return;
+    if (this.data.isSavingHighlight || this.pendingHighlight) {
+      return;
+    }
     if (this._recoveryFabLongPressConsumed) {
       this._recoveryFabLongPressConsumed = false;
       return;
@@ -1554,13 +1783,13 @@ Page({
               complete: () => {
                 this.setData({ isRecording: false });
                 this.lastRecordStartAt = 0;
-                setTimeout(() => this.startOneSegment(sessionId, 0), 120);
+                this.scheduleAfterStopRecord(() => this.startOneSegment(sessionId, 0));
               }
             });
           } catch (e) {
             this.setData({ isRecording: false });
             this.lastRecordStartAt = 0;
-            setTimeout(() => this.startOneSegment(sessionId, 0), 120);
+            this.scheduleAfterStopRecord(() => this.startOneSegment(sessionId, 0));
           }
           return;
         }
@@ -1582,8 +1811,16 @@ Page({
         if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
         const hadFailBefore = this.startRecordFailStreak > 0;
         this.startRecordFailStreak = 0;
+        this._currentRollingSegmentRecordStartMs = Date.now();
         this.lastRecordStartAt = Date.now();
         this.setData({ isRecording: true });
+        if (
+          this._highlightSaveAwaitingResume
+          && this._highlightSaveSessionId === sessionId
+        ) {
+          this._highlightPipelineDoneResume = true;
+          this.maybeReleaseHighlightSaveLock();
+        }
         if (hadFailBefore) {
           this.appendHealthLog('segment_start_ok_recovered', { retryCount });
         }
@@ -1609,7 +1846,7 @@ Page({
           this.startRecordFailStreak = 0;
           this.setData({ isRecording: false });
           this.lastRecordStartAt = 0;
-          setTimeout(() => this.startOneSegment(sessionId, 0), 900);
+          this.scheduleAfterStopRecord(() => this.startOneSegment(sessionId, 0));
           return;
         }
         setTimeout(() => this.startOneSegment(sessionId, nextRetry), delay);
@@ -1626,6 +1863,7 @@ Page({
         this.setData({ isRecording: false });
         this.lastRecordStartAt = 0;
         const tempPath = res && res.tempVideoPath ? res.tempVideoPath : '';
+        const recordStartWallMs = this._currentRollingSegmentRecordStartMs || 0;
         /** 在 copy 完成前就刷新心跳，避免仅依赖 finalize 时写盘慢导致看门狗误判空闲 */
         this.lastSegmentAt = Date.now();
         this.segmentCounter += 1;
@@ -1633,18 +1871,20 @@ Page({
           // 关键时序修复：
           // 先固定当前片段，再开始下一段录制，避免 tempPath 被后续录制复用/覆盖。
           // 传入 recordSessionId：copy 异步完成时若已 onShow/恢复导致 rollingSessionId 变化，则不得写入缓冲，否则会指向错文件、保存必败。
-          this.onSegmentRecorded(tempPath, this.segmentCounter, sessionId).finally(() => {
-            setTimeout(() => this.startOneSegment(sessionId), 0);
+          this.onSegmentRecorded(tempPath, this.segmentCounter, sessionId, recordStartWallMs).finally(() => {
+            this.scheduleAfterStopRecord(() => this.startOneSegment(sessionId));
           });
           return;
         }
-        setTimeout(() => this.startOneSegment(sessionId), 0);
+        this.abortHighlightAfterStopIfNeeded(sessionId, 'empty_temp_path');
+        this.scheduleAfterStopRecord(() => this.startOneSegment(sessionId));
       },
       fail: () => {
         if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
         this.setData({ isRecording: false });
         this.lastRecordStartAt = 0;
-        setTimeout(() => this.startOneSegment(sessionId), 200);
+        this.abortHighlightAfterStopIfNeeded(sessionId, 'stop_record_fail');
+        this.scheduleAfterStopRecord(() => this.startOneSegment(sessionId));
       }
     });
   },
@@ -1705,9 +1945,10 @@ Page({
    * @param {string} tempPath 临时视频路径
    * @param {number} segNo 片段序号
    * @param {number} recordSessionId 本段录制开始时的 {@link rollingSessionId}，异步落盘完成时必须一致才入缓冲
+   * @param {number} [recordStartWallMs] 本段 startRecord 成功时的墙钟时间（用于高光逻辑起播偏移）
    * @returns {Promise<void>}
    */
-  onSegmentRecorded: function(tempPath, segNo, recordSessionId) {
+  onSegmentRecorded: function(tempPath, segNo, recordSessionId, recordStartWallMs) {
     // 关键修复：把每个 segment 立刻保存到本地 rolling 目录，避免 tempVideoPath 后续失效。
     this.rollingFsBusy = true;
     return this.ensureRollingDir().then(() => new Promise((resolve) => {
@@ -1748,7 +1989,50 @@ Page({
           resolve();
           return;
         }
-        this.segmentBuffer.push({ path: savedPath, segNo });
+        this.segmentBuffer.push({
+          path: savedPath,
+          segNo,
+          recordStartMs: typeof recordStartWallMs === 'number' ? recordStartWallMs : 0
+        });
+        if (
+          this._highlightAfterStopMeta
+          && this._highlightAfterStopMeta.recordSessionId === recordSessionId
+          && this._highlightAfterStopMeta.expectedSegNo === segNo
+        ) {
+          const hm = this._highlightAfterStopMeta;
+          const segLenSec = this.segmentDurationMs / 1000;
+          const windowSec = (this.highlightPlaybackWindowMs || 8000) / 1000;
+          const clickWallMs =
+            typeof hm.clickWallMs === 'number' && hm.clickWallMs > 0
+              ? hm.clickWallMs
+              : Date.now();
+          const curLenSec = Math.max(
+            0,
+            Math.min(segLenSec, (clickWallMs - (recordStartWallMs || clickWallMs)) / 1000)
+          );
+          const prevEntry = this.pickPrevRollingEntry(segNo);
+          const needDual = curLenSec < windowSec && prevEntry && prevEntry.path;
+          const replayInitialTimeSec = needDual
+            ? Math.max(0, segLenSec - (windowSec - curLenSec))
+            : Math.max(0, curLenSec - windowSec);
+          this.finalizeHighlight({
+            id: hm.id,
+            createdAt: hm.createdAt,
+            startSegNo: hm.startSegNo,
+            matchName: hm.matchName,
+            matchId: hm.matchId,
+            cover: hm.cover,
+            finalizing: false,
+            sourceSegNo: segNo,
+            preSegments: needDual ? [prevEntry.path, savedPath] : [savedPath],
+            postSegments: [],
+            replayInitialTimeSec,
+            replayUseChain: !!needDual
+          });
+          this._highlightAfterStopMeta = null;
+          resolve();
+          return;
+        }
         const maxBuf = this.rollingBufferMax || 10;
         if (this.segmentBuffer.length > maxBuf) {
           const removed = this.segmentBuffer.splice(0, this.segmentBuffer.length - maxBuf);
@@ -1775,6 +2059,13 @@ Page({
               clearTimeout(waitPending.timeout);
               waitPending.timeout = null;
             }
+            const entryMeta = {
+              path: savedPath,
+              segNo,
+              recordStartMs: typeof recordStartWallMs === 'number' ? recordStartWallMs : 0
+            };
+            const prevWait = this.pickPrevRollingEntry(segNo);
+            const planWait = this.buildHighlightPlaybackPlan(entryMeta, waitPending.createdAt, prevWait);
             this.finalizeHighlight({
               id: waitPending.id,
               createdAt: waitPending.createdAt,
@@ -1784,8 +2075,10 @@ Page({
               cover: waitPending.cover,
               finalizing: false,
               sourceSegNo: segNo,
-              preSegments: [savedPath],
-              postSegments: []
+              preSegments: planWait.preSegments,
+              postSegments: [],
+              replayInitialTimeSec: planWait.replayInitialTimeSec,
+              replayUseChain: planWait.replayUseChain
             });
           }
         }
@@ -1885,10 +2178,13 @@ Page({
 
   /**
    * 保存高光：由右下角状态钮在管线为「录制中」（界面显示 REC）时单击触发。
-   * 保存「刚结束的一段」完整滚动片段（时长约 {@link segmentDurationMs}，默认 8s）。
+   * 物理上复制最近完成的 rolling 段（时长约 {@link segmentDurationMs}），逻辑回放窗口见 {@link highlightPlaybackWindowMs}。
    * 不额外拍照封面，避免与录制并行增加相机压力与闪屏。
    */
   requestHighlightCapture: function() {
+    if (this.data.isSavingHighlight) {
+      return;
+    }
     if (this.data.isRecovering || this._recoveryLock || !this._cameraInitDone) {
       wx.showToast({ title: '相机恢复中，请稍后保存', icon: 'none' });
       return;
@@ -1902,16 +2198,11 @@ Page({
       return;
     }
     const now = Date.now();
-    // 强制防抖：10s 时间锁，防止重复保存片段（略大于 segmentDurationMs）
-    const minGap = 10000; 
-    if (now - this.lastHighlightRequestAt < minGap) {
-      wx.showToast({ title: '操作过快，请稍后再试', icon: 'none' });
-      return;
-    }
     if (this.pendingHighlight) {
-      wx.showToast({ title: '正在保存片段，请稍候', icon: 'none' });
       return;
     }
+
+    this.beginHighlightSaving();
 
     /** 再次尝试拉起滚动分段（补救 init 与 onShow 竞态；与 tryStart 内聚，不重复判断 isRecording 误杀） */
     this.tryStartRollingWhenCameraReady();
@@ -1924,11 +2215,48 @@ Page({
     const currentMatchId = wx.getStorageSync('currentMatchId') || app.globalData.currentMatchId || '';
     const id = `${now}`;
     const startSegNo = this.segmentCounter;
-    const consumed = this.lastHighlightConsumedSegNo || 0;
-    /** 取 segNo 最大的可用段，避免异步落盘乱序时误把「尾部元素」当成最新段 */
-    const freshEntry = this.pickBestRollingEntryAfterConsumed(consumed);
+    if (this.data.isRecording) {
+      const sessionId = this.rollingSessionId;
+      this._highlightSaveAwaitingResume = true;
+      this._highlightPipelineDoneFinalize = false;
+      this._highlightPipelineDoneResume = false;
+      this._highlightSaveSessionId = sessionId;
+      this._highlightAfterStopMeta = {
+        expectedSegNo: this.segmentCounter + 1,
+        recordSessionId: sessionId,
+        id,
+        createdAt: now,
+        startSegNo,
+        matchName,
+        matchId: currentMatchId,
+        cover: this.data.defaultCover,
+        clickWallMs: now
+      };
+      const resumeGuardMs = Math.max(12000, Math.floor(this.segmentDurationMs * 1.3));
+      this._highlightResumeGuardTimer = setTimeout(() => {
+        if (!this._highlightSaveAwaitingResume) return;
+        this.appendHealthLog('highlight_resume_guard_timeout', {});
+        this.clearHighlightSavePipelineState();
+        this.endHighlightSaving();
+        this.recoverRollingPipelineForHighlight();
+      }, resumeGuardMs);
+      try {
+        if (this.segmentStopTimer) {
+          clearTimeout(this.segmentStopTimer);
+          this.segmentStopTimer = null;
+        }
+        this.appendHealthLog('highlight_stop_on_click', { segNo: this.segmentCounter + 1 });
+        this.stopOneSegment(sessionId);
+        return;
+      } catch (e) {
+        this.abortHighlightAfterStopIfNeeded(sessionId, 'stop_throw');
+        return;
+      }
+    }
 
-    if (freshEntry) {
+    const consumed = this.lastHighlightConsumedSegNo || 0;
+    const freshEntry = this.pickBestRollingEntryAfterConsumed(consumed);
+    if (freshEntry && freshEntry.path) {
       this.finalizeHighlight({
         id,
         createdAt: now,
@@ -1939,35 +2267,14 @@ Page({
         finalizing: false,
         sourceSegNo: freshEntry.segNo,
         preSegments: [freshEntry.path],
-        postSegments: []
+        postSegments: [],
+        replayInitialTimeSec: 0,
+        replayUseChain: false
       });
       return;
     }
-
-    const waitPending = {
-      id,
-      createdAt: now,
-      startSegNo,
-      minSegNoExclusive: consumed,
-      matchName,
-      matchId: currentMatchId,
-      cover: this.data.defaultCover,
-      finalizing: false,
-      waitNext: true,
-      timeout: null
-    };
-    const waitHighlightMs = this.segmentDurationMs * 5 + 12000;
-    waitPending.timeout = setTimeout(() => {
-      if (this.pendingHighlight && this.pendingHighlight.id === id) {
-        this.pendingHighlight = null;
-        this.highlightMissStreak += 1;
-        /** 不在此处自动硬恢复相机：易与 onShow/手动恢复叠加，打断分段并污染缓冲，反而使保存成功率骤降。 */
-        this.recoverRollingPipelineForHighlight(() => {
-          wx.showToast({ title: '未捕捉到可用片段', icon: 'none' });
-        });
-      }
-    }, waitHighlightMs);
-    this.pendingHighlight = waitPending;
+    this.endHighlightSaving();
+    this.appendHealthLog('highlight_skip_not_recording_no_fresh', {});
   },
 
   finalizeHighlight: function(pending) {
@@ -1979,7 +2286,13 @@ Page({
     }
     const segments = [...pending.preSegments, ...pending.postSegments].filter(Boolean);
     if (segments.length === 0) {
-      wx.showToast({ title: '未捕捉到可用片段', icon: 'none' });
+      this.appendHealthLog('highlight_finalize_no_segments', {});
+      if (this._highlightSaveAwaitingResume) {
+        this._highlightPipelineDoneFinalize = true;
+        this.maybeReleaseHighlightSaveLock();
+      } else {
+        this.endHighlightSaving();
+      }
       return;
     }
     const fs = wx.getFileSystemManager();
@@ -2029,14 +2342,25 @@ Page({
       });
     });
 
-    this.ensureHighlightDir().then(() => Promise.all(segments.map((p, i) => copyOne(p, i)))).then((saved) => {
+    this.ensureHighlightDir()
+      .then(() => Promise.all(segments.map((p, i) => copyOne(p, i))))
+      .then((saved) => {
       const savedPaths = saved.filter(Boolean);
       if (savedPaths.length === 0) {
-        wx.showToast({ title: '保存失败，请稍后重试', icon: 'none' });
+        this.appendHealthLog('highlight_finalize_copy_empty', {});
+        if (this._highlightSaveAwaitingResume) {
+          this._highlightPipelineDoneFinalize = true;
+          this.maybeReleaseHighlightSaveLock();
+        } else {
+          this.endHighlightSaving();
+        }
         return;
       }
       
       const replaySegment = savedPaths[savedPaths.length - 1] || savedPaths[0] || '';
+      const replayInitialTimeSec =
+        typeof pending.replayInitialTimeSec === 'number' ? pending.replayInitialTimeSec : 0;
+      const replayUseChain = !!pending.replayUseChain && savedPaths.length >= 2;
       
       // 提取视频首帧作为封面
       const extractCover = () => {
@@ -2068,11 +2392,19 @@ Page({
         timeText: this.formatTime(pending.createdAt),
         cover: pending.cover || this.data.defaultCover,
         segments: savedPaths,
-        replaySegment: replaySegment
+        replaySegment: replaySegment,
+        replayInitialTimeSec,
+        replayUseChain
       };
-      const signature = savedPaths.join('|');
+      const signature = `${savedPaths.join('|')}@i${replayInitialTimeSec}@c${replayUseChain ? 1 : 0}`;
       if (signature && signature === this.lastHighlightSignature) {
-        wx.showToast({ title: '与上一条片段重复，已忽略', icon: 'none' });
+        this.appendHealthLog('highlight_duplicate_ignored', {});
+        if (this._highlightSaveAwaitingResume) {
+          this._highlightPipelineDoneFinalize = true;
+          this.maybeReleaseHighlightSaveLock();
+        } else {
+          this.endHighlightSaving();
+        }
         return;
       }
       this.lastHighlightSignature = signature;
@@ -2101,7 +2433,22 @@ Page({
       if (this.data.drawerMode === 1) {
         this.refreshDrawerHighlights();
       }
-    });
+      if (this._highlightSaveAwaitingResume) {
+        this._highlightPipelineDoneFinalize = true;
+        this.maybeReleaseHighlightSaveLock();
+      } else {
+        this.endHighlightSaving();
+      }
+    })
+      .catch(() => {
+        this.appendHealthLog('highlight_finalize_exception', {});
+        if (this._highlightSaveAwaitingResume) {
+          this._highlightPipelineDoneFinalize = true;
+          this.maybeReleaseHighlightSaveLock();
+        } else {
+          this.endHighlightSaving();
+        }
+      });
   },
 
   formatTime: function(ts) {
@@ -2341,12 +2688,20 @@ Page({
     const currentMatchId = wx.getStorageSync('currentMatchId') || app.globalData.currentMatchId || '';
     const list = this.getHighlightList(currentMatchId).slice(0, 50);
     const drawerHighlights = list.map((it) => {
-      // 这里的逻辑必须保证 item 独立性，不再共用全局变量
+      const chainThumb =
+        it && it.replayUseChain && Array.isArray(it.segments) && it.segments[0]
+          ? it.segments[0]
+          : '';
+      const videoPath =
+        chainThumb
+        || (it && it.replaySegment)
+        || (it && Array.isArray(it.segments) && it.segments[0])
+        || '';
       return {
         id: it.id,
-        // 如果 cover 还是默认图，且有视频片段，则标记需要提取封面
         cover: it.cover || this.data.defaultCover,
-        videoPath: it.replaySegment || (it.segments && it.segments[0]) || '',
+        videoPath,
+        replayInitialTimeSec: typeof it.replayInitialTimeSec === 'number' ? it.replayInitialTimeSec : 0,
         needsCover: (!it.cover || it.cover === this.data.defaultCover)
       };
     });
@@ -2433,6 +2788,11 @@ Page({
    */
   pauseRollingForReplay: function() {
     if (this._rollingPausedForReplay) return;
+    if (this.data.isSavingHighlight) {
+      this.appendHealthLog('replay_pause_cancel_highlight_saving', {});
+      this.clearHighlightSavePipelineState();
+      this.endHighlightSaving();
+    }
     this._rollingPausedForReplay = true;
     this.appendHealthLog('replay_pause_rolling', {});
     this.rollingActive = false;
@@ -2462,63 +2822,102 @@ Page({
     this.tryStartRollingWhenCameraReady();
   },
 
+  /**
+   * 启动回放，采用双 slot 预加载方案消除链式切换时的黑帧。
+   * - slot-a 播放第一段（或单段）；slot-b 同步预加载第二段（如有）。
+   * - 切换时只改 replayActiveSlot，两个 video 组件始终在 DOM 中，不触发重新加载。
+   * @param {object} item 高光条目
+   */
   startReplay: function(item) {
-    const target = (item && item.replaySegment)
-      || ((item && Array.isArray(item.segments) && item.segments[item.segments.length - 1]) ? item.segments[item.segments.length - 1] : '');
+    const useChain = !!(item && item.replayUseChain && item.segments && item.segments.length >= 2);
+    const paths = useChain ? item.segments.slice() : [];
+    const target =
+      (item && item.replaySegment)
+      || ((item && Array.isArray(item.segments) && item.segments[item.segments.length - 1])
+        ? item.segments[item.segments.length - 1]
+        : '');
     if (!target) return;
     this.pauseRollingForReplay();
 
-    // 安全性检查：检查物理文件是否存在
     const fs = wx.getFileSystemManager();
-    try {
-      fs.accessSync(target);
-    } catch (e) {
-      wx.showModal({
-        title: '文件已移除',
-        content: '该视频文件已不存在，系统将自动清理无效记录。',
-        showCancel: false,
-        success: () => {
-          this.doDeleteHighlight(item.id);
-        }
-      });
-      return;
+    const toCheck = useChain ? paths : [target];
+    for (let i = 0; i < toCheck.length; i += 1) {
+      try {
+        fs.accessSync(toCheck[i]);
+      } catch (e) {
+        wx.showModal({
+          title: '文件已移除',
+          content: '该视频文件已不存在，系统将自动清理无效记录。',
+          showCancel: false,
+          success: () => {
+            this.doDeleteHighlight(item.id);
+          }
+        });
+        return;
+      }
     }
-    
-    // 回放前确保横屏（防止相机录制时方向切换导致回放竖屏）
+
     if (wx.setPageOrientation) {
       wx.setPageOrientation({ orientation: 'landscape' });
     }
 
-    // 总时长 1.0s (1000ms)
-     // 1. 0.35s 快速进场 (遮罩全黑)
-     // 2. 0.65s 优雅淡出 (视频开始播放)
-     const introMs = 1000;
-     const peakMs = 350; 
+    const introMs = 1000;
+    const peakMs = 350;
+    const initialSec = typeof item.replayInitialTimeSec === 'number' ? item.replayInitialTimeSec : 0;
 
-     this.setData({
-       showReplayMask: true,
-       replayMaskText: 'REPLAY',
-       replayMaskKind: 'replay',
-       replayQueue: [],
-       replayIndex: 0,
-       replaySrc: '',
-       replayVideoNeedRotate: false,
-       replayVideoRotateDeg: 90,
-       replayMuted: true,
-       replayViewScale: 1,
-       replayViewX: 0,
-       replayViewY: 0
-     });
+    /** 第一段路径与第二段路径（链式时预加载，单段为空） */
+    const firstPath = useChain ? paths[0] : target;
+    const secondPath = useChain && paths.length >= 2 ? paths[1] : '';
 
-     // 在 0.35s 强制执行播放逻辑
-     setTimeout(() => {
-       this.setData({ isReplaying: true, replaySrc: target });
-     }, peakMs);
+    this.setData({
+      showReplayMask: true,
+      replayMaskText: 'REPLAY',
+      replayMaskKind: 'replay',
+      replayQueue: [],
+      replayIndex: 0,
+      replaySrc: '',
+      replayVideoNeedRotate: false,
+      replayVideoRotateDeg: 90,
+      replayMuted: true,
+      replayViewScale: 1,
+      replayViewX: 0,
+      replayViewY: 0,
+      replayInitialTime: 0,
+      replayHighlightChain: false,
+      replayHighlightPaths: paths,
+      replayHighlightIndex: 0,
+      replayActiveSlot: 0,
+      replaySlotASrc: '',
+      replaySlotAInitialTime: 0,
+      replaySlotBSrc: '',
+      replaySlotBInitialTime: 0
+    });
 
-     // 在 1.0s 彻底隐藏遮罩
-     setTimeout(() => {
-       this.setData({ showReplayMask: false });
-     }, introMs);
+    setTimeout(() => {
+      this.setData({
+        isReplaying: true,
+        replayHighlightChain: useChain,
+        replayHighlightPaths: paths,
+        replayHighlightIndex: 0,
+        replayActiveSlot: 0,
+        replaySlotASrc: firstPath,
+        replaySlotAInitialTime: initialSec,
+        replaySlotBSrc: secondPath,
+        replaySlotBInitialTime: 0
+      });
+    }, peakMs);
+
+    setTimeout(() => {
+      this.setData({ showReplayMask: false });
+    }, introMs);
+  },
+
+  /**
+   * 获取当前活跃 slot 对应的 VideoContext id。
+   * @returns {string} 'replayVideoA' | 'replayVideoB'
+   */
+  _activeReplayVideoId: function() {
+    return this.data.replayActiveSlot === 1 ? 'replayVideoB' : 'replayVideoA';
   },
 
   /**
@@ -2528,7 +2927,7 @@ Page({
   finishReplayToLive: function(stopPlayer) {
     if (stopPlayer) {
       try {
-        const ctx = wx.createVideoContext('replayVideo', this);
+        const ctx = wx.createVideoContext(this._activeReplayVideoId(), this);
         if (ctx && ctx.stop) ctx.stop();
       } catch (e) {}
     }
@@ -2542,6 +2941,15 @@ Page({
       replayViewScale: 1,
       replayViewX: 0,
       replayViewY: 0,
+      replayInitialTime: 0,
+      replayHighlightChain: false,
+      replayHighlightPaths: [],
+      replayHighlightIndex: 0,
+      replayActiveSlot: 0,
+      replaySlotASrc: '',
+      replaySlotAInitialTime: 0,
+      replaySlotBSrc: '',
+      replaySlotBInitialTime: 0,
       showReplayMask: true,
       replayMaskText: 'LIVE',
       replayMaskKind: 'live'
@@ -2552,8 +2960,73 @@ Page({
     }, outroMs);
   },
 
+  /**
+   * 活跃 slot 播放结束：链式时切换到预加载好的另一 slot，无需重新加载。
+   * 仅在活跃 slot 的 bindended 中调用（通过 data-slot 区分）。
+   * @param {number} slotIdx 触发事件的 slot（0=A, 1=B）
+   */
+  onReplaySlotEnded: function(slotIdx) {
+    if (slotIdx !== this.data.replayActiveSlot) return;
+    if (!this.data.replayHighlightChain) {
+      this.finishReplayToLive(false);
+      return;
+    }
+    const paths = this.data.replayHighlightPaths || [];
+    const currentIdx = this.data.replayHighlightIndex || 0;
+    const nextIdx = currentIdx + 1;
+    if (nextIdx >= paths.length) {
+      this.setData({ replayHighlightChain: false });
+      this.finishReplayToLive(false);
+      return;
+    }
+    /** 切换 slot：另一个 slot 已在 src 写入阶段完成预加载，直接翻到最前 */
+    const nextSlot = slotIdx === 0 ? 1 : 0;
+    const nextNextPath = paths[nextIdx + 1] || '';
+    const updates = {
+      replayActiveSlot: nextSlot,
+      replayHighlightIndex: nextIdx
+    };
+    /** 把当前已用的 slot 写入再下一段（滚动预加载），当前只有 2 段所以通常为空 */
+    if (slotIdx === 0) {
+      updates.replaySlotASrc = nextNextPath;
+      updates.replaySlotAInitialTime = 0;
+    } else {
+      updates.replaySlotBSrc = nextNextPath;
+      updates.replaySlotBInitialTime = 0;
+    }
+    this.setData(updates, () => {
+      try {
+        const ctx = wx.createVideoContext(
+          nextSlot === 0 ? 'replayVideoA' : 'replayVideoB', this
+        );
+        if (ctx) {
+          const rate = this.data.replayPlaybackRate || 0.75;
+          if (ctx.play) ctx.play();
+          if (ctx.playbackRate) ctx.playbackRate(rate);
+        }
+      } catch (e) {}
+    });
+  },
+
+  /**
+   * slot-a 的 bindended 回调。
+   */
+  onReplayVideoAEnded: function() {
+    this.onReplaySlotEnded(0);
+  },
+
+  /**
+   * slot-b 的 bindended 回调。
+   */
+  onReplayVideoBEnded: function() {
+    this.onReplaySlotEnded(1);
+  },
+
+  /**
+   * 兼容旧 WXML bindended="onReplayEnded"（单 video 模式下仍可调用）。
+   */
   onReplayEnded: function() {
-    this.finishReplayToLive(false);
+    this.onReplaySlotEnded(this.data.replayActiveSlot);
   },
 
   /**
@@ -2565,32 +3038,78 @@ Page({
   },
 
   /**
-   * 确保回放以当前设定倍速播放（部分机型仅属性不生效，需 VideoContext）。
+   * 仅对活跃 slot 生效：设置回放倍速。
+   * @param {number} slotIdx 触发事件的 slot（0=A, 1=B）
    */
-  onReplayVideoPlay: function() {
+  _applyPlaybackRateToSlot: function(slotIdx) {
+    if (slotIdx !== this.data.replayActiveSlot) return;
     const rate = this.data.replayPlaybackRate || 0.75;
     try {
-      const ctx = wx.createVideoContext('replayVideo', this);
+      const id = slotIdx === 0 ? 'replayVideoA' : 'replayVideoB';
+      const ctx = wx.createVideoContext(id, this);
       if (ctx && ctx.playbackRate) ctx.playbackRate(rate);
     } catch (e) {}
   },
 
   /**
-   * 回放元信息加载完成后，根据视频宽高判断是否需要旋转。
-   * @param {WechatMiniprogram.CustomEvent} e
-   * @returns {void}
+   * slot-a bindplay 回调：设置倍速。
    */
-  onReplayVideoLoadedMeta: function(e) {
+  onReplayVideoAPlay: function() {
+    this._applyPlaybackRateToSlot(0);
+  },
+
+  /**
+   * slot-b bindplay 回调：设置倍速。
+   */
+  onReplayVideoBPlay: function() {
+    this._applyPlaybackRateToSlot(1);
+  },
+
+  /**
+   * 兼容旧 WXML bindplay="onReplayVideoPlay"。
+   */
+  onReplayVideoPlay: function() {
+    this._applyPlaybackRateToSlot(this.data.replayActiveSlot);
+  },
+
+  /**
+   * 仅对活跃 slot 的 loadedmetadata 处理旋转检测。
+   * @param {WechatMiniprogram.CustomEvent} e
+   * @param {number} slotIdx 触发事件的 slot（0=A, 1=B）
+   */
+  _handleReplayLoadedMeta: function(e, slotIdx) {
+    if (slotIdx !== this.data.replayActiveSlot) return;
     const detail = (e && e.detail) || {};
     const width = Number(detail.width || 0);
     const height = Number(detail.height || 0);
     const needRotate = width > 0 && height > 0 && height > width;
     const rotateDeg = needRotate ? this.getReplayRotateDegForDevice() : 90;
-    this.setData({
-      replayVideoNeedRotate: needRotate,
-      replayVideoRotateDeg: rotateDeg
-    });
-    this.onReplayVideoPlay();
+    this.setData({ replayVideoNeedRotate: needRotate, replayVideoRotateDeg: rotateDeg });
+    this._applyPlaybackRateToSlot(slotIdx);
+  },
+
+  /**
+   * slot-a bindloadedmetadata 回调。
+   * @param {WechatMiniprogram.CustomEvent} e
+   */
+  onReplayVideoALoadedMeta: function(e) {
+    this._handleReplayLoadedMeta(e, 0);
+  },
+
+  /**
+   * slot-b bindloadedmetadata 回调。
+   * @param {WechatMiniprogram.CustomEvent} e
+   */
+  onReplayVideoBLoadedMeta: function(e) {
+    this._handleReplayLoadedMeta(e, 1);
+  },
+
+  /**
+   * 兼容旧 WXML bindloadedmetadata="onReplayVideoLoadedMeta"。
+   * @param {WechatMiniprogram.CustomEvent} e
+   */
+  onReplayVideoLoadedMeta: function(e) {
+    this._handleReplayLoadedMeta(e, this.data.replayActiveSlot);
   },
 
   /**
@@ -2625,10 +3144,7 @@ Page({
     if (!rate || isNaN(rate)) return;
     const muted = rate < 1.0;
     this.setData({ replayPlaybackRate: rate, replayMuted: muted });
-    try {
-      const ctx = wx.createVideoContext('replayVideo', this);
-      if (ctx && ctx.playbackRate) ctx.playbackRate(rate);
-    } catch (err) {}
+    this._applyPlaybackRateToSlot(this.data.replayActiveSlot);
   },
 
   /**
