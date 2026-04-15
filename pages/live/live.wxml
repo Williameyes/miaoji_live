@@ -193,7 +193,7 @@
             src="{{replaySlotASrc}}"
             class="replay-video-fullscreen {{replayVideoNeedRotate ? 'replay-video-fullscreen--rotated' : ''}}"
             style="{{replayVideoNeedRotate ? 'transform: translate(-50%, -50%) rotate(' + replayVideoRotateDeg + 'deg);' : 'transform: translate(-50%, -50%);'}}"
-            autoplay="{{replayActiveSlot === 0}}"
+            autoplay="{{false}}"
             initial-time="{{replaySlotAInitialTime}}"
             controls="{{false}}"
             show-center-play-btn="{{false}}"
@@ -203,6 +203,7 @@
             muted="{{replayActiveSlot !== 0 ? true : replayMuted}}"
             loop="{{false}}"
             bindplay="onReplayVideoAPlay"
+            bindtimeupdate="onReplayVideoATimeUpdate"
             bindloadedmetadata="onReplayVideoALoadedMeta"
             bindended="onReplayVideoAEnded">
           </video>
@@ -215,7 +216,7 @@
             src="{{replaySlotBSrc}}"
             class="replay-video-fullscreen {{replayVideoNeedRotate ? 'replay-video-fullscreen--rotated' : ''}}"
             style="{{replayVideoNeedRotate ? 'transform: translate(-50%, -50%) rotate(' + replayVideoRotateDeg + 'deg);' : 'transform: translate(-50%, -50%);'}}"
-            autoplay="{{replayActiveSlot === 1}}"
+            autoplay="{{false}}"
             initial-time="{{replaySlotBInitialTime}}"
             controls="{{false}}"
             show-center-play-btn="{{false}}"
@@ -225,6 +226,7 @@
             muted="{{replayActiveSlot !== 1 ? true : replayMuted}}"
             loop="{{false}}"
             bindplay="onReplayVideoBPlay"
+            bindtimeupdate="onReplayVideoBTimeUpdate"
             bindloadedmetadata="onReplayVideoBLoadedMeta"
             bindended="onReplayVideoBEnded">
           </video>

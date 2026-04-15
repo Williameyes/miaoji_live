@@ -538,6 +538,13 @@ Page({
     this._currentRollingSegmentRecordStartMs = 0;
     /** isRecovering UI 兜底定时器（与 camera init 超时分离） */
     this._recoverUiFailsafeTimer = null;
+    /** 链式回放：待置顶 slot（0/1），等 timeupdate 出画后再 setData，减轻黑帧 */
+    this._replayPendingActiveSlot = null;
+    /** 链式回放：各 slot 是否已做过后台 prime，避免重复 */
+    this._replayPrimedSlot0 = false;
+    this._replayPrimedSlot1 = false;
+    /** 链式回放：待置顶兜底定时器 */
+    this._replayPendingFallbackTimer = null;
     this.initHealthLogs();
 
     this.syncMatchConfigFromPageSources();
@@ -2829,6 +2836,13 @@ Page({
    * @param {object} item 高光条目
    */
   startReplay: function(item) {
+    this._replayPendingActiveSlot = null;
+    if (this._replayPendingFallbackTimer) {
+      clearTimeout(this._replayPendingFallbackTimer);
+      this._replayPendingFallbackTimer = null;
+    }
+    this._replayPrimedSlot0 = false;
+    this._replayPrimedSlot1 = false;
     const useChain = !!(item && item.replayUseChain && item.segments && item.segments.length >= 2);
     const paths = useChain ? item.segments.slice() : [];
     const target =
@@ -2904,6 +2918,13 @@ Page({
         replaySlotAInitialTime: initialSec,
         replaySlotBSrc: secondPath,
         replaySlotBInitialTime: 0
+      }, () => {
+        wx.nextTick(() => {
+          try {
+            const ctx = wx.createVideoContext('replayVideoA', this);
+            if (ctx && ctx.play) ctx.play();
+          } catch (e) {}
+        });
       });
     }, peakMs);
 
@@ -2925,10 +2946,19 @@ Page({
    * @param {boolean} stopPlayer 是否立即停止 video（点击中断时为 true）
    */
   finishReplayToLive: function(stopPlayer) {
+    this._replayPendingActiveSlot = null;
+    if (this._replayPendingFallbackTimer) {
+      clearTimeout(this._replayPendingFallbackTimer);
+      this._replayPendingFallbackTimer = null;
+    }
+    this._replayPrimedSlot0 = false;
+    this._replayPrimedSlot1 = false;
     if (stopPlayer) {
       try {
-        const ctx = wx.createVideoContext(this._activeReplayVideoId(), this);
-        if (ctx && ctx.stop) ctx.stop();
+        ['replayVideoA', 'replayVideoB'].forEach((vid) => {
+          const ctx = wx.createVideoContext(vid, this);
+          if (ctx && ctx.stop) ctx.stop();
+        });
       } catch (e) {}
     }
     const outroMs = this.data.replayOutroDurationMs || 720;
@@ -2982,30 +3012,123 @@ Page({
     /** 切换 slot：另一个 slot 已在 src 写入阶段完成预加载，直接翻到最前 */
     const nextSlot = slotIdx === 0 ? 1 : 0;
     const nextNextPath = paths[nextIdx + 1] || '';
-    const updates = {
-      replayActiveSlot: nextSlot,
-      replayHighlightIndex: nextIdx
-    };
-    /** 把当前已用的 slot 写入再下一段（滚动预加载），当前只有 2 段所以通常为空 */
-    if (slotIdx === 0) {
-      updates.replaySlotASrc = nextNextPath;
-      updates.replaySlotAInitialTime = 0;
-    } else {
-      updates.replaySlotBSrc = nextNextPath;
-      updates.replaySlotBInitialTime = 0;
+    const updates = { replayHighlightIndex: nextIdx };
+    /** 仅在有下一段时才改「旧槽」src，避免与切层同一帧把 src 置空导致闪一下 */
+    if (nextNextPath) {
+      if (slotIdx === 0) {
+        updates.replaySlotASrc = nextNextPath;
+        updates.replaySlotAInitialTime = 0;
+      } else {
+        updates.replaySlotBSrc = nextNextPath;
+        updates.replaySlotBInitialTime = 0;
+      }
+      this._replayPrimedSlot0 = false;
+      this._replayPrimedSlot1 = false;
+    }
+    this._replayPendingActiveSlot = nextSlot;
+    if (this._replayPendingFallbackTimer) {
+      clearTimeout(this._replayPendingFallbackTimer);
+      this._replayPendingFallbackTimer = null;
     }
     this.setData(updates, () => {
-      try {
-        const ctx = wx.createVideoContext(
-          nextSlot === 0 ? 'replayVideoA' : 'replayVideoB', this
-        );
-        if (ctx) {
+      const nextId = nextSlot === 0 ? 'replayVideoA' : 'replayVideoB';
+      wx.nextTick(() => {
+        try {
+          const ctx = wx.createVideoContext(nextId, this);
           const rate = this.data.replayPlaybackRate || 0.75;
-          if (ctx.play) ctx.play();
-          if (ctx.playbackRate) ctx.playbackRate(rate);
-        }
+          if (ctx && ctx.seek) ctx.seek(0);
+          if (ctx && ctx.play) ctx.play();
+          if (ctx && ctx.playbackRate) ctx.playbackRate(rate);
+        } catch (e) {}
+      });
+      this._replayPendingFallbackTimer = setTimeout(() => {
+        if (this._replayPendingActiveSlot !== nextSlot) return;
+        this._replayPendingActiveSlot = null;
+        this._replayPendingFallbackTimer = null;
+        this.setData({ replayActiveSlot: nextSlot });
+        try {
+          const oldId = slotIdx === 0 ? 'replayVideoA' : 'replayVideoB';
+          const oldCtx = wx.createVideoContext(oldId, this);
+          if (oldCtx && oldCtx.pause) oldCtx.pause();
+        } catch (e2) {}
+      }, 420);
+    });
+  },
+
+  /**
+   * 链式回放：在后台 slot 上做一次轻量 play→pause→seek(0)，促使解码器先出首帧，切换时少黑场。
+   * @param {number} slotIdx 0=A, 1=B
+   * @returns {void}
+   */
+  _maybePrimeHiddenChainSlot: function(slotIdx) {
+    if (!this.data.isReplaying || !this.data.replayHighlightChain) return;
+    const active = this.data.replayActiveSlot;
+    const src = slotIdx === 0 ? this.data.replaySlotASrc : this.data.replaySlotBSrc;
+    if (!src || active === slotIdx) return;
+    if (slotIdx === 0 && this._replayPrimedSlot0) return;
+    if (slotIdx === 1 && this._replayPrimedSlot1) return;
+    if (slotIdx === 0) this._replayPrimedSlot0 = true;
+    else this._replayPrimedSlot1 = true;
+    const id = slotIdx === 0 ? 'replayVideoA' : 'replayVideoB';
+    wx.nextTick(() => {
+      try {
+        const ctx = wx.createVideoContext(id, this);
+        if (ctx && ctx.play) ctx.play();
+        setTimeout(() => {
+          try {
+            const c2 = wx.createVideoContext(id, this);
+            if (c2 && c2.pause) c2.pause();
+            if (c2 && c2.seek) c2.seek(0);
+          } catch (e2) {}
+        }, 120);
       } catch (e) {}
     });
+  },
+
+  /**
+   * 待置顶 slot 已推进到可显示时间后，再切换 z-index 并暂停旧槽，避免与解码空窗重叠。
+   * @param {number} slotIdx 触发 timeupdate 的 slot
+   * @param {WechatMiniprogram.CustomEvent} e
+   * @returns {void}
+   */
+  _onReplaySlotTimeUpdate: function(slotIdx, e) {
+    if (this._replayPendingActiveSlot !== slotIdx) return;
+    const t = e && e.detail && typeof e.detail.currentTime === 'number' ? e.detail.currentTime : 0;
+    if (t < 0.05) return;
+    this._replayPendingActiveSlot = null;
+    if (this._replayPendingFallbackTimer) {
+      clearTimeout(this._replayPendingFallbackTimer);
+      this._replayPendingFallbackTimer = null;
+    }
+    const oldSlot = slotIdx === 0 ? 1 : 0;
+    this.setData({ replayActiveSlot: slotIdx }, () => {
+      try {
+        const oldId = oldSlot === 0 ? 'replayVideoA' : 'replayVideoB';
+        const oldCtx = wx.createVideoContext(oldId, this);
+        if (oldCtx && oldCtx.pause) oldCtx.pause();
+      } catch (err) {}
+      try {
+        const ctx = wx.createVideoContext(slotIdx === 0 ? 'replayVideoA' : 'replayVideoB', this);
+        const rate = this.data.replayPlaybackRate || 0.75;
+        if (ctx && ctx.playbackRate) ctx.playbackRate(rate);
+      } catch (err2) {}
+    });
+  },
+
+  /**
+   * slot-a timeupdate：用于链式切换后待置顶确认。
+   * @param {WechatMiniprogram.CustomEvent} e
+   */
+  onReplayVideoATimeUpdate: function(e) {
+    this._onReplaySlotTimeUpdate(0, e);
+  },
+
+  /**
+   * slot-b timeupdate：用于链式切换后待置顶确认。
+   * @param {WechatMiniprogram.CustomEvent} e
+   */
+  onReplayVideoBTimeUpdate: function(e) {
+    this._onReplaySlotTimeUpdate(1, e);
   },
 
   /**
@@ -3042,7 +3165,9 @@ Page({
    * @param {number} slotIdx 触发事件的 slot（0=A, 1=B）
    */
   _applyPlaybackRateToSlot: function(slotIdx) {
-    if (slotIdx !== this.data.replayActiveSlot) return;
+    const active = this.data.replayActiveSlot;
+    const pending = this._replayPendingActiveSlot;
+    if (slotIdx !== active && slotIdx !== pending) return;
     const rate = this.data.replayPlaybackRate || 0.75;
     try {
       const id = slotIdx === 0 ? 'replayVideoA' : 'replayVideoB';
@@ -3093,6 +3218,7 @@ Page({
    * @param {WechatMiniprogram.CustomEvent} e
    */
   onReplayVideoALoadedMeta: function(e) {
+    this._maybePrimeHiddenChainSlot(0);
     this._handleReplayLoadedMeta(e, 0);
   },
 
@@ -3101,6 +3227,7 @@ Page({
    * @param {WechatMiniprogram.CustomEvent} e
    */
   onReplayVideoBLoadedMeta: function(e) {
+    this._maybePrimeHiddenChainSlot(1);
     this._handleReplayLoadedMeta(e, 1);
   },
 
