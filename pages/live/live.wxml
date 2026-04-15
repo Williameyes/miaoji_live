@@ -11,6 +11,8 @@
     class="camera-bg"
     mode="normal"
     zoom="{{zoom}}"
+    bindstop="onCameraStop"
+    binderror="onCameraError"
     bindinitdone="onCameraInit">
   </camera>
 
@@ -44,7 +46,10 @@
     <view class="bottom-center-board">
       <!-- 比赛名称与迷你回放按钮 -->
       <view class="match-name-row">
-        <view class="match-name-banner" style="color: {{matchConfig.matchNameColor}}">
+        <view
+          class="match-name-banner"
+          style="color: {{matchConfig.matchNameColor}}"
+        >
           {{matchConfig.matchName || 'HoopsLive Assistant'}}
         </view>
       </view>
@@ -88,8 +93,8 @@
           </view>
         </view>
 
-        <!-- 中间节次 -->
-        <view class="period-center-outer" bindtap="onPeriodTap">
+        <!-- 中间节次；长按导出诊断日志 -->
+        <view class="period-center-outer" bindtap="onPeriodTap" catchlongpress="onExportHealthLogs">
           <view class="period-strip"></view>
           <view class="period-text" style="color: {{periodFlash ? '#000000' : '#fff'}}">
             {{periods[matchConfig.period]}}
@@ -219,10 +224,10 @@
           >1.0</view>
           <!-- 重置缩放：仅放大后出现，与倍速按钮同排同样式 -->
           <view
-            class="replay-speed-btn"
+            class="replay-speed-btn replay-speed-btn--icon"
             catchtap="onReplayResetView"
             wx:if="{{replayViewScale > 1}}"
-          >↺</view>
+          ><view class="replay-icon replay-icon--fitscreen"></view></view>
           <!-- 退出回放：固定在行末，与倍速按钮同排同样式 -->
           <view class="replay-speed-btn" catchtap="onReplayClose">✕</view>
         </view>
@@ -230,36 +235,58 @@
     </view>
   </view>
 
-  <!-- Level 3: 操作指南弹窗 (极简风格) -->
-  <view class="guide-overlay" wx:if="{{showGuide}}">
-    <view class="guide-card">
-      <view class="guide-close" bindtap="dismissGuide">×</view>
+  <!-- Level 3: 操作指南弹窗（毛玻璃深蓝卡片风格） -->
+  <view class="guide-overlay" wx:if="{{showGuide}}" catchtouchmove="noop">
+    <view class="guide-card" catchtap="noop">
+      <view class="guide-close" bindtap="dismissGuide">✕</view>
+      <view class="guide-title-bar">
+        <text class="guide-main-title">快速上手指南</text>
+      </view>
       <scroll-view scroll-y class="guide-scroll">
         <view class="guide-list">
-          <view class="guide-item">
-            <text class="guide-key">加分：</text>
-            <text class="guide-desc">单击队名+1，长按队名连续+1</text>
+
+          <!-- 得分操控 -->
+          <view class="guide-section-header">
+            <text class="guide-section-emoji">👉</text>
+            <text class="guide-section-title">得分操控</text>
           </view>
           <view class="guide-item">
-            <text class="guide-key">减分：</text>
-            <text class="guide-desc">单击得分-1，长按得分连续-1</text>
+            <text class="guide-action">单击队名</text>
+            <text class="guide-sep">：</text>
+            <text class="guide-desc">得 +1 分</text>
           </view>
           <view class="guide-item">
-            <text class="guide-key">保存：</text>
-            <text class="guide-desc">显示 REC 时单击右下角圆钮保存片段；长按该钮可恢复相机</text>
+            <text class="guide-action">长按队名</text>
+            <text class="guide-sep">：</text>
+            <text class="guide-desc">连续得分模式</text>
           </view>
           <view class="guide-item">
-            <text class="guide-key">回放：</text>
-            <text class="guide-desc">长按屏幕空白处（点缩略图回放）</text>
+            <text class="guide-action">单击得分</text>
+            <text class="guide-sep">：</text>
+            <text class="guide-desc">得 -1 分</text>
+          </view>
+
+          <!-- 录制与回放 -->
+          <view class="guide-section-header guide-section-header--mt">
+            <text class="guide-section-emoji">🎥</text>
+            <text class="guide-section-title">录制与回放</text>
           </view>
           <view class="guide-item">
-            <text class="guide-key">换节：</text>
-            <text class="guide-desc">单击“节次”区域（如：第一节）</text>
+            <text class="guide-action">保存片段</text>
+            <text class="guide-sep">：</text>
+            <text class="guide-desc">单击 REC 按钮</text>
           </view>
           <view class="guide-item">
-            <text class="guide-key">退出：</text>
-            <text class="guide-desc">长按屏幕（点左上方返回）</text>
+            <text class="guide-action">恢复相机</text>
+            <text class="guide-sep">：</text>
+            <text class="guide-desc">长按 REC 按钮</text>
           </view>
+          <view class="guide-item">
+            <text class="guide-action">查看回放</text>
+            <text class="guide-sep">：</text>
+            <text class="guide-desc">长按空白处 / 点击缩略图</text>
+          </view>
+
         </view>
       </scroll-view>
     </view>

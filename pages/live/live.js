@@ -17,6 +17,8 @@ Page({
     statusBarHeight: 0,
     cameraContext: null,
     cameraMounted: false,
+    /** 强制 camera 组件重建的渲染序号（每次重建 +1）。 */
+    cameraRenderNonce: 0,
     isRecovering: false,
     pipelineHealth: 'ok',
     opsControlText: 'OK',
@@ -187,6 +189,13 @@ Page({
    * @returns {void}
    */
   refreshLiveEntitlementAndResume: function(onAllowed) {
+    if (this._entitlementChecking) {
+      if (typeof onAllowed === 'function') {
+        this._entitlementOnAllowedQueue.push(onAllowed);
+      }
+      return;
+    }
+    this._entitlementChecking = true;
     const token = getToken();
     if (!token) {
       this.rollingActive = false;
@@ -202,6 +211,8 @@ Page({
         vipGateMinor: '',
         vipGateRetryVisible: false
       });
+      this._entitlementOnAllowedQueue = [];
+      this._entitlementChecking = false;
       return;
     }
 
@@ -225,28 +236,63 @@ Page({
               vipGateRetryVisible: gate.showRetry
             });
           });
+          this._entitlementOnAllowedQueue = [];
+          this._entitlementChecking = false;
           return;
         }
 
-        const nextCtx = this.data.cameraContext || wx.createCameraContext();
-        this.setData(
-          {
+        const cameraAlreadyHealthy =
+          this.data.liveStreamAllowed
+          && this.data.cameraMounted
+          && !!this.data.cameraContext
+          && this._cameraInitDone
+          && !this.data.isRecovering;
+        if (cameraAlreadyHealthy) {
+          this.setData({
             liveEntitlementChecking: false,
             liveStreamAllowed: true,
-            cameraMounted: true,
-            cameraContext: nextCtx,
             showVipGate: false,
             vipGateTitle: '',
             vipGateSubtext: '',
             vipGateMinor: '',
             vipGateRetryVisible: false
-          },
-          () => {
-            if (typeof onAllowed === 'function') {
-              onAllowed();
+          }, () => {
+            if (typeof onAllowed === 'function') onAllowed();
+            const queued = this._entitlementOnAllowedQueue.splice(0, this._entitlementOnAllowedQueue.length);
+            queued.forEach((fn) => {
+              try { fn(); } catch (e) {}
+            });
+          });
+          this._entitlementChecking = false;
+          return;
+        }
+
+        this.rebuildCameraComponent(() => {
+          const nextCtx = wx.createCameraContext();
+          this.setData(
+            {
+              liveEntitlementChecking: false,
+              liveStreamAllowed: true,
+              cameraMounted: true,
+              cameraContext: nextCtx,
+              showVipGate: false,
+              vipGateTitle: '',
+              vipGateSubtext: '',
+              vipGateMinor: '',
+              vipGateRetryVisible: false
+            },
+            () => {
+              if (typeof onAllowed === 'function') {
+                onAllowed();
+              }
+              const queued = this._entitlementOnAllowedQueue.splice(0, this._entitlementOnAllowedQueue.length);
+              queued.forEach((fn) => {
+                try { fn(); } catch (e) {}
+              });
             }
-          }
-        );
+          );
+        });
+        this._entitlementChecking = false;
       })
       .catch(() => {
         this.rollingActive = false;
@@ -263,6 +309,8 @@ Page({
             vipGateRetryVisible: true
           });
         });
+        this._entitlementOnAllowedQueue = [];
+        this._entitlementChecking = false;
       });
   },
 
@@ -412,8 +460,26 @@ Page({
     this._recoveryGuardTimer = null;
     this._recoverProgTimer = null;
     this._recoverProgressResetTimer = null;
+    this._recoveryFailSafeTimer = null;
     /** 长按状态钮后通常会跟一次 tap，需吞掉避免误触保存/二次恢复 */
     this._recoveryFabLongPressConsumed = false;
+    /** 自动恢复节流戳，避免 camera error/stop 连续抖动触发恢复风暴。 */
+    this._lastAutoRecoveryAt = 0;
+    /** 相机异常连续计数；用于更稳地判定硬恢复时机。 */
+    this._cameraFaultStreak = 0;
+    /** 健康日志内存缓冲与落盘节流定时器。 */
+    this._healthLogs = [];
+    this._healthLogFlushTimer = null;
+    this._healthLogStorageKey = 'LIVE_HEALTH_LOGS_V1';
+    /** 权益校验串行锁，避免 onLoad/onShow/重试并发导致重复挂载 camera。 */
+    this._entitlementChecking = false;
+    this._entitlementOnAllowedQueue = [];
+    /** 相机重建锁，避免短时多次重建触发 “can insert only one camera”。 */
+    this._cameraRebuildLock = false;
+    this._cameraRebuildQueue = [];
+    /** 回放期间是否已主动暂停滚动录制。 */
+    this._rollingPausedForReplay = false;
+    this.initHealthLogs();
 
     this.syncMatchConfigFromPageSources();
     
@@ -458,7 +524,95 @@ Page({
       // 低版本基础库忽略
     }
 
-    this.refreshLiveEntitlementAndResume(null);
+    // 直播核心拉起统一放在 onShow，避免 onLoad + onShow 并发触发 camera 重建。
+  },
+
+  /**
+   * 初始化直播健康日志缓冲。
+   * 设备信息只采集一次存入 header，避免每条 log 都重复写相同字段浪费体积。
+   * @returns {void}
+   */
+  initHealthLogs: function() {
+    try {
+      const raw = wx.getStorageSync(this._healthLogStorageKey);
+      this._healthLogs = Array.isArray(raw) ? raw.slice(-120) : [];
+    } catch (e) {
+      this._healthLogs = [];
+    }
+    try {
+      const sys = wx.getSystemInfoSync();
+      this._healthLogDevice = {
+        model: String(sys.model || ''),
+        brand: String(sys.brand || ''),
+        platform: String(sys.platform || ''),
+        wxVersion: String(sys.version || ''),
+        system: String(sys.system || '')
+      };
+    } catch (e) {
+      this._healthLogDevice = {};
+    }
+    this.appendHealthLog('page_load', {});
+  },
+
+  /**
+   * 追加一条健康日志（环形缓冲，控制体积）。
+   * 每条仅存 timestamp + event + detail，设备信息统一由 header 承载。
+   * @param {string} eventName 事件名
+   * @param {Record<string, unknown>} [detail] 事件详情
+   * @returns {void}
+   */
+  appendHealthLog: function(eventName, detail) {
+    const item = {
+      t: Date.now(),
+      e: String(eventName || '?'),
+      d: detail && typeof detail === 'object' ? detail : {}
+    };
+    this._healthLogs.push(item);
+    if (this._healthLogs.length > 120) {
+      this._healthLogs.splice(0, this._healthLogs.length - 120);
+    }
+    this.scheduleHealthLogFlush();
+  },
+
+  /**
+   * 节流写入健康日志到 storage，避免频繁 IO 干扰直播。
+   * @returns {void}
+   */
+  scheduleHealthLogFlush: function() {
+    if (this._healthLogFlushTimer) return;
+    this._healthLogFlushTimer = setTimeout(() => {
+      this._healthLogFlushTimer = null;
+      try {
+        wx.setStorageSync(this._healthLogStorageKey, this._healthLogs.slice(-240));
+      } catch (e) {}
+    }, 1800);
+  },
+
+  /**
+   * 手动导出健康日志到剪贴板，便于现场复现后快速回传排查。
+   * @returns {void}
+   */
+  onExportHealthLogs: function() {
+    const logs = (this._healthLogs || []).slice(-100);
+    const payload = {
+      at: Date.now(),
+      device: this._healthLogDevice || {},
+      logs
+    };
+    const text = JSON.stringify(payload);
+    wx.setClipboardData({
+      data: text,
+      success: () => {
+        wx.showModal({
+          title: '诊断日志已复制',
+          content: '已复制最近健康日志。请把内容发给我用于定位现场问题。',
+          showCancel: false
+        });
+      },
+      fail: () => {
+        wx.showToast({ title: '复制失败，请重试', icon: 'none' });
+      }
+    });
   },
 
   // 相机初始化完成回调
@@ -477,6 +631,10 @@ Page({
         clearTimeout(this._recoveryGuardTimer);
         this._recoveryGuardTimer = null;
       }
+      if (this._recoveryFailSafeTimer) {
+        clearTimeout(this._recoveryFailSafeTimer);
+        this._recoveryFailSafeTimer = null;
+      }
       this.stopRecoveryProgressAnim(true);
       this.setData({ isRecovering: false });
       this._recoveryLock = false;
@@ -486,7 +644,98 @@ Page({
       }
       this.updatePipelineHealth();
     }
+    this._cameraFaultStreak = 0;
+    this.appendHealthLog('camera_init', { maxZoom: maxZoom });
     this.tryStartRollingWhenCameraReady();
+  },
+
+  /**
+   * camera 非正常中断（如切后台/系统打断）后的恢复入口。
+   * @param {WechatMiniprogram.CustomEvent} e
+   * @returns {void}
+   */
+  onCameraStop: function(e) {
+    const detail = (e && e.detail) || {};
+    const reason = detail && detail.reason ? String(detail.reason) : '';
+    this.appendHealthLog('camera_stop', { reason });
+    this.triggerCameraFaultRecovery(`stop:${reason}`);
+  },
+
+  /**
+   * camera 组件错误回调（权限变化、系统相机异常等）。
+   * @param {WechatMiniprogram.CustomEvent} e
+   * @returns {void}
+   */
+  onCameraError: function(e) {
+    const detail = (e && e.detail) || {};
+    const errMsg = detail && detail.errMsg ? String(detail.errMsg) : '';
+    this.appendHealthLog('camera_error', { errMsg });
+    this.triggerCameraFaultRecovery(`error:${errMsg}`);
+  },
+
+  /**
+   * 统一相机异常恢复触发器：带节流，避免短时连发导致反复黑屏。
+   * @param {string} reason
+   * @returns {void}
+   */
+  triggerCameraFaultRecovery: function(reason) {
+    if (!this.data.liveStreamAllowed) return;
+    if (this.data.isRecovering || this._recoveryLock) return;
+    if (this.pendingHighlight) return;
+    const now = Date.now();
+    const minAutoRecoverGapMs = 18000;
+    this._cameraFaultStreak = (this._cameraFaultStreak || 0) + 1;
+    const needRecover = this._cameraFaultStreak >= 2;
+    if (!needRecover) {
+      this.updatePipelineHealth();
+      return;
+    }
+    if (now - (this._lastAutoRecoveryAt || 0) < minAutoRecoverGapMs) return;
+    this.appendHealthLog('camera_auto_recover', {
+      reason,
+      faultStreak: this._cameraFaultStreak,
+      pipelineHealth: this.data.pipelineHealth
+    });
+    this._lastAutoRecoveryAt = now;
+    this.hardRecoverLivePipeline(`auto:${reason}`);
+  },
+
+  /**
+   * 强制重建 camera 组件并释放旧上下文，避免会话切换后复用脏资源。
+   * @param {function(): void} [onRebuilt]
+   * @returns {void}
+   */
+  rebuildCameraComponent: function(onRebuilt) {
+    if (this._cameraRebuildLock) {
+      if (typeof onRebuilt === 'function') {
+        this._cameraRebuildQueue.push(onRebuilt);
+      }
+      return;
+    }
+    this._cameraRebuildLock = true;
+    this._cameraInitDone = false;
+    this.setData({
+      cameraMounted: false,
+      cameraContext: null,
+      isRecording: false,
+      cameraRenderNonce: (this.data.cameraRenderNonce || 0) + 1
+    }, () => {
+      const kick = () => {
+        if (typeof onRebuilt === 'function') onRebuilt();
+        this._cameraRebuildLock = false;
+        const queued = this._cameraRebuildQueue.splice(0, this._cameraRebuildQueue.length);
+        if (queued.length > 0) {
+          const next = queued.shift();
+          if (typeof next === 'function') {
+            this.rebuildCameraComponent(next);
+          }
+          queued.forEach((fn) => {
+            if (typeof fn === 'function') this._cameraRebuildQueue.push(fn);
+          });
+        }
+      };
+      setTimeout(kick, 120);
+    });
   },
 
   /**
@@ -641,6 +890,7 @@ Page({
     }
 
     this.syncMatchConfigFromPageSources();
+    this.appendHealthLog('page_show', {});
 
     wx.setKeepScreenOn({
       keepScreenOn: true,
@@ -775,12 +1025,17 @@ Page({
 
   onUnload: function() {
     this.rollingActive = false;
+    this._rollingPausedForReplay = false;
     this.stopHealthMonitor();
     this.clearRecoveryFabAck();
     this.stopRecoveryProgressAnim(false);
     if (this._recoveryGuardTimer) {
       clearTimeout(this._recoveryGuardTimer);
       this._recoveryGuardTimer = null;
+    }
+    if (this._recoveryFailSafeTimer) {
+      clearTimeout(this._recoveryFailSafeTimer);
+      this._recoveryFailSafeTimer = null;
     }
     this._hardRecoverAwaitingCamera = false;
     this._cameraInitDone = false;
@@ -800,11 +1055,14 @@ Page({
       clearInterval(this.rollingWatchdogTimer);
       this.rollingWatchdogTimer = null;
     }
+    this.appendHealthLog('page_unload', {});
+    this.setData({ cameraMounted: false, cameraContext: null, isRecording: false });
     this.stopRollingRecording();
   },
 
   onHide: function() {
     this.rollingActive = false;
+    this._rollingPausedForReplay = false;
     this.stopHealthMonitor();
     this.clearRecoveryFabAck();
     this.stopRecoveryProgressAnim(false);
@@ -812,12 +1070,19 @@ Page({
       clearTimeout(this._recoveryGuardTimer);
       this._recoveryGuardTimer = null;
     }
+    if (this._recoveryFailSafeTimer) {
+      clearTimeout(this._recoveryFailSafeTimer);
+      this._recoveryFailSafeTimer = null;
+    }
     this._hardRecoverAwaitingCamera = false;
     this._recoveryLock = false;
     this._manualRecoveryPendingAck = false;
     if (this.data.isRecovering) {
       this.setData({ isRecovering: false });
     }
+    this.appendHealthLog('page_hide', {});
+    this._cameraInitDone = false;
+    this.setData({ cameraMounted: false, cameraContext: null, isRecording: false });
     this.stopRollingRecording();
   },
 
@@ -979,6 +1244,25 @@ Page({
   },
 
   /**
+   * 恢复失败兜底：释放锁并回退 UI，避免状态钮永久不可点击。
+   * @param {string} reason
+   * @returns {void}
+   */
+  finalizeRecoveryAsFailed: function(reason) {
+    if (this._recoveryFailSafeTimer) {
+      clearTimeout(this._recoveryFailSafeTimer);
+      this._recoveryFailSafeTimer = null;
+    }
+    this._hardRecoverAwaitingCamera = false;
+    this._manualRecoveryPendingAck = false;
+    this.stopRecoveryProgressAnim(false);
+    this.setData({ isRecovering: false });
+    this._recoveryLock = false;
+    this.appendHealthLog('hard_recover_fail', { reason: reason || 'unknown' });
+    this.updatePipelineHealth();
+  },
+
+  /**
    * 页面内一键恢复：硬重建 camera 与 rolling 管线，避免必须退回微信。
    * @param {string} trigger 触发来源（manual/auto）
    * @returns {void}
@@ -991,16 +1275,31 @@ Page({
       this._recoveryGuardTimer = null;
     }
     const source = trigger || 'manual';
+    this.appendHealthLog('hard_recover_start', { trigger: source });
     this._manualRecoveryPendingAck = source === 'manual';
     this._hardRecoverAwaitingCamera = true;
     this._recoveryGuardTimer = setTimeout(() => {
       this._recoveryGuardTimer = null;
-      this._hardRecoverAwaitingCamera = false;
-      this._manualRecoveryPendingAck = false;
-      this.stopRecoveryProgressAnim(false);
-      this.setData({ isRecovering: false });
-      this._recoveryLock = false;
-      this.updatePipelineHealth();
+      if (!this._hardRecoverAwaitingCamera) return;
+      this.appendHealthLog('hard_recover_timeout', { trigger: source });
+      // 超时后二次强制重建一次，避免 iOS 在 stop 后偶发不再触发 initdone。
+      this.rebuildCameraComponent(() => {
+        this.setData({ cameraMounted: true }, () => {
+          const bindCameraContext = () => {
+            const nextCameraContext = wx.createCameraContext();
+            this.setData({ cameraContext: nextCameraContext, isRecording: false });
+          };
+          if (wx.nextTick) wx.nextTick(bindCameraContext);
+          else setTimeout(bindCameraContext, 0);
+        });
+      });
+      if (this._recoveryFailSafeTimer) {
+        clearTimeout(this._recoveryFailSafeTimer);
+      }
+      this._recoveryFailSafeTimer = setTimeout(() => {
+        if (!this._hardRecoverAwaitingCamera) return;
+        this.finalizeRecoveryAsFailed('timeout_after_retry_rebuild');
+      }, 4500);
     }, 6000);
     this.rollingActive = false;
     this.rollingSessionId += 1;
@@ -1014,24 +1313,25 @@ Page({
     this.setData({ isRecovering: true });
     this.startRecoveryProgressAnim();
     this.stopRollingRecording(() => {
-      this.setData({ cameraMounted: false, isRecording: false });
-      setTimeout(() => {
+      this.rebuildCameraComponent(() => {
         this._cameraInitDone = false;
         this.segmentBuffer = [];
         this.lastSegmentAt = Date.now();
         this.setData({ cameraMounted: true }, () => {
           const bindCameraContext = () => {
             const nextCameraContext = wx.createCameraContext();
-            this.setData({ cameraContext: nextCameraContext }, () => {
+            this.setData({ cameraContext: nextCameraContext, isRecording: false }, () => {
               this.rollingActive = true;
               this.rollingSessionId += 1;
               this.highlightMissStreak = 0;
+              this._cameraFaultStreak = 0;
+              this.appendHealthLog('hard_recover_rebuild_done', { trigger: source });
             });
           };
           if (wx.nextTick) wx.nextTick(bindCameraContext);
           else setTimeout(bindCameraContext, 0);
         });
-      }, 120);
+      });
     });
   },
 
@@ -1277,11 +1577,19 @@ Page({
     if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
     if (!this.data.cameraContext) return;
     this.data.cameraContext.startRecord({
+      timeout: Math.max(12, Math.ceil(this.segmentDurationMs / 1000) + 2),
       success: () => {
         if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
+        const hadFailBefore = this.startRecordFailStreak > 0;
         this.startRecordFailStreak = 0;
         this.lastRecordStartAt = Date.now();
         this.setData({ isRecording: true });
+        if (hadFailBefore) {
+          this.appendHealthLog('segment_start_ok_recovered', { retryCount });
+        }
+        if (retryCount > 0) {
+          this.appendHealthLog('segment_start_ok_after_retry', { retryCount });
+        }
         if (this.segmentStopTimer) clearTimeout(this.segmentStopTimer);
         this.segmentStopTimer = setTimeout(() => {
           this.stopOneSegment(sessionId);
@@ -1290,6 +1598,10 @@ Page({
       fail: () => {
         if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
         this.startRecordFailStreak += 1;
+        this.appendHealthLog('segment_start_fail', {
+          retryCount,
+          failStreak: this.startRecordFailStreak
+        });
         // 关键修复：不能在少量失败后停止，否则 segmentCounter 会冻结，后续高光重复。
         const nextRetry = retryCount + 1;
         const delay = Math.min(1500, 220 + nextRetry * 140);
@@ -1577,6 +1889,10 @@ Page({
    * 不额外拍照封面，避免与录制并行增加相机压力与闪屏。
    */
   requestHighlightCapture: function() {
+    if (this.data.isRecovering || this._recoveryLock || !this._cameraInitDone) {
+      wx.showToast({ title: '相机恢复中，请稍后保存', icon: 'none' });
+      return;
+    }
     if (this.data.drawerMode > 0) {
       wx.showToast({ title: '请先关闭抽屉再保存高光', icon: 'none' });
       return;
@@ -2111,10 +2427,46 @@ Page({
     this.refreshDrawerHighlights();
   },
 
+  /**
+   * 进入回放前暂停滚动录制，降低 iOS 下 camera 与 video 并行造成的录制失败概率。
+   * @returns {void}
+   */
+  pauseRollingForReplay: function() {
+    if (this._rollingPausedForReplay) return;
+    this._rollingPausedForReplay = true;
+    this.appendHealthLog('replay_pause_rolling', {});
+    this.rollingActive = false;
+    this.rollingSessionId += 1;
+    this.stopRollingRecording(() => {
+      this.setData({ isRecording: false });
+    });
+  },
+
+  /**
+   * 退出回放后恢复滚动录制；仅在相机可用且非恢复流程中重启。
+   * @returns {void}
+   */
+  resumeRollingAfterReplay: function() {
+    if (!this._rollingPausedForReplay) return;
+    this._rollingPausedForReplay = false;
+    if (!this.data.liveStreamAllowed || this.data.isRecovering || this._recoveryLock) return;
+    if (!this.data.cameraMounted || !this.data.cameraContext || !this._cameraInitDone) {
+      this.appendHealthLog('replay_resume_need_recover', {});
+      this.hardRecoverLivePipeline('auto:resume_after_replay');
+      return;
+    }
+    this.appendHealthLog('replay_resume_rolling', {});
+    this.rollingActive = true;
+    this.rollingSessionId += 1;
+    this.startRecordFailStreak = 0;
+    this.tryStartRollingWhenCameraReady();
+  },
+
   startReplay: function(item) {
     const target = (item && item.replaySegment)
       || ((item && Array.isArray(item.segments) && item.segments[item.segments.length - 1]) ? item.segments[item.segments.length - 1] : '');
     if (!target) return;
+    this.pauseRollingForReplay();
 
     // 安全性检查：检查物理文件是否存在
     const fs = wx.getFileSystemManager();
@@ -2196,6 +2548,7 @@ Page({
     });
     setTimeout(() => {
       this.setData({ showReplayMask: false, replayMaskText: 'REPLAY', replayMaskKind: 'replay' });
+      this.resumeRollingAfterReplay();
     }, outroMs);
   },
 

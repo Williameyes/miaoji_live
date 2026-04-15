@@ -449,6 +449,32 @@ page {
   box-sizing: border-box;
 }
 
+/* 图标型按钮变体：收窄宽度，居中显示 mask 图标 */
+.replay-speed-btn--icon {
+  min-width: 44rpx;
+  padding: 0 11rpx;
+}
+
+/* 回放操作小图标：使用 CSS mask 渲染 SVG，颜色跟随父级半透明白 */
+.replay-icon {
+  width: 20rpx;
+  height: 20rpx;
+  flex-shrink: 0;
+  background-color: rgba(255, 255, 255, 0.5);
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+}
+
+/* 全屏还原图标（四角朝外箭头） */
+.replay-icon--fitscreen {
+  -webkit-mask-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iIzAwMCIgZD0iTTE1IDNsMi4zIDIuMy0yLjg5IDIuODcgMS40MiAxLjQyTDE4LjcgNi43IDIxIDlWM2gtNnpNMyA5bDIuMy0yLjMgMi44NyAyLjg5IDEuNDItMS40Mkw2LjcgNS4zIDkgM0gzdjZ6bTYgMTJsLTIuMy0yLjMgMi44OS0yLjg3LTEuNDItMS40Mkw1LjMgMTcuMyAzIDE1djZoNnptMTItNmwtMi4zIDIuMy0yLjg3LTIuODktMS40MiAxLjQyIDIuODkgMi44N0wxNSAyMWg2di02eiIvPjwvc3ZnPg==");
+  mask-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iIzAwMCIgZD0iTTE1IDNsMi4zIDIuMy0yLjg5IDIuODcgMS40MiAxLjQyTDE4LjcgNi43IDIxIDlWM2gtNnpNMyA5bDIuMy0yLjMgMi44NyAyLjg5IDEuNDItMS40Mkw2LjcgNS4zIDkgM0gzdjZ6bTYgMTJsLTIuMy0yLjMgMi44OS0yLjg3LTEuNDItMS40Mkw1LjMgMTcuMyAzIDE1djZoNnptMTItNmwtMi4zIDIuMy0yLjg3LTIuODktMS40MiAxLjQyIDIuODkgMi44N0wxNSAyMWg2di02eiIvPjwvc3ZnPg==");
+}
+
 /* 当前激活倍速：高亮白色 */
 .replay-speed-btn--active {
   color: #ffffff;
@@ -834,7 +860,7 @@ page {
   transform: translate(-50%, -50%) rotate(90deg);
 }
 
-/* 操作指南弹窗 (专业导播风格) */
+/* ══ 操作指南弹窗（毛玻璃深蓝卡片风格）══ */
 .guide-overlay {
   position: fixed;
   top: 0;
@@ -842,81 +868,190 @@ page {
   width: 100vw;
   height: 100vh;
   z-index: 500;
-  background: rgba(0, 0, 0, 0.7); /* 透明度调到 70 */
   display: flex;
   align-items: center;
   justify-content: center;
-  backdrop-filter: blur(10px);
+  background:
+    radial-gradient(ellipse 140% 90% at 25% 20%, rgba(37, 99, 235, 0.32), transparent 55%),
+    radial-gradient(ellipse 100% 80% at 80% 80%, rgba(16, 174, 255, 0.18), transparent 50%),
+    rgba(4, 8, 24, 0.84);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
 }
 
 .guide-card {
-  width: 85%;
-  max-height: 80vh;
-  background: rgba(30, 31, 35, 0.85);
-  border-radius: 24rpx;
-  padding: 32rpx;
+  width: 80%;
+  max-height: 88vh;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 30rpx;
+  border: 1rpx solid rgba(255, 255, 255, 0.16);
+  padding: 40rpx 36rpx 32rpx;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(20rpx);
   position: relative;
-  padding-left: calc(32rpx + env(safe-area-inset-left));
-  padding-right: calc(32rpx + env(safe-area-inset-right));
+  box-shadow: 0 20rpx 60rpx rgba(0, 0, 40, 0.55), inset 0 1rpx 0 rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding-left: calc(36rpx + env(safe-area-inset-left));
+  padding-right: calc(36rpx + env(safe-area-inset-right));
 }
 
 .guide-close {
   position: absolute;
-  top: 20rpx;
-  right: 20rpx;
+  top: 24rpx;
+  right: 24rpx;
   z-index: 10;
   width: 56rpx;
   height: 56rpx;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1.5rpx solid rgba(255, 255, 255, 0.28);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 34rpx;
+  font-size: 26rpx;
   line-height: 1;
-  color: #F5F5F7;
+  color: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* 标题区域 */
+.guide-title-bar {
+  margin-bottom: 28rpx;
+  padding-right: 68rpx;
+}
+
+.guide-main-title {
+  font-size: 32rpx;
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: 1rpx;
 }
 
 .guide-scroll {
   flex: 1;
-  max-height: 70vh;
+  max-height: 65vh;
 }
 
 .guide-list {
   display: flex;
   flex-direction: column;
-  padding-top: 10rpx;
+  padding-bottom: 8rpx;
 }
 
+/* 分区标题行（如 👉 得分操控） */
+.guide-section-header {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10rpx;
+  margin-bottom: 16rpx;
+  margin-top: 0;
+}
+
+.guide-section-header--mt {
+  margin-top: 28rpx;
+}
+
+.guide-section-emoji {
+  font-size: 26rpx;
+  line-height: 1;
+}
+
+.guide-section-title {
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #4ade80;
+  letter-spacing: 0.5rpx;
+}
+
+/* 操作条目行 */
 .guide-item {
   display: flex;
-  align-items: flex-start;
-  margin-bottom: 20rpx;
-  line-height: 1.8;
+  flex-direction: row;
+  align-items: baseline;
+  margin-bottom: 14rpx;
+  padding-left: 36rpx;
+  line-height: 1.7;
 }
 
-.guide-key {
+.guide-action {
   font-size: 22rpx;
-  font-weight: bold;
-  color: #5C9CF2;
+  font-weight: 600;
+  color: #fbbf24;
   white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.guide-sep {
+  font-size: 20rpx;
+  color: rgba(255, 255, 255, 0.35);
+  flex-shrink: 0;
+  margin: 0 6rpx;
 }
 
 .guide-desc {
   font-size: 20rpx;
-  color: #F5F5F7;
+  color: rgba(255, 255, 255, 0.82);
   flex: 1;
+  line-height: 1.7;
 }
 
-/* 移除不再需要的旧样式 */
-.guide-title, .guide-btn-container, .guide-confirm-btn {
+/* 兼容旧 class，避免残留节点可见 */
+.guide-key, .guide-title, .guide-btn-container, .guide-confirm-btn {
   display: none;
+}
+
+/* 横屏适配：缩小字号与内边距，避免卡片过高 */
+@media screen and (orientation: landscape) {
+  .guide-card {
+    width: 56%;
+    max-width: 680rpx;
+    min-width: 480rpx;
+    max-height: 90vh;
+    padding: 28rpx 30rpx 22rpx;
+    border-radius: 24rpx;
+  }
+
+  .guide-main-title {
+    font-size: 26rpx;
+    margin-bottom: 0;
+  }
+
+  .guide-title-bar {
+    margin-bottom: 20rpx;
+  }
+
+  .guide-section-title {
+    font-size: 20rpx;
+  }
+
+  .guide-section-header {
+    margin-bottom: 12rpx;
+  }
+
+  .guide-section-header--mt {
+    margin-top: 20rpx;
+  }
+
+  .guide-item {
+    margin-bottom: 10rpx;
+    padding-left: 28rpx;
+  }
+
+  .guide-action {
+    font-size: 18rpx;
+  }
+
+  .guide-sep {
+    font-size: 17rpx;
+  }
+
+  .guide-desc {
+    font-size: 17rpx;
+  }
 }
 
 /* ══════════════════════════════════════════
