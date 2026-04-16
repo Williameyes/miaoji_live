@@ -60,6 +60,22 @@ Page({
     highlightList: [],
     groupedHighlights: [],
 
+    /** 批量管理模式 */
+    batchMode: false,
+    /** 已选中片段 ID → true 映射（用于 WXML 快速判断） */
+    selectedIdsMap: {},
+    /** 已选中片段数量 */
+    selectedCount: 0,
+
+    /** 自定义播放器是否可见 */
+    showPlayer: false,
+    /** 播放列表（全部片段展平） */
+    playerList: [],
+    /** 当前播放索引 */
+    playerIndex: 0,
+    /** 页内播放器是否暂停（用于 UI 状态） */
+    playerPaused: false,
+
     defaultCover: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90" viewBox="0 0 160 90"><rect width="160" height="90" rx="12" ry="12" fill="%2322262f"/><path d="M66 58V32l28 13-28 13z" fill="%23ffffff" fill-opacity="0.75"/></svg>'
   },
 
@@ -392,79 +408,73 @@ Page({
     return ((r * 299 + g * 587 + b * 114) / 1000) >= 128 ? '#000000' : '#FFFFFF';
   },
 
+
   // ─────────────────────────────────────────────
-  // 高光录像管理（沿用原有逻辑）
+  // 高光录像管理
   // ─────────────────────────────────────────────
 
   /**
-   * 从 Storage 读取高光列表并按比赛场次唯一 ID 分组
+   * 从 Storage 读取高光列表并按比赛场次分组
    */
   loadHighlights() {
     const rawClips = wx.getStorageSync('MIAOXIE_CLIPS') || {};
     const rawMatches = wx.getStorageSync(STORAGE_KEY) || [];
-    
-    // 兼容旧版本：从全局 highlight_list 中提取未按 ID 归类的数据（如果需要）
     const legacyClips = wx.getStorageSync('highlight_list') || [];
-    
     const groupedList = [];
-    
-    // 遍历所有比赛场次，按 ID 提取高光
+
     rawMatches.forEach((match) => {
       const matchId = match.id;
       let matchClips = Array.isArray(rawClips[matchId]) ? rawClips[matchId] : [];
-      
-      // 兼容逻辑：如果该 matchId 在 MIAOXIE_CLIPS 中没找到，尝试从 legacyClips 中按 matchName 匹配（不推荐，仅作过渡）
       if (matchClips.length === 0 && match.matchName) {
-        matchClips = legacyClips.filter(c => c.matchId === matchId || (!c.matchId && c.matchName === match.matchName));
+        matchClips = legacyClips.filter(
+          (c) => c.matchId === matchId || (!c.matchId && c.matchName === match.matchName)
+        );
       }
-
       if (matchClips.length > 0) {
-        // 格式化场次标题：【日期】队名A VS 队名B
         const dateStr = this.formatDate(match.createdAt);
-        const matchTitle = `【${dateStr}】${match.teamA.name || 'A'} VS ${match.teamB.name || 'B'}`;
-        const scoreInfo = `${match.teamA.score} : ${match.teamB.score}`;
-
         groupedList.push({
           matchId: match.id,
-          matchTitle: matchTitle,
+          matchTitle: `【${dateStr}】${match.teamA.name || 'A'} VS ${match.teamB.name || 'B'}`,
           matchName: match.matchName,
-          scoreInfo: scoreInfo,
-          dateStr: dateStr,
-          videos: matchClips.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).map(v => ({
-            ...v,
-            timeText: v.timeText || this.formatTime(v.createdAt),
-            cover: v.cover || this.data.defaultCover,
-            videoPath: v.replaySegment || (v.segments && v.segments[0]) || ''
-          }))
+          scoreInfo: `${match.teamA.score} : ${match.teamB.score}`,
+          dateStr,
+          videos: matchClips
+            .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+            .map((v) => ({
+              ...v,
+              timeText: v.timeText || this.formatTime(v.createdAt),
+              cover: v.cover || this.data.defaultCover,
+              videoPath: v.replaySegment || (v.segments && v.segments[0]) || ''
+            }))
         });
       }
     });
 
-    // 还有一种情况：MIAOXIE_CLIPS 中有数据，但对应的比赛场次在 MIAOXIE_MATCHES 中被删除了
-    // 这些数据我们也应该显示出来，作为“历史遗留”分组
-    const matchIdsInList = rawMatches.map(m => m.id);
-    Object.keys(rawClips).forEach(id => {
+    const matchIdsInList = rawMatches.map((m) => m.id);
+    Object.keys(rawClips).forEach((id) => {
       if (!matchIdsInList.includes(id) && rawClips[id].length > 0) {
         const firstClip = rawClips[id][0];
         const dateStr = this.formatDate(firstClip.createdAt);
         groupedList.push({
           matchId: id,
           matchTitle: `【${dateStr}】${firstClip.matchName || '已删比赛'} (遗留)`,
-          videos: rawClips[id].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).map(v => ({
-            ...v,
-            timeText: v.timeText || this.formatTime(v.createdAt),
-            cover: v.cover || this.data.defaultCover,
-            videoPath: v.replaySegment || (v.segments && v.segments[0]) || ''
-          }))
+          videos: rawClips[id]
+            .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+            .map((v) => ({
+              ...v,
+              timeText: v.timeText || this.formatTime(v.createdAt),
+              cover: v.cover || this.data.defaultCover,
+              videoPath: v.replaySegment || (v.segments && v.segments[0]) || ''
+            }))
         });
       }
     });
 
-    this.setData({ 
-      highlightList: legacyClips, // 仅用于兼容性参考
+    this.setData({
+      highlightList: legacyClips,
       groupedHighlights: groupedList.sort((a, b) => {
-        const timeA = a.videos[0]?.createdAt || 0;
-        const timeB = b.videos[0]?.createdAt || 0;
+        const timeA = (a.videos[0] && a.videos[0].createdAt) || 0;
+        const timeB = (b.videos[0] && b.videos[0].createdAt) || 0;
         return timeB - timeA;
       })
     });
@@ -491,198 +501,367 @@ Page({
     return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   },
 
-  /** 一键清理所有高光 */
-  clearAllHighlights() {
-    if (this.data.groupedHighlights.length === 0) return;
-    wx.showModal({
-      title: '一键清理',
-      content: '确定要删除所有场次的高光片段吗？此操作不可撤销。',
-      confirmColor: '#E64340',
+  /**
+   * 在两个存储区查找指定 ID 的片段
+   * @param {string} id
+   * @returns {object|null}
+   */
+  findClipById(id) {
+    const clipsMap = wx.getStorageSync('MIAOXIE_CLIPS') || {};
+    for (const matchId in clipsMap) {
+      const item = clipsMap[matchId].find((x) => x.id === id);
+      if (item) return item;
+    }
+    const legacyList = wx.getStorageSync('highlight_list') || [];
+    return legacyList.find((x) => x.id === id) || null;
+  },
+
+  /**
+   * 将视频文件列表批量存入相册（含权限处理）
+   * @param {string[]} segments
+   * @param {Function} [onComplete]
+   */
+  doSaveToAlbum(segments, onComplete) {
+    const fs = wx.getFileSystemManager();
+    const valid = segments.filter((p) => {
+      try { fs.accessSync(p); return true; } catch (e) { return false; }
+    });
+    if (valid.length === 0) {
+      wx.showToast({ title: '无有效视频文件', icon: 'none' });
+      return;
+    }
+    const proceed = () => {
+      let saved = 0;
+      const saveNext = (i) => {
+        if (i >= valid.length) {
+          wx.showToast({ title: `已保存 ${saved} 个视频到相册`, icon: 'success' });
+          if (onComplete) onComplete();
+          return;
+        }
+        wx.saveVideoToPhotosAlbum({
+          filePath: valid[i],
+          success: () => { saved++; saveNext(i + 1); },
+          fail: () => saveNext(i + 1)
+        });
+      };
+      saveNext(0);
+    };
+    wx.getSetting({
       success: (res) => {
-        if (res.confirm) {
-          const fs = wx.getFileSystemManager();
-          
-          // 清理 MIAOXIE_CLIPS
-          const clipsMap = wx.getStorageSync('MIAOXIE_CLIPS') || {};
-          Object.values(clipsMap).forEach(matchClips => {
-            matchClips.forEach(item => {
-              (Array.isArray(item.segments) ? item.segments : []).forEach(p => {
-                try { fs.unlinkSync(p); } catch (e) {}
+        if (res.authSetting['scope.writePhotosAlbum']) {
+          proceed();
+        } else {
+          wx.authorize({
+            scope: 'scope.writePhotosAlbum',
+            success: proceed,
+            fail: () => {
+              wx.showModal({
+                title: '需要相册权限',
+                content: '请在设置中允许访问相册',
+                confirmText: '去设置',
+                success: (r) => { if (r.confirm) wx.openSetting({}); }
               });
-            });
+            }
           });
-          wx.setStorageSync('MIAOXIE_CLIPS', {});
-
-          // 清理 legacy highlight_list
-          const legacyList = wx.getStorageSync('highlight_list') || [];
-          legacyList.forEach(item => {
-            (Array.isArray(item.segments) ? item.segments : []).forEach(p => {
-              try { fs.unlinkSync(p); } catch (e) {}
-            });
-          });
-          wx.setStorageSync('highlight_list', []);
-
-          wx.showToast({ title: '清理完成', icon: 'success' });
-          this.loadHighlights();
         }
       }
     });
   },
 
+  // ─────────────────────────────────────────────
+  // 自定义播放器
+  // ─────────────────────────────────────────────
+
   /**
-   * 播放高光片段
+   * 点击片段：批量模式下切换选中，普通模式打开播放器
    * @param {WechatMiniprogram.TouchEvent} e
    */
-  playHighlight(e) {
-    const { id } = e.currentTarget.dataset;
-    const clipsMap = wx.getStorageSync('MIAOXIE_CLIPS') || {};
-    let item = null;
-    let foundMatchId = null;
-
-    // 先从 MIAOXIE_CLIPS 查找
-    for (const matchId in clipsMap) {
-      item = clipsMap[matchId].find(x => x.id === id);
-      if (item) {
-        foundMatchId = matchId;
-        break;
-      }
+  onHighlightItemTap(e) {
+    if (this.data.batchMode) {
+      this.onToggleSelect(e);
+    } else {
+      this.openPlayer(e);
     }
-
-    // 如果没找到，从 legacy highlight_list 查找
-    if (!item) {
-      const legacyList = wx.getStorageSync('highlight_list') || [];
-      item = legacyList.find(x => x.id === id);
-    }
-
-    if (!item || !item.segments || item.segments.length === 0) {
-      wx.showToast({ title: '视频信息不存在', icon: 'none' });
-      return;
-    }
-
-    // 安全性检查：检查物理文件是否存在
-    const fs = wx.getFileSystemManager();
-    const validSegments = item.segments.filter(p => {
-      try {
-        fs.accessSync(p);
-        return true;
-      } catch (e) {
-        return false;
-      }
-    });
-
-    if (validSegments.length === 0) {
-      wx.showModal({
-        title: '文件已移除',
-        content: '该视频文件已不存在，系统将自动清理无效记录。',
-        showCancel: false,
-        success: () => {
-          this.doDeleteHighlight(id);
-        }
-      });
-      return;
-    }
-
-    wx.previewMedia({ sources: validSegments.map((p) => ({ url: p, type: 'video' })) });
   },
 
   /**
-   * 长按删除高光
+   * 打开自定义播放器，构建全局片段列表并定位到所点击项
+   * @param {WechatMiniprogram.TouchEvent} e
+   */
+  openPlayer(e) {
+    const { id } = e.currentTarget.dataset;
+    const playerList = [];
+    this.data.groupedHighlights.forEach((group) => {
+      group.videos.forEach((v) => {
+        if (v.videoPath) {
+          playerList.push({
+            id: v.id,
+            videoPath: v.videoPath,
+            segments: Array.isArray(v.segments) ? v.segments : [v.videoPath],
+            timeText: v.timeText || '',
+            matchTitle: group.matchTitle || '',
+            cover: v.cover || this.data.defaultCover
+          });
+        }
+      });
+    });
+    const index = playerList.findIndex((x) => x.id === id);
+    if (index < 0) {
+      wx.showToast({ title: '视频文件不存在', icon: 'none' });
+      return;
+    }
+    this.setData({ showPlayer: true, playerList, playerIndex: index, playerPaused: false });
+  },
+
+  /** 关闭播放器面板 */
+  closePlayer() {
+    this.setData({ showPlayer: false, playerList: [], playerIndex: 0, playerPaused: false });
+  },
+
+  /**
+   * 播放器点击：切换暂停/播放
+   * @returns {void}
+   */
+  playerTogglePlay() {
+    const ctx = wx.createVideoContext('indexPlayerVideo', this);
+    if (this.data.playerPaused) {
+      ctx.play();
+      this.setData({ playerPaused: false });
+    } else {
+      ctx.pause();
+      this.setData({ playerPaused: true });
+    }
+  },
+
+  /**
+   * 当前视频播放结束后自动切换到下一段
+   * @returns {void}
+   */
+  onPlayerVideoEnded() {
+    if (this.data.playerIndex < this.data.playerList.length - 1) {
+      this.setData({ playerIndex: this.data.playerIndex + 1, playerPaused: false });
+      return;
+    }
+    this.setData({ playerPaused: true });
+  },
+
+  /**
+   * 触摸开始，记录起始坐标用于滑动判断
+   * @param {WechatMiniprogram.TouchEvent} e
+   */
+  onPlayerTouchStart(e) {
+    this._swipeStartX = e.touches[0].clientX;
+    this._swipeStartY = e.touches[0].clientY;
+  },
+
+  /**
+   * 触摸结束，判断水平滑动方向并切换片段
+   * @param {WechatMiniprogram.TouchEvent} e
+   */
+  onPlayerTouchEnd(e) {
+    const dx = e.changedTouches[0].clientX - (this._swipeStartX || 0);
+    const dy = e.changedTouches[0].clientY - (this._swipeStartY || 0);
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      if (dx < 0) {
+        this.playerNext();
+      } else {
+        this.playerPrev();
+      }
+    }
+  },
+
+  /** 切换到上一片段 */
+  playerPrev() {
+    if (this.data.playerIndex > 0) {
+      this.setData({ playerIndex: this.data.playerIndex - 1, playerPaused: false });
+    }
+  },
+
+  /** 切换到下一片段 */
+  playerNext() {
+    if (this.data.playerIndex < this.data.playerList.length - 1) {
+      this.setData({ playerIndex: this.data.playerIndex + 1, playerPaused: false });
+    }
+  },
+
+  /** 播放器内删除当前片段 */
+  playerDelete() {
+    const item = this.data.playerList[this.data.playerIndex];
+    if (!item) return;
+    wx.showModal({
+      title: '删除片段',
+      content: '确定要删除这段高光视频吗？',
+      confirmColor: '#E64340',
+      success: (res) => {
+        if (!res.confirm) return;
+        this.doDeleteHighlight(item.id, true);
+        const newList = this.data.playerList.filter((x) => x.id !== item.id);
+        if (newList.length === 0) {
+          this.closePlayer();
+          return;
+        }
+        const newIndex = Math.min(this.data.playerIndex, newList.length - 1);
+        this.setData({ playerList: newList, playerIndex: newIndex, playerPaused: false });
+        wx.showToast({ title: '已删除', icon: 'success' });
+      }
+    });
+  },
+
+  /** 播放器内下载当前片段到相册 */
+  playerDownload() {
+    const item = this.data.playerList[this.data.playerIndex];
+    if (!item) return;
+    this.doSaveToAlbum(item.segments);
+  },
+
+  /** 播放器内下载并删除当前片段 */
+  playerDownloadAndDelete() {
+    const item = this.data.playerList[this.data.playerIndex];
+    if (!item) return;
+    this.doSaveToAlbum(item.segments, () => {
+      this.doDeleteHighlight(item.id, true);
+      const newList = this.data.playerList.filter((x) => x.id !== item.id);
+      if (newList.length === 0) {
+        this.closePlayer();
+        return;
+      }
+      const newIndex = Math.min(this.data.playerIndex, newList.length - 1);
+      this.setData({ playerList: newList, playerIndex: newIndex, playerPaused: false });
+    });
+  },
+
+  // ─────────────────────────────────────────────
+  // 批量管理
+  // ─────────────────────────────────────────────
+
+  /** 切换批量管理模式 */
+  toggleBatchMode() {
+    if (this.data.batchMode) {
+      this.setData({ batchMode: false, selectedIdsMap: {}, selectedCount: 0 });
+    } else {
+      this.setData({ batchMode: true, selectedIdsMap: {}, selectedCount: 0 });
+    }
+  },
+
+  /**
+   * 切换单个片段的选中状态
+   * @param {WechatMiniprogram.TouchEvent} e
+   */
+  onToggleSelect(e) {
+    const { id } = e.currentTarget.dataset;
+    const map = Object.assign({}, this.data.selectedIdsMap);
+    if (map[id]) {
+      delete map[id];
+    } else {
+      map[id] = true;
+    }
+    this.setData({ selectedIdsMap: map, selectedCount: Object.keys(map).length });
+  },
+
+  /** 批量删除选中片段 */
+  batchDelete() {
+    const ids = Object.keys(this.data.selectedIdsMap);
+    if (ids.length === 0) {
+      wx.showToast({ title: '请先选择片段', icon: 'none' });
+      return;
+    }
+    wx.showModal({
+      title: `删除 ${ids.length} 个片段`,
+      content: '确定要永久删除选中的高光视频吗？此操作不可撤销。',
+      confirmColor: '#E64340',
+      success: (res) => {
+        if (!res.confirm) return;
+        ids.forEach((id) => this.doDeleteHighlight(id, true));
+        wx.showToast({ title: `已删除 ${ids.length} 个片段`, icon: 'success' });
+        this.setData({ batchMode: false, selectedIdsMap: {}, selectedCount: 0 });
+        this.loadHighlights();
+      }
+    });
+  },
+
+  /** 批量下载选中片段到相册 */
+  batchDownload() {
+    const ids = Object.keys(this.data.selectedIdsMap);
+    if (ids.length === 0) {
+      wx.showToast({ title: '请先选择片段', icon: 'none' });
+      return;
+    }
+    const allSegments = [];
+    ids.forEach((id) => {
+      const item = this.findClipById(id);
+      if (item && Array.isArray(item.segments)) {
+        allSegments.push(...item.segments);
+      }
+    });
+    this.doSaveToAlbum(allSegments, () => {
+      this.setData({ batchMode: false, selectedIdsMap: {}, selectedCount: 0 });
+    });
+  },
+
+  /**
+   * 长按片段：单独删除（批量模式下忽略）
    * @param {WechatMiniprogram.TouchEvent} e
    */
   onDeleteHighlight(e) {
+    if (this.data.batchMode) return;
     const { id } = e.currentTarget.dataset;
     wx.showModal({
       title: '删除高光',
       content: '确定要永久删除这段高光视频吗？',
       confirmColor: '#E64340',
       success: (res) => {
-        if (res.confirm) {
-          this.doDeleteHighlight(id);
-        }
+        if (res.confirm) this.doDeleteHighlight(id);
       }
     });
   },
 
-  /** 真正执行删除逻辑（复用） */
-  doDeleteHighlight(id) {
+  /**
+   * 执行删除（复用）
+   * @param {string} id 片段 ID
+   * @param {boolean} [silent] true 时不弹 Toast、不刷新列表（批量/播放器操作时使用）
+   */
+  doDeleteHighlight(id, silent) {
     const fs = wx.getFileSystemManager();
-    
-    // 1. 处理 MIAOXIE_CLIPS
     const clipsMap = wx.getStorageSync('MIAOXIE_CLIPS') || {};
     let foundInClips = false;
     for (const matchId in clipsMap) {
-      const idx = clipsMap[matchId].findIndex(x => x.id === id);
+      const idx = clipsMap[matchId].findIndex((x) => x.id === id);
       if (idx >= 0) {
         const item = clipsMap[matchId][idx];
-        (item.segments || []).forEach(p => { try { fs.unlinkSync(p); } catch (e) {} });
+        (item.segments || []).forEach((p) => { try { fs.unlinkSync(p); } catch (e) {} });
         clipsMap[matchId].splice(idx, 1);
         foundInClips = true;
         break;
       }
     }
-    if (foundInClips) {
-      wx.setStorageSync('MIAOXIE_CLIPS', clipsMap);
-    }
+    if (foundInClips) wx.setStorageSync('MIAOXIE_CLIPS', clipsMap);
 
-    // 2. 处理 legacy highlight_list
     const legacyList = wx.getStorageSync('highlight_list') || [];
-    const legacyIdx = legacyList.findIndex(x => x.id === id);
+    const legacyIdx = legacyList.findIndex((x) => x.id === id);
     if (legacyIdx >= 0) {
       const item = legacyList[legacyIdx];
-      (item.segments || []).forEach(p => { try { fs.unlinkSync(p); } catch (e) {} });
+      (item.segments || []).forEach((p) => { try { fs.unlinkSync(p); } catch (e) {} });
       legacyList.splice(legacyIdx, 1);
       wx.setStorageSync('highlight_list', legacyList);
     }
 
-    wx.showToast({ title: '已删除', icon: 'success' });
-    this.loadHighlights();
+    if (!silent) {
+      wx.showToast({ title: '已删除', icon: 'success' });
+      this.loadHighlights();
+    }
   },
 
   /**
-   * 下载高光到相册
+   * 单独下载指定片段到相册（点击下载按钮）
    * @param {WechatMiniprogram.TouchEvent} e
    */
   onDownloadHighlight(e) {
     const { id } = e.currentTarget.dataset;
-    const list = Array.isArray(wx.getStorageSync('highlight_list'))
-      ? wx.getStorageSync('highlight_list') : [];
-    const item = list.find((x) => x.id === id);
-    const segments = item && Array.isArray(item.segments) ? item.segments : [];
-    if (segments.length === 0) return;
-
-    wx.getSetting({
-      success: (res) => {
-        const hasAuth = !!res.authSetting['scope.writePhotosAlbum'];
-        const doSave = () => {
-          const saveNext = (i) => {
-            if (i >= segments.length) {
-              wx.showToast({ title: '已保存到相册', icon: 'success' });
-              return;
-            }
-            wx.saveVideoToPhotosAlbum({
-              filePath: segments[i],
-              success: () => saveNext(i + 1),
-              fail: () => wx.showToast({ title: '保存失败', icon: 'none' })
-            });
-          };
-          saveNext(0);
-        };
-
-        if (hasAuth) { doSave(); return; }
-
-        wx.authorize({
-          scope: 'scope.writePhotosAlbum',
-          success: doSave,
-          fail: () => {
-            wx.showModal({
-              title: '需要相册权限',
-              content: '请在系统设置中允许保存到相册。',
-              confirmText: '去设置',
-              success: (r) => { if (r.confirm) wx.openSetting({}); }
-            });
-          }
-        });
-      }
-    });
+    const item = this.findClipById(id);
+    if (!item || !Array.isArray(item.segments) || item.segments.length === 0) {
+      wx.showToast({ title: '无可下载文件', icon: 'none' });
+      return;
+    }
+    this.doSaveToAlbum(item.segments);
   }
 });

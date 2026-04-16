@@ -276,17 +276,18 @@
     </view>
   </view>
 
-  <!-- Level 3: 操作指南弹窗（毛玻璃深蓝卡片风格） -->
+  <!-- Level 3: 操作指南弹窗（毛玻璃深色双列布局） -->
   <view class="guide-overlay" wx:if="{{showGuide}}" catchtouchmove="noop">
     <view class="guide-card" catchtap="noop">
-      <view class="guide-close" bindtap="dismissGuide">✕</view>
       <view class="guide-title-bar">
-        <text class="guide-main-title">快速上手指南</text>
+        <text class="guide-main-title">快速上手</text>
       </view>
-      <scroll-view scroll-y class="guide-scroll">
-        <view class="guide-list">
 
-          <!-- 得分操控 -->
+      <!-- 双列内容区 -->
+      <view class="guide-columns">
+
+        <!-- 左列：得分操控 -->
+        <view class="guide-col">
           <view class="guide-section-header">
             <text class="guide-section-emoji">👉</text>
             <text class="guide-section-title">得分操控</text>
@@ -299,37 +300,57 @@
           <view class="guide-item">
             <text class="guide-action">长按队名</text>
             <text class="guide-sep">：</text>
-            <text class="guide-desc">连续得分模式</text>
+            <text class="guide-desc">连续得分</text>
           </view>
           <view class="guide-item">
             <text class="guide-action">单击得分</text>
             <text class="guide-sep">：</text>
             <text class="guide-desc">得 -1 分</text>
           </view>
+        </view>
 
-          <!-- 录制与回放 -->
-          <view class="guide-section-header guide-section-header--mt">
+        <!-- 分隔线 -->
+        <view class="guide-divider-v"></view>
+
+        <!-- 右列：录制与回放 -->
+        <view class="guide-col">
+          <view class="guide-section-header">
             <text class="guide-section-emoji">🎥</text>
             <text class="guide-section-title">录制与回放</text>
           </view>
           <view class="guide-item">
             <text class="guide-action">保存片段</text>
             <text class="guide-sep">：</text>
-            <text class="guide-desc">单击 REC 按钮</text>
+            <text class="guide-desc">单击 REC</text>
           </view>
           <view class="guide-item">
             <text class="guide-action">恢复相机</text>
             <text class="guide-sep">：</text>
-            <text class="guide-desc">长按 REC 按钮</text>
+            <text class="guide-desc">长按 REC</text>
           </view>
           <view class="guide-item">
             <text class="guide-action">查看回放</text>
             <text class="guide-sep">：</text>
-            <text class="guide-desc">长按空白处 / 点击缩略图</text>
+            <text class="guide-desc">长按空白处</text>
           </view>
-
         </view>
-      </scroll-view>
+
+      </view>
+
+      <!-- 分隔线 -->
+      <view class="guide-full-divider"></view>
+
+      <!-- 全宽补充项 -->
+      <view class="guide-item guide-item-full">
+        <text class="guide-action">长按空白处</text>
+        <text class="guide-sep">：</text>
+        <text class="guide-desc">查看回放 / 切换场次 / 返回列表</text>
+      </view>
+
+      <!-- 关闭按钮（居中底部） -->
+      <view class="guide-close-bar">
+        <view class="guide-close" bindtap="dismissGuide">关闭</view>
+      </view>
     </view>
   </view>
 
@@ -341,6 +362,10 @@
 
     <!-- 左侧：比赛卡片列表（与右侧高光缩略图完全一致的矩形） -->
     <view class="left-drawer" catchtap="stopLeftDrawerBubbling">
+      <!-- 场次计数标题 -->
+      <view class="clip-count-bar">
+        <text class="clip-count-label">场次：{{matchCount}}</text>
+      </view>
       <view class="match-list-view">
         <scroll-view 
           scroll-y 
@@ -364,8 +389,12 @@
       </view>
     </view>
 
-    <!-- 右侧：高光缩略图（与原有样式完全一致） -->
+    <!-- 右侧：高光缩略图 -->
     <view class="drawer-panel" catchtap="stopDrawerBubbling">
+      <!-- 片段计数标题 -->
+      <view class="clip-count-bar">
+        <text class="clip-count-label">片段：{{highlightCount}}</text>
+      </view>
       <view class="clip-list-view">
         <scroll-view 
           scroll-y 
@@ -382,13 +411,27 @@
             bindlongpress="onDeleteHighlight"
             data-id="{{item.id}}"
           >
+            <!-- 封面图 -->
             <image
+              wx:if="{{item.hasRealCover}}"
               class="drawer-cover"
               mode="aspectFill"
               src="{{item.thumbSrc || item.cover || defaultCover}}"
               binderror="onDrawerImageError"
               data-id="{{item.id}}"
             ></image>
+            <!-- 左上：序号角标（弱化） -->
+            <text class="clip-index-badge">#{{item.clipIndex}}</text>
+            <!-- 右上：播放示意 -->
+            <view class="clip-play-btn">▶</view>
+            <!-- 正中：比分（无队名） -->
+            <view class="clip-score-center">
+              <text class="clip-score-digit" style="color: {{item.colorA}};">{{item.scoreA}}</text>
+              <text class="clip-score-colon">:</text>
+              <text class="clip-score-digit" style="color: {{item.colorB}};">{{item.scoreB}}</text>
+            </view>
+            <!-- 左下：时间 -->
+            <text class="clip-time-bl">{{item.timeText}}</text>
           </view>
         </scroll-view>
       </view>

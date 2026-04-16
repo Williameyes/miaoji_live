@@ -40,6 +40,8 @@ Page({
     drawerMode: 0,
     /** 左侧比赛管理列表数据 */
     matchList: [],
+    /** 场次总数（用于左侧抽屉顶部统计显示）。 */
+    matchCount: 0,
     /** 颜色设置浮层：是否可见 */
     showColorModal: false,
     /** 颜色设置浮层：当前操作的比赛数据 */
@@ -53,7 +55,9 @@ Page({
       '#DB2777', '#E11D48', '#F43F5E', '#FFFFFF', '#E2E8F0', '#94A3B8', '#475569', '#000000'
     ],
     drawerHighlights: [],
-    defaultCover: 'data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"160\" height=\"90\" viewBox=\"0 0 160 90\"><rect width=\"160\" height=\"90\" rx=\"12\" ry=\"12\" fill=\"%2322262f\"/><path d=\"M66 58V32l28 13-28 13z\" fill=\"%23ffffff\" fill-opacity=\"0.75\"/></svg>',
+    /** 当前场次高光片段总数（用于抽屉顶部统计显示）。 */
+    highlightCount: 0,
+    defaultCover: 'data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"160\" height=\"90\" viewBox=\"0 0 160 90\"><defs><linearGradient id=\"g\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"%2338475e\"/><stop offset=\"100%\" stop-color=\"%23202a3c\"/></linearGradient></defs><rect width=\"160\" height=\"90\" rx=\"12\" ry=\"12\" fill=\"url(%23g)\"/></svg>',
 
     showReplayMask: false,
     replayMaskText: 'REPLAY',
@@ -410,15 +414,11 @@ Page({
 
     wx.getSetting({
       success: (res) => {
-        if (!res.authSetting['scope.camera'] || !res.authSetting['scope.record']) {
-          wx.authorize({
-            scope: 'scope.camera',
-            success: () => {
-              wx.authorize({ scope: 'scope.record' });
-            }
-          });
-        }
+        const hasRecord = !!res.authSetting['scope.record'];
         const albumScope = res.authSetting['scope.writePhotosAlbum'];
+        if (!hasRecord) {
+          wx.authorize({ scope: 'scope.record', fail: () => {} });
+        }
         if (albumScope !== true && albumScope === undefined) {
           wx.authorize({ scope: 'scope.writePhotosAlbum', fail: () => {} });
         }
@@ -2667,6 +2667,13 @@ Page({
    */
   buildIndexedHighlightItem: function(pending, segments) {
     const replaySegment = segments[segments.length - 1] || segments[0] || '';
+    const mc = this.data.matchConfig;
+    const scoreA = mc && mc.teamA ? Number(mc.teamA.score || 0) : 0;
+    const scoreB = mc && mc.teamB ? Number(mc.teamB.score || 0) : 0;
+    const nameA = (mc && mc.teamA && mc.teamA.name) ? mc.teamA.name : 'A';
+    const nameB = (mc && mc.teamB && mc.teamB.name) ? mc.teamB.name : 'B';
+    const colorA = (mc && mc.teamA && mc.teamA.bgColor) ? mc.teamA.bgColor : '#E64340';
+    const colorB = (mc && mc.teamB && mc.teamB.bgColor) ? mc.teamB.bgColor : '#10AEFF';
     return {
       id: pending.id,
       matchName: pending.matchName,
@@ -2678,7 +2685,13 @@ Page({
       replaySegment,
       replayInitialTimeSec: Number(pending.replayInitialTimeSec || 0),
       replayUseChain: !!pending.replayUseChain && segments.length >= 2,
-      status: 'indexed'
+      status: 'indexed',
+      scoreA,
+      scoreB,
+      nameA,
+      nameB,
+      colorA,
+      colorB
     };
   },
 
@@ -3060,7 +3073,7 @@ Page({
     const raw = wx.getStorageSync('MIAOXIE_MATCHES');
     const matches = Array.isArray(raw) ? raw : [];
     const matchList = matches.map((m) => ({ ...m, isCurrent: m.id === currentMatchId }));
-    this.setData({ matchList });
+    this.setData({ matchList, matchCount: matchList.length });
   },
 
   /**
@@ -3225,20 +3238,32 @@ Page({
 
   refreshDrawerHighlights: function() {
     const currentMatchId = wx.getStorageSync('currentMatchId') || app.globalData.currentMatchId || '';
-    const list = this.getHighlightList(currentMatchId).slice(0, 50);
-    const drawerHighlights = list.map((it) => {
-      const dc = this.data.defaultCover;
+    const fullList = this.getHighlightList(currentMatchId);
+    const total = fullList.length;
+    const list = fullList.slice(0, 50);
+    const dc = this.data.defaultCover;
+    const drawerHighlights = list.map((it, idx) => {
       const rawCover = it && it.cover ? it.cover : '';
-      const thumbSrc = rawCover && rawCover !== dc ? rawCover : dc;
+      const hasRealCover = !!(rawCover && rawCover !== dc);
+      const thumbSrc = hasRealCover ? rawCover : '';
       return {
         id: it.id,
         cover: rawCover || dc,
         thumbSrc,
+        hasRealCover,
         replayInitialTimeSec: typeof it.replayInitialTimeSec === 'number' ? it.replayInitialTimeSec : 0,
-        needsCover: (!rawCover || rawCover === dc)
+        needsCover: (!rawCover || rawCover === dc),
+        timeText: it.timeText || '',
+        scoreA: typeof it.scoreA === 'number' ? it.scoreA : 0,
+        scoreB: typeof it.scoreB === 'number' ? it.scoreB : 0,
+        nameA: it.nameA || 'A',
+        nameB: it.nameB || 'B',
+        colorA: it.colorA || '#E64340',
+        colorB: it.colorB || '#10AEFF',
+        clipIndex: total - idx
       };
     });
-    this.setData({ drawerHighlights });
+    this.setData({ drawerHighlights, highlightCount: total });
   },
 
   onDrawerImageError: function(e) {
