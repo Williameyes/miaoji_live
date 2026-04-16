@@ -20,8 +20,11 @@ Page({
     /** 强制 camera 组件重建的渲染序号（每次重建 +1）。 */
     cameraRenderNonce: 0,
     isRecovering: false,
+    /** 硬恢复相机卸载间隙：静态遮罩（无 Toast、无循环 video），减轻黑屏与推流观感问题。 */
+    showRecoveryVeil: false,
+    recoveryVeilSrc: '',
     pipelineHealth: 'ok',
-    opsControlText: 'OK',
+    opsControlText: 'PAUSE',
     opsControlActionable: false,
     opsControlAck: false,
     /** 恢复圆环进度 0–100，与 recoveryConicEndDeg 同步供 conic-gradient 使用 */
@@ -364,10 +367,28 @@ Page({
   onVipGateCatchMove: function() {},
 
   /**
+   * 恢复遮罩层吞掉触摸移动，避免穿透到计分手势。
+   * @returns {void}
+   */
+  noopCatchMove: function() {},
+
+  /**
    * 阻止卡片内点击冒泡到根（预留）。
    * @returns {void}
    */
   stopVipGateInnerBubble: function() {},
+
+  /**
+   * 标记为“仅允许长按重启”的故障态，禁止状态灯单击动作。
+   * @param {string} reason
+   * @returns {void}
+   */
+  markNeedManualRelaunch: function(reason) {
+    if (this._needManualRelaunch) return;
+    this._needManualRelaunch = true;
+    this.appendHealthLog('manual_relaunch_required', { reason: reason || 'unknown' });
+    this.updatePipelineHealth();
+  },
 
   /**
    * onShow 中在权益通过后执行的相机与滚动分段恢复逻辑。
@@ -396,6 +417,10 @@ Page({
               wx.authorize({ scope: 'scope.record' });
             }
           });
+        }
+        const albumScope = res.authSetting['scope.writePhotosAlbum'];
+        if (albumScope !== true && albumScope === undefined) {
+          wx.authorize({ scope: 'scope.writePhotosAlbum', fail: () => {} });
         }
       }
     });
@@ -431,7 +456,11 @@ Page({
         this.tryStartRollingWhenCameraReady();
       }, 1800);
     };
-    this.stopRollingRecording(kickoffRolling);
+    this.stopRollingRecording(() => {
+      this.ensureRollingDir()
+        .then(() => this.clearStaleRollingFiles())
+        .finally(() => kickoffRolling());
+    });
     if (this.data.drawerMode === 1) {
       this.refreshDrawerHighlights();
     }
@@ -454,6 +483,8 @@ Page({
   highlightPlaybackWindowMs: 8000,
   /** stopRecord 完成后再启动下一段 startRecord / 相机重启前的冷却（毫秒），硬件隔离硬约束 */
   recordCooldownAfterStopMs: 500,
+  /** 高光点击后执行 stopRecord 的最小时长门槛（毫秒），避免刚起录即 stop 在部分机型失败 */
+  minRecordMsBeforeHighlightStop: 1300,
   segmentStopTimer: null,
   rollingWatchdogTimer: null,
   segmentCounter: 0,
@@ -481,6 +512,8 @@ Page({
   _highlightSaveSessionId: 0,
   _highlightResumeGuardTimer: null,
   _highlightSaveHardTimeoutTimer: null,
+  _highlightDeferredStopTimer: null,
+  _highlightRequestLock: false,
   segmentBuffer: [],
   rollingActive: false,
   rollingSessionId: 0,
@@ -501,6 +534,20 @@ Page({
   replayOutroDurationMs: 720,
   /** 连续高光未命中计数；用于触发自动硬恢复。 */
   highlightMissStreak: 0,
+  /** 连续高光落盘失败计数；用于触发录制管线自恢复。 */
+  highlightCopyFailStreak: 0,
+  /** 连续 segment 持久化失败计数；超过阈值说明当前页实例已失稳。 */
+  segmentPersistFailStreak: 0,
+  /** 高光异步固化任务队列。 */
+  highlightMaterializeQueue: [],
+  /** 高光异步固化执行中标记。 */
+  highlightMaterializeRunning: false,
+  /** 存储水位级别：0/70/85/95。 */
+  storageWatermarkLevel: 0,
+  /** 高光实体最大保留条数（>=30 条实战需求；超出淘汰最旧项）。 */
+  highlightsMaxCount: 100,
+  /** startRecord 连续失败风暴计数（每次达到 failStreak=5 记 1 次）。 */
+  segmentStartFailStormCycles: 0,
 
   onLoad: function() {
     /** 相机 bindinitdone 完成前禁止 startRecord，否则部分机型预览一直黑屏 */
@@ -532,6 +579,28 @@ Page({
     /** 相机重建锁，避免短时多次重建触发 “can insert only one camera”。 */
     this._cameraRebuildLock = false;
     this._cameraRebuildQueue = [];
+    /** 最近一次硬恢复时间戳：防止短时连点/连错触发恢复风暴。 */
+    this._lastHardRecoverAt = 0;
+    /** 硬恢复最小间隔（毫秒）。 */
+    this._hardRecoverMinGapMs = 2200;
+    /** insertCamera 冲突后的自动恢复冷静期截止时间。 */
+    this._insertCameraRecoverCooldownUntil = 0;
+    /** camera 组件重建额外延迟（毫秒），在 insertCamera 冲突后动态抬高。 */
+    this._cameraRebuildExtraDelayMs = 0;
+    /** insertCamera 冲突连续计数。 */
+    this._insertCameraErrorStreak = 0;
+    /** insertCamera 冲突后单次延迟重试定时器。 */
+    this._insertCameraRetryTimer = null;
+    /** insertCamera 冲突恢复进行中标记，避免并发恢复。 */
+    this._insertConflictRecovering = false;
+    this.segmentPersistFailStreak = 0;
+    this.segmentStartFailStormCycles = 0;
+    /** 当前是否进入“仅允许长按重启”故障态。 */
+    this._needManualRelaunch = false;
+    /** 状态灯长按重启计时器（比默认 longpress 更长）。 */
+    this._relaunchPressTimer = null;
+    /** 最近一次 camera 卸载时间戳（用于重挂前等待）。 */
+    this._lastCameraUnmountAt = 0;
     /** 回放期间是否已主动暂停滚动录制。 */
     this._rollingPausedForReplay = false;
     /** 当前 rolling 段开始录制的墙钟时间（ms），用于高光逻辑起播偏移 */
@@ -545,6 +614,12 @@ Page({
     this._replayPrimedSlot1 = false;
     /** 链式回放：待置顶兜底定时器 */
     this._replayPendingFallbackTimer = null;
+    /** 回放转场定时器：用于中断/反复回放时统一清理，避免定时任务堆积 */
+    this._replayStartTimer = null;
+    this._replayMaskHideTimer = null;
+    this._replayOutroTimer = null;
+    this._replayPrimeTimerA = null;
+    this._replayPrimeTimerB = null;
     this.initHealthLogs();
 
     this.syncMatchConfigFromPageSources();
@@ -686,6 +761,8 @@ Page({
    * @returns {void}
    */
   beginHighlightSaving: function() {
+    if (this._highlightRequestLock) return;
+    this._highlightRequestLock = true;
     if (this.data.isSavingHighlight) return;
     this.setData({ isSavingHighlight: true });
     if (this._highlightSaveHardTimeoutTimer) {
@@ -707,6 +784,7 @@ Page({
    * @returns {void}
    */
   endHighlightSaving: function() {
+    this._highlightRequestLock = false;
     if (this.data.isSavingHighlight) {
       this.setData({ isSavingHighlight: false });
     }
@@ -728,6 +806,10 @@ Page({
     if (this._highlightResumeGuardTimer) {
       clearTimeout(this._highlightResumeGuardTimer);
       this._highlightResumeGuardTimer = null;
+    }
+    if (this._highlightDeferredStopTimer) {
+      clearTimeout(this._highlightDeferredStopTimer);
+      this._highlightDeferredStopTimer = null;
     }
     this._highlightAfterStopMeta = null;
   },
@@ -754,6 +836,34 @@ Page({
     const hm = this._highlightAfterStopMeta;
     if (!hm || hm.recordSessionId !== sessionId) return;
     this.appendHealthLog('highlight_after_stop_abort', { reason });
+    if (reason === 'stop_record_fail' || reason === 'empty_temp_path') {
+      const fallback = this.pickLatestRollingEntry();
+      if (fallback && fallback.path) {
+        this.finalizeHighlight({
+          id: hm.id,
+          createdAt: hm.createdAt,
+          startSegNo: hm.startSegNo,
+          matchName: hm.matchName,
+          matchId: hm.matchId,
+          cover: hm.cover,
+          finalizing: false,
+          sourceSegNo: fallback.segNo,
+          preSegments: [fallback.path],
+          postSegments: [],
+          replayInitialTimeSec: 0,
+          replayUseChain: false
+        });
+        this._highlightAfterStopMeta = null;
+        return;
+      }
+    }
+    if (reason === 'segment_persist_fail') {
+      this.segmentPersistFailStreak = (this.segmentPersistFailStreak || 0) + 1;
+      if (this.segmentPersistFailStreak >= 3) {
+        this.segmentPersistFailStreak = 0;
+        this.markNeedManualRelaunch('segment_persist_fail_streak');
+      }
+    }
     this.clearHighlightSavePipelineState();
     this.endHighlightSaving();
   },
@@ -783,7 +893,7 @@ Page({
         this._recoveryFailSafeTimer = null;
       }
       this.stopRecoveryProgressAnim(true);
-      this.setData({ isRecovering: false });
+      this.setData({ isRecovering: false, showRecoveryVeil: false });
       this._recoveryLock = false;
       if (this._manualRecoveryPendingAck) {
         this._manualRecoveryPendingAck = false;
@@ -792,6 +902,21 @@ Page({
       this.updatePipelineHealth();
     }
     this._cameraFaultStreak = 0;
+    this._insertCameraErrorStreak = 0;
+    this._cameraRebuildExtraDelayMs = 0;
+    this._insertCameraRecoverCooldownUntil = 0;
+    this._insertConflictRecovering = false;
+    this.segmentStartFailStormCycles = 0;
+    this._needManualRelaunch = false;
+    if (this._insertCameraRetryTimer) {
+      clearTimeout(this._insertCameraRetryTimer);
+      this._insertCameraRetryTimer = null;
+    }
+    if (this._relaunchPressTimer) {
+      clearTimeout(this._relaunchPressTimer);
+      this._relaunchPressTimer = null;
+    }
+    this._insertConflictRecovering = false;
     this.appendHealthLog('camera_init', { maxZoom: maxZoom });
     this.tryStartRollingWhenCameraReady();
   },
@@ -817,6 +942,55 @@ Page({
     const detail = (e && e.detail) || {};
     const errMsg = detail && detail.errMsg ? String(detail.errMsg) : '';
     this.appendHealthLog('camera_error', { errMsg });
+    const lower = errMsg.toLowerCase();
+    const isInsertConflict =
+      lower.indexOf('can insert only one camera') >= 0
+      || lower.indexOf('insertcamera:fail') >= 0;
+    if (isInsertConflict) {
+      this._insertCameraErrorStreak = (this._insertCameraErrorStreak || 0) + 1;
+      const now = Date.now();
+      const currentExtra = this._cameraRebuildExtraDelayMs || 0;
+      this._cameraRebuildExtraDelayMs = Math.min(2200, Math.max(900, currentExtra + 300));
+      this._insertCameraRecoverCooldownUntil = now + 3500;
+      this.appendHealthLog('camera_insert_conflict', {
+        streak: this._insertCameraErrorStreak,
+        rebuildDelayMs: this._cameraRebuildExtraDelayMs
+      });
+      if (this._insertCameraErrorStreak >= 3) {
+        this.markNeedManualRelaunch('insert_conflict_streak');
+      }
+      if (this._insertCameraRetryTimer) {
+        clearTimeout(this._insertCameraRetryTimer);
+        this._insertCameraRetryTimer = null;
+      }
+      /**
+       * 根因治理：首次 insert 冲突不立即硬恢复，先做轻量踢管线（不重建 camera 组件）；
+       * 仅连续冲突时再升级硬恢复，避免“恢复风暴”反向放大故障。
+       */
+      if (this._insertCameraErrorStreak <= 1) {
+        this.appendHealthLog('camera_insert_conflict_soft_kick', {});
+        this.rollingActive = false;
+        this.stopRollingRecording(() => {
+          this.scheduleAfterStopRecord(() => {
+            if (this.data.isRecovering || this._recoveryLock) return;
+            this.rollingActive = true;
+            this.rollingSessionId += 1;
+            this.tryStartRollingWhenCameraReady();
+          });
+        });
+        return;
+      }
+      if (this._insertConflictRecovering) return;
+      this._insertConflictRecovering = true;
+      const waitMs = 900 + Math.floor((this._cameraRebuildExtraDelayMs || 0) * 0.5);
+      this._insertCameraRetryTimer = setTimeout(() => {
+        this._insertCameraRetryTimer = null;
+        this._insertConflictRecovering = false;
+        if (this.data.isRecovering || this._recoveryLock) return;
+        this.hardRecoverLivePipeline('auto:insert_camera_conflict');
+      }, waitMs);
+      return;
+    }
     this.triggerCameraFaultRecovery(`error:${errMsg}`);
   },
 
@@ -829,6 +1003,7 @@ Page({
     if (!this.data.liveStreamAllowed) return;
     if (this.data.isRecovering || this._recoveryLock) return;
     if (this.pendingHighlight) return;
+    if (Date.now() < (this._insertCameraRecoverCooldownUntil || 0)) return;
     const now = Date.now();
     const minAutoRecoverGapMs = 18000;
     this._cameraFaultStreak = (this._cameraFaultStreak || 0) + 1;
@@ -867,6 +1042,7 @@ Page({
       isRecording: false,
       cameraRenderNonce: (this.data.cameraRenderNonce || 0) + 1
     }, () => {
+      this._lastCameraUnmountAt = Date.now();
       const kick = () => {
         if (typeof onRebuilt === 'function') onRebuilt();
         this._cameraRebuildLock = false;
@@ -881,7 +1057,9 @@ Page({
           });
         }
       };
-      setTimeout(kick, this.recordCooldownAfterStopMs || 500);
+      const baseMs = this.recordCooldownAfterStopMs || 500;
+      const extraMs = this._cameraRebuildExtraDelayMs || 0;
+      setTimeout(kick, baseMs + extraMs);
     });
   },
 
@@ -1248,6 +1426,16 @@ Page({
       clearTimeout(this._recoverUiFailsafeTimer);
       this._recoverUiFailsafeTimer = null;
     }
+    if (this._insertCameraRetryTimer) {
+      clearTimeout(this._insertCameraRetryTimer);
+      this._insertCameraRetryTimer = null;
+    }
+    if (this._relaunchPressTimer) {
+      clearTimeout(this._relaunchPressTimer);
+      this._relaunchPressTimer = null;
+    }
+    this._insertConflictRecovering = false;
+    this._needManualRelaunch = false;
     this._hardRecoverAwaitingCamera = false;
     this._cameraInitDone = false;
     if (this._rollingKickoffTimer) {
@@ -1260,6 +1448,8 @@ Page({
     this.pendingHighlight = null;
     this.clearHighlightSavePipelineState();
     this.segmentBuffer = [];
+    this.highlightMaterializeQueue = [];
+    this.highlightMaterializeRunning = false;
     this.highlightMissStreak = 0;
     this.lastHighlightConsumedSegNo = 0;
     this.rollingFsBusy = false;
@@ -1268,7 +1458,12 @@ Page({
       this.rollingWatchdogTimer = null;
     }
     this.appendHealthLog('page_unload', {});
-    this.setData({ cameraMounted: false, cameraContext: null, isRecording: false });
+    this.setData({
+      cameraMounted: false,
+      cameraContext: null,
+      isRecording: false,
+      showRecoveryVeil: false
+    });
     this.stopRollingRecording();
   },
 
@@ -1292,11 +1487,23 @@ Page({
       clearTimeout(this._recoverUiFailsafeTimer);
       this._recoverUiFailsafeTimer = null;
     }
+    if (this._insertCameraRetryTimer) {
+      clearTimeout(this._insertCameraRetryTimer);
+      this._insertCameraRetryTimer = null;
+    }
+    if (this._relaunchPressTimer) {
+      clearTimeout(this._relaunchPressTimer);
+      this._relaunchPressTimer = null;
+    }
+    this._insertConflictRecovering = false;
+    this._needManualRelaunch = false;
     this._hardRecoverAwaitingCamera = false;
     this._recoveryLock = false;
     this._manualRecoveryPendingAck = false;
+    this.highlightMaterializeQueue = [];
+    this.highlightMaterializeRunning = false;
     if (this.data.isRecovering) {
-      this.setData({ isRecovering: false });
+      this.setData({ isRecovering: false, showRecoveryVeil: false });
     }
     this.appendHealthLog('page_hide', {});
     this._cameraInitDone = false;
@@ -1341,8 +1548,22 @@ Page({
    */
   updatePipelineHealth: function() {
     let health = 'ok';
-    let text = 'OK';
+    let text = 'PAUSE';
     let actionable = false;
+    if (this._needManualRelaunch) {
+      if (
+        this.data.pipelineHealth !== 'warn'
+        || this.data.opsControlText !== 'ERR'
+        || this.data.opsControlActionable !== true
+      ) {
+        this.setData({
+          pipelineHealth: 'warn',
+          opsControlText: 'ERR',
+          opsControlActionable: true
+        });
+      }
+      return;
+    }
     const now = Date.now();
     const pendingAgeMs = this.pendingHighlight
       ? (now - (this.pendingHighlight.createdAt || now))
@@ -1363,7 +1584,7 @@ Page({
       text = '...';
     } else if (captureLikelyBlocked) {
       health = 'warn';
-      text = '↻';
+      text = 'ERR';
       actionable = true;
     } else if (this.data.isRecording) {
       health = 'recording';
@@ -1478,9 +1699,15 @@ Page({
     this._hardRecoverAwaitingCamera = false;
     this._manualRecoveryPendingAck = false;
     this.stopRecoveryProgressAnim(false);
-    this.setData({ isRecovering: false });
+    this.setData({ isRecovering: false, showRecoveryVeil: false });
     this._recoveryLock = false;
     this.appendHealthLog('hard_recover_fail', { reason: reason || 'unknown' });
+    if (
+      reason === 'recovering_ui_5s_failsafe'
+      && (this._insertCameraErrorStreak || 0) >= 2
+    ) {
+      this.markNeedManualRelaunch('recovering_failsafe_after_insert_conflict');
+    }
     this.updatePipelineHealth();
   },
 
@@ -1491,14 +1718,37 @@ Page({
    */
   hardRecoverLivePipeline: function(trigger) {
     if (this._recoveryLock) return;
+    const now = Date.now();
+    const cooldownUntil = this._insertCameraRecoverCooldownUntil || 0;
+    const source = trigger || 'manual';
+    const isAutoRecover = source.indexOf('auto:') === 0;
+    if (isAutoRecover && now < cooldownUntil) {
+      this.appendHealthLog('hard_recover_skip_insert_cooldown', {
+        trigger: source,
+        waitMs: cooldownUntil - now
+      });
+      if (!this._insertCameraRetryTimer) {
+        const delay = Math.max(600, cooldownUntil - now + 120);
+        this._insertCameraRetryTimer = setTimeout(() => {
+          this._insertCameraRetryTimer = null;
+          if (this.data.isRecovering || this._recoveryLock) return;
+          this.hardRecoverLivePipeline('auto:insert_camera_conflict_retry');
+        }, delay);
+      }
+      return;
+    }
+    if (now - (this._lastHardRecoverAt || 0) < (this._hardRecoverMinGapMs || 2200)) {
+      this.appendHealthLog('hard_recover_skip_too_frequent', { trigger: trigger || 'manual' });
+      return;
+    }
+    this._lastHardRecoverAt = now;
     this._recoveryLock = true;
     if (this._recoveryGuardTimer) {
       clearTimeout(this._recoveryGuardTimer);
       this._recoveryGuardTimer = null;
     }
-    const source = trigger || 'manual';
     this.appendHealthLog('hard_recover_start', { trigger: source });
-    this._manualRecoveryPendingAck = source === 'manual';
+    this._manualRecoveryPendingAck = typeof source === 'string' && source.indexOf('manual') === 0;
     this._hardRecoverAwaitingCamera = true;
     this._recoveryGuardTimer = setTimeout(() => {
       this._recoveryGuardTimer = null;
@@ -1533,7 +1783,11 @@ Page({
     this.rollingFsBusy = false;
     this.lastRecordStartAt = 0;
     this.startRecordFailStreak = 0;
-    this.setData({ isRecovering: true });
+    this.setData({
+      isRecovering: true,
+      showRecoveryVeil: true,
+      recoveryVeilSrc: this.data.defaultCover
+    });
     if (this._recoverUiFailsafeTimer) {
       clearTimeout(this._recoverUiFailsafeTimer);
       this._recoverUiFailsafeTimer = null;
@@ -1569,7 +1823,7 @@ Page({
   },
 
   /**
-   * 右下角状态钮单击：REC 时保存高光，否则执行硬恢复。
+   * 右下角状态钮：REC 时保存高光；ERR 时单击触发页内硬恢复（不跳页、不挡预览）。
    * @returns {void}
    */
   onRecoveryFabTap: function() {
@@ -1585,19 +1839,67 @@ Page({
       this.requestHighlightCapture();
       return;
     }
-    this.vibrate('light');
-    this.hardRecoverLivePipeline('manual');
+    const isErr =
+      this.data.pipelineHealth === 'warn'
+      || this._needManualRelaunch
+      || this.data.opsControlText === 'ERR';
+    if (isErr) {
+      this.vibrate('light');
+      this.appendHealthLog('recovery_fab_tap_recover', {});
+      this.hardRecoverLivePipeline('manual_tap');
+    }
   },
 
   /**
-   * 长按状态钮：硬恢复相机与滚动管线（与 REC 下单击保存区分）。
+   * 系统 longpress：ERR 态下触发页内硬恢复。
    * @returns {void}
    */
   onRecoveryFabLongPress: function() {
     if (this.data.isRecovering) return;
     this._recoveryFabLongPressConsumed = true;
+    const isErr =
+      this.data.pipelineHealth === 'warn'
+      || this._needManualRelaunch
+      || this.data.opsControlText === 'ERR';
+    if (!isErr) return;
     this.vibrate('light');
-    this.hardRecoverLivePipeline('manual');
+    this.appendHealthLog('recovery_fab_longpress_recover', {});
+    this.hardRecoverLivePipeline('manual_longpress');
+  },
+
+  /**
+   * 状态灯按下：ERR 态长按约 1.8s 触发页内硬恢复（与单击互为补充）。
+   * @returns {void}
+   */
+  onRecoveryFabTouchStart: function() {
+    const isErr =
+      this.data.pipelineHealth === 'warn'
+      || this._needManualRelaunch
+      || this.data.opsControlText === 'ERR';
+    if (!isErr) return;
+    if (this._relaunchPressTimer) {
+      clearTimeout(this._relaunchPressTimer);
+      this._relaunchPressTimer = null;
+    }
+    this._relaunchPressTimer = setTimeout(() => {
+      this._relaunchPressTimer = null;
+      this._recoveryFabLongPressConsumed = true;
+      this.vibrate('light');
+      this.appendHealthLog('recovery_fab_hold_recover', {});
+      this._needManualRelaunch = false;
+      this.hardRecoverLivePipeline('manual_hold_recover');
+    }, 1800);
+  },
+
+  /**
+   * 状态灯抬起/取消：清理长按重启计时器。
+   * @returns {void}
+   */
+  onRecoveryFabTouchEnd: function() {
+    if (this._relaunchPressTimer) {
+      clearTimeout(this._relaunchPressTimer);
+      this._relaunchPressTimer = null;
+    }
   },
 
   // 节次切换
@@ -1763,6 +2065,40 @@ Page({
     });
   },
 
+  /**
+   * 清理 rolling 目录中的历史会话残留分段，避免长期运行后占满沙盒存储导致落盘失败。
+   * 说明：仅删除 `_rolling` 目录下的临时分段，不影响已保存高光。
+   * @returns {Promise<void>}
+   */
+  clearStaleRollingFiles: function() {
+    const fs = wx.getFileSystemManager();
+    const rollingDir = this.getRollingDir();
+    return new Promise((resolve) => {
+      fs.readdir({
+        dirPath: rollingDir,
+        success: (res) => {
+          const files = Array.isArray(res && res.files) ? res.files : [];
+          if (files.length === 0) {
+            resolve();
+            return;
+          }
+          let pending = files.length;
+          files.forEach((name) => {
+            const fullPath = `${rollingDir}/${name}`;
+            fs.unlink({
+              filePath: fullPath,
+              complete: () => {
+                pending -= 1;
+                if (pending <= 0) resolve();
+              }
+            });
+          });
+        },
+        fail: () => resolve()
+      });
+    });
+  },
+
   startRollingRecording: function() {
     if (!this.data.cameraContext) return;
     /** 已在录时勿重复拉起，避免双 startRecord；假阳性 isRecording 由 onShow 的 stopRollingRecording 收口 */
@@ -1818,6 +2154,7 @@ Page({
         if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
         const hadFailBefore = this.startRecordFailStreak > 0;
         this.startRecordFailStreak = 0;
+        this.segmentStartFailStormCycles = 0;
         this._currentRollingSegmentRecordStartMs = Date.now();
         this.lastRecordStartAt = Date.now();
         this.setData({ isRecording: true });
@@ -1850,6 +2187,18 @@ Page({
         const nextRetry = retryCount + 1;
         const delay = Math.min(1500, 220 + nextRetry * 140);
         if (this.startRecordFailStreak >= 5) {
+          this.segmentStartFailStormCycles = (this.segmentStartFailStormCycles || 0) + 1;
+          this.appendHealthLog('segment_start_fail_storm_cycle', {
+            cycles: this.segmentStartFailStormCycles
+          });
+          if (this.segmentStartFailStormCycles >= 3) {
+            this.segmentStartFailStormCycles = 0;
+            this.markNeedManualRelaunch('segment_start_fail_storm');
+            this.startRecordFailStreak = 0;
+            this.setData({ isRecording: false });
+            this.lastRecordStartAt = 0;
+            return;
+          }
           this.startRecordFailStreak = 0;
           this.setData({ isRecording: false });
           this.lastRecordStartAt = 0;
@@ -1992,20 +2341,28 @@ Page({
           resolve();
           return;
         }
-        if (!savedPath) {
-          resolve();
-          return;
+        if (savedPath) {
+          this.segmentBuffer.push({
+            path: savedPath,
+            segNo,
+            recordStartMs: typeof recordStartWallMs === 'number' ? recordStartWallMs : 0,
+            refCount: 0
+          });
         }
-        this.segmentBuffer.push({
-          path: savedPath,
-          segNo,
-          recordStartMs: typeof recordStartWallMs === 'number' ? recordStartWallMs : 0
-        });
         if (
           this._highlightAfterStopMeta
           && this._highlightAfterStopMeta.recordSessionId === recordSessionId
           && this._highlightAfterStopMeta.expectedSegNo === segNo
         ) {
+          const currentSegPath = savedPath || tempPath || '';
+          if (!savedPath && tempPath) {
+            this.appendHealthLog('segment_persist_use_temp_fallback', {});
+          }
+          if (!currentSegPath) {
+            this.abortHighlightAfterStopIfNeeded(recordSessionId, 'segment_persist_fail');
+            resolve();
+            return;
+          }
           const hm = this._highlightAfterStopMeta;
           const segLenSec = this.segmentDurationMs / 1000;
           const windowSec = (this.highlightPlaybackWindowMs || 8000) / 1000;
@@ -2031,18 +2388,34 @@ Page({
             cover: hm.cover,
             finalizing: false,
             sourceSegNo: segNo,
-            preSegments: needDual ? [prevEntry.path, savedPath] : [savedPath],
+            preSegments: needDual ? [prevEntry.path, currentSegPath] : [currentSegPath],
             postSegments: [],
             replayInitialTimeSec,
             replayUseChain: !!needDual
           });
+          this.segmentPersistFailStreak = 0;
           this._highlightAfterStopMeta = null;
+          resolve();
+          return;
+        }
+        if (!savedPath) {
           resolve();
           return;
         }
         const maxBuf = this.rollingBufferMax || 10;
         if (this.segmentBuffer.length > maxBuf) {
-          const removed = this.segmentBuffer.splice(0, this.segmentBuffer.length - maxBuf);
+          const excess = this.segmentBuffer.length - maxBuf;
+          const removed = [];
+          const kept = [];
+          for (let i = 0; i < this.segmentBuffer.length; i += 1) {
+            const it = this.segmentBuffer[i];
+            if (removed.length < excess && Number(it && it.refCount || 0) <= 0) {
+              removed.push(it);
+            } else {
+              kept.push(it);
+            }
+          }
+          this.segmentBuffer = kept;
           // 清理被淘汰的 rolling 文件（不影响已保存为高光的副本）
           removed.forEach((it) => {
             if (!it || !it.path) return;
@@ -2106,7 +2479,7 @@ Page({
               fail: () => {
                 tryTempToRollingReadWrite((rwPath) => {
                   if (rwPath) finalizeSegment(rwPath);
-                  else finalizeSegment(tempPath);
+                  else finalizeSegment('');
                 });
               }
             });
@@ -2121,7 +2494,7 @@ Page({
         fail: () => {
           tryTempToRollingReadWrite((rwPath) => {
             if (rwPath) finalizeSegment(rwPath);
-            else finalizeSegment(tempPath);
+            else finalizeSegment('');
           });
         }
       });
@@ -2184,16 +2557,276 @@ Page({
   },
 
   /**
+   * 将指定 rolling 片段加入引用锁，防止异步固化期间被热层淘汰。
+   * @param {string[]} paths
+   * @returns {void}
+   */
+  retainRollingSegmentsByPaths: function(paths) {
+    if (!Array.isArray(paths) || paths.length === 0) return;
+    const rollingDir = this.getRollingDir();
+    const buf = this.segmentBuffer || [];
+    paths.forEach((p) => {
+      if (!p || p.indexOf(rollingDir) !== 0) return;
+      for (let i = 0; i < buf.length; i += 1) {
+        const it = buf[i];
+        if (!it || it.path !== p) continue;
+        it.refCount = Math.max(0, Number(it.refCount || 0)) + 1;
+        break;
+      }
+    });
+  },
+
+  /**
+   * 释放 rolling 片段引用锁。
+   * @param {string[]} paths
+   * @returns {void}
+   */
+  releaseRollingSegmentsByPaths: function(paths) {
+    if (!Array.isArray(paths) || paths.length === 0) return;
+    const buf = this.segmentBuffer || [];
+    paths.forEach((p) => {
+      if (!p) return;
+      for (let i = 0; i < buf.length; i += 1) {
+        const it = buf[i];
+        if (!it || it.path !== p) continue;
+        it.refCount = Math.max(0, Number(it.refCount || 0) - 1);
+        break;
+      }
+    });
+  },
+
+  /**
+   * 是否允许执行高光实体固化（degraded/recovering/故障态时暂停重 IO）。
+   * @returns {boolean}
+   */
+  canMaterializeHighlightNow: function() {
+    if (this.data.isRecovering || this._needManualRelaunch) return false;
+    if (this.data.pipelineHealth === 'warn') return false;
+    return true;
+  },
+
+  /**
+   * 清理过量高光实体，避免温层无限增长与沙盒爆满。
+   * @param {string} matchId
+   * @returns {void}
+   */
+  pruneHighlightStorageForMatch: function(matchId) {
+    if (!matchId) return;
+    const fs = wx.getFileSystemManager();
+    const clipsMap = wx.getStorageSync('MIAOXIE_CLIPS') || {};
+    const list = Array.isArray(clipsMap[matchId]) ? clipsMap[matchId] : [];
+    const maxCount = this.highlightsMaxCount || 100;
+    if (list.length <= maxCount) return;
+    const removed = list.splice(maxCount);
+    clipsMap[matchId] = list;
+    wx.setStorageSync('MIAOXIE_CLIPS', clipsMap);
+    removed.forEach((it) => {
+      const segs = it && Array.isArray(it.segments) ? it.segments : [];
+      segs.forEach((p) => {
+        if (!p) return;
+        try { fs.unlinkSync(p); } catch (e) {}
+      });
+    });
+  },
+
+  /**
+   * 评估 Storage 水位并执行分级治理。
+   * @returns {number}
+   */
+  evaluateStorageWatermark: function() {
+    let ratio = 0;
+    try {
+      const info = wx.getStorageInfoSync();
+      const current = Number(info && info.currentSize);
+      const limit = Number(info && info.limitSize);
+      if (Number.isFinite(current) && Number.isFinite(limit) && limit > 0) {
+        ratio = current / limit;
+      }
+    } catch (e) {}
+    let level = 0;
+    if (ratio >= 0.95) level = 95;
+    else if (ratio >= 0.85) level = 85;
+    else if (ratio >= 0.7) level = 70;
+    if (level !== this.storageWatermarkLevel) {
+      this.storageWatermarkLevel = level;
+      this.appendHealthLog('storage_watermark_change', { level, ratio: Number(ratio.toFixed(3)) });
+    }
+    // 95%：强制淘汰最旧高光实体，优先保直播
+    if (level >= 95) {
+      const currentMatchId = wx.getStorageSync('currentMatchId') || app.globalData.currentMatchId || '';
+      if (currentMatchId) this.pruneHighlightStorageForMatch(currentMatchId);
+    }
+    return level;
+  },
+
+  /**
+   * 创建高光索引项（立即可回看，不依赖固化完成）。
+   * @param {Record<string, unknown>} pending
+   * @param {string[]} segments
+   * @returns {Record<string, unknown>}
+   */
+  buildIndexedHighlightItem: function(pending, segments) {
+    const replaySegment = segments[segments.length - 1] || segments[0] || '';
+    return {
+      id: pending.id,
+      matchName: pending.matchName,
+      matchId: pending.matchId,
+      createdAt: pending.createdAt,
+      timeText: this.formatTime(pending.createdAt),
+      cover: pending.cover || this.data.defaultCover,
+      segments: segments.slice(),
+      replaySegment,
+      replayInitialTimeSec: Number(pending.replayInitialTimeSec || 0),
+      replayUseChain: !!pending.replayUseChain && segments.length >= 2,
+      status: 'indexed'
+    };
+  },
+
+  /**
+   * 入队一个高光固化任务并触发后台执行。
+   * @param {Record<string, unknown>} task
+   * @returns {void}
+   */
+  enqueueHighlightMaterializeTask: function(task) {
+    this.highlightMaterializeQueue.push(task);
+    this.processHighlightMaterializeQueue();
+  },
+
+  /**
+   * 后台串行执行高光固化队列（带降级暂停与退避）。
+   * @returns {void}
+   */
+  processHighlightMaterializeQueue: function() {
+    if (this.highlightMaterializeRunning) return;
+    if (!this.highlightMaterializeQueue.length) return;
+    const watermark = this.evaluateStorageWatermark();
+    if (!this.canMaterializeHighlightNow() || watermark >= 85) {
+      setTimeout(() => this.processHighlightMaterializeQueue(), 1200);
+      return;
+    }
+    const task = this.highlightMaterializeQueue.shift();
+    if (!task) return;
+    this.highlightMaterializeRunning = true;
+    this.materializeHighlightTask(task)
+      .catch(() => Promise.resolve())
+      .finally(() => {
+        this.highlightMaterializeRunning = false;
+        let gap = 0;
+        if (this.data.isRecording) gap = Math.max(gap, 650);
+        if (!this.data.drawerMode) gap = Math.max(gap, 320);
+        setTimeout(() => this.processHighlightMaterializeQueue(), gap);
+      });
+  },
+
+  /**
+   * 执行单个高光固化任务：拷贝到高光目录并更新索引状态。
+   * @param {Record<string, unknown>} task
+   * @returns {Promise<void>}
+   */
+  materializeHighlightTask: function(task) {
+    const segments = Array.isArray(task.segments) ? task.segments.filter(Boolean) : [];
+    if (!segments.length || !task.id) {
+      return Promise.resolve();
+    }
+    const fs = wx.getFileSystemManager();
+    const dir = this.getHighlightDir();
+    const copyOne = (srcPath, idx) => new Promise((resolve) => {
+      const filePath = `${dir}/${task.id}_${idx}.mp4`;
+      if (fs.copyFile) {
+        fs.copyFile({
+          srcPath,
+          destPath: filePath,
+          success: () => resolve(filePath),
+          fail: () => resolve('')
+        });
+        return;
+      }
+      fs.saveFile({
+        tempFilePath: srcPath,
+        filePath,
+        success: (r) => resolve((r && r.savedFilePath) ? r.savedFilePath : filePath),
+        fail: () => resolve('')
+      });
+    });
+    return this.ensureHighlightDir()
+      .then(() => Promise.all(segments.map((p, i) => copyOne(p, i))))
+      .then((saved) => {
+        const savedPaths = saved.filter(Boolean);
+        const matchId = task.matchId || 'default';
+        const clipsMap = wx.getStorageSync('MIAOXIE_CLIPS') || {};
+        const list = Array.isArray(clipsMap[matchId]) ? clipsMap[matchId] : [];
+        const idx = list.findIndex((it) => it && it.id === task.id);
+        if (idx >= 0) {
+          if (savedPaths.length > 0) {
+            const replaySegment = savedPaths[savedPaths.length - 1] || savedPaths[0] || '';
+            list[idx].segments = savedPaths;
+            list[idx].replaySegment = replaySegment;
+            list[idx].status = 'materialized';
+          } else {
+            list[idx].status = 'failed';
+          }
+          clipsMap[matchId] = list;
+          wx.setStorageSync('MIAOXIE_CLIPS', clipsMap);
+        }
+        if (!savedPaths.length) {
+          const retryCount = Number(task.retryCount || 0);
+          if (retryCount < 3) {
+            const next = { ...task, retryCount: retryCount + 1 };
+            const delays = [300, 800, 1500, 3000];
+            const delay = delays[next.retryCount] || 3000;
+            setTimeout(() => {
+              this.highlightMaterializeQueue.unshift(next);
+              this.processHighlightMaterializeQueue();
+            }, delay);
+            return;
+          }
+        }
+        this.releaseRollingSegmentsByPaths(segments);
+      })
+      .catch(() => {
+        const retryCount = Number(task.retryCount || 0);
+        if (retryCount < 3) {
+          const next = { ...task, retryCount: retryCount + 1 };
+          const delays = [300, 800, 1500, 3000];
+          const delay = delays[next.retryCount] || 3000;
+          setTimeout(() => {
+            this.highlightMaterializeQueue.unshift(next);
+            this.processHighlightMaterializeQueue();
+          }, delay);
+        } else {
+          this.releaseRollingSegmentsByPaths(segments);
+        }
+        return Promise.resolve();
+      });
+  },
+
+  /**
+   * 取 rolling 缓冲中 segNo 最大的条目（忽略 consumed）。
+   * iOS 保护模式下用于避免“必须新段”导致回退 stop 当前段。
+   * @returns {{ path: string, segNo: number, recordStartMs?: number } | null}
+   */
+  pickLatestRollingEntry: function() {
+    let best = null;
+    const buf = this.segmentBuffer || [];
+    for (let i = 0; i < buf.length; i += 1) {
+      const it = buf[i];
+      if (!it || !it.path || typeof it.segNo !== 'number') continue;
+      if (!best || it.segNo > best.segNo) best = it;
+    }
+    return best;
+  },
+
+  /**
    * 保存高光：由右下角状态钮在管线为「录制中」（界面显示 REC）时单击触发。
    * 物理上复制最近完成的 rolling 段（时长约 {@link segmentDurationMs}），逻辑回放窗口见 {@link highlightPlaybackWindowMs}。
    * 不额外拍照封面，避免与录制并行增加相机压力与闪屏。
    */
   requestHighlightCapture: function() {
-    if (this.data.isSavingHighlight) {
+    if (this._highlightRequestLock || this.data.isSavingHighlight) {
       return;
     }
     if (this.data.isRecovering || this._recoveryLock || !this._cameraInitDone) {
-      wx.showToast({ title: '相机恢复中，请稍后保存', icon: 'none' });
+      this.appendHealthLog('highlight_skip_camera_not_ready', {});
       return;
     }
     if (this.data.drawerMode > 0) {
@@ -2222,8 +2855,14 @@ Page({
     const currentMatchId = wx.getStorageSync('currentMatchId') || app.globalData.currentMatchId || '';
     const id = `${now}`;
     const startSegNo = this.segmentCounter;
+    const consumed = this.lastHighlightConsumedSegNo || 0;
+    const freshEntry = this.pickBestRollingEntryAfterConsumed(consumed);
+
     if (this.data.isRecording) {
       const sessionId = this.rollingSessionId;
+      const minStopMs = Math.max(this.minRecordMsBeforeHighlightStop || 1300, 1800);
+      const recStartMs = this._currentRollingSegmentRecordStartMs || 0;
+      const elapsedMs = recStartMs > 0 ? (now - recStartMs) : 0;
       this._highlightSaveAwaitingResume = true;
       this._highlightPipelineDoneFinalize = false;
       this._highlightPipelineDoneResume = false;
@@ -2252,8 +2891,22 @@ Page({
           clearTimeout(this.segmentStopTimer);
           this.segmentStopTimer = null;
         }
+        if (this._highlightDeferredStopTimer) {
+          clearTimeout(this._highlightDeferredStopTimer);
+          this._highlightDeferredStopTimer = null;
+        }
         this.appendHealthLog('highlight_stop_on_click', { segNo: this.segmentCounter + 1 });
-        this.stopOneSegment(sessionId);
+        if (elapsedMs > 0 && elapsedMs < minStopMs) {
+          const waitMs = Math.max(0, minStopMs - elapsedMs);
+          this.appendHealthLog('highlight_stop_deferred', { waitMs, elapsedMs });
+          this._highlightDeferredStopTimer = setTimeout(() => {
+            this._highlightDeferredStopTimer = null;
+            if (!this._highlightSaveAwaitingResume) return;
+            this.stopOneSegment(sessionId);
+          }, waitMs);
+        } else {
+          this.stopOneSegment(sessionId);
+        }
         return;
       } catch (e) {
         this.abortHighlightAfterStopIfNeeded(sessionId, 'stop_throw');
@@ -2261,8 +2914,6 @@ Page({
       }
     }
 
-    const consumed = this.lastHighlightConsumedSegNo || 0;
-    const freshEntry = this.pickBestRollingEntryAfterConsumed(consumed);
     if (freshEntry && freshEntry.path) {
       this.finalizeHighlight({
         id,
@@ -2302,160 +2953,41 @@ Page({
       }
       return;
     }
-    const fs = wx.getFileSystemManager();
-    const dir = this.getHighlightDir();
-
-    /**
-     * 将源视频复制到高光目录；copyFile 失败时用 readFile+writeFile 兜底（部分基础库/路径组合下更稳）。
-     * @param {string} srcPath 源路径
-     * @param {number} idx 片段序号
-     * @returns {Promise<string>} 成功时为目标路径，失败为空串
-     */
-    const copyOne = (srcPath, idx) => new Promise((resolve) => {
-      const filePath = `${dir}/${pending.id}_${idx}.mp4`;
-      const tryReadWrite = () => {
-        fs.readFile({
-          filePath: srcPath,
-          success: (readRes) => {
-            const raw = readRes && readRes.data;
-            if (!raw) {
-              resolve('');
-              return;
-            }
-            fs.writeFile({
-              filePath,
-              data: raw,
-              success: () => resolve(filePath),
-              fail: () => resolve('')
-            });
-          },
-          fail: () => resolve('')
-        });
-      };
-      if (fs.copyFile) {
-        fs.copyFile({
-          srcPath,
-          destPath: filePath,
-          success: () => resolve(filePath),
-          fail: () => tryReadWrite()
-        });
-        return;
-      }
-      fs.saveFile({
-        tempFilePath: srcPath,
-        filePath,
-        success: (r) => resolve((r && r.savedFilePath) ? r.savedFilePath : filePath),
-        fail: () => tryReadWrite()
-      });
+    const matchId = pending.matchId || 'default';
+    const item = this.buildIndexedHighlightItem(pending, segments);
+    const clipsMap = wx.getStorageSync('MIAOXIE_CLIPS') || {};
+    if (!clipsMap[matchId]) clipsMap[matchId] = [];
+    clipsMap[matchId].unshift(item);
+    wx.setStorageSync('MIAOXIE_CLIPS', clipsMap);
+    this.pruneHighlightStorageForMatch(matchId);
+    const list = this.getHighlightList();
+    list.unshift(item);
+    wx.setStorageSync('highlight_list', list);
+    this.retainRollingSegmentsByPaths(segments);
+    this.enqueueHighlightMaterializeTask({
+      id: pending.id,
+      matchId,
+      segments: segments.slice(),
+      retryCount: 0
     });
-
-    this.ensureHighlightDir()
-      .then(() => Promise.all(segments.map((p, i) => copyOne(p, i))))
-      .then((saved) => {
-      const savedPaths = saved.filter(Boolean);
-      if (savedPaths.length === 0) {
-        this.appendHealthLog('highlight_finalize_copy_empty', {});
-        if (this._highlightSaveAwaitingResume) {
-          this._highlightPipelineDoneFinalize = true;
-          this.maybeReleaseHighlightSaveLock();
-        } else {
-          this.endHighlightSaving();
-        }
-        return;
-      }
-      
-      const replaySegment = savedPaths[savedPaths.length - 1] || savedPaths[0] || '';
-      const replayInitialTimeSec =
-        typeof pending.replayInitialTimeSec === 'number' ? pending.replayInitialTimeSec : 0;
-      const replayUseChain = !!pending.replayUseChain && savedPaths.length >= 2;
-      
-      // 提取视频首帧作为封面
-      const extractCover = () => {
-        if (!replaySegment) return Promise.resolve(this.data.defaultCover);
-        return new Promise((resolve) => {
-          if (wx.createVideoMessageReceiver || wx.getVideoInfo) {
-            // 小程序原生提取首帧通常需要通过 media-container 或特定 API
-            // 这里使用更通用的方式：如果有视频，尝试获取视频信息并作为占位，
-            // 实际上小程序端最稳妥的离线首帧提取是利用 <video> 组件的 bindloadedmetadata 配合 canvas
-            // 但在后台逻辑中，我们优先尝试使用 wx.getVideoInfo 配合后端的首帧服务或者小程序本地缓存
-            // 鉴于目前是离线场景，我们利用小程序 video 组件自带的 thumb-extractor 逻辑（如果有）
-            // 或者直接在 finalize 阶段记录，在 UI 层通过微信 video 的 poster 属性逻辑处理
-            resolve(replaySegment + '?x-oss-process=video/snapshot,t_0,f_jpg'); // 伪代码，部分云存储支持
-          } else {
-            resolve(this.data.defaultCover);
-          }
-        });
-      };
-
-      // 修正：小程序本地视频提取首帧最稳妥方法是 wx.getVideoInfo (如果支持) 
-      // 或者在 save 成功后，UI 渲染时直接使用视频组件展示。
-      // 为了性能和兼容性，我们先记录视频路径，封面逻辑在 refreshDrawerHighlights 中优化。
-      
-      const item = {
-        id: pending.id,
-        matchName: pending.matchName,
-        matchId: pending.matchId,
-        createdAt: pending.createdAt,
-        timeText: this.formatTime(pending.createdAt),
-        cover: pending.cover || this.data.defaultCover,
-        segments: savedPaths,
-        replaySegment: replaySegment,
-        replayInitialTimeSec,
-        replayUseChain
-      };
-      const signature = `${savedPaths.join('|')}@i${replayInitialTimeSec}@c${replayUseChain ? 1 : 0}`;
-      if (signature && signature === this.lastHighlightSignature) {
-        this.appendHealthLog('highlight_duplicate_ignored', {});
-        if (this._highlightSaveAwaitingResume) {
-          this._highlightPipelineDoneFinalize = true;
-          this.maybeReleaseHighlightSaveLock();
-        } else {
-          this.endHighlightSaving();
-        }
-        return;
-      }
-      this.lastHighlightSignature = signature;
-      this.highlightMissStreak = 0;
-      if (typeof pending.sourceSegNo === 'number' && pending.sourceSegNo > 0) {
-        this.lastHighlightConsumedSegNo = Math.max(
-          this.lastHighlightConsumedSegNo || 0,
-          pending.sourceSegNo
-        );
-      }
-
-      // 重构：根据 matchId 存储高光
-      const clipsMap = wx.getStorageSync('MIAOXIE_CLIPS') || {};
-      const matchId = pending.matchId || 'default';
-      if (!clipsMap[matchId]) clipsMap[matchId] = [];
-      clipsMap[matchId].unshift(item);
-      wx.setStorageSync('MIAOXIE_CLIPS', clipsMap);
-
-      // 向后兼容：保留一份全局列表（可选，但为了防止老版本逻辑报错建议保留）
-      const list = this.getHighlightList();
-      list.unshift(item);
-      wx.setStorageSync('highlight_list', list);
-
-      this.vibrateHighlightSaved();
-      this.flashPeriod();
-      if (this.data.drawerMode === 1) {
-        this.refreshDrawerHighlights();
-      }
-      if (this._highlightSaveAwaitingResume) {
-        this._highlightPipelineDoneFinalize = true;
-        this.maybeReleaseHighlightSaveLock();
-      } else {
-        this.endHighlightSaving();
-      }
-    })
-      .catch(() => {
-        this.appendHealthLog('highlight_finalize_exception', {});
-        if (this._highlightSaveAwaitingResume) {
-          this._highlightPipelineDoneFinalize = true;
-          this.maybeReleaseHighlightSaveLock();
-        } else {
-          this.endHighlightSaving();
-        }
-      });
+    this.highlightMissStreak = 0;
+    if (typeof pending.sourceSegNo === 'number' && pending.sourceSegNo > 0) {
+      this.lastHighlightConsumedSegNo = Math.max(
+        this.lastHighlightConsumedSegNo || 0,
+        pending.sourceSegNo
+      );
+    }
+    this.vibrateHighlightSaved();
+    this.flashPeriod();
+    if (this.data.drawerMode === 1) {
+      this.refreshDrawerHighlights();
+    }
+    if (this._highlightSaveAwaitingResume) {
+      this._highlightPipelineDoneFinalize = true;
+      this.maybeReleaseHighlightSaveLock();
+    } else {
+      this.endHighlightSaving();
+    }
   },
 
   formatTime: function(ts) {
@@ -2695,21 +3227,15 @@ Page({
     const currentMatchId = wx.getStorageSync('currentMatchId') || app.globalData.currentMatchId || '';
     const list = this.getHighlightList(currentMatchId).slice(0, 50);
     const drawerHighlights = list.map((it) => {
-      const chainThumb =
-        it && it.replayUseChain && Array.isArray(it.segments) && it.segments[0]
-          ? it.segments[0]
-          : '';
-      const videoPath =
-        chainThumb
-        || (it && it.replaySegment)
-        || (it && Array.isArray(it.segments) && it.segments[0])
-        || '';
+      const dc = this.data.defaultCover;
+      const rawCover = it && it.cover ? it.cover : '';
+      const thumbSrc = rawCover && rawCover !== dc ? rawCover : dc;
       return {
         id: it.id,
-        cover: it.cover || this.data.defaultCover,
-        videoPath,
+        cover: rawCover || dc,
+        thumbSrc,
         replayInitialTimeSec: typeof it.replayInitialTimeSec === 'number' ? it.replayInitialTimeSec : 0,
-        needsCover: (!it.cover || it.cover === this.data.defaultCover)
+        needsCover: (!rawCover || rawCover === dc)
       };
     });
     this.setData({ drawerHighlights });
@@ -2717,9 +3243,10 @@ Page({
 
   onDrawerImageError: function(e) {
     const { id } = e.currentTarget.dataset;
+    const dc = this.data.defaultCover;
     const updated = (this.data.drawerHighlights || []).map((it) => {
       if (it.id === id) {
-        return { ...it, cover: this.data.defaultCover };
+        return { ...it, cover: dc, thumbSrc: dc };
       }
       return it;
     });
@@ -2818,6 +3345,10 @@ Page({
     this._rollingPausedForReplay = false;
     if (!this.data.liveStreamAllowed || this.data.isRecovering || this._recoveryLock) return;
     if (!this.data.cameraMounted || !this.data.cameraContext || !this._cameraInitDone) {
+      if (Date.now() < (this._insertCameraRecoverCooldownUntil || 0)) {
+        this.appendHealthLog('replay_resume_wait_insert_cooldown', {});
+        return;
+      }
       this.appendHealthLog('replay_resume_need_recover', {});
       this.hardRecoverLivePipeline('auto:resume_after_replay');
       return;
@@ -2837,9 +3368,29 @@ Page({
    */
   startReplay: function(item) {
     this._replayPendingActiveSlot = null;
+    if (this._replayStartTimer) {
+      clearTimeout(this._replayStartTimer);
+      this._replayStartTimer = null;
+    }
+    if (this._replayMaskHideTimer) {
+      clearTimeout(this._replayMaskHideTimer);
+      this._replayMaskHideTimer = null;
+    }
+    if (this._replayOutroTimer) {
+      clearTimeout(this._replayOutroTimer);
+      this._replayOutroTimer = null;
+    }
     if (this._replayPendingFallbackTimer) {
       clearTimeout(this._replayPendingFallbackTimer);
       this._replayPendingFallbackTimer = null;
+    }
+    if (this._replayPrimeTimerA) {
+      clearTimeout(this._replayPrimeTimerA);
+      this._replayPrimeTimerA = null;
+    }
+    if (this._replayPrimeTimerB) {
+      clearTimeout(this._replayPrimeTimerB);
+      this._replayPrimeTimerB = null;
     }
     this._replayPrimedSlot0 = false;
     this._replayPrimedSlot1 = false;
@@ -2907,7 +3458,8 @@ Page({
       replaySlotBInitialTime: 0
     });
 
-    setTimeout(() => {
+    this._replayStartTimer = setTimeout(() => {
+      this._replayStartTimer = null;
       this.setData({
         isReplaying: true,
         replayHighlightChain: useChain,
@@ -2928,7 +3480,8 @@ Page({
       });
     }, peakMs);
 
-    setTimeout(() => {
+    this._replayMaskHideTimer = setTimeout(() => {
+      this._replayMaskHideTimer = null;
       this.setData({ showReplayMask: false });
     }, introMs);
   },
@@ -2947,9 +3500,29 @@ Page({
    */
   finishReplayToLive: function(stopPlayer) {
     this._replayPendingActiveSlot = null;
+    if (this._replayStartTimer) {
+      clearTimeout(this._replayStartTimer);
+      this._replayStartTimer = null;
+    }
+    if (this._replayMaskHideTimer) {
+      clearTimeout(this._replayMaskHideTimer);
+      this._replayMaskHideTimer = null;
+    }
+    if (this._replayOutroTimer) {
+      clearTimeout(this._replayOutroTimer);
+      this._replayOutroTimer = null;
+    }
     if (this._replayPendingFallbackTimer) {
       clearTimeout(this._replayPendingFallbackTimer);
       this._replayPendingFallbackTimer = null;
+    }
+    if (this._replayPrimeTimerA) {
+      clearTimeout(this._replayPrimeTimerA);
+      this._replayPrimeTimerA = null;
+    }
+    if (this._replayPrimeTimerB) {
+      clearTimeout(this._replayPrimeTimerB);
+      this._replayPrimeTimerB = null;
     }
     this._replayPrimedSlot0 = false;
     this._replayPrimedSlot1 = false;
@@ -2984,7 +3557,8 @@ Page({
       replayMaskText: 'LIVE',
       replayMaskKind: 'live'
     });
-    setTimeout(() => {
+    this._replayOutroTimer = setTimeout(() => {
+      this._replayOutroTimer = null;
       this.setData({ showReplayMask: false, replayMaskText: 'REPLAY', replayMaskKind: 'replay' });
       this.resumeRollingAfterReplay();
     }, outroMs);
@@ -3074,7 +3648,13 @@ Page({
       try {
         const ctx = wx.createVideoContext(id, this);
         if (ctx && ctx.play) ctx.play();
-        setTimeout(() => {
+        const key = slotIdx === 0 ? '_replayPrimeTimerA' : '_replayPrimeTimerB';
+        if (this[key]) {
+          clearTimeout(this[key]);
+          this[key] = null;
+        }
+        this[key] = setTimeout(() => {
+          this[key] = null;
           try {
             const c2 = wx.createVideoContext(id, this);
             if (c2 && c2.pause) c2.pause();

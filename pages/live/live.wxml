@@ -16,6 +16,11 @@
     bindinitdone="onCameraInit">
   </camera>
 
+  <!-- 硬恢复间隙：静态低透明度遮罩（无文字、无 Toast、不盖 live 预览逻辑上的循环 video） -->
+  <view wx:if="{{showRecoveryVeil}}" class="recovery-veil" catchtouchmove="noopCatchMove">
+    <image class="recovery-veil-art" src="{{recoveryVeilSrc}}" mode="aspectFill" />
+  </view>
+
   <!-- Level 0.5: 透明手势层 (专门处理双指缩放) -->
   <view class="gesture-layer"
     bindtouchstart="onTouchStart" 
@@ -29,6 +34,9 @@
     <view
       class="recover-fab recover-fab--{{pipelineHealth}} {{isRecovering ? 'recover-fab--busy' : ''}} {{opsControlActionable ? 'recover-fab--actionable' : ''}} {{opsControlAck ? 'recover-fab--ack' : ''}}"
       catchtap="onRecoveryFabTap"
+      bindtouchstart="onRecoveryFabTouchStart"
+      bindtouchend="onRecoveryFabTouchEnd"
+      bindtouchcancel="onRecoveryFabTouchEnd"
       catchlongpress="onRecoveryFabLongPress"
     >
       <view class="recover-fab-ring">
@@ -374,22 +382,10 @@
             bindlongpress="onDeleteHighlight"
             data-id="{{item.id}}"
           >
-            <video
-              wx:if="{{item.videoPath}}"
-              class="drawer-cover"
-              src="{{item.videoPath}}"
-              controls="{{false}}"
-              show-play-btn="{{false}}"
-              show-center-play-btn="{{false}}"
-              enable-progress-gesture="{{false}}"
-              object-fit="cover"
-              muted="{{true}}"
-            ></video>
             <image
-              wx:else
               class="drawer-cover"
               mode="aspectFill"
-              src="{{item.cover || defaultCover}}"
+              src="{{item.thumbSrc || item.cover || defaultCover}}"
               binderror="onDrawerImageError"
               data-id="{{item.id}}"
             ></image>

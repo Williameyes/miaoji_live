@@ -32,6 +32,26 @@ page {
   z-index: 0;
 }
 
+/* 硬恢复相机卸载间隙：静态遮罩（pointer-events:none，不挡状态灯与计分 UI） */
+.recovery-veil {
+  position: fixed;
+  top: -5vh;
+  left: -5vw;
+  width: 110vw;
+  height: 110vh;
+  z-index: 1;
+  pointer-events: none;
+  background: #050608;
+  overflow: hidden;
+}
+
+.recovery-veil-art {
+  width: 100%;
+  height: 100%;
+  opacity: 0.22;
+  display: block;
+}
+
 /* 专门针对安卓曲面屏/白边的全屏溢出覆盖 (已废弃，改为全局物理溢出) */
 
 .overlay {

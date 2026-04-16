@@ -13,6 +13,7 @@ page {
   background: linear-gradient(160deg, #EEF6FF 0%, #E8F8F2 55%, #EFF6FF 100%);
   color: #1E293B;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  position: relative;
 }
 
 /* ─────────────────────────────────────

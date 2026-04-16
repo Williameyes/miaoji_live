@@ -63,6 +63,9 @@ Page({
     defaultCover: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90" viewBox="0 0 160 90"><rect width="160" height="90" rx="12" ry="12" fill="%2322262f"/><path d="M66 58V32l28 13-28 13z" fill="%23ffffff" fill-opacity="0.75"/></svg>'
   },
 
+  /**
+   * @param {WechatMiniprogram.Page.ILifetimePageOptions} [options]
+   */
   onLoad() {
     const sys = wx.getSystemInfoSync();
     this.setData({ statusBarHeight: sys.statusBarHeight || 0 });
