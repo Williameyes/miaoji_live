@@ -344,7 +344,7 @@
       <view class="guide-item guide-item-full">
         <text class="guide-action">长按空白处</text>
         <text class="guide-sep">：</text>
-        <text class="guide-desc">查看回放 / 切换场次 / 返回列表</text>
+        <text class="guide-desc"> 查看列表 / 返回主页 </text>
       </view>
 
       <!-- 关闭按钮（居中底部） -->
