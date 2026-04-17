@@ -267,12 +267,17 @@
               data-field="teamA.name"
             />
             <view
-              class="color-pick-btn"
-              style="background-color: {{editingMatch.teamA.bgColor}}"
+              class="color-pick-btn color-pick-btn--jersey"
               hover-class="color-pick-btn-hover"
               bindtap="openColorPicker"
               data-target="teamA"
-            ></view>
+            >
+              <image
+                class="color-pick-btn__jersey-img"
+                src="{{jerseyIconEditTeamA}}"
+                mode="aspectFit"
+              />
+            </view>
           </view>
         </view>
 
@@ -289,12 +294,17 @@
               data-field="teamB.name"
             />
             <view
-              class="color-pick-btn"
-              style="background-color: {{editingMatch.teamB.bgColor}}"
+              class="color-pick-btn color-pick-btn--jersey"
               hover-class="color-pick-btn-hover"
               bindtap="openColorPicker"
               data-target="teamB"
-            ></view>
+            >
+              <image
+                class="color-pick-btn__jersey-img"
+                src="{{jerseyIconEditTeamB}}"
+                mode="aspectFit"
+              />
+            </view>
           </view>
         </view>
 

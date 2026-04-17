@@ -878,6 +878,23 @@ page {
   transform: scale(0.95);
 }
 
+/* 主客队：队服色用球衣剪影展示，浅底保证浅色队服仍可辨认 */
+.color-pick-btn--jersey {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  box-sizing: border-box;
+  background: #eef2f7;
+  border: 1rpx solid #e2e8f0;
+  box-shadow: 0 4rpx 14rpx rgba(15, 23, 42, 0.12);
+}
+
+.color-pick-btn__jersey-img {
+  width: 58rpx;
+  height: 58rpx;
+}
+
 .modal-footer {
   display: flex;
   gap: 16rpx;

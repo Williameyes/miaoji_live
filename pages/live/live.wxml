@@ -457,10 +457,12 @@
           data-team="teamA"
         >
           <text class="cm-team-name cm-team-name--left">{{colorModalMatch.teamA.name || '主队'}}</text>
-          <view
-            class="cm-color-swatch cm-color-swatch--left"
-            style="background-color: {{colorModalMatch.teamA.bgColor}};"
-          ></view>
+          <view class="cm-color-swatch cm-color-swatch--jersey cm-color-swatch--left">
+            <view
+              class="cm-color-swatch__jersey-fill"
+              style="background-color: {{colorModalMatch.teamA.bgColor}};"
+            ></view>
+          </view>
         </view>
         <text class="cm-vs-divider">VS</text>
         <view
@@ -469,10 +471,12 @@
           catchtap="onSelectModalTeam"
           data-team="teamB"
         >
-          <view
-            class="cm-color-swatch cm-color-swatch--right"
-            style="background-color: {{colorModalMatch.teamB.bgColor}};"
-          ></view>
+          <view class="cm-color-swatch cm-color-swatch--jersey cm-color-swatch--right">
+            <view
+              class="cm-color-swatch__jersey-fill"
+              style="background-color: {{colorModalMatch.teamB.bgColor}};"
+            ></view>
+          </view>
           <text class="cm-team-name cm-team-name--right">{{colorModalMatch.teamB.name || '客队'}}</text>
         </view>
       </view>

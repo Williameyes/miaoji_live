@@ -1,6 +1,24 @@
 const app = getApp();
 
 const { STORAGE_USER_INFO_KEY } = require('../../utils/request.js');
+const { buildJerseyIconDataUrl } = require('../../utils/jersey-icon.js');
+
+/**
+ * 根据编辑草稿中的队服色生成球衣剪影 data URL，供浮层内 `<image>` 绑定。
+ * @param {Record<string, unknown>|null} draft 编辑中的比赛对象
+ * @returns {{ jerseyIconEditTeamA: string, jerseyIconEditTeamB: string }}
+ */
+function jerseyUrlsFromEditDraft(draft) {
+  if (!draft || !draft.teamA || !draft.teamB) {
+    return { jerseyIconEditTeamA: '', jerseyIconEditTeamB: '' };
+  }
+  const a = /** @type {{ bgColor?: string }} */ (draft.teamA);
+  const b = /** @type {{ bgColor?: string }} */ (draft.teamB);
+  return {
+    jerseyIconEditTeamA: buildJerseyIconDataUrl(a.bgColor || '#E64340'),
+    jerseyIconEditTeamB: buildJerseyIconDataUrl(b.bgColor || '#10AEFF')
+  };
+}
 const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
 
 /** @const {string} 比赛列表 Storage 主键 */
@@ -55,6 +73,10 @@ Page({
     tempSelectedColor: '',
     colorPresets: COLOR_PRESETS,
     extendedColors: EXTENDED_COLORS,
+
+    /** 编辑浮层：主客队球衣剪影图标（随 bgColor 更新） */
+    jerseyIconEditTeamA: '',
+    jerseyIconEditTeamB: '',
 
     /** 高光录像列表 */
     highlightList: [],
@@ -189,7 +211,8 @@ Page({
     this.setData({
       editingId: '',
       editingMatch: draft,
-      showEditModal: true
+      showEditModal: true,
+      ...jerseyUrlsFromEditDraft(draft)
     });
   },
 
@@ -201,10 +224,12 @@ Page({
     const { id } = e.currentTarget.dataset;
     const match = this.data.matches.find((m) => m.id === id);
     if (!match) return;
+    const copied = JSON.parse(JSON.stringify(match));
     this.setData({
       editingId: id,
-      editingMatch: JSON.parse(JSON.stringify(match)),
-      showEditModal: true
+      editingMatch: copied,
+      showEditModal: true,
+      ...jerseyUrlsFromEditDraft(copied)
     });
   },
 
@@ -385,7 +410,8 @@ Page({
       draft[target].bgColor = color;
       draft[target].textColor = textColor;
     }
-    this.setData({ editingMatch: draft, showColorPicker: false });
+    const extra = target === 'matchName' ? {} : jerseyUrlsFromEditDraft(draft);
+    this.setData({ editingMatch: draft, showColorPicker: false, ...extra });
   },
 
   // ─────────────────────────────────────────────
