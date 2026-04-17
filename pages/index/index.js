@@ -130,7 +130,7 @@ Page({
         ? `/pages/index/index?referrerId=${encodeURIComponent(openid)}`
         : '/pages/index/index';
     return {
-      title: '秒记篮球场助手 — 邀你免费试用直播计分',
+      title: '高光记分 — 邀你免费试用直播记分',
       path,
       imageUrl: SHARE_IMAGE_URL
     };
@@ -228,7 +228,7 @@ Page({
   },
 
   /**
-   * 进入计分页：增加登录拦截，设置 currentMatchId，同步 globalData，跳转 live 页
+   * 进入记分页：增加登录拦截，设置 currentMatchId，同步 globalData，跳转 live 页
    * @param {WechatMiniprogram.TouchEvent} e
    */
   onGoToLive(e) {
@@ -239,7 +239,7 @@ Page({
     if (!isLoggedIn) {
       wx.showModal({
         title: '需要登录',
-        content: '请先登录后再进行比赛计分',
+        content: '请先登录后再进行比赛记分',
         confirmText: '去登录',
         success: (res) => {
           if (res.confirm) {

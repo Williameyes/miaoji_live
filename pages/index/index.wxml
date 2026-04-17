@@ -4,7 +4,7 @@
   <view class="header">
   
     <view class="logo-text">
-        秒<text class="italic-text">记</text>篮场
+        高光<text class="italic-text">记</text>分
     </view>
         <text class="header-sub">MATCH CENTER</text>
   </view>
@@ -57,7 +57,7 @@
           <text>删除</text>
         </view>
         <view class="btn-card-live" hover-class="btn-card-live-hover" bindtap="onGoToLive" data-id="{{item.id}}">
-          <text>▶ 进入计分</text>
+          <text>▶ 进入记分</text>
         </view>
       </view>
     </view>
@@ -140,7 +140,7 @@
     </view>
 
     <view class="empty-highlights" wx:else>
-      <text>暂无高光录像，在计分页右下角显示 REC 时单击可保存</text>
+      <text>暂无高光录像，在记分页右下角显示 REC 时单击可保存</text>
     </view>
 
     <!-- 批量操作条：放在高光区域下方，不再固定在页面底部 -->

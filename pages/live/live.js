@@ -128,7 +128,7 @@ Page({
   },
 
   /**
-   * 从全局与 Storage 同步当前场次计分配置（与 index、onShow 逻辑一致）。
+   * 从全局与 Storage 同步当前场次记分配置（与 index、onShow 逻辑一致）。
    * @returns {void}
    */
   syncMatchConfigFromPageSources: function() {
@@ -239,7 +239,7 @@ Page({
         cameraContext: null,
         showVipGate: true,
         vipGateTitle: '需要登录',
-        vipGateSubtext: '请先到「我的」完成微信登录，再使用直播计分与录像。',
+        vipGateSubtext: '请先到「我的」完成微信登录，再使用直播记分与录像。',
         vipGateMinor: '',
         vipGateRetryVisible: false
       });
@@ -371,7 +371,7 @@ Page({
   onVipGateCatchMove: function() {},
 
   /**
-   * 恢复遮罩层吞掉触摸移动，避免穿透到计分手势。
+   * 恢复遮罩层吞掉触摸移动，避免穿透到记分手势。
    * @returns {void}
    */
   noopCatchMove: function() {},
@@ -1188,7 +1188,7 @@ Page({
   },
 
   onTouchEnd: function(e) {
-    this.onScoreTouchEnd(); // 防止干扰计分长按
+    this.onScoreTouchEnd(); // 防止干扰记分长按
     if (!e.touches || e.touches.length === 0) {
       this.isPinching = false;
       this.pinchStartDistance = 0;
@@ -1320,7 +1320,7 @@ Page({
         ? `/pages/index/index?referrerId=${encodeURIComponent(openid)}`
         : '/pages/index/index';
     return {
-      title: '秒记篮球场助手 — 邀你免费试用直播计分',
+      title: '高光记分 — 邀你免费试用直播记分',
       path,
       imageUrl: SHARE_IMAGE_URL
     };
@@ -1366,7 +1366,7 @@ Page({
       const wh = sys.windowHeight || ww;
       return Math.min(ww, wh);
     };
-    /** 使用短边做基准，避免横竖屏时机差异导致计分条忽长忽短。 */
+    /** 使用短边做基准，避免横竖屏时机差异导致记分条忽长忽短。 */
     const shortEdge = getShortEdge();
     const rpxToPx = shortEdge / 750;
     /** 队名区宽度 = 12 字槽位 + 分数固定槽位 + 二者间距 + 左右内边距。 */
@@ -1910,7 +1910,7 @@ Page({
     this.vibrate('light');
   },
 
-  // 核心计分逻辑
+  // 核心记分逻辑
   onScoreTap: function(e) {
     const { team, type } = e.currentTarget.dataset;
     if (this.suppressScoreTap) {
@@ -1942,7 +1942,7 @@ Page({
     wx.navigateBack();
   },
 
-  // 长按连续计分
+  // 长按连续记分
   onScoreLongPress: function(e) {
     const { team, type } = e.currentTarget.dataset;
     this.vibrate('heavy');

@@ -7,7 +7,7 @@
   "window": {
     "backgroundTextStyle": "light",
     "navigationBarBackgroundColor": "#000000",
-    "navigationBarTitleText": "秒记篮场助手",
+    "navigationBarTitleText": "高光记分",
     "navigationBarTextStyle": "white",
     "navigationStyle": "custom",
     "backgroundColor": "#000000",
@@ -23,7 +23,7 @@
     "list": [
       {
         "pagePath": "pages/index/index",
-        "text": "计分",
+        "text": "记分",
         "iconPath": "assets/tab/tab-score.png",
         "selectedIconPath": "assets/tab/tab-score-active.png"
       },

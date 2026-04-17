@@ -29,7 +29,7 @@
     bindlongpress="onBackgroundLongPress">
   </view>
 
-  <!-- Level 1: 计分 UI 遮罩层 (沉浸式，不避让状态栏) -->
+  <!-- Level 1: 记分 UI 遮罩层 (沉浸式，不避让状态栏) -->
   <view class="overlay immersive">
     <view
       class="recover-fab recover-fab--{{pipelineHealth}} {{isRecovering ? 'recover-fab--busy' : ''}} {{opsControlActionable ? 'recover-fab--actionable' : ''}} {{opsControlAck ? 'recover-fab--ack' : ''}}"
@@ -50,7 +50,7 @@
       </view>
     </view>
 
-    <!-- 核心计分区域：位于正下方居中 -->
+    <!-- 核心记分区域：位于正下方居中 -->
     <view class="bottom-center-board">
       <!-- 比赛名称与迷你回放按钮 -->
       <view class="match-name-row">
@@ -62,7 +62,7 @@
         </view>
       </view>
 
-      <!-- 计分条主体：左右等宽且比分固定（色条视觉约 50% 高度，操作热区保持原 min-height） -->
+      <!-- 记分条主体：左右等宽且比分固定（色条视觉约 50% 高度，操作热区保持原 min-height） -->
       <view class="main-score-bar">
         <!-- 球队 A 容器 -->
         <view

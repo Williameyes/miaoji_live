@@ -23,7 +23,7 @@ function ballActive(sel, teamA, teamB, ball) {
 }
 
 /**
- * 队名截断：最多保留前 12 个字符，不追加省略号（与计分栏固定宽度一致）。
+ * 队名截断：最多保留前 12 个字符，不追加省略号（与记分栏固定宽度一致）。
  * @param {string} name
  * @returns {string}
  */

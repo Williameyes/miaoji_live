@@ -276,7 +276,7 @@ Page({
         ? `/pages/index/index?referrerId=${encodeURIComponent(openid)}`
         : '/pages/index/index';
     return {
-      title: '秒记篮球场助手 — 邀你免费试用直播计分',
+      title: '高光记分 — 邀你免费试用直播记分',
       path,
       imageUrl: SHARE_IMAGE_URL
     };
@@ -312,7 +312,7 @@ Page({
       this.setData({
         vipStatusText: d ? `试用权益：${d} 到期` : '试用权益：有效期内',
         vipStatusExpired: false,
-        vipStatusRenewHintVisible: false
+        vipStatusRenewHintVisible: true
       });
       return;
     }
@@ -616,8 +616,8 @@ Page({
 
   onAboutTap: function () {
     wx.showModal({
-      title: '关于秒记',
-      content: '秒记篮场助手：篮球比赛计分与高光管理，为业余与校园赛事提供轻量记录体验。',
+      title: '关于我们',
+      content: '高光记分：比赛记分与高光管理，为业余与校园赛事提供轻量记录体验。',
       showCancel: false,
       confirmText: '知道了'
     });

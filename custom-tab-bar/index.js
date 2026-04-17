@@ -7,7 +7,7 @@ Component({
     list: [
       {
         pagePath: '/pages/index/index',
-        text: '计分',
+        text: '记分',
         iconKey: 'score'
       },
       {

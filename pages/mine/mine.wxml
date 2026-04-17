@@ -57,7 +57,7 @@
 
   <view class="list-card">
     <view class="list-item" hover-class="list-item-hover" bindtap="onAboutTap">
-      <text class="list-label">关于秒记</text>
+      <text class="list-label">关于我们</text>
       <text class="list-arrow">›</text>
     </view>
     <view class="list-divider"></view>

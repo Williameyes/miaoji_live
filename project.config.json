@@ -1,7 +1,7 @@
 {
   "miniprogramRoot": "./",
   "projectname": "miaoji-hoopslive",
-  "description": "篮场计分助手",
+  "description": "比赛记分助手",
   "appid": "wxc4a03ae1583e3d39",
   "setting": {
     "urlCheck": false,

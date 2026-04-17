@@ -32,7 +32,7 @@ page {
   z-index: 0;
 }
 
-/* 硬恢复相机卸载间隙：静态遮罩（pointer-events:none，不挡状态灯与计分 UI） */
+/* 硬恢复相机卸载间隙：静态遮罩（pointer-events:none，不挡状态灯与记分 UI） */
 .recovery-veil {
   position: fixed;
   top: -5vh;
@@ -174,7 +174,7 @@ page {
   z-index: 5; /* 位于相机之上，UI 之下 */
 }
 
-/* 底部居中计分板 */
+/* 底部居中记分板 */
 .bottom-center-board {
   position: absolute;
   bottom: calc(4rpx + env(safe-area-inset-bottom));
@@ -217,7 +217,7 @@ page {
   pointer-events: none;
 }
 
-/* 计分条：色带视觉高度约 30rpx（约为原先 60rpx 的 50%），整行仍保留约 60rpx 操作热区 */
+/* 记分条：色带视觉高度约 30rpx（约为原先 60rpx 的 50%），整行仍保留约 60rpx 操作热区 */
 .main-score-bar {
   display: flex;
   align-items: center;
