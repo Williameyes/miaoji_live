@@ -50,6 +50,10 @@ Page({
     colorModalMatch: null,
     /** 颜色设置浮层：当前选中的队（teamA / teamB），共用色盘指向 */
     colorModalTeam: 'teamA',
+    /** 颜色浮层：高光缓存行提示（含约 MB） */
+    colorModalCacheRowHint: '',
+    /** 颜色浮层：已执行下载清空，按钮置为「已清空」 */
+    colorModalDownloadCleared: false,
     /** 快选颜色球色板（24 色：8 列 × 3 行，仅一个纯黑） */
     colorBalls: [
       '#DC2626', '#EA580C', '#F59E0B', '#EAB308', '#84CC16', '#16A34A', '#059669', '#0D9488',
@@ -477,10 +481,10 @@ Page({
   lastSetZoomTime: 0,
   suppressScoreTap: false,
   /**
-   * 滚动录制单段时长（毫秒）。16s 在稳定性与响应速度之间做平衡。
-   * 高光「体感窗口」仍由 {@link highlightPlaybackWindowMs} 控制（默认 8s 起播逻辑）。
+   * 滚动录制单段时长（毫秒）。8s 单段体积更小，在约 200MB 本机文件配额下可保留更多段/更多次高光；
+   * 高光「体感窗口」仍由 {@link highlightPlaybackWindowMs} 控制（默认 8s）。
    */
-  segmentDurationMs: 16000,
+  segmentDurationMs: 8000,
   /** 用户点击保存后，回放时希望覆盖的精彩窗口长度（毫秒），可与物理切片时长解耦 */
   highlightPlaybackWindowMs: 8000,
   /**
@@ -540,8 +544,8 @@ Page({
   lastRecordStartAt: 0,
   startRecordFailStreak: 0,
   /** rolling 缓冲最多保留的段数；长切片下单段更大，略减段数以控制磁盘水位 */
-  /** rolling 热层保留段数；过小易在高压 I/O 下过早淘汰，过大占盘 */
-  rollingBufferMax: 18,
+  /** rolling 热层保留段数；过小易在高压 I/O 下过早淘汰，过大占满小程序文件配额 */
+  rollingBufferMax: 10,
   /** 正在将分段写入本地 rolling（copyFile 等），此时禁止看门狗误启新段，避免长直播后写盘变慢导致管线错乱 */
   rollingFsBusy: false,
   /**
@@ -990,6 +994,24 @@ Page({
     }
     this.clearHighlightSavePipelineState();
     this.endHighlightSaving();
+    /**
+     * iOS 上 persist 失败后 rolling 易与相机争用进入 start_fail；中止高光后软恢复 rolling，
+     * 避免仅解锁 UI 而录制链仍处于亚健康（参考 segment_persist_reject_temp_unstable 日志链）。
+     */
+    if (reason === 'segment_persist_unstable' || reason === 'segment_persist_fail') {
+      let recoverDelayMs = 140;
+      try {
+        const siAb = wx.getSystemInfoSync();
+        if (siAb && siAb.platform === 'ios') {
+          recoverDelayMs = 420;
+        }
+      } catch (eAb) {
+        recoverDelayMs = 140;
+      }
+      setTimeout(() => {
+        this.recoverRollingPipelineForHighlight();
+      }, recoverDelayMs);
+    }
   },
 
   // 相机初始化完成回调
@@ -1184,37 +1206,65 @@ Page({
         }
       };
       const baseMs =
-        (this.recordCooldownAfterStopMs || 500) + this.getAdaptiveRecordCooldownExtraMs();
+        (this.recordCooldownAfterStopMs || 500) +
+        this.getAdaptiveRecordCooldownExtraMs() +
+        this.getIosParallelRollingStopExtraMs();
       const extraMs = this._cameraRebuildExtraDelayMs || 0;
       setTimeout(kick, baseMs + extraMs);
     });
   },
 
   /**
-   * Android 长会话后附加 stop→start 冷却，减轻连续 startRecord 失败（与日志中 segment_start_fail 簇相关）。
+   * 长会话后附加 stop→start 冷却：Android 针对高压 I/O；iOS 略增句柄释放时间。
+   * 非上述平台返回 0。
    * @returns {number}
    */
   getAdaptiveRecordCooldownExtraMs: function() {
     try {
       const si = wx.getSystemInfoSync();
-      if (!si || si.platform !== 'android') return 0;
+      if (!si) return 0;
+      const n = typeof this.segmentCounter === 'number' ? this.segmentCounter : 0;
+      if (si.platform === 'android') {
+        /** 长会话 + 频繁 user 目录落盘时略抬高上限，降低句柄竞态 */
+        return Math.min(680, Math.floor(n / 12) * 38);
+      }
+      if (si.platform === 'ios') {
+        /** 与 Android 同为并行落盘；具体加长见 {@link getIosParallelRollingStopExtraMs} */
+        return Math.min(300, 72 + Math.floor(n / 10) * 22);
+      }
+    } catch (e) {
+      return 0;
+    }
+    return 0;
+  },
+
+  /**
+   * iOS 与 Android 均并行调度下一段时，额外拉长 stop→start，降低上一段 temp 被回收前未完成 save 的概率。
+   * Android 返回 0。
+   * @returns {number}
+   */
+  getIosParallelRollingStopExtraMs: function() {
+    try {
+      const si = wx.getSystemInfoSync();
+      if (!si || si.platform !== 'ios') return 0;
     } catch (e) {
       return 0;
     }
     const n = typeof this.segmentCounter === 'number' ? this.segmentCounter : 0;
-    /** 长会话 + 频繁 user 目录落盘时略抬高上限，降低句柄竞态 */
-    return Math.min(680, Math.floor(n / 12) * 38);
+    return Math.min(920, 380 + Math.floor(n / 4) * 36);
   },
 
   /**
    * stopRecord 完成后延迟再启动下一段录制，避免 Native 句柄未释放即 startRecord。
    * 若上一段落盘走了 user 目录 saveFile，会在回调内再叠一段冷却以减轻与相机争用。
+   * iOS 另加 {@link getIosParallelRollingStopExtraMs}（与 Android 并行模型一致，仅时间不同）。
    * @param {function(): void} fn
    * @returns {void}
    */
   scheduleAfterStopRecord: function(fn) {
     const base = this.recordCooldownAfterStopMs || 500;
-    const ms = base + this.getAdaptiveRecordCooldownExtraMs();
+    const ms =
+      base + this.getAdaptiveRecordCooldownExtraMs() + this.getIosParallelRollingStopExtraMs();
     setTimeout(() => {
       const extra = typeof this._postUserLocalPersistCooldownMs === 'number'
         ? this._postUserLocalPersistCooldownMs
@@ -1265,9 +1315,32 @@ Page({
     const ps = prevEntry && typeof prevEntry.recordStartMs === 'number' ? prevEntry.recordStartMs : 0;
     const fs = freshEntry && typeof freshEntry.recordStartMs === 'number' ? freshEntry.recordStartMs : 0;
     if (ps <= 0 || fs <= 0) return false;
+    let isIos = false;
+    try {
+      const siAdj = wx.getSystemInfoSync();
+      isIos = !!(siAdj && siAdj.platform === 'ios');
+    } catch (eIos) {
+      isIos = false;
+    }
+    if (
+      isIos
+      && prevEntry
+      && freshEntry
+      && typeof prevEntry.segNo === 'number'
+      && typeof freshEntry.segNo === 'number'
+      && freshEntry.segNo === prevEntry.segNo + 1
+    ) {
+      return false;
+    }
     const prevEndApprox = ps + dur;
     const gapMs = fs - prevEndApprox;
-    const maxGap = this.highlightChainMaxGapMs != null ? this.highlightChainMaxGapMs : 8000;
+    let maxGap = this.highlightChainMaxGapMs != null ? this.highlightChainMaxGapMs : 8000;
+    if (isIos) {
+      /**
+       * iOS 频繁回放/恢复时，墙钟间隙会被人为拉大；非连号段再按放宽阈值判定。
+       */
+      maxGap = Math.max(maxGap, 24000);
+    }
     return gapMs > maxGap;
   },
 
@@ -1484,6 +1557,7 @@ Page({
 
     this.syncMatchConfigFromPageSources();
     this.appendHealthLog('page_show', {});
+    this.maybeToastFileStoragePressureFromGlobal();
 
     wx.setKeepScreenOn({
       keepScreenOn: true,
@@ -1499,6 +1573,24 @@ Page({
     this.refreshLiveEntitlementAndResume(() => {
       this._liveCoreOnShowAfterEntitlement();
     });
+  },
+
+  /**
+   * 若首页已估算本机视频水位偏高，进入直播时轻提示（依赖 {@link app.globalData.fileStorageEstimate}）。
+   * @returns {void}
+   */
+  maybeToastFileStoragePressureFromGlobal: function() {
+    try {
+      if (this._fileStoragePressureToastShown) return;
+      const est = app.globalData && app.globalData.fileStorageEstimate;
+      if (!est || est.healthLevel === 'ok') return;
+      this._fileStoragePressureToastShown = true;
+      wx.showToast({
+        title: '高光缓存偏高，保存可能失败，建议在首页清理或导出至相册',
+        icon: 'none',
+        duration: 3200
+      });
+    } catch (eToastFs) {}
   },
 
   /**
@@ -1617,6 +1709,7 @@ Page({
   },
 
   onUnload: function() {
+    this._fileStoragePressureToastShown = false;
     this._replayDeferredItem = null;
     if (this._replayPauseWaitTimer) {
       clearTimeout(this._replayPauseWaitTimer);
@@ -2411,17 +2504,24 @@ Page({
         });
         // 关键修复：不能在少量失败后停止，否则 segmentCounter 会冻结，后续高光重复。
         const nextRetry = retryCount + 1;
-        let androidSegPad = 0;
+        let platformSegPad = 0;
+        let isIosFail = false;
         try {
           const si = wx.getSystemInfoSync();
+          const n = typeof this.segmentCounter === 'number' ? this.segmentCounter : 0;
           if (si && si.platform === 'android') {
-            const n = typeof this.segmentCounter === 'number' ? this.segmentCounter : 0;
-            androidSegPad = Math.min(380, Math.floor(n / 16) * 30);
+            platformSegPad = Math.min(380, Math.floor(n / 16) * 30);
+          } else if (si && si.platform === 'ios') {
+            isIosFail = true;
+            /** iOS startRecord 失败后略拉长退避，避免与文件落盘叠峰 */
+            platformSegPad = Math.min(380, Math.floor(n / 10) * 32);
           }
         } catch (ePad) {
-          androidSegPad = 0;
+          platformSegPad = 0;
         }
-        const delay = Math.min(1900, 220 + nextRetry * 140 + androidSegPad);
+        const baseBackoff = isIosFail ? 300 : 220;
+        const perStep = isIosFail ? 175 : 140;
+        const delay = Math.min(2200, baseBackoff + nextRetry * perStep + platformSegPad);
         if (this.startRecordFailStreak >= 5) {
           this.segmentStartFailStormCycles = (this.segmentStartFailStormCycles || 0) + 1;
           this.appendHealthLog('segment_start_fail_storm_cycle', {
@@ -2462,11 +2562,45 @@ Page({
         this.segmentCounter += 1;
         if (tempPath) {
           /**
-           * 与落盘并行启动下一段：各段 temp 路径独立，避免 phase7 saveFile 慢时整段链阻塞在 .finally，
-           * 否则会出现长时间 PAUSE、highlight_resume_guard 误杀、以及下一段 startRecord 过晚。
+           * Android：落盘与下一段并行（temp 相对稳定）。
+           * iOS：**必须先完成本段 temp→稳定路径**，再 schedule 下一段 startRecord；否则下一段相机起来后，
+           * 系统常提前回收上一段 temp，导致 copy/save 全失败、高光五连重试仍 segment_persist_reject_temp_unstable。
            */
-          this.onSegmentRecorded(tempPath, this.segmentCounter, sessionId, recordStartWallMs).catch(() => {});
-          this.scheduleAfterStopRecord(() => this.startOneSegment(sessionId));
+          const persistPromise = this.onSegmentRecorded(
+            tempPath,
+            this.segmentCounter,
+            sessionId,
+            recordStartWallMs
+          );
+          const kickNextSegment = () => {
+            if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
+            this.scheduleAfterStopRecord(() => this.startOneSegment(sessionId));
+          };
+          let iosSerialPersist = false;
+          try {
+            const siStop = wx.getSystemInfoSync();
+            iosSerialPersist = !!(siStop && siStop.platform === 'ios');
+          } catch (eStopPlat) {
+            iosSerialPersist = false;
+          }
+          if (iosSerialPersist) {
+            try {
+              const hmSerial = this._highlightAfterStopMeta;
+              if (
+                hmSerial
+                && hmSerial.recordSessionId === sessionId
+                && hmSerial.expectedSegNo === this.segmentCounter
+              ) {
+                this.appendHealthLog('rolling_ios_serial_for_highlight_expected_seg', {
+                  segNo: this.segmentCounter
+                });
+              }
+            } catch (eSerialLog) {}
+            persistPromise.then(kickNextSegment, kickNextSegment);
+          } else {
+            persistPromise.catch(() => {});
+            kickNextSegment();
+          }
           return;
         }
         this.abortHighlightAfterStopIfNeeded(sessionId, 'empty_temp_path');
@@ -2551,12 +2685,35 @@ Page({
       const rollingPath = `${rollingDir}/seg_${segNo}.mp4`;
       const altRollingPath = `${rollingDir}/s_${segNo}_${Date.now()}.mp4`;
       const sessionOk = () => recordSessionId === this.rollingSessionId;
+      let persistIsIos = false;
+      try {
+        const siPlat = wx.getSystemInfoSync();
+        persistIsIos = !!(siPlat && siPlat.platform === 'ios');
+      } catch (ePlat0) {
+        persistIsIos = false;
+      }
+      /** 高光对应段在「全路径 persist 仍空」时，限次整段重试（iOS temp 晚就绪） */
+      let highlightPersistUnstableRetries = 0;
+      /** 本段仅做一次配额急救（删热层/孤儿）后整管重试，避免与 maximum file storage limit 死循环 */
+      let quotaReliefTriedForThisSegment = false;
+      /** iOS：优先尽快 user save；并跳过整文件 readFile（大视频易失败或拖慢导致 temp 失效） */
+      let iosPrimaryUserTried = false;
+      let iosPrimaryUserRetry = 0;
+      let iosEarlyUserTried = false;
+      let iosUserSaveRetry = 0;
+      /** 仅在中后段周期性收紧 user-local 热层，避免每段 prune 误伤可用条数 */
+      if (persistIsIos && typeof this.segmentCounter === 'number' && this.segmentCounter >= 18) {
+        if (this.segmentCounter % 8 === 0) {
+          this.pruneIosSegmentBufferUserLocals(10);
+        }
+      }
       /** 部分 Android 上同名目标残留 0 字节或句柄未释放，导致此后所有 copy 失败 */
       try {
         fs.unlinkSync(rollingPath);
       } catch (eUnlink) {}
       /**
        * 将临时文件读入内存再写入 rolling（部分机型 copyFile/saveFile 失败时仍可用）。
+       * iOS 上不使用此路径（见 attemptRollingPersist phase 4/5）。
        * @param {function(string): void} onDone 落盘后的物理路径
        * @returns {void}
        */
@@ -2578,6 +2735,50 @@ Page({
           },
           fail: () => onDone('')
         });
+      };
+      /**
+       * saveFile 仅 temp → 本地用户路径（与 phase 7 一致）。
+       * @param {{ onOk: function(string): void, onEmptyOrFail: function(): void }} cb
+       * @returns {void}
+       */
+      const trySaveTempToUserLocal = (cb) => {
+        fs.saveFile({
+          tempFilePath: tempPath,
+          success: (r) => {
+            const p = r && r.savedFilePath ? String(r.savedFilePath) : '';
+            if (p) {
+              cb.onOk(p);
+            } else {
+              cb.onEmptyOrFail();
+            }
+          },
+          fail: () => {
+            cb.onEmptyOrFail();
+          }
+        });
+      };
+      /**
+       * @param {string} p user 目录下的稳定路径
+       * @returns {void}
+       */
+      const applyUserLocalPersistSuccess = (p, opts) => {
+        if (!opts || !opts.skipUserLocalLog) {
+          this.appendHealthLog('rolling_persist_ok_user_local_savefile', {});
+        }
+        let userLocalPad = 260;
+        try {
+          const si2 = wx.getSystemInfoSync();
+          if (si2 && si2.platform === 'ios') {
+            userLocalPad = 340;
+          }
+        } catch (ePad2) {
+          userLocalPad = 260;
+        }
+        this._postUserLocalPersistCooldownMs = Math.max(
+          this._postUserLocalPersistCooldownMs || 0,
+          userLocalPad
+        );
+        finalizeSegment(p, { evictUnlink: true });
       };
       /**
        * @param {string} savedPath 稳定可读路径（含 _rolling、备用名或 saveFile 用户路径）
@@ -2609,6 +2810,25 @@ Page({
            */
           let currentSegPath = savedPath || '';
           if (!currentSegPath && tempPath) {
+            const maxUnstableRetry = persistIsIos ? 5 : 2;
+            if (highlightPersistUnstableRetries < maxUnstableRetry) {
+              highlightPersistUnstableRetries += 1;
+              this.appendHealthLog('segment_persist_retry_after_temp_unstable', {
+                attempt: highlightPersistUnstableRetries,
+                segNo
+              });
+              const backoffMs = persistIsIos
+                ? Math.min(980, 280 + highlightPersistUnstableRetries * 160)
+                : 200 + highlightPersistUnstableRetries * 120;
+              setTimeout(() => {
+                if (!sessionOk()) {
+                  resolve();
+                  return;
+                }
+                attemptRollingPersist(0);
+              }, backoffMs);
+              return;
+            }
             this.appendHealthLog('segment_persist_reject_temp_unstable', {});
             this.abortHighlightAfterStopIfNeeded(recordSessionId, 'segment_persist_unstable');
             resolve();
@@ -2656,7 +2876,14 @@ Page({
           resolve();
           return;
         }
-        const maxBuf = this.rollingBufferMax || 10;
+        let maxBuf = this.rollingBufferMax || 10;
+        try {
+          const siMb = wx.getSystemInfoSync();
+          if (siMb && siMb.platform === 'ios') {
+            /** 用户目录热层 + 多段 MP4 易触顶小程序「文件存储」上限（非 KV storage） */
+            maxBuf = Math.min(maxBuf, 5);
+          }
+        } catch (eMb) {}
         if (this.segmentBuffer.length > maxBuf) {
           const excess = this.segmentBuffer.length - maxBuf;
           const removed = [];
@@ -2725,15 +2952,77 @@ Page({
       };
 
       /**
-       * 多阶段重试落盘：Android 上易因目标文件锁、瞬时 I/O 失败导致全链路失败。
-       * 顺序：copy×2 → save×2 → **延迟一拍再 copy** → read/write×2 → **备用文件名 copy** → **saveFile 仅 temp（落本地用户路径）**。
+       * 多阶段重试落盘：Android 易锁文件；iOS 忌整段 readFile、且宜尽早 user save 以免 temp 过期。
+       * 顺序：copy×2 → save×2 →（iOS 抢先 user save）→ 延迟 copy → read/write（非 iOS）→ alt copy → user save + iOS 重试。
        * @param {number} phase 0–7
        * @returns {void}
        */
       let preReadFileDelayedCopyTried = false;
+      /**
+       * copy/save 失败且 errMsg 为文件配额已满时，清理热层后从 phase 0 整段重试一次。
+       * @param {string} errMsg
+       * @returns {boolean} 已接管重试则为 true，调用方勿再执行后续链
+       */
+      const maybeQuotaRelief = (errMsg) => {
+        if (!this.isMiniProgramFileQuotaExceeded(errMsg) || quotaReliefTriedForThisSegment) {
+          return false;
+        }
+        quotaReliefTriedForThisSegment = true;
+        this.appendHealthLog('rolling_persist_quota_relief_retry', { segNo });
+        try {
+          wx.showToast({
+            title: '存储空间不足，已自动清理录像缓存',
+            icon: 'none',
+            duration: 2200
+          });
+        } catch (eToast) {}
+        this.freeRollingFileStorageAggressive('persist_io_fail');
+        setTimeout(() => {
+          if (!sessionOk()) {
+            resolve();
+            return;
+          }
+          iosPrimaryUserTried = false;
+          iosEarlyUserTried = false;
+          preReadFileDelayedCopyTried = false;
+          iosPrimaryUserRetry = 0;
+          iosUserSaveRetry = 0;
+          attemptRollingPersist(0);
+        }, 140);
+        return true;
+      };
       const attemptRollingPersist = (phase) => {
         if (!sessionOk()) {
           resolve();
+          return;
+        }
+        if (phase === 0 && persistIsIos && !iosPrimaryUserTried) {
+          iosPrimaryUserTried = true;
+          trySaveTempToUserLocal({
+            onOk: (p) => {
+              this.appendHealthLog('rolling_persist_ok_ios_primary_user_save', {});
+              applyUserLocalPersistSuccess(p, { skipUserLocalLog: true });
+            },
+            onEmptyOrFail: () => {
+              if (iosPrimaryUserRetry < 3) {
+                iosPrimaryUserRetry += 1;
+                iosPrimaryUserTried = false;
+                if (iosPrimaryUserRetry >= 2) {
+                  this.freeRollingFileStorageAggressive('ios_primary_save_empty');
+                }
+                const backoff = 120 + iosPrimaryUserRetry * 140;
+                setTimeout(() => {
+                  if (!sessionOk()) {
+                    resolve();
+                    return;
+                  }
+                  attemptRollingPersist(0);
+                }, backoff);
+                return;
+              }
+              attemptRollingPersist(1);
+            }
+          });
           return;
         }
         if (phase === 0 || phase === 1) {
@@ -2745,7 +3034,14 @@ Page({
             srcPath: tempPath,
             destPath: rollingPath,
             success: () => finalizeSegment(rollingPath),
-            fail: () => {
+            fail: (errCf) => {
+              const msg = errCf && errCf.errMsg ? String(errCf.errMsg) : '';
+              this.appendHealthLog('rolling_persist_copy_fail', {
+                phase,
+                segNo,
+                errMsg: msg
+              });
+              if (maybeQuotaRelief(msg)) return;
               if (phase === 0) {
                 setTimeout(() => attemptRollingPersist(1), 90);
               } else {
@@ -2761,7 +3057,14 @@ Page({
             filePath: rollingPath,
             success: (r) =>
               finalizeSegment((r && r.savedFilePath) ? r.savedFilePath : rollingPath),
-            fail: () => {
+            fail: (errSf) => {
+              const msg = errSf && errSf.errMsg ? String(errSf.errMsg) : '';
+              this.appendHealthLog('rolling_persist_save_fail', {
+                phase,
+                segNo,
+                errMsg: msg
+              });
+              if (maybeQuotaRelief(msg)) return;
               if (phase === 2) {
                 setTimeout(() => attemptRollingPersist(3), 110);
               } else {
@@ -2772,6 +3075,47 @@ Page({
           return;
         }
         if (phase === 4) {
+          if (persistIsIos && !iosEarlyUserTried) {
+            iosEarlyUserTried = true;
+            trySaveTempToUserLocal({
+              onOk: (p) => {
+                applyUserLocalPersistSuccess(p);
+              },
+              onEmptyOrFail: () => {
+                attemptRollingPersist(4);
+              }
+            });
+            return;
+          }
+          if (persistIsIos) {
+            if (!preReadFileDelayedCopyTried && fs.copyFile) {
+              preReadFileDelayedCopyTried = true;
+              setTimeout(() => {
+                if (!sessionOk()) {
+                  resolve();
+                  return;
+                }
+                fs.copyFile({
+                  srcPath: tempPath,
+                  destPath: rollingPath,
+                  success: () => finalizeSegment(rollingPath),
+                  fail: (errCf4) => {
+                    const msg = errCf4 && errCf4.errMsg ? String(errCf4.errMsg) : '';
+                    this.appendHealthLog('rolling_persist_copy_fail', {
+                      phase: 4,
+                      segNo,
+                      errMsg: msg
+                    });
+                    if (maybeQuotaRelief(msg)) return;
+                    attemptRollingPersist(6);
+                  }
+                });
+              }, persistIsIos ? 560 : 420);
+              return;
+            }
+            attemptRollingPersist(6);
+            return;
+          }
           if (!preReadFileDelayedCopyTried && fs.copyFile) {
             preReadFileDelayedCopyTried = true;
             setTimeout(() => {
@@ -2783,7 +3127,16 @@ Page({
                 srcPath: tempPath,
                 destPath: rollingPath,
                 success: () => finalizeSegment(rollingPath),
-                fail: () => attemptRollingPersist(4)
+                fail: (errCf4b) => {
+                  const msg = errCf4b && errCf4b.errMsg ? String(errCf4b.errMsg) : '';
+                  this.appendHealthLog('rolling_persist_copy_fail', {
+                    phase: 4,
+                    segNo,
+                    errMsg: msg
+                  });
+                  if (maybeQuotaRelief(msg)) return;
+                  attemptRollingPersist(4);
+                }
               });
             }, 320);
             return;
@@ -2799,6 +3152,10 @@ Page({
           return;
         }
         if (phase === 5) {
+          if (persistIsIos) {
+            attemptRollingPersist(6);
+            return;
+          }
           tryTempToRollingReadWrite((rwPath) => {
             if (rwPath) {
               this.appendHealthLog('rolling_persist_ok_rw_deferred', {});
@@ -2824,36 +3181,88 @@ Page({
               this.appendHealthLog('rolling_persist_ok_alt_filename', { path: altRollingPath });
               finalizeSegment(altRollingPath);
             },
-            fail: () => {
+            fail: (errAlt) => {
+              const msg = errAlt && errAlt.errMsg ? String(errAlt.errMsg) : '';
+              this.appendHealthLog('rolling_persist_copy_fail', {
+                phase: 6,
+                segNo,
+                errMsg: msg
+              });
+              if (maybeQuotaRelief(msg)) return;
               attemptRollingPersist(7);
             }
           });
           return;
         }
         if (phase === 7) {
-          fs.saveFile({
-            tempFilePath: tempPath,
-            success: (r) => {
-              const p = r && r.savedFilePath ? String(r.savedFilePath) : '';
-              if (p) {
-                this.appendHealthLog('rolling_persist_ok_user_local_savefile', {});
-                /** 与相机 startRecord 错开，减轻热机 + I/O 争用 */
-                this._postUserLocalPersistCooldownMs = Math.max(
-                  this._postUserLocalPersistCooldownMs || 0,
-                  260
-                );
-                finalizeSegment(p, { evictUnlink: true });
-              } else {
+          const runUserSave = () => {
+            trySaveTempToUserLocal({
+              onOk: (p) => {
+                applyUserLocalPersistSuccess(p);
+              },
+              onEmptyOrFail: () => {
+                if (persistIsIos && iosUserSaveRetry < 4) {
+                  iosUserSaveRetry += 1;
+                  if (iosUserSaveRetry >= 2) {
+                    this.trimRollingSegmentBufferForQuota(5);
+                  }
+                  setTimeout(() => {
+                    if (!sessionOk()) {
+                      resolve();
+                      return;
+                    }
+                    runUserSave();
+                  }, 380 + iosUserSaveRetry * 130);
+                  return;
+                }
+                if (!quotaReliefTriedForThisSegment && persistIsIos) {
+                  quotaReliefTriedForThisSegment = true;
+                  this.appendHealthLog('rolling_persist_phase7_empty_relief', { segNo });
+                  this.freeRollingFileStorageAggressive('phase7_user_save_exhausted');
+                  setTimeout(() => {
+                    if (!sessionOk()) {
+                      resolve();
+                      return;
+                    }
+                    iosPrimaryUserTried = false;
+                    iosEarlyUserTried = false;
+                    preReadFileDelayedCopyTried = false;
+                    iosPrimaryUserRetry = 0;
+                    iosUserSaveRetry = 0;
+                    attemptRollingPersist(0);
+                  }, 160);
+                  return;
+                }
                 finalizeSegment('');
               }
-            },
-            fail: () => {
-              finalizeSegment('');
-            }
-          });
+            });
+          };
+          runUserSave();
         }
       };
-      attemptRollingPersist(0);
+      /**
+       * iOS：tempPath 早于真实 flush，略延迟再开始多阶段落盘，降低 phase 7 空路径 + 高光误判不稳定概率。
+       */
+      const kickRollingPersist = () => {
+        if (!sessionOk()) {
+          resolve();
+          return;
+        }
+        if (persistIsIos) {
+          this.pruneIosSegmentBufferUserLocals(4);
+          this.trimRollingSegmentBufferForQuota(5);
+        }
+        attemptRollingPersist(0);
+      };
+      if (persistIsIos) {
+        const settleMs = Math.min(
+          520,
+          200 + Math.floor((typeof segNo === 'number' ? segNo : 0) / 6) * 38
+        );
+        setTimeout(kickRollingPersist, settleMs);
+      } else {
+        kickRollingPersist();
+      }
     }))
       .catch(() => Promise.resolve())
       .finally(() => {
@@ -2920,10 +3329,13 @@ Page({
    */
   retainRollingSegmentsByPaths: function(paths) {
     if (!Array.isArray(paths) || paths.length === 0) return;
-    const rollingDir = this.getRollingDir();
     const buf = this.segmentBuffer || [];
     paths.forEach((p) => {
-      if (!p || p.indexOf(rollingDir) !== 0) return;
+      if (!p) return;
+      /**
+       * iOS 常落 saveFile 用户路径（非 _rolling）；必须与 _rolling 一样加 ref，否则 refCount 恒为 0，
+       * 热层淘汰会误删仍被高光索引/固化引用的文件，沙盒爆满后 saveFile 全失败。
+       */
       for (let i = 0; i < buf.length; i += 1) {
         const it = buf[i];
         if (!it || it.path !== p) continue;
@@ -3013,7 +3425,145 @@ Page({
       const currentMatchId = wx.getStorageSync('currentMatchId') || app.globalData.currentMatchId || '';
       if (currentMatchId) this.pruneHighlightStorageForMatch(currentMatchId);
     }
+    if (ratio >= 0.85) {
+      try {
+        const siPr = wx.getSystemInfoSync();
+        if (siPr && siPr.platform === 'ios') {
+          this.pruneIosSegmentBufferUserLocals(4);
+        }
+      } catch (ePr) {}
+    }
     return level;
+  },
+
+  /**
+   * iOS 高光热层大量使用 saveFile 用户路径，易占满沙盒；淘汰最旧且未引用（refCount=0）的 user-local 副本。
+   * @param {number} maxKeep 最多保留几条 user-local 热层片段
+   * @returns {void}
+   */
+  pruneIosSegmentBufferUserLocals: function(maxKeep) {
+    const cap = typeof maxKeep === 'number' && maxKeep > 0 ? maxKeep : 4;
+    try {
+      const si = wx.getSystemInfoSync();
+      if (!si || si.platform !== 'ios') return;
+    } catch (e) {
+      return;
+    }
+    const fs = wx.getFileSystemManager();
+    const rollingDir = this.getRollingDir();
+    const buf = this.segmentBuffer || [];
+    const candidates = [];
+    for (let i = 0; i < buf.length; i += 1) {
+      const it = buf[i];
+      if (!it || !it.path) continue;
+      if (it.path.indexOf(rollingDir) === 0) continue;
+      if (!it.evictUnlink) continue;
+      if (Number(it.refCount || 0) > 0) continue;
+      candidates.push(it);
+    }
+    if (candidates.length <= cap) return;
+    candidates.sort((a, b) => (a.segNo || 0) - (b.segNo || 0));
+    const dropCount = candidates.length - cap;
+    const dropSet = /** @type {Set<string>} */ (new Set());
+    for (let j = 0; j < dropCount; j += 1) {
+      const it = candidates[j];
+      if (!it || !it.path) continue;
+      dropSet.add(it.path);
+      try {
+        fs.unlinkSync(it.path);
+      } catch (eUn) {}
+    }
+    if (dropSet.size === 0) return;
+    this.segmentBuffer = buf.filter((bItem) => bItem && !dropSet.has(bItem.path));
+    this.appendHealthLog('ios_prune_user_local_rolling', { dropped: dropSet.size, keep: cap });
+  },
+
+  /**
+   * 判断是否为小程序本地「文件存储」配额已满（与 KV storage 的 limitSize 不同）。
+   * @param {string} errMsg 接口 fail 回调中的 errMsg
+   * @returns {boolean}
+   */
+  isMiniProgramFileQuotaExceeded: function(errMsg) {
+    if (!errMsg || typeof errMsg !== 'string') return false;
+    const s = errMsg.toLowerCase();
+    return (
+      s.indexOf('storage limit') >= 0
+      || s.indexOf('maximum size') >= 0
+      || s.indexOf('file storage') >= 0
+    );
+  },
+
+  /**
+   * 将 rolling 热层条数压到上限内（仅删 refCount=0，最旧优先），并 unlink 对应文件。
+   * @param {number} maxEntries 目标最大条数（含 ref>0）
+   * @returns {void}
+   */
+  trimRollingSegmentBufferForQuota: function(maxEntries) {
+    const cap = typeof maxEntries === 'number' && maxEntries >= 4 ? maxEntries : 6;
+    const fs = wx.getFileSystemManager();
+    let buf = this.segmentBuffer || [];
+    if (buf.length <= cap) return;
+    const droppable = buf.filter((it) => it && it.path && Number(it.refCount || 0) <= 0);
+    droppable.sort((a, b) => (a.segNo || 0) - (b.segNo || 0));
+    while (buf.length > cap && droppable.length > 0) {
+      const victim = droppable.shift();
+      if (!victim || !victim.path) continue;
+      try {
+        fs.unlinkSync(victim.path);
+      } catch (eUn) {}
+      buf = buf.filter((bItem) => bItem !== victim);
+    }
+    this.segmentBuffer = buf;
+  },
+
+  /**
+   * 文件配额告警时尽量释放空间：淘汰 user-local 副本、rolling 热层最旧项、清理 _rolling 孤儿文件。
+   * @param {string} [reason] 诊断用
+   * @returns {void}
+   */
+  freeRollingFileStorageAggressive: function(reason) {
+    const now = Date.now();
+    const gapMs = reason === 'persist_io_fail' || reason === 'phase7_user_save_exhausted' ? 450 : 2400;
+    if (this._lastRollingAggressiveFreeAt && now - this._lastRollingAggressiveFreeAt < gapMs) {
+      this.appendHealthLog('rolling_aggressive_free_throttled', {
+        reason: reason || '',
+        sinceLastMs: now - this._lastRollingAggressiveFreeAt
+      });
+      return;
+    }
+    this._lastRollingAggressiveFreeAt = now;
+    const fs = wx.getFileSystemManager();
+    const rollingDir = this.getRollingDir();
+    this.appendHealthLog('rolling_file_quota_emergency_free', { reason: reason || '' });
+    this.pruneIosSegmentBufferUserLocals(2);
+    this.trimRollingSegmentBufferForQuota(5);
+    try {
+      if (typeof fs.readdirSync === 'function') {
+        let names = [];
+        try {
+          names = fs.readdirSync(rollingDir) || [];
+        } catch (eRd0) {
+          names = [];
+        }
+        const keep = new Set();
+        (this.segmentBuffer || []).forEach((it) => {
+          if (it && it.path) keep.add(it.path);
+        });
+        let n = 0;
+        names.forEach((name) => {
+          if (!name || String(name).indexOf('.mp4') < 0) return;
+          const full = `${rollingDir}/${name}`;
+          if (keep.has(full)) return;
+          try {
+            fs.unlinkSync(full);
+            n += 1;
+          } catch (eUn) {}
+        });
+        if (n > 0) {
+          this.appendHealthLog('rolling_orphan_file_unlinked', { n });
+        }
+      }
+    } catch (eR) {}
   },
 
   /**
@@ -3251,6 +3801,12 @@ Page({
             resumeGuardMs,
             Math.floor(this.segmentDurationMs * 2.35) + 48000
           );
+        } else if (si && si.platform === 'ios') {
+          /** iOS 多阶段 save + 高光重试：默认 22s 易触发 highlight_resume_guard_timeout */
+          resumeGuardMs = Math.max(
+            resumeGuardMs,
+            Math.floor(this.segmentDurationMs * 2.05) + 42000
+          );
         }
       } catch (eRg) {}
       this._highlightResumeGuardTimer = setTimeout(() => {
@@ -3450,15 +4006,169 @@ Page({
       drawerMode: 0,
       showColorModal: true,
       colorModalMatch: cloned,
-      colorModalTeam: 'teamA'
+      colorModalTeam: 'teamA',
+      colorModalCacheRowHint: '正在估算缓存…',
+      colorModalDownloadCleared: false
     });
+    try {
+      const { estimateClipSegmentsBytesFromStorage } = require('../../utils/file-storage-estimate.js');
+      estimateClipSegmentsBytesFromStorage().then((bytes) => {
+        if (!this.data.showColorModal) return;
+        const mb = Math.max(0, Math.round((bytes / (1024 * 1024)) * 10) / 10);
+        const empty = mb < 0.05;
+        const hint = empty
+          ? '本地高光视频缓存约 0 MB，暂无可导出的本地文件。'
+          : `当前已缓存高光约 ${mb} MB，建议直播前下载至相册以腾出空间。`;
+        this.setData({
+          colorModalCacheRowHint: hint,
+          colorModalDownloadCleared: empty
+        });
+      });
+    } catch (eEst) {}
   },
 
   /**
    * 关闭颜色设置浮层
    */
   closeColorModal: function() {
-    this.setData({ showColorModal: false, colorModalMatch: null });
+    this.setData({
+      showColorModal: false,
+      colorModalMatch: null,
+      colorModalCacheRowHint: '',
+      colorModalDownloadCleared: false
+    });
+  },
+
+  /**
+   * 将全部高光本地视频保存到系统相册并 unlink，索引保留为「已导出」（小程序内无法直连相册路径回放）。
+   * @returns {void}
+   */
+  onDownloadHighlightsToAlbumAndClearCache: function() {
+    const fs = wx.getFileSystemManager();
+    const clipsMap = wx.getStorageSync('MIAOXIE_CLIPS') || {};
+    /** @type {{ matchId: string, item: Record<string, unknown>, paths: string[] }[]} */
+    const tasks = [];
+    Object.keys(clipsMap).forEach((matchId) => {
+      const list = clipsMap[matchId];
+      if (!Array.isArray(list)) return;
+      list.forEach((it) => {
+        if (!it || typeof it !== 'object' || it.exportedToAlbum) return;
+        const segs = Array.isArray(it.segments) ? it.segments.filter((p) => p && typeof p === 'string') : [];
+        const extra = it.replaySegment && typeof it.replaySegment === 'string' ? [it.replaySegment] : [];
+        const merged = [...new Set([...segs, ...extra])];
+        if (merged.length === 0) return;
+        tasks.push({ matchId, item: it, paths: merged });
+      });
+    });
+    if (tasks.length === 0) {
+      try {
+        const { estimateClipSegmentsBytesFromStorage } = require('../../utils/file-storage-estimate.js');
+        estimateClipSegmentsBytesFromStorage().then((b) => {
+          const mb = Math.max(0, Math.round((b / (1024 * 1024)) * 10) / 10);
+          this.setData({
+            colorModalCacheRowHint:
+              mb < 0.05
+                ? '本地高光视频缓存约 0 MB，暂无可导出的本地文件。'
+                : `本地高光视频缓存约 ${mb} MB，暂无可导出的本地文件。`,
+            colorModalDownloadCleared: true
+          });
+        });
+      } catch (eZ) {}
+      wx.showToast({ title: '无待导出本地文件', icon: 'none' });
+      return;
+    }
+    const runChain = (taskIdx) => {
+      if (taskIdx >= tasks.length) {
+        wx.setStorageSync('MIAOXIE_CLIPS', clipsMap);
+        this.segmentBuffer = [];
+        this.clearStaleRollingFiles().then(() => {
+          this.refreshDrawerHighlights();
+          this.loadMatchList();
+          wx.showToast({ title: '已保存至相册并清理本地缓存', icon: 'success' });
+          try {
+            const {
+              estimateClipSegmentsBytesFromStorage,
+              estimateUserDataPathUsageBytes,
+              getClipStorageHealthHint
+            } = require('../../utils/file-storage-estimate.js');
+            Promise.all([estimateUserDataPathUsageBytes(), estimateClipSegmentsBytesFromStorage()]).then(
+              ([userB, clipB]) => {
+                const mb = Math.max(0, Math.round((clipB / (1024 * 1024)) * 10) / 10);
+                try {
+                  const h = getClipStorageHealthHint(clipB, userB);
+                  app.globalData.fileStorageEstimate = {
+                    clipBytes: clipB,
+                    userDataBytes: userB,
+                    clipMb: h.clipMb,
+                    totalMb: h.totalMb,
+                    healthLevel: h.level,
+                    at: Date.now()
+                  };
+                } catch (eG) {}
+                if (this.data.showColorModal) {
+                  this.setData({
+                    colorModalCacheRowHint: `本地高光视频缓存约 ${mb} MB，已导出至系统相册。`,
+                    colorModalDownloadCleared: true
+                  });
+                }
+              }
+            );
+          } catch (eUpd) {}
+        });
+        return;
+      }
+      const { matchId, item, paths } = tasks[taskIdx];
+      let pi = 0;
+      const step = () => {
+        if (pi >= paths.length) {
+          const list = clipsMap[matchId];
+          const idx = Array.isArray(list) ? list.findIndex((x) => x && x.id === item.id) : -1;
+          if (idx >= 0) {
+            list[idx].segments = [];
+            list[idx].replaySegment = '';
+            list[idx].exportedToAlbum = true;
+            list[idx].exportedToAlbumAt = Date.now();
+          }
+          runChain(taskIdx + 1);
+          return;
+        }
+        const p = paths[pi];
+        pi += 1;
+        wx.saveVideoToPhotosAlbum({
+          filePath: p,
+          success: () => {
+            try {
+              fs.unlinkSync(p);
+            } catch (eUn) {}
+            step();
+          },
+          fail: () => {
+            step();
+          }
+        });
+      };
+      step();
+    };
+    const start = () => runChain(0);
+    wx.getSetting({
+      success: (res) => {
+        if (res.authSetting['scope.writePhotosAlbum']) {
+          start();
+        } else {
+          wx.authorize({
+            scope: 'scope.writePhotosAlbum',
+            success: start,
+            fail: () => {
+              wx.showModal({
+                title: '需要相册权限',
+                content: '请在设置中允许保存到相册',
+                showCancel: false
+              });
+            }
+          });
+        }
+      }
+    });
   },
 
   /** 阻止颜色浮层内部点击冒泡到遮罩关闭 */
@@ -3594,7 +4304,9 @@ Page({
 
   refreshDrawerHighlights: function() {
     const currentMatchId = wx.getStorageSync('currentMatchId') || app.globalData.currentMatchId || '';
-    const fullList = this.getHighlightList(currentMatchId);
+    const fullList = (this.getHighlightList(currentMatchId) || []).filter(
+      (it) => it && !it.exportedToAlbum
+    );
     const total = fullList.length;
     const list = fullList.slice(0, 50);
     const dc = this.data.defaultCover;
@@ -3673,7 +4385,18 @@ Page({
       const idx = clipsMap[matchId].findIndex(x => x.id === id);
       if (idx >= 0) {
         const item = clipsMap[matchId][idx];
-        (item.segments || []).forEach(p => { try { fs.unlinkSync(p); } catch (e) {} });
+        const toUnlink = new Set();
+        (item.segments || []).forEach((p) => {
+          if (p && typeof p === 'string') toUnlink.add(p);
+        });
+        if (item.replaySegment && typeof item.replaySegment === 'string') {
+          toUnlink.add(item.replaySegment);
+        }
+        toUnlink.forEach((p) => {
+          try {
+            fs.unlinkSync(p);
+          } catch (e) {}
+        });
         clipsMap[matchId].splice(idx, 1);
         foundInClips = true;
         break;
@@ -3703,28 +4426,32 @@ Page({
    */
   pauseRollingForReplay: function() {
     if (this._rollingPausedForReplay) return;
-    /** 正在把 temp 写入 rolling 时禁止立刻 stopRecord，否则与落盘竞态，Android 上易 copy 全败 */
+    /**
+     * 必须等 rolling 落盘结束再 bump rollingSessionId。
+     * iOS 串行落盘较慢；若 busy 时仍 ++，onSegmentRecorded 内 sessionOk 变 false，整段不落盘 → segment_persist_reject_temp_unstable。
+     * 禁止「等满 N 次后强制继续」：此前会在仍 busy 时 ++，与高光/回放强相关。
+     */
     if (this.rollingFsBusy) {
       this._replayPauseWaitAttempts = (this._replayPauseWaitAttempts || 0) + 1;
-      if (this._replayPauseWaitAttempts > 35) {
-        this.appendHealthLog('replay_pause_force_after_fs_busy', {});
-        this._replayPauseWaitAttempts = 0;
-      } else {
+      if (this._replayPauseWaitAttempts % 50 === 0) {
+        this.appendHealthLog('replay_pause_defer_rolling_fs_busy_long', {
+          attempt: this._replayPauseWaitAttempts
+        });
+      } else if (this._replayPauseWaitAttempts <= 5 || this._replayPauseWaitAttempts % 15 === 0) {
         this.appendHealthLog('replay_pause_defer_rolling_fs_busy', {
           attempt: this._replayPauseWaitAttempts
         });
-        if (this._replayPauseWaitTimer) {
-          clearTimeout(this._replayPauseWaitTimer);
-        }
-        this._replayPauseWaitTimer = setTimeout(() => {
-          this._replayPauseWaitTimer = null;
-          this.pauseRollingForReplay();
-        }, 100);
-        return;
       }
-    } else {
-      this._replayPauseWaitAttempts = 0;
+      if (this._replayPauseWaitTimer) {
+        clearTimeout(this._replayPauseWaitTimer);
+      }
+      this._replayPauseWaitTimer = setTimeout(() => {
+        this._replayPauseWaitTimer = null;
+        this.pauseRollingForReplay();
+      }, 100);
+      return;
     }
+    this._replayPauseWaitAttempts = 0;
     this._rollingPausedForReplay = true;
     this.appendHealthLog('replay_pause_rolling', {});
     this.rollingActive = false;
@@ -3753,7 +4480,6 @@ Page({
     }
     this.appendHealthLog('replay_resume_rolling', {});
     this.rollingActive = true;
-    this.rollingSessionId += 1;
     this.startRecordFailStreak = 0;
     let resumeLagMs = 0;
     try {
@@ -3788,6 +4514,8 @@ Page({
         return;
       }
       this._replayResumeFsWaitAttempts = 0;
+      /** 须在落盘空闲后再 bump，避免与 pause 边界上未完成的 onSegmentRecorded 竞态（同 pause 侧根因） */
+      this.rollingSessionId += 1;
       kickResume();
     };
     setTimeout(waitFsThenKick, resumeLagMs > 0 ? resumeLagMs : 0);
@@ -3837,6 +4565,14 @@ Page({
     this._replayPrimedSlot1 = false;
     const useChain = !!(item && item.replayUseChain && item.segments && item.segments.length >= 2);
     const paths = useChain ? item.segments.slice() : [];
+    if (item && item.exportedToAlbum) {
+      wx.showToast({
+        title: '已导出至系统相册，小程序无法直连播放，请到相册查看',
+        icon: 'none',
+        duration: 3200
+      });
+      return;
+    }
     const target =
       (item && item.replaySegment)
       || ((item && Array.isArray(item.segments) && item.segments[item.segments.length - 1])

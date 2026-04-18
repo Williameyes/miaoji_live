@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>高精度毫秒测试时钟</title>
+    <style>
+        /* 使用深色背景减少录屏时的反光干扰，文字使用等宽字体防止跳动 */
+        body {
+            background-color: #000;
+            color: #00ff00; /* 经典的黑客绿，辨识度高 */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            font-family: 'Courier New', Courier, monospace; 
+            overflow: hidden;
+        }
+
+        #clock {
+            font-size: 15vw; /* 字体随窗口大小自动缩放 */
+            font-weight: bold;
+            text-shadow: 0 0 20px rgba(0, 255, 0, 0.5);
+            white-space: nowrap;
+        }
+
+        .ms {
+            font-size: 8vw;
+            color: #008800;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="clock">00:00:00<span class="ms">.000</span></div>
+
+    <script>
+        const clockElement = document.getElementById('clock');
+
+        function updateTime() {
+            const now = new Date();
+            
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            const seconds = String(now.getSeconds()).padStart(2, '0');
+            const milliseconds = String(now.getMilliseconds()).padStart(3, '0');
+
+            // 动态更新 DOM
+            clockElement.innerHTML = `${hours}:${minutes}:${seconds}<span class="ms">.${milliseconds}</span>`;
+
+            // 使用 requestAnimationFrame 保证最高频率刷新（通常为 60fps 或更高）
+            requestAnimationFrame(updateTime);
+        }
+
+        // 启动时钟
+        requestAnimationFrame(updateTime);
+    </script>
+</body>
+</html>

@@ -506,6 +506,16 @@
         ></view>
       </view>
 
+      <view class="cm-cache-row" wx:if="{{colorModalCacheRowHint}}">
+        <text class="cm-cache-text">{{colorModalCacheRowHint}}</text>
+        <text
+          wx:if="{{!colorModalDownloadCleared}}"
+          class="cm-cache-btn"
+          catchtap="onDownloadHighlightsToAlbumAndClearCache"
+        >下载并清空缓存</text>
+        <text wx:else class="cm-cache-btn cm-cache-btn--done">已清空</text>
+      </view>
+
       <!-- 切换按钮 -->
       <view class="cm-action-row">
         <view

@@ -9,6 +9,19 @@
         <text class="header-sub">MATCH CENTER</text>
   </view>
 
+  <!-- 占用：高光片段文件 MB（getFileInfo）+ 沙盒总 MB；非系统精确剩余配额 -->
+  <view class="storage-panel" wx:if="{{!fileStorageLoading}}">
+    <view class="storage-panel-row" bindtap="refreshFileStorageEstimate" hover-class="storage-panel-row--hover">
+      <text class="storage-panel-title">高光缓存 </text>
+      <text class="storage-panel-pct {{fileStorageHealthLevel === 'severe' ? 'storage-panel-pct--severe' : (fileStorageHealthLevel === 'warn' ? 'storage-panel-pct--warn' : '')}}">{{fileStorageClipMb}} MB</text>
+    </view>
+    <text class="storage-hint">{{fileStorageHint}}</text>
+    <text class="storage-kv" wx:if="{{fileStorageKvText}}">{{fileStorageKvText}}</text>
+  </view>
+  <view class="storage-panel storage-panel--loading" wx:else>
+    <text class="storage-loading-text">正在估算本机空间…</text>
+  </view>
+
   <!-- ===== 比赛场次区 ===== -->
   <view class="section">
     <view class="section-header">
@@ -132,7 +145,12 @@
             </view>
             <view class="item-footer">
               <text class="time-text">{{video.timeText}}</text>
-              <text class="download-btn" wx:if="{{!batchMode}}" catchtap="onDownloadHighlight" data-id="{{video.id}}">下载</text>
+              <text
+                class="download-btn"
+                wx:if="{{!batchMode && !video.exportedToAlbum}}"
+                catchtap="onDownloadHighlight"
+                data-id="{{video.id}}"
+              >下载</text>
             </view>
           </view>
         </scroll-view>
@@ -140,7 +158,7 @@
     </view>
 
     <view class="empty-highlights" wx:else>
-      <text>暂无高光录像，在记分页右下角显示 REC 时单击可保存</text>
+      <text>暂无高光片段，在记分页右下角单击 REC 保存；保存后，请及时下载至相册以免丢失；单场限 20 段，超限易闪退或保存失败。</text>
     </view>
 
     <!-- 批量操作条：放在高光区域下方，不再固定在页面底部 -->

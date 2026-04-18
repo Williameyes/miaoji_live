@@ -798,32 +798,72 @@ page {
 
 /* 浮层主体容器：width 85%，动态高度 */
 .color-modal-container {
-  width: 85%;
-  background: rgba(255, 255, 255, 0.4);
+  width: 86%;
+  max-width: 620rpx;
+  background: rgba(255, 255, 255, 0.42);
   backdrop-filter: blur(50rpx);
   -webkit-backdrop-filter: blur(50rpx);
-  border-radius: 40rpx;
-  padding: 4%; /* 动态撑开 */
+  border-radius: 32rpx;
+  padding: 28rpx 28rpx 32rpx;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  border: 1rpx solid rgba(255, 255, 255, 0.4);
+  align-items: stretch;
+  border: 1rpx solid rgba(255, 255, 255, 0.45);
 }
 
 /* ── 队名卡片显示层 ── */
 .cm-teams-header {
   width: 100%;
-  min-height: 56rpx;
+  min-height: 40rpx;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 2%;
+  margin-bottom: 12rpx;
+  padding: 0 4rpx;
+  box-sizing: border-box;
+}
+
+/* 与 index 页 .empty-highlights 占位说明同为 24rpx，无额外底纹避免层次过多 */
+.cm-cache-row {
+  width: 100%;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 32rpx;
+  margin: 20rpx 0rpx 0rpx 0rpx;
+  padding: 0 30rpx;
+  box-sizing: border-box;
+  background: transparent;
+}
+.cm-cache-text {
+  flex: 1;
+  font-size: 13rpx;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.9);
+  min-width: 0;
+}
+.cm-cache-btn {
+  flex-shrink: 0;
+  font-size: 13rpx;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.95);
+  text-decoration: underline;
+  text-underline-offset: 4rpx;
+  padding: 0;
+  background: transparent;
+}
+.cm-cache-btn--done {
+  text-decoration: none;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 13rpx;
 }
 
 .cm-team-item {
   flex: 1;
-  min-height: 56rpx;
+  min-height: 44rpx;
   background: transparent;
   border-radius: 12rpx;
   border: 2rpx solid rgba(255, 255, 255, 0.15);
@@ -1327,8 +1367,10 @@ page {
   display: grid;
   grid-template-columns: repeat(12, 1fr);
   column-gap: 1.5%;
-  row-gap: 12rpx; /* 添加垂直间距，防止误触 */
-  margin-top: 5%; /* 布局间距 */
+  row-gap: 12rpx;
+  margin: 18rpx 0 0;
+  padding: 0 4rpx;
+  box-sizing: border-box;
   justify-items: center;
   align-items: center;
 }
@@ -1353,7 +1395,8 @@ page {
   width: 100%;
   display: flex;
   justify-content: center;
-  margin-top: 5%; /* 布局间距 */
+  margin-top: 8rpx;
+  padding-top: 4rpx;
 }
 
 /* 切换按钮：添加圆角并适配比例 */

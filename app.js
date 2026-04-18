@@ -80,6 +80,8 @@ App({
   },
 
   globalData: {
+    /** 首页遍历 USER_DATA_PATH 估算的本机视频占用，供直播页提示（非微信官方精确值） */
+    fileStorageEstimate: null,
     /** 当前登录用户信息（与本地 userInfo 缓存同步；未登录为 null） */
     userInfo: null,
     matchConfig: {

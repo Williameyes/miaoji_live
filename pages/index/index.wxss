@@ -41,6 +41,76 @@ page {
   letter-spacing: 6rpx;
   font-weight: 600;
 }
+
+/* 本机视频空间水位（估算） */
+.storage-panel {
+  margin: 0 0 28rpx;
+  padding: 20rpx 22rpx;
+  background: rgba(255, 255, 255, 0.88);
+  border-radius: 20rpx;
+  box-shadow: 0 8rpx 28rpx rgba(15, 23, 42, 0.06);
+}
+.storage-panel--loading {
+  padding: 16rpx 22rpx;
+}
+.storage-loading-text {
+  font-size: 24rpx;
+  color: #64748B;
+}
+.storage-panel-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12rpx;
+}
+.storage-panel-row--hover {
+  opacity: 0.88;
+}
+.storage-panel-title {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #0F172A;
+}
+.storage-panel-pct {
+  font-size: 26rpx;
+  font-weight: 700;
+  color: #0EA5E9;
+}
+.storage-panel-pct--warn {
+  color: #EA580C;
+}
+.storage-panel-pct--severe {
+  color: #DC2626;
+}
+.storage-bar {
+  height: 12rpx;
+  border-radius: 8rpx;
+  background: #E2E8F0;
+  overflow: hidden;
+  margin-bottom: 12rpx;
+}
+.storage-bar-fill {
+  height: 100%;
+  border-radius: 8rpx;
+  background: linear-gradient(90deg, #38BDF8, #0EA5E9);
+  transition: width 0.35s ease;
+}
+.storage-bar-fill--warn {
+  background: linear-gradient(90deg, #FB923C, #EA580C);
+}
+.storage-hint {
+  display: block;
+  font-size: 22rpx;
+  line-height: 1.45;
+  color: #64748B;
+}
+.storage-kv {
+  display: block;
+  margin-top: 8rpx;
+  font-size: 20rpx;
+  color: #94A3B8;
+}
+
 .logo-text {
     font-size: 40rpx; /* 根据你的需求调整字号 */
     font-weight: bold; /* 加粗更有力量感 */
@@ -464,16 +534,25 @@ page {
 }
 
 .empty-highlights {
-  height: 200rpx;
-  background: #FFFFFF;
-  border-radius: 24rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #94A3B8;
-  font-size: 26rpx;
-  border: 2rpx dashed #E2E8F0;
-}
+    height: 240rpx; /* 改为最小高度，更灵活 */
+    background: #FFFFFF;
+    border-radius: 24rpx;
+    display: flex;
+    flex-direction: column; /* 垂直排列 */
+    align-items: flex-start; /* 改为左对齐 */
+    justify-content: center;
+    color: #94A3B8;
+    font-size: 24rpx;
+    border: 2rpx dashed #E2E8F0;
+    padding: 30rpx 40rpx;    /* 上下 30，左右 40 的间距 */
+    box-sizing: border-box;  /* 确保 padding 不会撑大外框 */
+  }
+  
+  .empty-highlights view {
+    margin-bottom: 12rpx;   /* 每行之间的间距 */
+    line-height: 1.6;       /* 增加行高，看起来不累 */
+  }
+  
 
 /* ─────────────────────────────────────
    批量选中

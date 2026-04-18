@@ -2,6 +2,12 @@ const app = getApp();
 
 const { STORAGE_USER_INFO_KEY } = require('../../utils/request.js');
 const { buildJerseyIconDataUrl } = require('../../utils/jersey-icon.js');
+const {
+  estimateUserDataPathUsageBytes,
+  estimateClipSegmentsBytesFromStorage,
+  getClipStorageHealthHint,
+  getKvStorageInfoSafe
+} = require('../../utils/file-storage-estimate.js');
 
 /**
  * 根据编辑草稿中的队服色生成球衣剪影 data URL，供浮层内 `<image>` 绑定。
@@ -100,7 +106,15 @@ Page({
     /** 页内播放器是否暂停（用于 UI 状态） */
     playerPaused: false,
 
-    defaultCover: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90" viewBox="0 0 160 90"><rect width="160" height="90" rx="12" ry="12" fill="%2322262f"/><path d="M66 58V32l28 13-28 13z" fill="%23ffffff" fill-opacity="0.75"/></svg>'
+    defaultCover: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90" viewBox="0 0 160 90"><rect width="160" height="90" rx="12" ry="12" fill="%2322262f"/><path d="M66 58V32l28 13-28 13z" fill="%23ffffff" fill-opacity="0.75"/></svg>',
+
+    /** 本机占用：高光文件 MB + 沙盒总 MB（getFileInfo 估算） */
+    fileStorageLoading: true,
+    fileStorageClipMb: 0,
+    fileStorageTotalMb: 0,
+    fileStorageHealthLevel: 'ok',
+    fileStorageHint: '',
+    fileStorageKvText: ''
   },
 
   /**
@@ -125,6 +139,49 @@ Page({
     }
     this.loadMatches();
     this.loadHighlights();
+    this.refreshFileStorageEstimate();
+  },
+
+  /**
+   * 遍历 USER_DATA_PATH 估算已用字节，写入 globalData 并更新水位 UI。
+   * @returns {void}
+   */
+  refreshFileStorageEstimate() {
+    this.setData({ fileStorageLoading: true });
+    Promise.all([estimateUserDataPathUsageBytes(), estimateClipSegmentsBytesFromStorage()])
+      .then(([userDataBytes, clipBytes]) => {
+        const hint = getClipStorageHealthHint(clipBytes, userDataBytes);
+        const kv = getKvStorageInfoSafe();
+        const kvText = `配置缓存 ${kv.currentKb}/${kv.limitKb} KB`;
+        try {
+          app.globalData.fileStorageEstimate = {
+            clipBytes,
+            userDataBytes,
+            clipMb: hint.clipMb,
+            totalMb: hint.totalMb,
+            healthLevel: hint.level,
+            at: Date.now()
+          };
+        } catch (eG) {}
+        this.setData({
+          fileStorageLoading: false,
+          fileStorageClipMb: hint.clipMb,
+          fileStorageTotalMb: hint.totalMb,
+          fileStorageHealthLevel: hint.level,
+          fileStorageHint: hint.hintText,
+          fileStorageKvText: kvText
+        });
+      })
+      .catch(() => {
+        this.setData({
+          fileStorageLoading: false,
+          fileStorageClipMb: 0,
+          fileStorageTotalMb: 0,
+          fileStorageHealthLevel: 'ok',
+          fileStorageHint: '无法估算本机占用',
+          fileStorageKvText: ''
+        });
+      });
   },
 
   /**
@@ -458,6 +515,7 @@ Page({
           (c) => c.matchId === matchId || (!c.matchId && c.matchName === match.matchName)
         );
       }
+      matchClips = matchClips.filter((c) => c && !c.exportedToAlbum);
       if (matchClips.length > 0) {
         const dateStr = this.formatDate(match.createdAt);
         groupedList.push({
@@ -483,12 +541,14 @@ Page({
       if (!matchIdsInList.includes(id) && rawClips[id].length > 0) {
         const firstClip = rawClips[id][0];
         const dateStr = this.formatDate(firstClip.createdAt);
+        const orphanVideos = rawClips[id]
+          .filter((c) => c && !c.exportedToAlbum)
+          .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        if (orphanVideos.length === 0) return;
         groupedList.push({
           matchId: id,
           matchTitle: `【${dateStr}】${firstClip.matchName || '已删比赛'} (遗留)`,
-          videos: rawClips[id]
-            .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
-            .map((v) => ({
+          videos: orphanVideos.map((v) => ({
               ...v,
               timeText: v.timeText || this.formatTime(v.createdAt),
               cover: v.cover || this.data.defaultCover,
@@ -624,6 +684,11 @@ Page({
    */
   openPlayer(e) {
     const { id } = e.currentTarget.dataset;
+    const direct = this.findClipById(id);
+    if (direct && direct.exportedToAlbum) {
+      wx.showToast({ title: '该片段已导出至系统相册，请到相册观看', icon: 'none', duration: 2800 });
+      return;
+    }
     const playerList = [];
     this.data.groupedHighlights.forEach((group) => {
       group.videos.forEach((v) => {
@@ -846,6 +911,7 @@ Page({
     const allSegments = [];
     ids.forEach((id) => {
       const item = this.findClipById(id);
+      if (item && item.exportedToAlbum) return;
       if (item && Array.isArray(item.segments)) {
         allSegments.push(...item.segments);
       }
@@ -885,7 +951,18 @@ Page({
       const idx = clipsMap[matchId].findIndex((x) => x.id === id);
       if (idx >= 0) {
         const item = clipsMap[matchId][idx];
-        (item.segments || []).forEach((p) => { try { fs.unlinkSync(p); } catch (e) {} });
+        const toUnlink = new Set();
+        (item.segments || []).forEach((p) => {
+          if (p && typeof p === 'string') toUnlink.add(p);
+        });
+        if (item.replaySegment && typeof item.replaySegment === 'string') {
+          toUnlink.add(item.replaySegment);
+        }
+        toUnlink.forEach((p) => {
+          try {
+            fs.unlinkSync(p);
+          } catch (e) {}
+        });
         clipsMap[matchId].splice(idx, 1);
         foundInClips = true;
         break;
@@ -897,7 +974,18 @@ Page({
     const legacyIdx = legacyList.findIndex((x) => x.id === id);
     if (legacyIdx >= 0) {
       const item = legacyList[legacyIdx];
-      (item.segments || []).forEach((p) => { try { fs.unlinkSync(p); } catch (e) {} });
+      const toUnlinkL = new Set();
+      (item.segments || []).forEach((p) => {
+        if (p && typeof p === 'string') toUnlinkL.add(p);
+      });
+      if (item.replaySegment && typeof item.replaySegment === 'string') {
+        toUnlinkL.add(item.replaySegment);
+      }
+      toUnlinkL.forEach((p) => {
+        try {
+          fs.unlinkSync(p);
+        } catch (e) {}
+      });
       legacyList.splice(legacyIdx, 1);
       wx.setStorageSync('highlight_list', legacyList);
     }
