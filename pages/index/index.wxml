@@ -146,6 +146,14 @@
     <!-- 批量操作条：放在高光区域下方，不再固定在页面底部 -->
     <view class="batch-action-bar" wx:if="{{batchMode}}">
       <text class="batch-count-hint">已选 {{selectedCount}} 项</text>
+      <view
+        class="batch-btn batch-btn--toggle-all"
+        hover-class="batch-btn-hover"
+        bindtap="toggleSelectAllHighlights"
+      >
+        <text wx:if="{{batchSelectableTotal > 0 && selectedCount >= batchSelectableTotal}}">全不选</text>
+        <text wx:else>全选</text>
+      </view>
       <view class="batch-btn batch-btn--download" hover-class="batch-btn-hover" bindtap="batchDownload">下载选中</view>
       <view class="batch-btn batch-btn--delete" hover-class="batch-btn-hover" bindtap="batchDelete">删除选中</view>
     </view>

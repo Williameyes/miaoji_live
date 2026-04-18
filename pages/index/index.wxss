@@ -521,6 +521,7 @@ page {
   margin-top: 14rpx;
   padding: 16rpx 20rpx;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 14rpx;
   border: 1rpx solid #E2E8F0;
@@ -549,6 +550,13 @@ page {
   color: #2563EB;
   background: rgba(37, 99, 235, 0.08);
   border: 1px solid rgba(37, 99, 235, 0.2);
+}
+
+.batch-btn--toggle-all {
+  flex-shrink: 0;
+  color: #475569;
+  background: rgba(71, 85, 105, 0.06);
+  border: 1px solid rgba(71, 85, 105, 0.22);
 }
 
 .batch-btn--delete {

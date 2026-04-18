@@ -99,6 +99,11 @@ page {
   border-radius: 50%;
 }
 
+/** 与硬恢复同款 conic 色；整环略透明以免压住中心 REC 字 */
+.recover-fab-progress--highlight-save {
+  opacity: 0.88;
+}
+
 .recover-fab-inner {
   position: absolute;
   left: 50%;
@@ -553,14 +558,14 @@ page {
   transform-origin: center center;
 }
 
-/* 进入回放：1.0s 快进慢出逻辑 */
+/* 进入回放：与 live.js introMs≈520ms 对齐，缩短全黑等待 */
 .replay-mask--replay {
   background: rgba(0,0,0,1);
-  animation: replayMaskMotion 1s both;
+  animation: replayMaskMotion 0.52s both;
 }
 
 .replay-mask--replay .replay-mask-text {
-  animation: replayBadgeMotion 1s both;
+  animation: replayBadgeMotion 0.52s both;
 }
 
 /* 回到直播：反向旋转收束，与 REPLAY 动效区分 */

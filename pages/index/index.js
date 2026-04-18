@@ -88,6 +88,8 @@ Page({
     selectedIdsMap: {},
     /** 已选中片段数量 */
     selectedCount: 0,
+    /** 当前列表中可批量选择的高光片段总数（用于全选/全不选） */
+    batchSelectableTotal: 0,
 
     /** 自定义播放器是否可见 */
     showPlayer: false,
@@ -496,13 +498,19 @@ Page({
       }
     });
 
+    const sortedGroups = groupedList.sort((a, b) => {
+      const timeA = (a.videos[0] && a.videos[0].createdAt) || 0;
+      const timeB = (b.videos[0] && b.videos[0].createdAt) || 0;
+      return timeB - timeA;
+    });
+    const batchSelectableTotal = sortedGroups.reduce(
+      (sum, g) => sum + (Array.isArray(g.videos) ? g.videos.length : 0),
+      0
+    );
     this.setData({
       highlightList: legacyClips,
-      groupedHighlights: groupedList.sort((a, b) => {
-        const timeA = (a.videos[0] && a.videos[0].createdAt) || 0;
-        const timeB = (b.videos[0] && b.videos[0].createdAt) || 0;
-        return timeB - timeA;
-      })
+      groupedHighlights: sortedGroups,
+      batchSelectableTotal
     });
   },
 
@@ -781,6 +789,29 @@ Page({
     } else {
       map[id] = true;
     }
+    this.setData({ selectedIdsMap: map, selectedCount: Object.keys(map).length });
+  },
+
+  /**
+   * 批量模式：一键全选当前列表全部片段；若已全选则清空选中（全不选）
+   * @returns {void}
+   */
+  toggleSelectAllHighlights() {
+    if (!this.data.batchMode) return;
+    const total = this.data.batchSelectableTotal || 0;
+    if (total === 0) return;
+    const selectedCount = this.data.selectedCount;
+    if (selectedCount === total) {
+      this.setData({ selectedIdsMap: {}, selectedCount: 0 });
+      return;
+    }
+    const map = {};
+    this.data.groupedHighlights.forEach((g) => {
+      if (!Array.isArray(g.videos)) return;
+      g.videos.forEach((v) => {
+        if (v && v.id) map[v.id] = true;
+      });
+    });
     this.setData({ selectedIdsMap: map, selectedCount: Object.keys(map).length });
   },
 

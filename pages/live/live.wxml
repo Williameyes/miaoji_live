@@ -41,8 +41,19 @@
     >
       <view class="recover-fab-ring">
         <view
+          wx:if="{{isRecovering}}"
           class="recover-fab-progress"
           style="background: conic-gradient(from -90deg, rgba(74, 222, 128, 0.5) 0deg, rgba(74, 222, 128, 0.5) {{recoveryConicEndDeg}}deg, rgba(48, 52, 58, 0.38) 0deg);"
+        ></view>
+        <view
+          wx:elif="{{isSavingHighlight}}"
+          class="recover-fab-progress recover-fab-progress--highlight-save"
+          style="background: conic-gradient(from -90deg, rgba(74, 222, 128, 0.5) 0deg, rgba(74, 222, 128, 0.5) {{highlightSaveConicEndDeg}}deg, rgba(48, 52, 58, 0.38) 0deg);"
+        ></view>
+        <view
+          wx:else
+          class="recover-fab-progress"
+          style="background: conic-gradient(from -90deg, rgba(48, 52, 58, 0.38) 0deg, rgba(48, 52, 58, 0.38) 360deg);"
         ></view>
         <view class="recover-fab-inner">
           <text class="recover-fab-text">{{opsControlText}}</text>
@@ -416,6 +427,7 @@
               wx:if="{{item.hasRealCover}}"
               class="drawer-cover"
               mode="aspectFill"
+              lazy-load="{{true}}"
               src="{{item.thumbSrc || item.cover || defaultCover}}"
               binderror="onDrawerImageError"
               data-id="{{item.id}}"
