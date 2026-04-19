@@ -66,10 +66,26 @@ page {
 .storage-panel-row--hover {
   opacity: 0.88;
 }
+.storage-panel-title-group {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
 .storage-panel-title {
   font-size: 26rpx;
   font-weight: 600;
   color: #0F172A;
+}
+
+.storage-panel-clip-total {
+  font-size: 20rpx;
+  font-weight: 600;
+  color: #3B82F6;
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.18);
+  border-radius: 20rpx;
+  padding: 2rpx 14rpx;
 }
 .storage-panel-pct {
   font-size: 26rpx;
@@ -104,11 +120,11 @@ page {
   line-height: 1.45;
   color: #64748B;
 }
-.storage-kv {
-  display: block;
-  margin-top: 8rpx;
-  font-size: 20rpx;
-  color: #94A3B8;
+.storage-hint--warn {
+  color: #EA580C;
+}
+.storage-hint--severe {
+  color: #DC2626;
 }
 
 .logo-text {
@@ -253,13 +269,51 @@ page {
   font-weight: 300;
 }
 
-/* 比赛名 */
+/* 赛名 + 开赛时间同行：镜像队伍行 flex 布局 */
+.card-meta-row {
+  display: flex;
+  align-items: flex-start;
+  margin-top: 6rpx;
+  margin-bottom: 6rpx;
+}
+
+.card-meta-left {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 与 .card-vs 的 padding 保持一致，形成对称间距 */
+.card-meta-spacer {
+  flex-shrink: 0;
+  width: 76rpx;
+}
+
+.card-meta-right {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* 开赛时间（列表卡片右侧） */
+.card-match-start {
+  font-size: 22rpx;
+  color: #64748B;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
+/* 比赛名（列表卡片左侧） */
 .card-match-name {
   display: block;
   font-size: 22rpx;
   color: #94A3B8;
-  margin-bottom: 22rpx;
-  margin-top: 4rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 操作栏 */
@@ -431,6 +485,17 @@ page {
   overflow: hidden;
   text-overflow: ellipsis;
   margin-right: 12rpx;
+}
+
+.match-group-clip-count {
+  font-size: 20rpx;
+  color: #94A3B8;
+  background: rgba(148, 163, 184, 0.12);
+  padding: 4rpx 12rpx;
+  border-radius: 20rpx;
+  white-space: nowrap;
+  margin-right: 8rpx;
+  flex-shrink: 0;
 }
 
 .match-group-score {
@@ -777,11 +842,12 @@ page {
   flex-shrink: 0;
 }
 
-/* 左右翻页箭头 */
+/* 左右翻页箭头：相对于 player-video-wrap 绝对定位，与暂停按钮同高 */
 .player-nav {
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
+  z-index: 10;
   width: 72rpx;
   height: 72rpx;
   border-radius: 50%;
@@ -796,11 +862,11 @@ page {
 }
 
 .player-nav--l {
-  left: 6rpx;
+  left: 14rpx;
 }
 
 .player-nav--r {
-  right: 6rpx;
+  right: 14rpx;
 }
 
 .player-nav--disabled {
@@ -847,6 +913,30 @@ page {
   font-size: 24rpx;
   font-weight: 600;
   color: #FFFFFF;
+}
+
+/* 退出预览按钮：全宽、易点击 */
+.player-exit-btn {
+  width: 100%;
+  height: 80rpx;
+  border-radius: 20rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.10);
+  border: 1rpx solid rgba(255, 255, 255, 0.22);
+  backdrop-filter: blur(8px);
+}
+
+.player-exit-btn--hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.player-exit-label {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+  letter-spacing: 2rpx;
 }
 
 /* ─────────────────────────────────────
@@ -949,6 +1039,62 @@ page {
 
 .team-name-input {
   flex: 1;
+}
+
+/* 编辑浮层：开赛日期 + 时间两个 picker 并排 */
+.start-time-row {
+  gap: 14rpx;
+}
+
+.start-time-row picker {
+  flex: 1;
+  min-width: 0;
+}
+
+.picker-display {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 赛名：固定前缀 + 可编辑后缀组合输入框 */
+.match-name-field-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  background: #F8FAFC;
+  border: 1.5rpx solid #E2E8F0;
+  border-radius: 16rpx;
+  height: 88rpx;
+  padding: 0 20rpx 0 20rpx;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.match-name-prefix-tag {
+  font-size: 24rpx;
+  color: #3B82F6;
+  font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.match-name-sep {
+  font-size: 24rpx;
+  color: #CBD5E1;
+  flex-shrink: 0;
+  margin: 0 6rpx;
+}
+
+.match-name-suffix-input {
+  flex: 1;
+  height: 88rpx;
+  font-size: 28rpx;
+  color: #0F172A;
+  min-width: 0;
+  background: transparent;
 }
 
 .color-pick-btn {

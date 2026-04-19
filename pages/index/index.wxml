@@ -1,3 +1,5 @@
+<wxs src="./index.wxs" module="mfmt" />
+
 <view class="page-root" style="padding-top: {{statusBarHeight}}px;">
 
   <!-- ===== 头部 ===== -->
@@ -7,19 +9,6 @@
         高光<text class="italic-text">记</text>分
     </view>
         <text class="header-sub">MATCH CENTER</text>
-  </view>
-
-  <!-- 占用：高光片段文件 MB（getFileInfo）+ 沙盒总 MB；非系统精确剩余配额 -->
-  <view class="storage-panel" wx:if="{{!fileStorageLoading}}">
-    <view class="storage-panel-row" bindtap="refreshFileStorageEstimate" hover-class="storage-panel-row--hover">
-      <text class="storage-panel-title">高光缓存 </text>
-      <text class="storage-panel-pct {{fileStorageHealthLevel === 'severe' ? 'storage-panel-pct--severe' : (fileStorageHealthLevel === 'warn' ? 'storage-panel-pct--warn' : '')}}">{{fileStorageClipMb}} MB</text>
-    </view>
-    <text class="storage-hint">{{fileStorageHint}}</text>
-    <text class="storage-kv" wx:if="{{fileStorageKvText}}">{{fileStorageKvText}}</text>
-  </view>
-  <view class="storage-panel storage-panel--loading" wx:else>
-    <text class="storage-loading-text">正在估算本机空间…</text>
   </view>
 
   <!-- ===== 比赛场次区 ===== -->
@@ -51,15 +40,23 @@
         </view>
       </view>
 
+      <!-- 赛名（左）& 开赛时间（右）：镜像队伍行布局 -->
+      <view class="card-meta-row">
+        <view class="card-meta-left">
+          <text class="card-match-name" wx:if="{{item.matchName}}">{{item.matchName}}</text>
+        </view>
+        <view class="card-meta-spacer"></view>
+        <view class="card-meta-right">
+          <text class="card-match-start" wx:if="{{item.startAt || item.createdAt}}">{{mfmt.fmtStart(item.startAt, item.createdAt)}}</text>
+        </view>
+      </view>
+
       <!-- 比分行（仅已有数据时展示） -->
       <view class="card-score-row" wx:if="{{item.teamA.score > 0 || item.teamB.score > 0}}">
         <text class="card-score-num" style="color: {{item.teamA.bgColor}}">{{item.teamA.score}}</text>
         <text class="card-score-sep">—</text>
         <text class="card-score-num" style="color: {{item.teamB.bgColor}}">{{item.teamB.score}}</text>
       </view>
-
-      <!-- 比赛名 -->
-      <text class="card-match-name" wx:if="{{item.matchName}}">{{item.matchName}}</text>
 
       <!-- 操作栏 -->
       <view class="card-actions">
@@ -103,10 +100,28 @@
       </view>
     </view>
 
+    <!-- 高光缓存卡片（置顶，点击刷新估算） -->
+    <view class="storage-panel" wx:if="{{!fileStorageLoading}}" bindtap="refreshFileStorageEstimate" hover-class="storage-panel-row--hover">
+      <view class="storage-panel-row">
+        <view class="storage-panel-title-group">
+          <text class="storage-panel-title">高光缓存</text>
+          <text class="storage-panel-clip-total" wx:if="{{batchSelectableTotal > 0}}">合计 {{batchSelectableTotal}} 段</text>
+        </view>
+        <text class="storage-panel-pct {{fileStorageHealthLevel === 'severe' ? 'storage-panel-pct--severe' : (fileStorageHealthLevel === 'warn' ? 'storage-panel-pct--warn' : '')}}">{{fileStorageClipMb}} MB</text>
+      </view>
+      <text class="storage-hint" wx:if="{{fileStorageHealthLevel === 'ok'}}">高光片段约{{fileStorageClipMb}}MB，在记分页右下角单击 REC 保存</text>
+      <text class="storage-hint storage-hint--warn" wx:elif="{{fileStorageHealthLevel === 'warn'}}">高光片段约{{fileStorageClipMb}}MB，当前保存在缓存中，删除小程序将被清空，请及时下载至相册以免丢失</text>
+      <text class="storage-hint storage-hint--severe" wx:else>高光片段约{{fileStorageClipMb}}MB，建议缓存片段20条以内，超限极易因空间失败，请删除旧片段或使用「下载至相册并清空」</text>
+    </view>
+    <view class="storage-panel storage-panel--loading" wx:else>
+      <text class="storage-loading-text">正在估算本机空间…</text>
+    </view>
+
     <view wx:if="{{groupedHighlights.length > 0}}">
       <view class="match-group" wx:for="{{groupedHighlights}}" wx:key="matchId">
         <view class="match-group-header">
           <text class="match-group-title">{{item.matchTitle}}</text>
+          <text class="match-group-clip-count">{{item.clipCount}} 段</text>
           <text class="match-group-score" wx:if="{{item.scoreInfo}}">{{item.scoreInfo}}</text>
         </view>
         <scroll-view scroll-x class="highlights-scroll" show-scrollbar="{{false}}">
@@ -118,6 +133,7 @@
             bindtap="onHighlightItemTap"
             bindlongpress="onDeleteHighlight"
             data-id="{{video.id}}"
+            data-matchid="{{item.matchId}}"
           >
             <view class="video-placeholder">
               <video
@@ -135,7 +151,7 @@
               <view class="play-icon-wrap" wx:if="{{!batchMode}}">
                 <text class="play-icon">▶</text>
               </view>
-              <view class="video-tag" wx:if="{{item.dateStr && !batchMode}}">{{item.dateStr}}</view>
+              <view class="video-tag" wx:if="{{!batchMode}}">{{video.videoIndex}}/{{video.videoTotal}}</view>
               <!-- 批量模式选中标识 -->
               <view class="select-badge" wx:if="{{batchMode}}">
                 <view class="select-check {{selectedIdsMap[video.id] ? 'select-check--on' : ''}}">
@@ -158,7 +174,7 @@
     </view>
 
     <view class="empty-highlights" wx:else>
-      <text>暂无高光片段，在记分页右下角单击 REC 保存；保存后，请及时下载至相册以免丢失；单场限 20 段，超限易闪退或保存失败。</text>
+      <text>暂无高光片段</text>
     </view>
 
     <!-- 批量操作条：放在高光区域下方，不再固定在页面底部 -->
@@ -193,10 +209,9 @@
           <text class="player-match-title">{{playerList[playerIndex].matchTitle}}</text>
         </view>
         <text class="player-time-label">{{playerList[playerIndex].timeText}}</text>
-        <view class="player-close-btn" bindtap="closePlayer">✕</view>
       </view>
 
-      <!-- 页内真实播放 -->
+      <!-- 页内真实播放（左右箭头内嵌，与暂停图标同层对齐） -->
       <view class="player-video-wrap">
         <video
           id="indexPlayerVideo"
@@ -217,17 +232,16 @@
         <view class="player-touch-layer" bindtap="playerTogglePlay"></view>
         <view class="player-play-tip">{{playerPaused ? '▶' : '❚❚'}}</view>
         <view class="player-swipe-tip">左右滑动切换片段</view>
+        <!-- 左右导航箭头：相对视频区域绝对定位，与暂停按钮同高 -->
+        <view
+          class="player-nav player-nav--l {{playerIndex <= 0 ? 'player-nav--disabled' : ''}}"
+          bindtap="playerPrev"
+        >‹</view>
+        <view
+          class="player-nav player-nav--r {{playerIndex >= playerList.length - 1 ? 'player-nav--disabled' : ''}}"
+          bindtap="playerNext"
+        >›</view>
       </view>
-
-      <!-- 左右导航箭头 -->
-      <view
-        class="player-nav player-nav--l {{playerIndex <= 0 ? 'player-nav--disabled' : ''}}"
-        bindtap="playerPrev"
-      >‹</view>
-      <view
-        class="player-nav player-nav--r {{playerIndex >= playerList.length - 1 ? 'player-nav--disabled' : ''}}"
-        bindtap="playerNext"
-      >›</view>
 
       <!-- 操作栏：放在视频下方，不被 tab 遮挡 -->
       <view class="player-bottom-bar">
@@ -240,6 +254,11 @@
         <view class="player-action-btn player-action--dl-del" bindtap="playerDownloadAndDelete">
           <text class="player-action-label">下载并删除</text>
         </view>
+      </view>
+
+      <!-- 退出预览按钮：大按钮，易于点击 -->
+      <view class="player-exit-btn" bindtap="closePlayer" hover-class="player-exit-btn--hover">
+        <text class="player-exit-label">退出预览</text>
       </view>
     </view>
   </view>
@@ -261,14 +280,18 @@
         <view class="form-group">
           <text class="form-label">比赛名称（选填）</text>
           <view class="team-input-row">
-            <input
-              class="form-input team-name-input"
-              placeholder="例：2026 社区杯总决赛"
-              placeholder-class="input-placeholder"
-              value="{{editingMatch.matchName}}"
-              bindinput="onEditInputChange"
-              data-field="matchName"
-            />
+            <!-- 固定前缀不可删除 + 用户输入后缀 -->
+            <view class="match-name-field-wrap">
+              <text class="match-name-prefix-tag">《高光记分》</text>
+              <text class="match-name-sep">-</text>
+              <input
+                class="match-name-suffix-input"
+                placeholder="赛事名称（选填）"
+                placeholder-class="input-placeholder"
+                value="{{editingMatchSuffix}}"
+                bindinput="onMatchNameSuffixInput"
+              />
+            </view>
             <view
               class="color-pick-btn"
               style="background-color: {{editingMatch.matchNameColor}}"
@@ -278,6 +301,20 @@
             ></view>
           </view>
           <text class="form-hint">右侧色块为直播页赛名文字颜色</text>
+        </view>
+
+        <!-- 开赛时间（日期 + 时间，精确到分钟） -->
+        <view class="form-group">
+          <text class="form-label">开赛时间</text>
+          <view class="team-input-row start-time-row">
+            <picker mode="date" value="{{editingStartDate}}" start="2020-01-01" end="2035-12-31" bindchange="onMatchStartDateChange">
+              <view class="form-input picker-display">{{editingStartDate}}</view>
+            </picker>
+            <picker mode="time" value="{{editingStartTime}}" bindchange="onMatchStartTimeChange">
+              <view class="form-input picker-display">{{editingStartTime}}</view>
+            </picker>
+          </view>
+          <text class="form-hint">精确到分钟；距现在较近的开赛优先排在列表上方，开赛超过 2 小时的场次会靠后</text>
         </view>
 
         <!-- 主队 -->
@@ -350,7 +387,7 @@
     <view class="color-picker-panel" catchtap="stopBubbling">
 
       <view class="picker-header">
-        <text class="picker-title">选择颜色</text>
+        <text class="picker-title">{{colorPickerTitle}}</text>
         <view class="close-icon" bindtap="closeColorPicker">×</view>
       </view>
 

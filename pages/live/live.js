@@ -4016,11 +4016,9 @@ Page({
         if (!this.data.showColorModal) return;
         const mb = Math.max(0, Math.round((bytes / (1024 * 1024)) * 10) / 10);
         const empty = mb < 0.05;
-        const hint = empty
-          ? '本地高光视频缓存约 0 MB，暂无可导出的本地文件。'
-          : `当前已缓存高光约 ${mb} MB，建议直播前下载至相册以腾出空间。`;
+        // 缓存为 0 时将 hint 置空，WXML 的 wx:if 会隐藏整个 Footer 行，用户无需操作
         this.setData({
-          colorModalCacheRowHint: hint,
+          colorModalCacheRowHint: empty ? '' : `当前已缓存高光约 ${mb} MB，建议开播前下载至相册以腾出空间。`,
           colorModalDownloadCleared: empty
         });
       });

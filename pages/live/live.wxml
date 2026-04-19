@@ -506,14 +506,18 @@
         ></view>
       </view>
 
-      <view class="cm-cache-row" wx:if="{{colorModalCacheRowHint}}">
-        <text class="cm-cache-text">{{colorModalCacheRowHint}}</text>
-        <text
-          wx:if="{{!colorModalDownloadCleared}}"
-          class="cm-cache-btn"
-          catchtap="onDownloadHighlightsToAlbumAndClearCache"
-        >下载并清空缓存</text>
-        <text wx:else class="cm-cache-btn cm-cache-btn--done">已清空</text>
+      <!-- 缓存 Footer：仅在 colorModalCacheRowHint 非空时显示（缓存为 0 时 JS 会置空以隐藏） -->
+      <view class="cm-cache-footer" wx:if="{{colorModalCacheRowHint}}">
+        <view class="cm-cache-divider"></view>
+        <view class="cm-cache-row">
+          <text class="cm-cache-text">{{colorModalCacheRowHint}}</text>
+          <view
+            wx:if="{{!colorModalDownloadCleared}}"
+            class="cm-cache-btn"
+            catchtap="onDownloadHighlightsToAlbumAndClearCache"
+          >下载并清空</view>
+          <text wx:else class="cm-cache-done">已清空</text>
+        </view>
       </view>
 
       <!-- 切换按钮 -->
