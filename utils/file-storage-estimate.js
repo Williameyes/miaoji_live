@@ -171,9 +171,9 @@ function getClipStorageHealthHint(clipBytes, userDataBytes) {
   else if (c >= CLIP_STORAGE_WARN_BYTES) level = 'warn';
   let hintText = '';
   if (level === 'severe') {
-    hintText = `高光片段文件约 ${clipMb} MB（≥100MB 严重）：直播极易因空间失败，请删除旧片段或使用「下载至相册并清空」`;
+    hintText = `高光片段文件约 ${clipMb} MB（≥100MB 严重）：保存极易因空间失败，请删除旧片段或使用「下载至相册并清空」`;
   } else if (level === 'warn') {
-    hintText = `高光片段文件约 ${clipMb} MB（≥50MB 注意）：长时间直播前建议清理或导出至相册`;
+    hintText = `高光片段文件约 ${clipMb} MB（≥50MB 注意）：长时间开播前建议清理或导出至相册`;
   } else {
     hintText = `高光片段约 ${clipMb} MB `;
   }

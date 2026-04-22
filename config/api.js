@@ -12,6 +12,11 @@ const API_BASE_URL = 'https://api.mx.server.ndcoo.com';
 const API_PATH_UPLOAD = '/api/upload';
 
 /**
+ * 客户端直播诊断日志（JSON 上报）。服务端实现后可落库分析 segment_start_fail 等现场。
+ */
+const API_PATH_CLIENT_DIAGNOSTIC_LOG = '/api/client/diagnostic-log';
+
+/**
  * 更新当前用户昵称/头像（PUT /api/user/update，需 Bearer）。
  */
 const API_PATH_USER_UPDATE = '/api/user/update';
@@ -19,5 +24,6 @@ const API_PATH_USER_UPDATE = '/api/user/update';
 module.exports = {
   API_BASE_URL,
   API_PATH_UPLOAD,
+  API_PATH_CLIENT_DIAGNOSTIC_LOG,
   API_PATH_USER_UPDATE
 };

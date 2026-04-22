@@ -104,14 +104,14 @@
     <view class="storage-panel" wx:if="{{!fileStorageLoading}}" bindtap="refreshFileStorageEstimate" hover-class="storage-panel-row--hover">
       <view class="storage-panel-row">
         <view class="storage-panel-title-group">
-          <text class="storage-panel-title">高光缓存</text>
+          <text class="storage-panel-title">高光保存</text>
           <text class="storage-panel-clip-total" wx:if="{{batchSelectableTotal > 0}}">合计 {{batchSelectableTotal}} 段</text>
         </view>
         <text class="storage-panel-pct {{fileStorageHealthLevel === 'severe' ? 'storage-panel-pct--severe' : (fileStorageHealthLevel === 'warn' ? 'storage-panel-pct--warn' : '')}}">{{fileStorageClipMb}} MB</text>
       </view>
-      <text class="storage-hint" wx:if="{{fileStorageHealthLevel === 'ok'}}">高光片段约{{fileStorageClipMb}}MB，在记分页右下角单击 REC 保存</text>
-      <text class="storage-hint storage-hint--warn" wx:elif="{{fileStorageHealthLevel === 'warn'}}">高光片段约{{fileStorageClipMb}}MB，当前保存在缓存中，删除小程序将被清空，请及时下载至相册以免丢失</text>
-      <text class="storage-hint storage-hint--severe" wx:else>高光片段约{{fileStorageClipMb}}MB，建议缓存片段20条以内，超限极易因空间失败，请删除旧片段或使用「下载至相册并清空」</text>
+      <text class="storage-hint" wx:if="{{fileStorageHealthLevel === 'ok'}}">高光片段约{{fileStorageClipMb}}MB</text>
+      <text class="storage-hint storage-hint--warn" wx:elif="{{fileStorageHealthLevel === 'warn'}}">高光片段约{{fileStorageClipMb}}MB，删除小程序将被清空，请及时下载至相册以免丢失</text>
+      <text class="storage-hint storage-hint--severe" wx:else>高光片段约{{fileStorageClipMb}}MB，建议保存片段20条以内，超限极易因空间失败，请删除旧片段或「下载至相册并清空」</text>
     </view>
     <view class="storage-panel storage-panel--loading" wx:else>
       <text class="storage-loading-text">正在估算本机空间…</text>
@@ -174,7 +174,7 @@
     </view>
 
     <view class="empty-highlights" wx:else>
-      <text>暂无高光片段</text>
+      <text>暂无高光片段，在记分页右下角单击 REC 保存</text>
     </view>
 
     <!-- 批量操作条：放在高光区域下方，不再固定在页面底部 -->

@@ -261,6 +261,7 @@ page {
   font-size: 44rpx;
   font-weight: 800;
   line-height: 1;
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.2);
 }
 
 .card-score-sep {

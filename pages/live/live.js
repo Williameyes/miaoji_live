@@ -1,7 +1,9 @@
 const app = getApp();
 
-const { get, getToken, STORAGE_USER_INFO_KEY } = require('../../utils/request.js');
+const { get, getToken, post, STORAGE_USER_INFO_KEY } = require('../../utils/request.js');
+const { API_PATH_CLIENT_DIAGNOSTIC_LOG } = require('../../config/api.js');
 const { parseExpireAtToMs } = require('../../utils/referral.js');
+const storageEst = require('../../utils/file-storage-estimate.js');
 const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
 
 Page({
@@ -396,7 +398,10 @@ Page({
   markNeedManualRelaunch: function(reason) {
     if (this._needManualRelaunch) return;
     this._needManualRelaunch = true;
-    this.appendHealthLog('manual_relaunch_required', { reason: reason || 'unknown' });
+    this.appendHealthLog('manual_relaunch_required', {
+      reason: reason || 'unknown',
+      diag: this.getLiveRollingDiagSnapshot({})
+    });
     this.updatePipelineHealth();
   },
 
@@ -465,7 +470,11 @@ Page({
     this.stopRollingRecording(() => {
       this.ensureRollingDir()
         .then(() => this.clearStaleRollingFiles())
-        .finally(() => kickoffRolling());
+        .finally(() => {
+          /** 开播前探测本机文件占用，与首页估算互补；不阻塞相机 kickoff */
+          this.probeLiveSandboxStorage('kickoff', true);
+          kickoffRolling();
+        });
     });
     if (this.data.drawerMode === 1) {
       this.refreshDrawerHighlights();
@@ -579,6 +588,16 @@ Page({
   highlightsMaxCount: 100,
   /** startRecord 连续失败风暴计数（每次达到 failStreak=5 记 1 次）。 */
   segmentStartFailStormCycles: 0,
+  /** startOneSegment 单飞锁，防止并发 startRecord 导致状态错乱。 */
+  _startOneSegmentInFlight: false,
+  /** startOneSegment 的延迟重试 timer（同一时刻仅允许一个）。 */
+  _segmentStartRetryTimer: null,
+  /** 处理 `is recording` 冲突时的恢复锁，避免并发 stopRecord。 */
+  _segmentStartRecoveringFromIsRecording: false,
+  /** 处理 `operate fail` 时的受控恢复锁，避免并发 stop/start 与硬恢复。 */
+  _segmentStartRecoveringFromOperateFail: false,
+  /** 连续 rolling temp 丢失计数（用于触发软恢复熔断）。 */
+  _rollingTempMissingStreak: 0,
 
   onLoad: function() {
     /** 相机 bindinitdone 完成前禁止 startRecord，否则部分机型预览一直黑屏 */
@@ -587,6 +606,11 @@ Page({
     this._opsToolsTimer = null;
     this._opsAckTimer = null;
     this._healthTimer = null;
+    this._liveFileStorageTimer = null;
+    this._lastLiveStorageProbeAt = 0;
+    this._lastLiveStorageProbeLevel = 'ok';
+    /** 每次 onLoad 重置，确保 severe Modal 只在当次开播 kickoff 时弹一次 */
+    this._liveStorageEntryModalShown = false;
     this.rollingFsBusy = false;
     this._rollingPersistInFlight = 0;
     this._postUserLocalPersistCooldownMs = 0;
@@ -606,6 +630,10 @@ Page({
     this._healthLogs = [];
     this._healthLogFlushTimer = null;
     this._healthLogStorageKey = 'LIVE_HEALTH_LOGS_V1';
+    /** 当前 live 页是否处于前台（onShow/onHide）；后台时不应触发相机硬恢复。 */
+    this._livePageVisible = false;
+    /** 远程诊断上报节流定时器 */
+    this._remoteHealthLogTimer = null;
     /** 权益校验串行锁，避免 onLoad/onShow/重试并发导致重复挂载 camera。 */
     this._entitlementChecking = false;
     this._entitlementOnAllowedQueue = [];
@@ -626,6 +654,11 @@ Page({
     this._insertCameraRetryTimer = null;
     /** insertCamera 冲突恢复进行中标记，避免并发恢复。 */
     this._insertConflictRecovering = false;
+    this._startOneSegmentInFlight = false;
+    this._segmentStartRetryTimer = null;
+    this._segmentStartRecoveringFromIsRecording = false;
+    this._segmentStartRecoveringFromOperateFail = false;
+    this._rollingTempMissingStreak = 0;
     this.segmentPersistFailStreak = 0;
     this.segmentStartFailStormCycles = 0;
     /** 当前是否进入“仅允许长按重启”故障态。 */
@@ -724,7 +757,9 @@ Page({
         brand: String(sys.brand || ''),
         platform: String(sys.platform || ''),
         wxVersion: String(sys.version || ''),
-        system: String(sys.system || '')
+        system: String(sys.system || ''),
+        /** 小程序基础库版本，与接口文档 `device.libVersion` 对齐 */
+        libVersion: String(sys.SDKVersion || '')
       };
     } catch (e) {
       this._healthLogDevice = {};
@@ -750,6 +785,25 @@ Page({
       this._healthLogs.splice(0, this._healthLogs.length - 120);
     }
     this.scheduleHealthLogFlush();
+    const ev = item.e;
+    if (
+      ev === 'hard_recover_fail'
+      || ev === 'hard_recover_start'
+      || ev === 'manual_relaunch_required'
+      || ev === 'segment_start_fail_storm_cycle'
+      || ev === 'camera_insert_conflict'
+      || ev === 'hard_recover_skip_page_hidden'
+      || ev === 'camera_fault_recovery_skip_page_hidden'
+      || ev === 'stop_record_fail'
+      || ev === 'rolling_persist_temp_gone_presync'
+      || ev === 'segment_persist_reject_temp_unstable'
+      || ev === 'rolling_persist_phase7_temp_missing_abort'
+      || ev === 'highlight_finalize_no_segments'
+      || ev === 'highlight_abort_no_fresh_rolling'
+      || ev === 'highlight_hard_timeout_unlock'
+    ) {
+      this.scheduleRemoteHealthLogUpload(ev);
+    }
   },
 
   /**
@@ -764,6 +818,118 @@ Page({
         wx.setStorageSync(this._healthLogStorageKey, this._healthLogs.slice(-240));
       } catch (e) {}
     }, 1800);
+  },
+
+  /**
+   * 收集 rolling / 相机管线瞬时状态，供健康日志与远程诊断上报。
+   * @param {Record<string, unknown>} [extra] 与现场事件相关的附加字段
+   * @returns {Record<string, unknown>}
+   */
+  getLiveRollingDiagSnapshot: function(extra) {
+    let matchId = '';
+    try {
+      matchId = String(wx.getStorageSync('currentMatchId') || app.globalData.currentMatchId || '');
+    } catch (eMid) {
+      matchId = '';
+    }
+    const base = {
+      v: 1,
+      matchId,
+      pageVisible: !!this._livePageVisible,
+      rollingActive: !!this.rollingActive,
+      rollingSessionId: this.rollingSessionId,
+      segmentCounter: this.segmentCounter,
+      isRecording: !!this.data.isRecording,
+      rollingFsBusy: !!this.rollingFsBusy,
+      rollingPersistInFlight: this._rollingPersistInFlight || 0,
+      cameraInitDone: !!this._cameraInitDone,
+      isRecovering: !!this.data.isRecovering,
+      recoveryLock: !!this._recoveryLock,
+      pipelineHealth: this.data.pipelineHealth || '',
+      startRecordFailStreak: this.startRecordFailStreak,
+      segmentStartFailStormCycles: this.segmentStartFailStormCycles || 0,
+      lastSegmentAgeMs:
+        this.lastSegmentAt > 0 ? Date.now() - this.lastSegmentAt : -1,
+      postUserLocalPersistCooldownMs: this._postUserLocalPersistCooldownMs || 0,
+      hasPendingHighlight: !!this.pendingHighlight,
+      hasHighlightAfterStop: !!this._highlightAfterStopMeta,
+      isSavingHighlight: !!this.data.isSavingHighlight,
+      storageWatermarkLevel: this.storageWatermarkLevel || 0,
+      needManualRelaunch: !!this._needManualRelaunch
+    };
+    return Object.assign(base, extra || {});
+  },
+
+  /**
+   * 将近期健康日志异步上报服务端；**不强制登录**，无 token 仍会上报（服务端不关联 openid）。
+   * @param {string} reason 触发原因（事件名或汇总标签）
+   * @returns {void}
+   */
+  scheduleRemoteHealthLogUpload: function(reason) {
+    if (this._remoteHealthLogTimer) {
+      this._remoteHealthLogPendingReason = reason || this._remoteHealthLogPendingReason;
+      return;
+    }
+    this._remoteHealthLogPendingReason = reason || 'batch';
+    this._remoteHealthLogTimer = setTimeout(() => {
+      this._remoteHealthLogTimer = null;
+      this.flushRemoteHealthLogsNow(this._remoteHealthLogPendingReason || 'batch');
+      this._remoteHealthLogPendingReason = '';
+    }, 14000);
+  },
+
+  /**
+   * 构造诊断接口要求的自定义 Header，与 Body `device` 一并供服务端合并入 device_json。
+   * @returns {Record<string, string>}
+   */
+  buildDiagnosticLogHeaders: function() {
+    const dev = this._healthLogDevice || {};
+    const model = typeof dev.model === 'string' ? dev.model : '';
+    const system = typeof dev.system === 'string' ? dev.system : '';
+    const wxVer = typeof dev.wxVersion === 'string' ? dev.wxVersion : '';
+    let infoJson = '{}';
+    try {
+      infoJson = JSON.stringify(dev);
+    } catch (eJson) {
+      infoJson = '{}';
+    }
+    if (infoJson.length > 4090) {
+      infoJson = `${infoJson.slice(0, 4090)}…`;
+    }
+    const clientDevice = [model, system].filter(Boolean).join(' / ').slice(0, 240);
+    return {
+      'X-Client-Device': clientDevice || 'unknown',
+      'X-Device-Info': infoJson,
+      'X-Wx-Client-Version': wxVer || ''
+    };
+  },
+
+  /**
+   * 立即执行一次远程健康日志上报（内部由 {@link scheduleRemoteHealthLogUpload} 节流调用）。
+   * 使用 skipAuth：避免诊断接口返回 401 时触发全局登出；有 token 时仍手动携带 Bearer。
+   * @param {string} reason
+   * @returns {void}
+   */
+  flushRemoteHealthLogsNow: function(reason) {
+    const logs = (this._healthLogs || []).slice(-80);
+    if (logs.length === 0) return;
+    const device =
+      this._healthLogDevice && typeof this._healthLogDevice === 'object' ? this._healthLogDevice : {};
+    const payload = {
+      at: Date.now(),
+      reason: String(reason || 'unspecified'),
+      device,
+      diag: this.getLiveRollingDiagSnapshot({}),
+      logs
+    };
+    const token = getToken();
+    const header = this.buildDiagnosticLogHeaders();
+    if (token) {
+      header.Authorization = `Bearer ${token}`;
+    }
+    post(API_PATH_CLIENT_DIAGNOSTIC_LOG, payload, { skipAuth: true, header })
+      .then(() => {})
+      .catch(() => {});
   },
 
   /**
@@ -1147,6 +1313,13 @@ Page({
    */
   triggerCameraFaultRecovery: function(reason) {
     if (!this.data.liveStreamAllowed) return;
+    if (!this._livePageVisible) {
+      this.appendHealthLog('camera_fault_recovery_skip_page_hidden', {
+        reason: reason || '',
+        diag: this.getLiveRollingDiagSnapshot({})
+      });
+      return;
+    }
     if (this.data.isRecovering || this._recoveryLock) return;
     if (this.pendingHighlight) return;
     /** 高光等待自然分段落盘期间避免硬恢复抢管线，降低 stop/start 风暴 */
@@ -1281,6 +1454,32 @@ Page({
       }
       run();
     }, ms);
+  },
+
+  /**
+   * 清理 startOneSegment 延迟重试 timer，避免形成并发重试链。
+   * @returns {void}
+   */
+  clearSegmentStartRetryTimer: function() {
+    if (this._segmentStartRetryTimer) {
+      clearTimeout(this._segmentStartRetryTimer);
+      this._segmentStartRetryTimer = null;
+    }
+  },
+
+  /**
+   * 串行调度下一次 startOneSegment（会覆盖旧重试，确保只有一条链）。
+   * @param {number} sessionId
+   * @param {number} retryCount
+   * @param {number} delayMs
+   * @returns {void}
+   */
+  scheduleStartOneSegmentRetry: function(sessionId, retryCount, delayMs) {
+    this.clearSegmentStartRetryTimer();
+    this._segmentStartRetryTimer = setTimeout(() => {
+      this._segmentStartRetryTimer = null;
+      this.startOneSegment(sessionId, retryCount);
+    }, Math.max(0, delayMs || 0));
   },
 
   /**
@@ -1546,6 +1745,7 @@ Page({
   },
 
   onShow: function() {
+    this._livePageVisible = true;
     try {
       wx.showShareMenu({
         withShareTicket: true,
@@ -1576,21 +1776,113 @@ Page({
   },
 
   /**
-   * 若首页已估算本机视频水位偏高，进入直播时轻提示（依赖 {@link app.globalData.fileStorageEstimate}）。
+   * 进入直播时检查存储水位——Toast 已移除，严重水位由 probeLiveSandboxStorage kickoff 弹一次 Modal 处理。
+   * 保留此函数签名以兼容 onShow 调用点，内部已无操作。
    * @returns {void}
    */
-  maybeToastFileStoragePressureFromGlobal: function() {
-    try {
-      if (this._fileStoragePressureToastShown) return;
-      const est = app.globalData && app.globalData.fileStorageEstimate;
-      if (!est || est.healthLevel === 'ok') return;
-      this._fileStoragePressureToastShown = true;
-      wx.showToast({
-        title: '高光缓存偏高，保存可能失败，建议在首页清理或导出至相册',
-        icon: 'none',
-        duration: 3200
-      });
-    } catch (eToastFs) {}
+  maybeToastFileStoragePressureFromGlobal: function() {},
+
+  /**
+   * 异步估算 USER_DATA_PATH 与高光片段体积，写入健康日志并可选提示用户。
+   * @param {string} [trigger] kickoff | periodic 等
+   * @param {boolean} [force] 为 true 时跳过短时间防抖（开播首次探测）
+   * @returns {void}
+   */
+  probeLiveSandboxStorage: function(trigger, force) {
+    const t = typeof trigger === 'string' ? trigger : '';
+    const now = Date.now();
+    if (!force && this._lastLiveStorageProbeAt && now - this._lastLiveStorageProbeAt < 25000) {
+      return;
+    }
+    this._lastLiveStorageProbeAt = now;
+    Promise.all([
+      storageEst.estimateClipSegmentsBytesFromStorage(),
+      storageEst.estimateUserDataPathUsageBytes()
+    ])
+      .then(([clipBytes, userBytes]) => {
+        if (t === 'periodic' && !this.rollingActive) {
+          return;
+        }
+        const hint = storageEst.getClipStorageHealthHint(clipBytes, userBytes);
+        this.appendHealthLog('live_sandbox_storage_probe', {
+          trigger: t,
+          clipMb: hint.clipMb,
+          totalMb: hint.totalMb,
+          level: hint.level,
+          rollingSessionId: this.rollingSessionId
+        });
+        try {
+          if (app.globalData) {
+            app.globalData.fileStorageEstimate = {
+              clipMb: hint.clipMb,
+              totalMb: hint.totalMb,
+              healthLevel: hint.level,
+              at: Date.now()
+            };
+          }
+        } catch (eG) {}
+        this.maybeNotifyLiveStoragePressure(hint, t);
+        this._lastLiveStorageProbeLevel = hint.level;
+      })
+      .catch(() => {});
+  },
+
+  /**
+   * 按档位提示存储压力。
+   * - severe：仅在开播进入时（trigger === 'kickoff'）弹一次 Modal，直播过程中不再重复弹出。
+   * - warn：静默记录日志，不弹任何 Toast，避免打断直播。
+   * @param {{ clipMb: number, totalMb: number, level: string, hintText: string }} hint
+   * @param {string} [trigger] kickoff | periodic 等，由 probeLiveSandboxStorage 传入
+   * @returns {void}
+   */
+  maybeNotifyLiveStoragePressure: function(hint, trigger) {
+    if (!hint || hint.level === 'ok') {
+      return;
+    }
+    if (hint.level === 'severe') {
+      if (trigger !== 'kickoff') return;
+      if (this._liveStorageEntryModalShown) return;
+      this._liveStorageEntryModalShown = true;
+      try {
+        wx.showModal({
+          title: '存储空间紧张',
+          content: `${hint.hintText}\n`,
+          showCancel: true,
+          cancelText: '知道了',
+          confirmText: '打开抽屉',
+          success: (res) => {
+            if (res.confirm) {
+              this.setData({ drawerMode: 1 });
+              this.refreshDrawerHighlights();
+            }
+          }
+        });
+      } catch (eM) {}
+    }
+  },
+
+  /**
+   * 长直播期间周期性探测（全量 walk 较重，默认 8 分钟）。
+   * @returns {void}
+   */
+  startLiveSandboxStorageWatch: function() {
+    this.stopLiveSandboxStorageWatch();
+    this._liveFileStorageTimer = setInterval(() => {
+      if (!this.rollingActive) {
+        return;
+      }
+      this.probeLiveSandboxStorage('periodic', false);
+    }, 8 * 60 * 1000);
+  },
+
+  /**
+   * @returns {void}
+   */
+  stopLiveSandboxStorageWatch: function() {
+    if (this._liveFileStorageTimer) {
+      clearInterval(this._liveFileStorageTimer);
+      this._liveFileStorageTimer = null;
+    }
   },
 
   /**
@@ -1709,7 +2001,6 @@ Page({
   },
 
   onUnload: function() {
-    this._fileStoragePressureToastShown = false;
     this._replayDeferredItem = null;
     if (this._replayPauseWaitTimer) {
       clearTimeout(this._replayPauseWaitTimer);
@@ -1740,6 +2031,10 @@ Page({
     if (this._relaunchPressTimer) {
       clearTimeout(this._relaunchPressTimer);
       this._relaunchPressTimer = null;
+    }
+    if (this._remoteHealthLogTimer) {
+      clearTimeout(this._remoteHealthLogTimer);
+      this._remoteHealthLogTimer = null;
     }
     this._insertConflictRecovering = false;
     this._needManualRelaunch = false;
@@ -1777,6 +2072,7 @@ Page({
   },
 
   onHide: function() {
+    this._livePageVisible = false;
     /** 切后台不打断保存，但取消「保存完成后自动回放」，避免隐藏态误开全屏回放 */
     this._replayDeferredItem = null;
     if (this._replayPauseWaitTimer) {
@@ -1927,6 +2223,7 @@ Page({
     this.stopHealthMonitor();
     this.updatePipelineHealth();
     this._healthTimer = setInterval(() => this.updatePipelineHealth(), 1200);
+    this.startLiveSandboxStorageWatch();
   },
 
   /**
@@ -1937,6 +2234,7 @@ Page({
     if (!this._healthTimer) return;
     clearInterval(this._healthTimer);
     this._healthTimer = null;
+    this.stopLiveSandboxStorageWatch();
   },
 
   /**
@@ -2017,7 +2315,10 @@ Page({
     this.stopRecoveryProgressAnim(false);
     this.setData({ isRecovering: false, showRecoveryVeil: false });
     this._recoveryLock = false;
-    this.appendHealthLog('hard_recover_fail', { reason: reason || 'unknown' });
+    this.appendHealthLog('hard_recover_fail', {
+      reason: reason || 'unknown',
+      diag: this.getLiveRollingDiagSnapshot({})
+    });
     if (
       reason === 'recovering_ui_5s_failsafe'
       && (this._insertCameraErrorStreak || 0) >= 2
@@ -2034,9 +2335,16 @@ Page({
    */
   hardRecoverLivePipeline: function(trigger) {
     if (this._recoveryLock) return;
+    const source = trigger || 'manual';
+    if (!this._livePageVisible) {
+      this.appendHealthLog('hard_recover_skip_page_hidden', {
+        trigger: source,
+        diag: this.getLiveRollingDiagSnapshot({})
+      });
+      return;
+    }
     const now = Date.now();
     const cooldownUntil = this._insertCameraRecoverCooldownUntil || 0;
-    const source = trigger || 'manual';
     const isAutoRecover = source.indexOf('auto:') === 0;
     if (isAutoRecover && now < cooldownUntil) {
       this.appendHealthLog('hard_recover_skip_insert_cooldown', {
@@ -2063,7 +2371,10 @@ Page({
       clearTimeout(this._recoveryGuardTimer);
       this._recoveryGuardTimer = null;
     }
-    this.appendHealthLog('hard_recover_start', { trigger: source });
+    this.appendHealthLog('hard_recover_start', {
+      trigger: source,
+      diag: this.getLiveRollingDiagSnapshot({})
+    });
     this._manualRecoveryPendingAck = typeof source === 'string' && source.indexOf('manual') === 0;
     this._hardRecoverAwaitingCamera = true;
     this._recoveryGuardTimer = setTimeout(() => {
@@ -2111,12 +2422,21 @@ Page({
       clearTimeout(this._recoverUiFailsafeTimer);
       this._recoverUiFailsafeTimer = null;
     }
+    let recoverUiFailsafeMs = 6000;
+    try {
+      const siFs = wx.getSystemInfoSync();
+      if (siFs && siFs.platform === 'ios') {
+        recoverUiFailsafeMs = 11000;
+      }
+    } catch (eFs) {
+      recoverUiFailsafeMs = 6000;
+    }
     this._recoverUiFailsafeTimer = setTimeout(() => {
       this._recoverUiFailsafeTimer = null;
       if (this.data.isRecovering) {
         this.finalizeRecoveryAsFailed('recovering_ui_5s_failsafe');
       }
-    }, 5000);
+    }, recoverUiFailsafeMs);
     this.startRecoveryProgressAnim();
     this.stopRollingRecording(() => {
       this.rebuildCameraComponent(() => {
@@ -2467,10 +2787,17 @@ Page({
   startOneSegment: function(sessionId, retryCount = 0) {
     if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
     if (!this.data.cameraContext) return;
+    if (this._needManualRelaunch) return;
+    if (this._startOneSegmentInFlight) return;
+    this._startOneSegmentInFlight = true;
     this.data.cameraContext.startRecord({
       timeout: Math.max(12, Math.ceil(this.segmentDurationMs / 1000) + 2),
       success: () => {
+        this._startOneSegmentInFlight = false;
         if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
+        this.clearSegmentStartRetryTimer();
+        this._segmentStartRecoveringFromIsRecording = false;
+        this._segmentStartRecoveringFromOperateFail = false;
         const hadFailBefore = this.startRecordFailStreak > 0;
         this.startRecordFailStreak = 0;
         this.segmentStartFailStormCycles = 0;
@@ -2495,13 +2822,83 @@ Page({
           this.stopOneSegment(sessionId);
         }, this.segmentDurationMs);
       },
-      fail: () => {
+      fail: (err) => {
+        this._startOneSegmentInFlight = false;
         if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
         this.startRecordFailStreak += 1;
-        this.appendHealthLog('segment_start_fail', {
+        const errMsg = err && err.errMsg ? String(err.errMsg) : '';
+        /** 全量 diag 仅在连续失败时附带，避免健康缓冲被长直播刷屏撑满 */
+        const logDetail = {
           retryCount,
-          failStreak: this.startRecordFailStreak
-        });
+          failStreak: this.startRecordFailStreak,
+          errMsg: errMsg || '(empty)'
+        };
+        if (this.startRecordFailStreak >= 2) {
+          logDetail.diag = this.getLiveRollingDiagSnapshot({});
+        }
+        this.appendHealthLog('segment_start_fail', logDetail);
+        const lowerErr = errMsg.toLowerCase();
+        const isRecordingConflict = lowerErr.indexOf('is recording') >= 0;
+        if (isRecordingConflict) {
+          if (this._segmentStartRecoveringFromIsRecording) {
+            this.scheduleStartOneSegmentRetry(sessionId, 0, 380);
+            return;
+          }
+          this._segmentStartRecoveringFromIsRecording = true;
+          this.appendHealthLog('segment_start_realign_is_recording_conflict', {
+            retryCount,
+            failStreak: this.startRecordFailStreak
+          });
+          const restartAfterStop = () => {
+            this.setData({ isRecording: false });
+            this.lastRecordStartAt = 0;
+            this.scheduleAfterStopRecord(() => {
+              this._segmentStartRecoveringFromIsRecording = false;
+              this.startOneSegment(sessionId, 0);
+            });
+          };
+          try {
+            this.data.cameraContext.stopRecord({ complete: restartAfterStop });
+          } catch (eStopRec) {
+            restartAfterStop();
+          }
+          return;
+        }
+        const isOperateFail = lowerErr.indexOf('operate fail') >= 0;
+        if (isOperateFail) {
+          if (this._segmentStartRecoveringFromOperateFail) {
+            this.scheduleStartOneSegmentRetry(sessionId, 0, 520);
+            return;
+          }
+          this._segmentStartRecoveringFromOperateFail = true;
+          this.appendHealthLog('segment_start_realign_operate_fail', {
+            retryCount,
+            failStreak: this.startRecordFailStreak
+          });
+          const restartAfterStop = () => {
+            this.setData({ isRecording: false });
+            this.lastRecordStartAt = 0;
+            this.scheduleAfterStopRecord(() => {
+              this._segmentStartRecoveringFromOperateFail = false;
+              if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
+              if (this._needManualRelaunch) return;
+              this.startOneSegment(sessionId, 0);
+            });
+          };
+          try {
+            this.data.cameraContext.stopRecord({ complete: restartAfterStop });
+          } catch (eStopRec) {
+            restartAfterStop();
+          }
+          if (this.startRecordFailStreak >= 5) {
+            this.appendHealthLog('segment_start_operate_fail_auto_recover', {
+              retryCount,
+              failStreak: this.startRecordFailStreak
+            });
+            this.triggerCameraFaultRecovery('start:operate_fail');
+          }
+          return;
+        }
         // 关键修复：不能在少量失败后停止，否则 segmentCounter 会冻结，后续高光重复。
         const nextRetry = retryCount + 1;
         let platformSegPad = 0;
@@ -2525,7 +2922,9 @@ Page({
         if (this.startRecordFailStreak >= 5) {
           this.segmentStartFailStormCycles = (this.segmentStartFailStormCycles || 0) + 1;
           this.appendHealthLog('segment_start_fail_storm_cycle', {
-            cycles: this.segmentStartFailStormCycles
+            cycles: this.segmentStartFailStormCycles,
+            lastErrMsg: errMsg || '(empty)',
+            diag: this.getLiveRollingDiagSnapshot({})
           });
           /** 易与回放恢复、磁盘抖动叠加误报，略提高阈值；真正死锁仍由 ERR + 手动恢复覆盖 */
           if (this.segmentStartFailStormCycles >= 4) {
@@ -2542,7 +2941,7 @@ Page({
           this.scheduleAfterStopRecord(() => this.startOneSegment(sessionId, 0));
           return;
         }
-        setTimeout(() => this.startOneSegment(sessionId, nextRetry), delay);
+        this.scheduleStartOneSegmentRetry(sessionId, nextRetry, delay);
       }
     });
   },
@@ -2606,8 +3005,13 @@ Page({
         this.abortHighlightAfterStopIfNeeded(sessionId, 'empty_temp_path');
         this.scheduleAfterStopRecord(() => this.startOneSegment(sessionId));
       },
-      fail: () => {
+      fail: (err) => {
         if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
+        const errMsg = err && err.errMsg ? String(err.errMsg) : '';
+        this.appendHealthLog('stop_record_fail', {
+          errMsg: errMsg || '(empty)',
+          diag: this.getLiveRollingDiagSnapshot({})
+        });
         this.setData({ isRecording: false });
         this.lastRecordStartAt = 0;
         this.abortHighlightAfterStopIfNeeded(sessionId, 'stop_record_fail');
@@ -2622,6 +3026,10 @@ Page({
    * @returns {void}
    */
   stopRollingRecording: function(onStopped) {
+    this.clearSegmentStartRetryTimer();
+    this._startOneSegmentInFlight = false;
+    this._segmentStartRecoveringFromIsRecording = false;
+    this._segmentStartRecoveringFromOperateFail = false;
     if (this.rollingWatchdogTimer) {
       clearInterval(this.rollingWatchdogTimer);
       this.rollingWatchdogTimer = null;
@@ -2685,6 +3093,16 @@ Page({
       const rollingPath = `${rollingDir}/seg_${segNo}.mp4`;
       const altRollingPath = `${rollingDir}/s_${segNo}_${Date.now()}.mp4`;
       const sessionOk = () => recordSessionId === this.rollingSessionId;
+      /**
+       * 是否为「临时文件已不存在」类错误（与配额满不同，清缓存无法恢复）。
+       * @param {string} msg
+       * @returns {boolean}
+       */
+      const isRollingTempMissingErr = (msg) => {
+        if (!msg || typeof msg !== 'string') return false;
+        const s = msg.toLowerCase();
+        return s.indexOf('no such file') >= 0;
+      };
       let persistIsIos = false;
       try {
         const siPlat = wx.getSystemInfoSync();
@@ -2701,6 +3119,8 @@ Page({
       let iosPrimaryUserRetry = 0;
       let iosEarlyUserTried = false;
       let iosUserSaveRetry = 0;
+      /** 本段 temp 已确认丢失：快速终止后续 phase，避免无效重试风暴。 */
+      let tempPathTerminalMissing = false;
       /** 仅在中后段周期性收紧 user-local 热层，避免每段 prune 误伤可用条数 */
       if (persistIsIos && typeof this.segmentCounter === 'number' && this.segmentCounter >= 18) {
         if (this.segmentCounter % 8 === 0) {
@@ -2738,7 +3158,7 @@ Page({
       };
       /**
        * saveFile 仅 temp → 本地用户路径（与 phase 7 一致）。
-       * @param {{ onOk: function(string): void, onEmptyOrFail: function(): void }} cb
+       * @param {{ onOk: function(string): void, onEmptyOrFail: function(string): void }} cb
        * @returns {void}
        */
       const trySaveTempToUserLocal = (cb) => {
@@ -2749,11 +3169,12 @@ Page({
             if (p) {
               cb.onOk(p);
             } else {
-              cb.onEmptyOrFail();
+              cb.onEmptyOrFail('saveFile_empty_saved_path');
             }
           },
-          fail: () => {
-            cb.onEmptyOrFail();
+          fail: (e) => {
+            const msg = e && e.errMsg ? String(e.errMsg) : 'saveFile_fail_unknown';
+            cb.onEmptyOrFail(msg);
           }
         });
       };
@@ -2809,7 +3230,7 @@ Page({
            * 仅接受已持久化的稳定路径（_rolling、备用名或 saveFile 用户路径）；纯 temp 易被回收。
            */
           let currentSegPath = savedPath || '';
-          if (!currentSegPath && tempPath) {
+          if (!currentSegPath && tempPath && !tempPathTerminalMissing) {
             const maxUnstableRetry = persistIsIos ? 5 : 2;
             if (highlightPersistUnstableRetries < maxUnstableRetry) {
               highlightPersistUnstableRetries += 1;
@@ -2873,9 +3294,24 @@ Page({
           return;
         }
         if (!savedPath) {
+          if (tempPathTerminalMissing) {
+            this._rollingTempMissingStreak = (this._rollingTempMissingStreak || 0) + 1;
+            this.appendHealthLog('rolling_persist_temp_terminal_skip', {
+              segNo,
+              streak: this._rollingTempMissingStreak
+            });
+            if (this._rollingTempMissingStreak >= 2) {
+              this._rollingTempMissingStreak = 0;
+              setTimeout(() => {
+                if (!sessionOk()) return;
+                this.recoverRollingPipelineForHighlight();
+              }, 120);
+            }
+          }
           resolve();
           return;
         }
+        this._rollingTempMissingStreak = 0;
         let maxBuf = this.rollingBufferMax || 10;
         try {
           const siMb = wx.getSystemInfoSync();
@@ -2964,6 +3400,9 @@ Page({
        * @returns {boolean} 已接管重试则为 true，调用方勿再执行后续链
        */
       const maybeQuotaRelief = (errMsg) => {
+        if (errMsg && isRollingTempMissingErr(errMsg)) {
+          return false;
+        }
         if (!this.isMiniProgramFileQuotaExceeded(errMsg) || quotaReliefTriedForThisSegment) {
           return false;
         }
@@ -2971,7 +3410,7 @@ Page({
         this.appendHealthLog('rolling_persist_quota_relief_retry', { segNo });
         try {
           wx.showToast({
-            title: '存储空间不足，已自动清理录像缓存',
+            title: '存储空间不足，已自动清理缓存',
             icon: 'none',
             duration: 2200
           });
@@ -3003,14 +3442,25 @@ Page({
               this.appendHealthLog('rolling_persist_ok_ios_primary_user_save', {});
               applyUserLocalPersistSuccess(p, { skipUserLocalLog: true });
             },
-            onEmptyOrFail: () => {
+            onEmptyOrFail: (failMsg) => {
+              const missingTemp = isRollingTempMissingErr(failMsg);
+              if (missingTemp) {
+                this.appendHealthLog('rolling_persist_ios_primary_temp_missing', {
+                  segNo,
+                  attempt: iosPrimaryUserRetry + 1,
+                  errMsg: failMsg || ''
+                });
+              }
               if (iosPrimaryUserRetry < 3) {
                 iosPrimaryUserRetry += 1;
                 iosPrimaryUserTried = false;
-                if (iosPrimaryUserRetry >= 2) {
+                /** temp 已不在时清缓存无意义，且会触发 aggressive 节流刷屏 */
+                if (!missingTemp && iosPrimaryUserRetry >= 2) {
                   this.freeRollingFileStorageAggressive('ios_primary_save_empty');
                 }
-                const backoff = 120 + iosPrimaryUserRetry * 140;
+                const backoff = missingTemp
+                  ? Math.min(520, 100 + iosPrimaryUserRetry * 130)
+                  : 120 + iosPrimaryUserRetry * 140;
                 setTimeout(() => {
                   if (!sessionOk()) {
                     resolve();
@@ -3081,7 +3531,13 @@ Page({
               onOk: (p) => {
                 applyUserLocalPersistSuccess(p);
               },
-              onEmptyOrFail: () => {
+              onEmptyOrFail: (failMsg) => {
+                if (isRollingTempMissingErr(failMsg)) {
+                  this.appendHealthLog('rolling_persist_ios_early_user_temp_missing', {
+                    segNo,
+                    errMsg: failMsg || ''
+                  });
+                }
                 attemptRollingPersist(4);
               }
             });
@@ -3200,7 +3656,17 @@ Page({
               onOk: (p) => {
                 applyUserLocalPersistSuccess(p);
               },
-              onEmptyOrFail: () => {
+              onEmptyOrFail: (failMsg) => {
+                const missingTemp = isRollingTempMissingErr(failMsg);
+                if (missingTemp) {
+                  tempPathTerminalMissing = true;
+                  this.appendHealthLog('rolling_persist_phase7_temp_missing_abort', {
+                    segNo,
+                    errMsg: failMsg || ''
+                  });
+                  finalizeSegment('');
+                  return;
+                }
                 if (persistIsIos && iosUserSaveRetry < 4) {
                   iosUserSaveRetry += 1;
                   if (iosUserSaveRetry >= 2) {
@@ -3241,7 +3707,66 @@ Page({
         }
       };
       /**
-       * iOS：tempPath 早于真实 flush，略延迟再开始多阶段落盘，降低 phase 7 空路径 + 高光误判不稳定概率。
+       * iOS：仅用于「尽早」发现 temp 已可读（getFileInfo 成功且 size>0 时提前落盘）。
+       * 不在轮询结束处触发落盘：部分机型上 getFileInfo 对 wxfile://tmp 长时间 fail 或 size 仍为 0，
+       * 旧逻辑会空等 ~1.7s 才首次 copy/save，temp 常被回收，表现为 rolling_persist_copy_fail / saveFile fail。
+       * @param {function(): void} onEarlyReady 仅在确认 size>0 时调用，与定时 kick 互斥（外层 kickOnce）
+       * @returns {void}
+       */
+      const pollTempFileForEarlyKick = (onEarlyReady) => {
+        const t0 = Date.now();
+        let attempt = 0;
+        const maxAttempts = 28;
+        const poll = () => {
+          if (!sessionOk()) {
+            resolve();
+            return;
+          }
+          fs.getFileInfo({
+            filePath: tempPath,
+            success: (fi) => {
+              const sz = fi && typeof fi.size === 'number' ? fi.size : 0;
+              if (sz > 0) {
+                this.appendHealthLog('rolling_persist_temp_ready', {
+                  segNo,
+                  size: sz,
+                  attempts: attempt,
+                  waitMs: Date.now() - t0
+                });
+                onEarlyReady();
+                return;
+              }
+              attempt += 1;
+              if (attempt >= maxAttempts) {
+                this.appendHealthLog('rolling_persist_temp_zero_presync', {
+                  segNo,
+                  attempts: attempt,
+                  waitMs: Date.now() - t0
+                });
+                return;
+              }
+              const delay = attempt < 4 ? 35 : attempt < 10 ? 70 : 120;
+              setTimeout(poll, delay);
+            },
+            fail: () => {
+              attempt += 1;
+              if (attempt >= maxAttempts) {
+                this.appendHealthLog('rolling_persist_temp_gone_presync', {
+                  segNo,
+                  attempts: attempt,
+                  waitMs: Date.now() - t0
+                });
+                return;
+              }
+              const delay = attempt < 6 ? 45 : 90;
+              setTimeout(poll, delay);
+            }
+          });
+        };
+        poll();
+      };
+      /**
+       * 开始多阶段落盘（iOS 在短延迟 + 可选提前探测之后调用）。
        */
       const kickRollingPersist = () => {
         if (!sessionOk()) {
@@ -3254,14 +3779,24 @@ Page({
         }
         attemptRollingPersist(0);
       };
-      if (persistIsIos) {
-        const settleMs = Math.min(
-          520,
-          200 + Math.floor((typeof segNo === 'number' ? segNo : 0) / 6) * 38
-        );
-        setTimeout(kickRollingPersist, settleMs);
-      } else {
+      let persistKickOnce = false;
+      /**
+       * 保证多阶段落盘只启动一次（定时 kick 与 poll 提前 kick 共用）。
+       * @returns {void}
+       */
+      const kickOnce = () => {
+        if (persistKickOnce) return;
+        persistKickOnce = true;
         kickRollingPersist();
+      };
+      if (persistIsIos) {
+        /**
+         * 首帧落盘：略大于一帧，给 stopRecord 落盘缓冲；远短于旧版纯轮询结束 (~1.7s)，避免 temp 窗口耗尽。
+         */
+        setTimeout(() => kickOnce(), 115);
+        pollTempFileForEarlyKick(kickOnce);
+      } else {
+        kickOnce();
       }
     }))
       .catch(() => Promise.resolve())
@@ -4007,7 +4542,7 @@ Page({
       showColorModal: true,
       colorModalMatch: cloned,
       colorModalTeam: 'teamA',
-      colorModalCacheRowHint: '正在估算缓存…',
+      colorModalCacheRowHint: '正在估算空间…',
       colorModalDownloadCleared: false
     });
     try {
@@ -4018,7 +4553,7 @@ Page({
         const empty = mb < 0.05;
         // 缓存为 0 时将 hint 置空，WXML 的 wx:if 会隐藏整个 Footer 行，用户无需操作
         this.setData({
-          colorModalCacheRowHint: empty ? '' : `当前已缓存高光约 ${mb} MB，建议开播前下载至相册以腾出空间。`,
+          colorModalCacheRowHint: empty ? '' : `当前已保存高光约 ${mb} MB，建议开播前下载至相册以腾出空间。`,
           colorModalDownloadCleared: empty
         });
       });
@@ -4066,8 +4601,8 @@ Page({
           this.setData({
             colorModalCacheRowHint:
               mb < 0.05
-                ? '本地高光视频缓存约 0 MB，暂无可导出的本地文件。'
-                : `本地高光视频缓存约 ${mb} MB，暂无可导出的本地文件。`,
+                ? '本地高光视频保存约 0 MB，暂无可导出的本地文件。'
+                : `本地高光视频保存约 ${mb} MB，暂无可导出的本地文件。`,
             colorModalDownloadCleared: true
           });
         });
@@ -4082,7 +4617,7 @@ Page({
         this.clearStaleRollingFiles().then(() => {
           this.refreshDrawerHighlights();
           this.loadMatchList();
-          wx.showToast({ title: '已保存至相册并清理本地缓存', icon: 'success' });
+          wx.showToast({ title: '已保存至相册并清理空间', icon: 'success' });
           try {
             const {
               estimateClipSegmentsBytesFromStorage,
@@ -4105,7 +4640,7 @@ Page({
                 } catch (eG) {}
                 if (this.data.showColorModal) {
                   this.setData({
-                    colorModalCacheRowHint: `本地高光视频缓存约 ${mb} MB，已导出至系统相册。`,
+                    colorModalCacheRowHint: `本地高光视频保存约 ${mb} MB，已导出至系统相册。`,
                     colorModalDownloadCleared: true
                   });
                 }
