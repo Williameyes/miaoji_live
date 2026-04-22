@@ -8,6 +8,7 @@ const {
   getClipStorageHealthHint,
   getKvStorageInfoSafe
 } = require('../../utils/file-storage-estimate.js');
+const clipsStorage = require('../../utils/miaoxie-clips-storage.js');
 
 /**
  * 根据编辑草稿中的队服色生成球衣剪影 data URL，供浮层内 `<image>` 绑定。
@@ -718,7 +719,16 @@ Page({
    * 从 Storage 读取高光列表并按比赛场次分组
    */
   loadHighlights() {
-    const rawClips = wx.getStorageSync('MIAOXIE_CLIPS') || {};
+    try {
+      clipsStorage.mergeDefaultClipBucketIfTargetEmpty(
+        String(wx.getStorageSync(CURRENT_ID_KEY) || '').trim()
+      );
+    } catch (eMerge) {}
+    const rawClipsMap = clipsStorage.readClipsMapSafe();
+    if (rawClipsMap === null) {
+      wx.showToast({ title: '高光索引数据异常', icon: 'none', duration: 2500 });
+    }
+    const rawClips = rawClipsMap || {};
     const rawMatches = wx.getStorageSync(STORAGE_KEY) || [];
     const legacyClips = wx.getStorageSync('highlight_list') || [];
     const groupedList = [];
@@ -731,7 +741,7 @@ Page({
           (c) => c.matchId === matchId || (!c.matchId && c.matchName === match.matchName)
         );
       }
-      matchClips = matchClips.filter((c) => c && !c.exportedToAlbum);
+      matchClips = matchClips.filter((c) => c);
       if (matchClips.length > 0) {
         const dateStr = this.formatDate(match.createdAt);
         const sortedClips = matchClips.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
@@ -745,7 +755,9 @@ Page({
           clipCount: clipTotal,
           videos: sortedClips.map((v, idx) => ({
             ...v,
-            timeText: v.timeText || this.formatTime(v.createdAt),
+            timeText:
+              (v.timeText || this.formatTime(v.createdAt)) +
+              (v.exportedToAlbum ? ' · 已导出相册' : ''),
             cover: v.cover || this.data.defaultCover,
             videoPath: v.replaySegment || (v.segments && v.segments[0]) || '',
             videoIndex: idx + 1,
@@ -757,11 +769,12 @@ Page({
 
     const matchIdsInList = rawMatches.map((m) => m.id);
     Object.keys(rawClips).forEach((id) => {
-      if (!matchIdsInList.includes(id) && rawClips[id].length > 0) {
-        const firstClip = rawClips[id][0];
+      const bucket = rawClips[id];
+      if (!matchIdsInList.includes(id) && Array.isArray(bucket) && bucket.length > 0) {
+        const firstClip = bucket[0];
         const dateStr = this.formatDate(firstClip.createdAt);
-        const orphanVideos = rawClips[id]
-          .filter((c) => c && !c.exportedToAlbum)
+        const orphanVideos = bucket
+          .filter((c) => c)
           .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
         if (orphanVideos.length === 0) return;
         const orphanTotal = orphanVideos.length;
@@ -771,7 +784,9 @@ Page({
           clipCount: orphanTotal,
           videos: orphanVideos.map((v, idx) => ({
             ...v,
-            timeText: v.timeText || this.formatTime(v.createdAt),
+            timeText:
+              (v.timeText || this.formatTime(v.createdAt)) +
+              (v.exportedToAlbum ? ' · 已导出相册' : ''),
             cover: v.cover || this.data.defaultCover,
             videoPath: v.replaySegment || (v.segments && v.segments[0]) || '',
             videoIndex: idx + 1,
@@ -824,9 +839,12 @@ Page({
    * @returns {object|null}
    */
   findClipById(id) {
-    const clipsMap = wx.getStorageSync('MIAOXIE_CLIPS') || {};
+    const clipsMap = clipsStorage.readClipsMapSafe();
+    if (!clipsMap) return null;
     for (const matchId in clipsMap) {
-      const item = clipsMap[matchId].find((x) => x.id === id);
+      const bucket = clipsMap[matchId];
+      if (!Array.isArray(bucket)) continue;
+      const item = bucket.find((x) => x && String(x.id) === String(id));
       if (item) return item;
     }
     const legacyList = wx.getStorageSync('highlight_list') || [];
@@ -1182,12 +1200,18 @@ Page({
    */
   doDeleteHighlight(id, silent) {
     const fs = wx.getFileSystemManager();
-    const clipsMap = wx.getStorageSync('MIAOXIE_CLIPS') || {};
+    const clipsMap = clipsStorage.readClipsMapSafe();
+    if (!clipsMap) {
+      if (!silent) wx.showToast({ title: '高光索引读取失败', icon: 'none' });
+      return;
+    }
     let foundInClips = false;
     for (const matchId in clipsMap) {
-      const idx = clipsMap[matchId].findIndex((x) => x.id === id);
+      const bucket = clipsMap[matchId];
+      if (!Array.isArray(bucket)) continue;
+      const idx = bucket.findIndex((x) => x && String(x.id) === String(id));
       if (idx >= 0) {
-        const item = clipsMap[matchId][idx];
+        const item = bucket[idx];
         const toUnlink = new Set();
         (item.segments || []).forEach((p) => {
           if (p && typeof p === 'string') toUnlink.add(p);
@@ -1200,12 +1224,12 @@ Page({
             fs.unlinkSync(p);
           } catch (e) {}
         });
-        clipsMap[matchId].splice(idx, 1);
+        bucket.splice(idx, 1);
         foundInClips = true;
         break;
       }
     }
-    if (foundInClips) wx.setStorageSync('MIAOXIE_CLIPS', clipsMap);
+    if (foundInClips) clipsStorage.writeClipsMapSafe(clipsMap);
 
     const legacyList = wx.getStorageSync('highlight_list') || [];
     const legacyIdx = legacyList.findIndex((x) => x.id === id);

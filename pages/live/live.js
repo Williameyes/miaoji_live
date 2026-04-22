@@ -4,7 +4,29 @@ const { get, getToken, post, STORAGE_USER_INFO_KEY } = require('../../utils/requ
 const { API_PATH_CLIENT_DIAGNOSTIC_LOG } = require('../../config/api.js');
 const { parseExpireAtToMs } = require('../../utils/referral.js');
 const storageEst = require('../../utils/file-storage-estimate.js');
+const clipsStorage = require('../../utils/miaoxie-clips-storage.js');
 const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
+
+/** 回放双击缩放档位（每次双击 +0.5x，至 3x 后下一轮回到 1x，与 movable-view scale-max 一致） */
+const REPLAY_ZOOM_LEVELS = [1, 1.5, 2, 2.5, 3];
+/** 与档位比较的容差，避免浮点与捏合缩放后的数值抖动 */
+const REPLAY_ZOOM_LEVEL_EPS = 0.04;
+/** 判定为同一点双击的最大间隔（ms） */
+const REPLAY_DOUBLE_TAP_INTERVAL_MS = 280;
+/** 两次点击允许的最大位移（px） */
+const REPLAY_DOUBLE_TAP_SLOP_PX = 35;
+/** 单次点击允许的最长按下时间（ms），超过则不计入双击候选 */
+const REPLAY_TAP_MAX_DURATION_MS = 380;
+/** 双击缩放动画时长（ms），缓动为 ease-out（立方） */
+const REPLAY_ZOOM_ANIM_MS = 300;
+/** 判定为拖拽的最小位移（px），超过则取消本次单击/双击识别 */
+const REPLAY_TAP_MOVE_SLOP_PX = 15;
+/**
+ * 全指抬起后仍用捏合焦点公式处理 bindscale 的时长（ms），避免末帧 scale 落在 touchend 之后导致回弹到 (0,0)。
+ */
+const REPLAY_PINCH_SCALE_TAIL_MS = 120;
+/** 边界夹紧时的浮点余量，减轻与原生 out-of-bounds 判定冲突 */
+const REPLAY_PAN_CLAMP_EPS = 0.5;
 
 Page({
   data: {
@@ -139,6 +161,20 @@ Page({
    * 从全局与 Storage 同步当前场次记分配置（与 index、onShow 逻辑一致）。
    * @returns {void}
    */
+  /**
+   * 解析当前高光应写入的场次 ID（Storage / globalData / 当前 matchConfig.id）。
+   * @returns {string} 空字符串表示无法安全落库，调用方应中止保存并提示用户。
+   */
+  resolveMatchIdForHighlightStorage: function() {
+    let id = clipsStorage.normalizeMatchIdKey(wx.getStorageSync('currentMatchId'));
+    if (!id) id = clipsStorage.normalizeMatchIdKey(app.globalData && app.globalData.currentMatchId);
+    if (!id) {
+      const mc = this.data.matchConfig;
+      if (mc && mc.id != null) id = clipsStorage.normalizeMatchIdKey(mc.id);
+    }
+    return id || '';
+  },
+
   syncMatchConfigFromPageSources: function() {
     const currentMatchId =
       wx.getStorageSync('currentMatchId') || app.globalData.currentMatchId || '';
@@ -410,6 +446,13 @@ Page({
    * @returns {void}
    */
   _liveCoreOnShowAfterEntitlement: function() {
+    /**
+     * 页实例未销毁时再次进入（如切 tab 后再 navigateTo 本页）不会走 onLoad，
+     * 若仍保留 _liveStorageEntryModalShown / _liveSevereKickoffPruneDone，severe 弹窗与 kickoff 清理会被误挡。
+     * 每次拉起直播核心前重置，使本轮 kickoff 探测行为与首次进入一致。
+     */
+    this._liveStorageEntryModalShown = false;
+    this._liveSevereKickoffPruneDone = false;
     this.rollingActive = true;
     this.rollingSessionId += 1;
     const sessionIdForRolling = this.rollingSessionId;
@@ -586,6 +629,8 @@ Page({
   storageWatermarkLevel: 0,
   /** 高光实体最大保留条数（>=30 条实战需求；超出淘汰最旧项）。 */
   highlightsMaxCount: 100,
+  /** 紧急清理时全局至少保留的高光条数，避免历史高光被连续误删。 */
+  highlightsEmergencyMinKeepCount: 30,
   /** startRecord 连续失败风暴计数（每次达到 failStreak=5 记 1 次）。 */
   segmentStartFailStormCycles: 0,
   /** startOneSegment 单飞锁，防止并发 startRecord 导致状态错乱。 */
@@ -598,6 +643,8 @@ Page({
   _segmentStartRecoveringFromOperateFail: false,
   /** 连续 rolling temp 丢失计数（用于触发软恢复熔断）。 */
   _rollingTempMissingStreak: 0,
+  /** 连续出现“temp 终态丢失”计数，超过阈值触发硬恢复。 */
+  _rollingTempTerminalFailStreak: 0,
 
   onLoad: function() {
     /** 相机 bindinitdone 完成前禁止 startRecord，否则部分机型预览一直黑屏 */
@@ -615,6 +662,8 @@ Page({
     this._liveSevereKickoffPruneDone = false;
     /** 长直播 periodic 探测下，上次因 severe 自动删高光的时间戳 */
     this._lastPeriodicSevereClipPruneAt = 0;
+    /** 紧急释放中，上次执行高光实体删最旧的时间戳。 */
+    this._lastEmergencyClipPruneAt = 0;
     this.rollingFsBusy = false;
     this._rollingPersistInFlight = 0;
     this._postUserLocalPersistCooldownMs = 0;
@@ -646,6 +695,8 @@ Page({
     this._cameraRebuildQueue = [];
     /** 最近一次硬恢复时间戳：防止短时连点/连错触发恢复风暴。 */
     this._lastHardRecoverAt = 0;
+    /** temp 丢失风暴触发硬恢复的节流戳。 */
+    this._lastTempMissingStormRecoverAt = 0;
     /** 硬恢复最小间隔（毫秒）。 */
     this._hardRecoverMinGapMs = 2200;
     /** insertCamera 冲突后的自动恢复冷静期截止时间。 */
@@ -663,6 +714,7 @@ Page({
     this._segmentStartRecoveringFromIsRecording = false;
     this._segmentStartRecoveringFromOperateFail = false;
     this._rollingTempMissingStreak = 0;
+    this._rollingTempTerminalFailStreak = 0;
     this.segmentPersistFailStreak = 0;
     this.segmentStartFailStormCycles = 0;
     /** 当前是否进入“仅允许长按重启”故障态。 */
@@ -1819,6 +1871,11 @@ Page({
     }
 
     this.syncMatchConfigFromPageSources();
+    try {
+      const cid =
+        wx.getStorageSync('currentMatchId') || (app.globalData && app.globalData.currentMatchId) || '';
+      clipsStorage.mergeDefaultClipBucketIfTargetEmpty(String(cid || '').trim());
+    } catch (eMerge) {}
     this.appendHealthLog('page_show', {});
     this.maybeToastFileStoragePressureFromGlobal();
 
@@ -1899,7 +1956,7 @@ Page({
           const gap = 8 * 60 * 1000;
           if (!this._lastPeriodicSevereClipPruneAt || n - this._lastPeriodicSevereClipPruneAt >= gap) {
             this._lastPeriodicSevereClipPruneAt = n;
-            const pr = this.pruneOldestHighlightClipsFromStorage(2);
+            const pr = this.pruneOldestHighlightClipsFromStorage(2, 'live_periodic_severe');
             if (pr > 0) {
               this.appendHealthLog('live_periodic_severe_prune', { pruned: pr });
             }
@@ -1911,7 +1968,8 @@ Page({
 
   /**
    * 按档位提示存储压力。
-   * - severe：仅在开播进入时（trigger === 'kickoff'）弹一次 Modal，直播过程中不再重复弹出。
+   * - severe：在 kickoff 探测且本页尚未在本轮展示过 Modal 时弹出（门闩在
+   *   {@link _liveCoreOnShowAfterEntitlement} 开头重置）；periodic 不弹，避免直播中反复打断。
    * - warn：静默记录日志，不弹任何 Toast，避免打断直播。
    * @param {{ clipMb: number, totalMb: number, level: string, hintText: string }} hint
    * @param {string} [trigger] kickoff | periodic 等，由 probeLiveSandboxStorage 传入
@@ -2500,6 +2558,7 @@ Page({
     this.startRecordFailStreak = 0;
     this.segmentPersistFailStreak = 0;
     this.segmentStartFailStormCycles = 0;
+    this._rollingTempTerminalFailStreak = 0;
     this.setData({
       isRecovering: true,
       showRecoveryVeil: true,
@@ -3399,9 +3458,11 @@ Page({
         if (!savedPath) {
           if (tempPathTerminalMissing) {
             this._rollingTempMissingStreak = (this._rollingTempMissingStreak || 0) + 1;
+            this._rollingTempTerminalFailStreak = (this._rollingTempTerminalFailStreak || 0) + 1;
             this.appendHealthLog('rolling_persist_temp_terminal_skip', {
               segNo,
-              streak: this._rollingTempMissingStreak
+              streak: this._rollingTempMissingStreak,
+              terminalStreak: this._rollingTempTerminalFailStreak
             });
             if (this._rollingTempMissingStreak >= 2) {
               this._rollingTempMissingStreak = 0;
@@ -3410,11 +3471,13 @@ Page({
                 this.recoverRollingPipelineForHighlight();
               }, 120);
             }
+            this.maybeHardRecoverForTempMissingStorm(this._rollingTempTerminalFailStreak, segNo);
           }
           resolve();
           return;
         }
         this._rollingTempMissingStreak = 0;
+        this._rollingTempTerminalFailStreak = 0;
         let maxBuf = this.rollingBufferMax || 10;
         try {
           const siMb = wx.getSystemInfoSync();
@@ -3898,6 +3961,33 @@ Page({
   },
 
   /**
+   * temp 文件在 stopRecord 后连续出现“终态丢失”时执行硬恢复。
+   * 该问题在部分机型会持续返回不可用 temp 路径，仅 tryStart 软恢复无法跳出死循环。
+   * @param {number} streak 当前连续失败次数
+   * @param {number} segNo 触发时片段号
+   * @returns {void}
+   */
+  maybeHardRecoverForTempMissingStorm: function(streak, segNo) {
+    const n = Number(streak || 0);
+    if (n < 2) return;
+    const now = Date.now();
+    const gapMs = 12000;
+    if (this._lastTempMissingStormRecoverAt && now - this._lastTempMissingStormRecoverAt < gapMs) {
+      this.appendHealthLog('temp_missing_storm_recover_throttled', {
+        streak: n,
+        segNo,
+        sinceLastMs: now - this._lastTempMissingStormRecoverAt
+      });
+      return;
+    }
+    this._lastTempMissingStormRecoverAt = now;
+    this.appendHealthLog('temp_missing_storm_force_hard_recover', { streak: n, segNo });
+    this._rollingTempTerminalFailStreak = 0;
+    if (this.data.isRecovering || this._recoveryLock) return;
+    this.hardRecoverLivePipeline('auto:segment_temp_missing_storm');
+  },
+
+  /**
    * 在滚动缓冲中选取 segNo 最大且严格大于 consumed 的条目。
    * copyFile 完成顺序可能与录制顺序不一致，不能仅用数组最后一项作为「最新段」。
    *
@@ -3975,15 +4065,17 @@ Page({
    * @returns {void}
    */
   pruneHighlightStorageForMatch: function(matchId) {
-    if (!matchId) return;
+    const key = clipsStorage.normalizeMatchIdKey(matchId);
+    if (!key) return;
     const fs = wx.getFileSystemManager();
-    const clipsMap = wx.getStorageSync('MIAOXIE_CLIPS') || {};
-    const list = Array.isArray(clipsMap[matchId]) ? clipsMap[matchId] : [];
+    const clipsMap = clipsStorage.readClipsMapSafe();
+    if (!clipsMap) return;
+    const list = Array.isArray(clipsMap[key]) ? clipsMap[key] : [];
     const maxCount = this.highlightsMaxCount || 100;
     if (list.length <= maxCount) return;
     const removed = list.splice(maxCount);
-    clipsMap[matchId] = list;
-    wx.setStorageSync('MIAOXIE_CLIPS', clipsMap);
+    clipsMap[key] = list;
+    clipsStorage.writeClipsMapSafe(clipsMap);
     removed.forEach((it) => {
       const segs = it && Array.isArray(it.segments) ? it.segments : [];
       segs.forEach((p) => {
@@ -3994,14 +4086,33 @@ Page({
   },
 
   /**
+   * 统计高光索引总条数（跨场次）。
+   * @returns {number}
+   */
+  getTotalHighlightClipCount: function() {
+    const clipsMap = clipsStorage.readClipsMapSafe();
+    if (!clipsMap) return 0;
+    let total = 0;
+    Object.keys(clipsMap).forEach((matchId) => {
+      const list = clipsMap[matchId];
+      if (!Array.isArray(list)) return;
+      total += list.length;
+    });
+    return total;
+  },
+
+  /**
    * 按创建时间删除最旧的高光条目并 unlink 片段文件，缓解小程序「文件存储」上限（非 KV）。
    * @param {number} maxRemove 最多删除几条（跨场次全局最旧）
+   * @param {string} [reason] 触发来源（诊断日志用）
    * @returns {number} 实际删除条数
    */
-  pruneOldestHighlightClipsFromStorage: function(maxRemove) {
+  pruneOldestHighlightClipsFromStorage: function(maxRemove, reason) {
     const cap = typeof maxRemove === 'number' && maxRemove > 0 ? Math.min(maxRemove, 30) : 1;
+    const why = typeof reason === 'string' ? reason : '';
     const fs = wx.getFileSystemManager();
-    const clipsMap = wx.getStorageSync('MIAOXIE_CLIPS') || {};
+    const clipsMap = clipsStorage.readClipsMapSafe();
+    if (!clipsMap) return 0;
     /** @type {{ matchId: string, id: string, createdAt: number }[]} */
     const entries = [];
     Object.keys(clipsMap).forEach((matchId) => {
@@ -4018,9 +4129,20 @@ Page({
     if (entries.length === 0) {
       return 0;
     }
+    const minKeep = Math.max(0, Number(this.highlightsEmergencyMinKeepCount || 0));
+    const removableBudget = Math.max(0, entries.length - minKeep);
+    if (removableBudget <= 0) {
+      this.appendHealthLog('live_prune_skipped_min_keep', {
+        total: entries.length,
+        minKeep,
+        reason: why
+      });
+      return 0;
+    }
+    const targetRemove = Math.min(cap, removableBudget);
     entries.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
     let removed = 0;
-    for (let i = 0; i < entries.length && removed < cap; i += 1) {
+    for (let i = 0; i < entries.length && removed < targetRemove; i += 1) {
       const { matchId, id } = entries[i];
       const list = clipsMap[matchId];
       if (!Array.isArray(list)) continue;
@@ -4043,8 +4165,14 @@ Page({
       removed += 1;
     }
     if (removed > 0) {
-      wx.setStorageSync('MIAOXIE_CLIPS', clipsMap);
-      this.appendHealthLog('live_pruned_oldest_highlights', { removed, requested: cap });
+      clipsStorage.writeClipsMapSafe(clipsMap);
+      this.appendHealthLog('live_pruned_oldest_highlights', {
+        removed,
+        requested: cap,
+        minKeep,
+        totalBefore: entries.length,
+        reason: why
+      });
       try {
         if (typeof this.refreshDrawerHighlights === 'function') {
           this.refreshDrawerHighlights();
@@ -4233,7 +4361,30 @@ Page({
       clipPrune = 2;
     }
     if (clipPrune > 0) {
-      const pr = this.pruneOldestHighlightClipsFromStorage(clipPrune);
+      const nowPr = Date.now();
+      const emergencyPruneGapMs = 15 * 60 * 1000;
+      if (
+        this._lastEmergencyClipPruneAt
+        && nowPr - this._lastEmergencyClipPruneAt < emergencyPruneGapMs
+      ) {
+        this.appendHealthLog('rolling_clip_prune_cooldown_skip', {
+          reason: r,
+          sinceLastMs: nowPr - this._lastEmergencyClipPruneAt
+        });
+        return;
+      }
+      const totalClips = this.getTotalHighlightClipCount();
+      const minKeep = Math.max(0, Number(this.highlightsEmergencyMinKeepCount || 0));
+      if (totalClips <= minKeep) {
+        this.appendHealthLog('rolling_clip_prune_min_keep_skip', {
+          reason: r,
+          totalClips,
+          minKeep
+        });
+        return;
+      }
+      this._lastEmergencyClipPruneAt = nowPr;
+      const pr = this.pruneOldestHighlightClipsFromStorage(clipPrune, r);
       if (pr > 0) {
         this.appendHealthLog('rolling_clip_prune_with_quota_free', { pruned: pr, reason: r });
       }
@@ -4355,10 +4506,15 @@ Page({
       .then(() => Promise.all(segments.map((p, i) => copyOne(p, i))))
       .then((saved) => {
         const savedPaths = saved.filter(Boolean);
-        const matchId = task.matchId || 'default';
-        const clipsMap = wx.getStorageSync('MIAOXIE_CLIPS') || {};
+        const matchId = clipsStorage.normalizeMatchIdKey(task.matchId);
+        if (!matchId) return;
+        const clipsMap = clipsStorage.readClipsMapSafe();
+        if (!clipsMap) {
+          this.appendHealthLog('highlight_materialize_clips_read_fail', { id: task.id });
+          return;
+        }
         const list = Array.isArray(clipsMap[matchId]) ? clipsMap[matchId] : [];
-        const idx = list.findIndex((it) => it && it.id === task.id);
+        const idx = list.findIndex((it) => it && String(it.id) === String(task.id));
         if (idx >= 0) {
           if (savedPaths.length > 0) {
             const replaySegment = savedPaths[savedPaths.length - 1] || savedPaths[0] || '';
@@ -4369,7 +4525,9 @@ Page({
             list[idx].status = 'failed';
           }
           clipsMap[matchId] = list;
-          wx.setStorageSync('MIAOXIE_CLIPS', clipsMap);
+          if (!clipsStorage.writeClipsMapSafe(clipsMap)) {
+            this.appendHealthLog('highlight_materialize_clips_write_fail', { id: task.id });
+          }
         }
         if (!savedPaths.length) {
           const retryCount = Number(task.retryCount || 0);
@@ -4432,6 +4590,18 @@ Page({
 
     this.beginHighlightSaving();
 
+    const currentMatchId = this.resolveMatchIdForHighlightStorage();
+    if (!currentMatchId) {
+      this.appendHealthLog('highlight_abort_no_match_id', {});
+      wx.showToast({
+        title: '无法识别比赛场次，请返回首页从赛程卡片进入',
+        icon: 'none',
+        duration: 2800
+      });
+      this.endHighlightSaving();
+      return;
+    }
+
     /** 再次尝试拉起滚动分段（补救 init 与 onShow 竞态；与 tryStart 内聚，不重复判断 isRecording 误杀） */
     this.tryStartRollingWhenCameraReady();
 
@@ -4440,7 +4610,6 @@ Page({
 
     this.lastHighlightRequestAt = now;
     const matchName = this.data.matchConfig.matchName || '未命名比赛';
-    const currentMatchId = wx.getStorageSync('currentMatchId') || app.globalData.currentMatchId || '';
     const id = `${now}`;
     const startSegNo = this.segmentCounter;
     const consumed = this.lastHighlightConsumedSegNo || 0;
@@ -4555,12 +4724,58 @@ Page({
       }
       return;
     }
-    const matchId = pending.matchId || 'default';
+    let matchId = clipsStorage.normalizeMatchIdKey(pending.matchId);
+    if (!matchId) matchId = this.resolveMatchIdForHighlightStorage();
+    if (!matchId) {
+      pending.finalizing = false;
+      this.appendHealthLog('highlight_finalize_missing_match_id', {});
+      wx.showToast({ title: '无法识别场次，高光未保存', icon: 'none' });
+      if (this._highlightSaveAwaitingResume) {
+        this._highlightPipelineDoneFinalize = true;
+        this.maybeReleaseHighlightSaveLock();
+        if (this._highlightSaveAwaitingResume) {
+          this.scheduleHighlightResumeUnlockFallback();
+        }
+      } else {
+        this.endHighlightSaving();
+      }
+      return;
+    }
     const item = this.buildIndexedHighlightItem(pending, segments);
-    const clipsMap = wx.getStorageSync('MIAOXIE_CLIPS') || {};
+    item.matchId = matchId;
+    const clipsMap = clipsStorage.readClipsMapSafe();
+    if (!clipsMap) {
+      pending.finalizing = false;
+      this.appendHealthLog('highlight_clips_corrupt_read', {});
+      wx.showToast({ title: '高光索引读取失败，请稍后再试', icon: 'none' });
+      if (this._highlightSaveAwaitingResume) {
+        this._highlightPipelineDoneFinalize = true;
+        this.maybeReleaseHighlightSaveLock();
+        if (this._highlightSaveAwaitingResume) {
+          this.scheduleHighlightResumeUnlockFallback();
+        }
+      } else {
+        this.endHighlightSaving();
+      }
+      return;
+    }
     if (!clipsMap[matchId]) clipsMap[matchId] = [];
     clipsMap[matchId].unshift(item);
-    wx.setStorageSync('MIAOXIE_CLIPS', clipsMap);
+    if (!clipsStorage.writeClipsMapSafe(clipsMap)) {
+      pending.finalizing = false;
+      this.appendHealthLog('highlight_clips_write_fail', {});
+      wx.showToast({ title: '存储空间不足，高光未保存', icon: 'none' });
+      if (this._highlightSaveAwaitingResume) {
+        this._highlightPipelineDoneFinalize = true;
+        this.maybeReleaseHighlightSaveLock();
+        if (this._highlightSaveAwaitingResume) {
+          this.scheduleHighlightResumeUnlockFallback();
+        }
+      } else {
+        this.endHighlightSaving();
+      }
+      return;
+    }
     this.pruneHighlightStorageForMatch(matchId);
     const list = this.getHighlightList();
     list.unshift(item);
@@ -4603,8 +4818,10 @@ Page({
 
   getHighlightList: function(matchId) {
     if (matchId) {
-      const clipsMap = wx.getStorageSync('MIAOXIE_CLIPS') || {};
-      return Array.isArray(clipsMap[matchId]) ? clipsMap[matchId] : [];
+      const clipsMap = clipsStorage.readClipsMapSafe();
+      if (!clipsMap) return [];
+      const key = clipsStorage.normalizeMatchIdKey(matchId);
+      return Array.isArray(clipsMap[key]) ? clipsMap[key] : [];
     }
     const raw = wx.getStorageSync('highlight_list');
     return Array.isArray(raw) ? raw : [];
@@ -4723,7 +4940,11 @@ Page({
    */
   onDownloadHighlightsToAlbumAndClearCache: function() {
     const fs = wx.getFileSystemManager();
-    const clipsMap = wx.getStorageSync('MIAOXIE_CLIPS') || {};
+    const clipsMap = clipsStorage.readClipsMapSafe();
+    if (!clipsMap) {
+      wx.showToast({ title: '高光索引读取失败', icon: 'none' });
+      return;
+    }
     /** @type {{ matchId: string, item: Record<string, unknown>, paths: string[] }[]} */
     const tasks = [];
     Object.keys(clipsMap).forEach((matchId) => {
@@ -4757,7 +4978,9 @@ Page({
     }
     const runChain = (taskIdx) => {
       if (taskIdx >= tasks.length) {
-        wx.setStorageSync('MIAOXIE_CLIPS', clipsMap);
+        if (!clipsStorage.writeClipsMapSafe(clipsMap)) {
+          wx.showToast({ title: '索引更新失败', icon: 'none' });
+        }
         this.segmentBuffer = [];
         this.clearStaleRollingFiles().then(() => {
           this.refreshDrawerHighlights();
@@ -4800,7 +5023,9 @@ Page({
       const step = () => {
         if (pi >= paths.length) {
           const list = clipsMap[matchId];
-          const idx = Array.isArray(list) ? list.findIndex((x) => x && x.id === item.id) : -1;
+          const idx = Array.isArray(list)
+            ? list.findIndex((x) => x && String(x.id) === String(item.id))
+            : -1;
           if (idx >= 0) {
             list[idx].segments = [];
             list[idx].replaySegment = '';
@@ -5028,7 +5253,7 @@ Page({
     const { id } = e.currentTarget.dataset;
     const currentMatchId = wx.getStorageSync('currentMatchId') || app.globalData.currentMatchId || '';
     const list = this.getHighlightList(currentMatchId);
-    const item = list.find((x) => x.id === id);
+    const item = list.find((x) => x && String(x.id) === String(id));
     if (!item) return;
     this.closeAllDrawers();
     this.startReplay(item);
@@ -5057,12 +5282,18 @@ Page({
     const fs = wx.getFileSystemManager();
     
     // 1. 处理 MIAOXIE_CLIPS
-    const clipsMap = wx.getStorageSync('MIAOXIE_CLIPS') || {};
+    const clipsMap = clipsStorage.readClipsMapSafe();
+    if (!clipsMap) {
+      wx.showToast({ title: '高光索引读取失败', icon: 'none' });
+      return;
+    }
     let foundInClips = false;
     for (const matchId in clipsMap) {
-      const idx = clipsMap[matchId].findIndex(x => x.id === id);
+      const bucket = clipsMap[matchId];
+      if (!Array.isArray(bucket)) continue;
+      const idx = bucket.findIndex((x) => x && String(x.id) === String(id));
       if (idx >= 0) {
-        const item = clipsMap[matchId][idx];
+        const item = bucket[idx];
         const toUnlink = new Set();
         (item.segments || []).forEach((p) => {
           if (p && typeof p === 'string') toUnlink.add(p);
@@ -5075,13 +5306,13 @@ Page({
             fs.unlinkSync(p);
           } catch (e) {}
         });
-        clipsMap[matchId].splice(idx, 1);
+        bucket.splice(idx, 1);
         foundInClips = true;
         break;
       }
     }
     if (foundInClips) {
-      wx.setStorageSync('MIAOXIE_CLIPS', clipsMap);
+      clipsStorage.writeClipsMapSafe(clipsMap);
     }
 
     // 2. 处理 legacy highlight_list
@@ -5332,6 +5563,13 @@ Page({
       this._replayChainPart2StopAt = null;
     }
 
+    this._cancelReplayZoomAnim();
+    this._replayBridgeTapLast = null;
+    this._replayMultiTouchActive = false;
+    this._replayHadMultiTouchThisGesture = false;
+    this._replayPinchFormulaUntil = 0;
+    this._resetReplayTransformCache();
+
     this.setData({
       showReplayMask: true,
       replayMaskText: 'REPLAY',
@@ -5426,6 +5664,12 @@ Page({
     }
     this._replayPrimedSlot0 = false;
     this._replayPrimedSlot1 = false;
+    this._cancelReplayZoomAnim();
+    this._replayBridgeTapLast = null;
+    this._replayMultiTouchActive = false;
+    this._replayHadMultiTouchThisGesture = false;
+    this._replayPinchFormulaUntil = 0;
+    this._resetReplayTransformCache();
     if (stopPlayer) {
       try {
         ['replayVideoA', 'replayVideoB'].forEach((vid) => {
@@ -5802,17 +6046,390 @@ Page({
    * @returns {void}
    */
   onReplayResetView: function() {
+    this._cancelReplayZoomAnim();
+    this._replayBridgeTapLast = null;
+    this._replayMultiTouchActive = false;
+    this._replayHadMultiTouchThisGesture = false;
+    this._replayPinchFormulaUntil = 0;
+    this._resetReplayTransformCache();
     this.setData({ replayViewScale: 1, replayViewX: 0, replayViewY: 0 });
   },
 
   /**
-   * 监听 movable-view 缩放变化，同步 replayViewScale 以控制重置按钮显隐。
-   * @param {WechatMiniprogram.CustomEvent} e detail.scale 当前缩放比例
+   * 拖动 movable-view 时同步 x/y；双指过程中不同步，避免与 bindscale 的 x/y 打架。
+   * @param {WechatMiniprogram.CustomEvent} e detail.x / detail.y
+   * @returns {void}
+   */
+  onReplayViewChange: function(e) {
+    if (this._replayZoomAnimating) return;
+    const d = (e && e.detail) || {};
+    if (typeof d.x !== 'number' || typeof d.y !== 'number') return;
+    if (isNaN(d.x) || isNaN(d.y)) return;
+    if (d.source === 'touch') {
+      // 单指拖动回调到达时，强制解除多指锁，避免“捏合后无法拖动”。
+      this._replayMultiTouchActive = false;
+    }
+    this._touchReplayMergeCache({ x: d.x, y: d.y });
+    this.setData({ replayViewX: d.x, replayViewY: d.y });
+  },
+
+  /**
+   * 缩放时始终与 scale 同次 setData 提交 x/y；捏合期间按双指中点焦点公式修正，避免视觉中心丢失。
+   * 公式：x_new = x_old - (scale_new/scale_old - 1) * (focalX - x_old)（y 同理）。
+   * @param {WechatMiniprogram.CustomEvent} e detail.scale / detail.x / detail.y
    * @returns {void}
    */
   onReplayViewScale: function(e) {
-    const scale = (e && e.detail && typeof e.detail.scale === 'number') ? e.detail.scale : 1;
-    this.setData({ replayViewScale: scale });
+    if (this._replayZoomAnimating) return;
+    const d = (e && e.detail) || {};
+    const scaleNew = typeof d.scale === 'number' && !isNaN(d.scale) ? d.scale : 1;
+    const prevScale = this.data.replayViewScale || 1;
+    if (Math.abs(scaleNew - prevScale) > 0.02) {
+      this._replayHadMultiTouchThisGesture = true;
+    }
+    const base = this._replayTransformCache || {
+      x: this.data.replayViewX || 0,
+      y: this.data.replayViewY || 0,
+      scale: this.data.replayViewScale || 1
+    };
+    const scaleOld = Math.max(0.001, base.scale);
+    const vp = this._getReplayViewportPx();
+    const w = vp.w;
+    const h = vp.h;
+
+    const hasNativeXY =
+      typeof d.x === 'number' &&
+      !isNaN(d.x) &&
+      typeof d.y === 'number' &&
+      !isNaN(d.y);
+
+    const now = Date.now();
+    const usePinchFocal =
+      this._replayMultiTouchActive ||
+      (typeof this._replayPinchFormulaUntil === 'number' && now < this._replayPinchFormulaUntil);
+
+    let xNew;
+    let yNew;
+
+    if (hasNativeXY) {
+      // 优先使用原生返回的 x/y，避免手动公式与内核手势解算冲突导致回弹。
+      xNew = d.x;
+      yNew = d.y;
+    } else if (usePinchFocal) {
+      const fx =
+        typeof this._replayPinchFocalX === 'number' && !isNaN(this._replayPinchFocalX)
+          ? this._replayPinchFocalX
+          : w * 0.5;
+      const fy =
+        typeof this._replayPinchFocalY === 'number' && !isNaN(this._replayPinchFocalY)
+          ? this._replayPinchFocalY
+          : h * 0.5;
+      const ratio = scaleNew / scaleOld;
+      xNew = base.x - (ratio - 1) * (fx - base.x);
+      yNew = base.y - (ratio - 1) * (fy - base.y);
+    } else {
+      const fx = w * 0.5;
+      const fy = h * 0.5;
+      const ratio = scaleNew / scaleOld;
+      xNew = base.x - (ratio - 1) * (fx - base.x);
+      yNew = base.y - (ratio - 1) * (fy - base.y);
+    }
+
+    const cl = this._clampReplayPan(xNew, yNew, scaleNew, w, h);
+    this._touchReplayMergeCache({ x: cl.x, y: cl.y, scale: scaleNew });
+    this.setData({
+      replayViewScale: scaleNew,
+      replayViewX: cl.x,
+      replayViewY: cl.y
+    });
+  },
+
+  /**
+   * video 上方透明桥接层 bindtap：video 会吞触摸；tap 的 detail.x/y 为相对桥接层左上角，需换算为 client 再双击判定。
+   * 不在此层绑定 touchmove，避免抢走 movable-view 的拖动/捏合。
+   * @param {WechatMiniprogram.TouchEvent} e
+   * @returns {void}
+   */
+  onReplayBridgeTap: function(e) {
+    if (!this.data.isReplaying) return;
+    const slot = parseInt((e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.slot) || '-1', 10);
+    if (slot !== this.data.replayActiveSlot) return;
+    const d = (e && e.detail) || {};
+    if (typeof d.x !== 'number' || typeof d.y !== 'number' || isNaN(d.x) || isNaN(d.y)) {
+      return;
+    }
+    const sel = slot === 0 ? '#replayTouchBridge0' : '#replayTouchBridge1';
+    const self = this;
+    const lx = d.x;
+    const ly = d.y;
+    const q = wx.createSelectorQuery().in(this);
+    q.select(sel).boundingClientRect();
+    q.exec((res) => {
+      if (!self.data.isReplaying) return;
+      const rect = res && res[0];
+      if (!rect) return;
+      const cx = rect.left + lx;
+      const cy = rect.top + ly;
+      const now = Date.now();
+      const last = self._replayBridgeTapLast;
+      if (
+        last &&
+        now - last.ts <= REPLAY_DOUBLE_TAP_INTERVAL_MS &&
+        (cx - last.x) * (cx - last.x) + (cy - last.y) * (cy - last.y) <=
+          REPLAY_DOUBLE_TAP_SLOP_PX * REPLAY_DOUBLE_TAP_SLOP_PX
+      ) {
+        self._replayBridgeTapLast = null;
+        self._replayApplyDoubleTapZoom(cx, cy);
+        return;
+      }
+      self._replayBridgeTapLast = { x: cx, y: cy, ts: now };
+    });
+  },
+
+  /**
+   * movable-view 上 touchend：维护捏合尾窗（桥接层不绑 touchmove，捏合仍落在 movable-view）。
+   * @param {WechatMiniprogram.TouchEvent} e
+   * @returns {void}
+   */
+  onReplayMovableTouchEnd: function(e) {
+    if (!this.data.isReplaying) return;
+    const touches = (e && e.touches) || [];
+    this._replayMultiTouchActive = touches.length >= 2;
+    if (touches.length === 0 && this._replayHadMultiTouchThisGesture) {
+      this._replayHadMultiTouchThisGesture = false;
+      this._replayPinchFormulaUntil = Date.now() + REPLAY_PINCH_SCALE_TAIL_MS;
+    }
+  },
+
+  /**
+   * movable-view touchcancel：清空双击候选并结束捏合尾窗。
+   * @param {WechatMiniprogram.TouchEvent} e
+   * @returns {void}
+   */
+  onReplayMovableTouchCancel: function(e) {
+    this._replayBridgeTapLast = null;
+    this.onReplayMovableTouchEnd(e);
+  },
+
+  /**
+   * 桥接层 touchend：与 movable-view 一致，用于捏合松手后的 scale 尾窗。
+   * @param {WechatMiniprogram.TouchEvent} e
+   * @returns {void}
+   */
+  onReplayBridgeTouchEnd: function(e) {
+    this.onReplayMovableTouchEnd(e);
+  },
+
+  /**
+   * 桥接层 touchcancel：清空双击候选并同步捏合尾窗。
+   * @param {WechatMiniprogram.TouchEvent} e
+   * @returns {void}
+   */
+  onReplayBridgeTouchCancel: function(e) {
+    this._replayBridgeTapLast = null;
+    this.onReplayMovableTouchEnd(e);
+  },
+
+  /**
+   * 取消正在进行的双击缩放动画帧。
+   * @returns {void}
+   */
+  _cancelReplayZoomAnim: function() {
+    if (this._replayZoomRafId != null) {
+      try {
+        wx.cancelAnimationFrame(this._replayZoomRafId);
+      } catch (err) {}
+      this._replayZoomRafId = null;
+    }
+    this._replayZoomAnimating = false;
+  },
+
+  /**
+   * 将回放层变换缓存重置为 1x 且左上角对齐。
+   * @returns {void}
+   */
+  _resetReplayTransformCache: function() {
+    this._replayTransformCache = { x: 0, y: 0, scale: 1 };
+  },
+
+  /**
+   * 合并最近一次 movable-view 的 x/y/scale 到内存缓存（优先于 data，避免节流延迟）。
+   * @param {{ x?: number, y?: number, scale?: number }} patch
+   * @returns {{ x: number, y: number, scale: number }}
+   */
+  _touchReplayMergeCache: function(patch) {
+    const base = this._replayTransformCache || {
+      x: this.data.replayViewX || 0,
+      y: this.data.replayViewY || 0,
+      scale: this.data.replayViewScale || 1
+    };
+    this._replayTransformCache = {
+      x: typeof patch.x === 'number' ? patch.x : base.x,
+      y: typeof patch.y === 'number' ? patch.y : base.y,
+      scale: typeof patch.scale === 'number' ? patch.scale : base.scale
+    };
+    return this._replayTransformCache;
+  },
+
+  /**
+   * 用双指中点更新捏合焦点（client 坐标，与 x/y 同属视口系）。
+   * @param {Array<WechatMiniprogram.Touch>} touches touches.length >= 2
+   * @returns {void}
+   */
+  _replayUpdatePinchFocal: function(touches) {
+    if (!touches || touches.length < 2) return;
+    const a = touches[0];
+    const b = touches[1];
+    this._replayPinchFocalX = (a.clientX + b.clientX) * 0.5;
+    this._replayPinchFocalY = (a.clientY + b.clientY) * 0.5;
+  },
+
+  /**
+   * 读取可视区域宽高（px），与 movable-area 全屏一致。
+   * @returns {{ w: number, h: number }}
+   */
+  _getReplayViewportPx: function() {
+    try {
+      if (typeof wx.getWindowInfo === 'function') {
+        const w = wx.getWindowInfo();
+        return { w: w.windowWidth, h: w.windowHeight };
+      }
+    } catch (err) {}
+    const s = wx.getSystemInfoSync();
+    return { w: s.windowWidth, h: s.windowHeight };
+  },
+
+  /**
+   * cubic ease-out，t∈[0,1]。
+   * @param {number} t
+   * @returns {number}
+   */
+  _easeOutCubic: function(t) {
+    const u = 1 - t;
+    return 1 - u * u * u;
+  },
+
+  /**
+   * 根据当前缩放比例得到双击后的下一档比例（1→1.5→…→3→1）。
+   * @param {number} s 当前 scale
+   * @returns {number}
+   */
+  _nextReplayDiscreteScale: function(s) {
+    for (let i = 0; i < REPLAY_ZOOM_LEVELS.length; i += 1) {
+      if (s < REPLAY_ZOOM_LEVELS[i] - REPLAY_ZOOM_LEVEL_EPS) {
+        return REPLAY_ZOOM_LEVELS[i];
+      }
+    }
+    return 1;
+  },
+
+  /**
+   * 将平移限制在 out-of-bounds=false 时的合法范围内：x∈[W(1-S),0]，y∈[H(1-S),0]。
+   * S>1 时向内收缩少量像素，减轻与原生边界判定的竞态导致的回弹。
+   * @param {number} x
+   * @param {number} y
+   * @param {number} scale
+   * @param {number} w
+   * @param {number} h
+   * @returns {{ x: number, y: number }}
+   */
+  _clampReplayPan: function(x, y, scale, w, h) {
+    const s = !scale || scale <= 0 || !Number.isFinite(scale) ? 1 : scale;
+    const ww = Math.max(0, w);
+    const hh = Math.max(0, h);
+    let minX = ww * (1 - s);
+    let minY = hh * (1 - s);
+    let maxX = 0;
+    let maxY = 0;
+    if (s > 1 + 1e-6) {
+      minX += REPLAY_PAN_CLAMP_EPS;
+      minY += REPLAY_PAN_CLAMP_EPS;
+      maxX -= REPLAY_PAN_CLAMP_EPS;
+      maxY -= REPLAY_PAN_CLAMP_EPS;
+    }
+    let nx = Number.isFinite(x) ? x : 0;
+    let ny = Number.isFinite(y) ? y : 0;
+    if (nx > maxX) nx = maxX;
+    if (nx < minX) nx = minX;
+    if (ny > maxY) ny = maxY;
+    if (ny < minY) ny = minY;
+    return { x: nx, y: ny };
+  },
+
+  /**
+   * 以屏幕坐标 (fx,fy) 为锚点执行双击缩放（含 300ms ease-out 动画）。
+   * @param {number} fx
+   * @param {number} fy
+   * @returns {void}
+   */
+  _replayApplyDoubleTapZoom: function(fx, fy) {
+    const t = this._replayTransformCache || {
+      x: this.data.replayViewX || 0,
+      y: this.data.replayViewY || 0,
+      scale: this.data.replayViewScale || 1
+    };
+    const s0 = t.scale;
+    if (s0 < 0.05) return;
+    const s1 = this._nextReplayDiscreteScale(s0);
+    const x0 = t.x;
+    const y0 = t.y;
+    const vp = this._getReplayViewportPx();
+    const w = vp.w;
+    const h = vp.h;
+    this._runReplayZoomAnim(s0, x0, y0, s1, fx, fy, w, h);
+  },
+
+  /**
+   * 使用 requestAnimationFrame 在 REPLAY_ZOOM_ANIM_MS 内插值 scale 与 x/y，保持锚点稳定。
+   * @param {number} s0
+   * @param {number} x0
+   * @param {number} y0
+   * @param {number} s1
+   * @param {number} fx 锚点 x（视口 px）
+   * @param {number} fy 锚点 y（视口 px）
+   * @param {number} w
+   * @param {number} h
+   * @returns {void}
+   */
+  _runReplayZoomAnim: function(s0, x0, y0, s1, fx, fy, w, h) {
+    this._cancelReplayZoomAnim();
+    this._replayZoomAnimating = true;
+    const tStart = Date.now();
+    const tick = () => {
+      const elapsed = Date.now() - tStart;
+      const p = REPLAY_ZOOM_ANIM_MS <= 0 ? 1 : Math.min(1, elapsed / REPLAY_ZOOM_ANIM_MS);
+      const e = this._easeOutCubic(p);
+      const s = s0 + (s1 - s0) * e;
+      const x = x0 - (s / s0 - 1) * (fx - x0);
+      const y = y0 - (s / s0 - 1) * (fy - y0);
+      const cl = this._clampReplayPan(x, y, s, w, h);
+      this._replayTransformCache = { x: cl.x, y: cl.y, scale: s };
+      if (p >= 1) {
+        this._replayZoomRafId = null;
+        this._replayZoomAnimating = false;
+        const fin = this._clampReplayPan(
+          x0 - (s1 / s0 - 1) * (fx - x0),
+          y0 - (s1 / s0 - 1) * (fy - y0),
+          s1,
+          w,
+          h
+        );
+        this._replayTransformCache = { x: fin.x, y: fin.y, scale: s1 };
+        this.setData({
+          replayViewScale: s1,
+          replayViewX: fin.x,
+          replayViewY: fin.y
+        });
+        return;
+      }
+      this.setData({
+        replayViewScale: s,
+        replayViewX: cl.x,
+        replayViewY: cl.y
+      });
+      this._replayZoomRafId = wx.requestAnimationFrame(tick);
+    };
+    this._replayZoomRafId = wx.requestAnimationFrame(tick);
   },
 
   flashPeriod: function() {

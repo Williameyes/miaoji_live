@@ -1063,6 +1063,17 @@ page {
   z-index: 1;
 }
 
+/* 盖在 video 之上仅接 tap：video 会吞触摸；勿绑 touchmove，以免抢走 movable-view 拖动/捏合 */
+.replay-touch-bridge {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  background-color: transparent;
+}
+
 .replay-video-fullscreen {
   position: absolute;
   left: 50%;

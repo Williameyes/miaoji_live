@@ -8,6 +8,8 @@ const CLIP_STORAGE_SEVERE_BYTES = 100 * 1024 * 1024;
 /** 「注意」档位（字节） */
 const CLIP_STORAGE_WARN_BYTES = 50 * 1024 * 1024;
 
+const clipsStorage = require('./miaoxie-clips-storage.js');
+
 /**
  * 单文件字节数（优先 getFileInfo，失败则 0）。
  * @param {WechatMiniprogram.FileSystemManager} fs
@@ -107,7 +109,8 @@ function estimateUserDataPathUsageBytes() {
  */
 function estimateClipSegmentsBytesFromStorage() {
   const fs = wx.getFileSystemManager();
-  const clipsMap = wx.getStorageSync('MIAOXIE_CLIPS') || {};
+  const rawMap = clipsStorage.readClipsMapSafe();
+  const clipsMap = rawMap || {};
   /** @type {Set<string>} */
   const paths = new Set();
   Object.keys(clipsMap).forEach((matchId) => {

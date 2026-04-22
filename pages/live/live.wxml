@@ -191,11 +191,14 @@
         direction="all"
         scale="{{true}}"
         scale-min="1"
-        scale-max="4"
+        scale-max="3"
         x="{{replayViewX}}"
         y="{{replayViewY}}"
         scale-value="{{replayViewScale}}"
         bindscale="onReplayViewScale"
+        bindchange="onReplayViewChange"
+        bindtouchend="onReplayMovableTouchEnd"
+        bindtouchcancel="onReplayMovableTouchCancel"
         out-of-bounds="{{false}}"
         damping="20"
         friction="2"
@@ -226,6 +229,14 @@
             bindloadedmetadata="onReplayVideoALoadedMeta"
             bindended="onReplayVideoAEnded">
           </video>
+          <view
+            id="replayTouchBridge0"
+            class="replay-touch-bridge"
+            data-slot="0"
+            bindtap="onReplayBridgeTap"
+            bindtouchend="onReplayBridgeTouchEnd"
+            bindtouchcancel="onReplayBridgeTouchCancel"
+          ></view>
         </view>
 
         <!-- Slot B：预加载第二段，切换时瞬间置顶 -->
@@ -249,6 +260,14 @@
             bindloadedmetadata="onReplayVideoBLoadedMeta"
             bindended="onReplayVideoBEnded">
           </video>
+          <view
+            id="replayTouchBridge1"
+            class="replay-touch-bridge"
+            data-slot="1"
+            bindtap="onReplayBridgeTap"
+            bindtouchend="onReplayBridgeTouchEnd"
+            bindtouchcancel="onReplayBridgeTouchCancel"
+          ></view>
         </view>
       </movable-view>
     </movable-area>
