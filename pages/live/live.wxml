@@ -1,6 +1,6 @@
 <page-meta background-color="#000000" background-color-top="#000000" background-color-bottom="#000000" page-style="background: #000000;"></page-meta>
 <wxs module="c" src="./live.wxs"></wxs>
-<view class="container landscape">
+<view class="container landscape {{isRecording ? 'container--rec-performance' : ''}}">
   <!-- Level 0: 全屏相机预览 -->
   <camera
     wx:if="{{cameraMounted && liveStreamAllowed}}"
@@ -27,6 +27,43 @@
     bindtouchmove="onTouchMove"
     bindtouchend="onTouchEnd"
     bindlongpress="onBackgroundLongPress">
+  </view>
+
+  <!-- 画质引导 + 共用 AF/AE 控件（z 介于 gesture 与记分层之间；中央区域 pointer-events 透传至手势层） -->
+  <view
+    class="focus-ui-layer"
+    wx:if="{{cameraMounted && liveStreamAllowed && !isReplaying}}">
+    <view wx:if="{{showFocusGuidePulse}}" class="focus-guide" pointer-events="none">
+      <view class="focus-guide-ring"></view>
+      <text class="focus-guide-text">点击球场中心，锁定对焦</text>
+    </view>
+    <view wx:if="{{aeControlsVisible}}" class="ae-af-wrap" pointer-events="none">
+      <view
+        class="ae-focus-cluster {{aeFocusIsTapPosition ? '' : 'ae-focus-cluster--center'}} {{aeFocusLockFlash ? 'ae-focus-cluster--flash' : ''}}"
+        style="{{aeFocusIsTapPosition ? 'left:' + aeClusterLeftRpx + 'rpx;top:' + aeClusterTopRpx + 'rpx' : ''}}"
+        pointer-events="none"
+      >
+        <view
+          class="ae-focus-bracket {{aeFocusUserLocked ? 'ae-focus-bracket--locked' : ''}}"
+          catchtap="onAeFocusBracketTap"
+        ></view>
+        <view wx:if="{{aeShowDoubleTapHint && !aeFocusUserLocked}}" class="ae-double-tap-hint">双击方框可锁定对焦点</view>
+      </view>
+      <!-- 仅在硬件 EV 支持时显示曝光滑条；不支持的机型完全不展示（不做软补光兜底） -->
+      <view
+        wx:if="{{aeExposureHardwareSupported}}"
+        class="ae-sun-rail ae-sun-rail--dock-right"
+        catchtouchstart="onAeSunTouchStart"
+        catchtouchmove="onAeSunTouchMove"
+        catchtouchend="onAeSunTouchEnd"
+        catchtouchcancel="onAeSunTouchEnd"
+      >
+        <view class="ae-sun-glyph">☼</view>
+        <view class="ae-sun-track">
+          <view class="ae-sun-thumb" style="top:{{aeSunTopPct}}%;"></view>
+        </view>
+      </view>
+    </view>
   </view>
 
   <!-- Level 1: 记分 UI 遮罩层 (沉浸式，不避让状态栏) -->
@@ -67,6 +104,7 @@
       <view class="match-name-row">
         <view
           class="match-name-banner"
+          catchlongpress="onExportHealthLogs"
           style="color: {{matchConfig.matchNameColor}}"
         >
           {{matchConfig.matchName || 'HoopsLive Assistant'}}
@@ -112,8 +150,8 @@
           </view>
         </view>
 
-        <!-- 中间节次；长按导出诊断日志 -->
-        <view class="period-center-outer" bindtap="onPeriodTap" catchlongpress="onExportHealthLogs">
+        <!-- 中间节次；长按唤起对焦/曝光控件 -->
+        <view class="period-center-outer" bindtap="onPeriodTap" catchlongpress="onPeriodLongPressFocusControl">
           <view class="period-strip"></view>
           <view class="period-text" style="color: {{periodFlash ? '#000000' : '#fff'}}">
             {{periods[matchConfig.period]}}

@@ -203,7 +203,7 @@ page {
   transform: translateY(0);
   position: relative;
   z-index: 2;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .match-name-banner {
@@ -219,7 +219,7 @@ page {
   text-overflow: clip;
   white-space: normal;
   word-break: break-all;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 /* 记分条：色带视觉高度约 30rpx（约为原先 60rpx 的 50%），整行仍保留约 60rpx 操作热区 */
@@ -1617,5 +1617,210 @@ page {
   .vip-gate-link {
     font-size: 19rpx;
     padding: 4rpx 2rpx;
+  }
+}
+
+/* ══ 开赛前引导 + 共用 AF/AE（与 replay-hint 胶囊、毛玻璃条风格统一） */
+.focus-ui-layer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 6;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.focus-guide {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+/* 半透明脉冲环：开赛前强提示，录制中由 container--rec-performance 关闭动效以省 CPU */
+.focus-guide-ring {
+  width: 200rpx;
+  height: 200rpx;
+  border-radius: 50%;
+  border: 2rpx solid rgba(74, 222, 128, 0.4);
+  background: rgba(74, 222, 128, 0.1);
+  box-shadow: 0 0 0 1rpx rgba(255, 255, 255, 0.1);
+  animation: focusGuidePulse 1.6s ease-in-out infinite;
+}
+
+@keyframes focusGuidePulse {
+  0% {
+    transform: scale(0.88);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1.04);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.88);
+    opacity: 0.6;
+  }
+}
+
+.focus-guide-text {
+  margin-top: 28rpx;
+  font-size: 20rpx;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.88);
+  text-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.75);
+  letter-spacing: 0.4rpx;
+  max-width: 80%;
+  text-align: center;
+}
+
+/*
+ * 对焦：仅方框+提示为簇，曝光条吸屏右；长按空白区仍由下层 gesture 接收。
+ */
+.ae-af-wrap {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+
+.ae-focus-cluster {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  pointer-events: none;
+}
+
+.ae-focus-cluster--center {
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  align-items: center;
+}
+
+.ae-focus-bracket {
+  width: 56rpx;
+  height: 56rpx;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  border: 2rpx solid rgba(74, 222, 128, 0.92);
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 3rpx;
+  pointer-events: auto;
+  box-shadow: 0 0 0 1rpx rgba(0, 0, 0, 0.2);
+}
+
+.ae-focus-bracket--locked {
+  border-color: #22c55e;
+  box-shadow: 0 0 0 1rpx rgba(0, 0, 0, 0.2), 0 0 0 4rpx rgba(34, 197, 94, 0.28);
+}
+
+.ae-double-tap-hint {
+  margin-top: 6rpx;
+  max-width: 220rpx;
+  font-size: 12rpx;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.82);
+  text-shadow: 0 1rpx 4rpx rgba(0, 0, 0, 0.85);
+  font-weight: 500;
+  pointer-events: none;
+}
+
+/* 对焦点位成功：短时扩散高亮；无 transform，避免与 .ae-focus-cluster--center 的 translate 争用 */
+.ae-focus-cluster--flash .ae-focus-bracket {
+  animation: aeBracketLockRipple 0.55s ease-out;
+}
+
+@keyframes aeBracketLockRipple {
+  0% {
+    box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 18rpx rgba(74, 222, 128, 0);
+  }
+}
+
+/* 吸右侧的竖向曝光区：加高滑轨；无大圆角底，仅小 padding 增触区 */
+.ae-sun-rail--dock-right {
+  position: absolute;
+  right: 2%;
+  top: 50%;
+  z-index: 2;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6rpx;
+  padding: 10rpx 8rpx 12rpx;
+  width: 104rpx;
+  box-sizing: border-box;
+  pointer-events: auto;
+}
+
+.ae-sun-rail--dock-right .ae-sun-track {
+  position: relative;
+  width: 5rpx;
+  height: 220rpx;
+  border-radius: 2rpx;
+  background: linear-gradient(180deg, rgba(187, 247, 208, 0.75) 0%, rgba(34, 197, 94, 0.2) 100%);
+}
+
+.ae-sun-thumb {
+  position: absolute;
+  left: 50%;
+  width: 20rpx;
+  height: 20rpx;
+  margin-left: -10rpx;
+  margin-top: -10rpx;
+  border-radius: 50%;
+  background: #4ade80;
+  box-shadow: 0 0 6rpx rgba(74, 222, 128, 0.75);
+}
+
+.ae-sun-glyph {
+  font-size: 22rpx;
+  line-height: 1;
+  color: #86efac;
+  text-shadow: 0 0 6rpx rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  flex-shrink: 0;
+}
+
+/* 录制中关闭引导脉冲与状态钮 ACK 动画，减少 setData/合成与编码同屏争用 */
+.container--rec-performance .focus-guide-ring {
+  animation: none;
+  opacity: 0.55;
+}
+
+.container--rec-performance .recover-fab--ack .recover-fab-ring {
+  animation: none;
+}
+
+@media screen and (orientation: landscape) {
+  .focus-guide-text {
+    font-size: 17rpx;
+    margin-top: 20rpx;
+  }
+  .focus-guide-ring {
+    width: 170rpx;
+    height: 170rpx;
+  }
+  .ae-sun-rail--dock-right .ae-sun-track {
+    height: 260rpx;
+  }
+  .ae-sun-rail--dock-right {
+    right: 1.5%;
   }
 }

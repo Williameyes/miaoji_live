@@ -35,6 +35,25 @@ const REPLAY_TAP_MOVE_SLOP_PX = 15;
 /** 边界夹紧时的浮点余量，减轻与原生 out-of-bounds 判定冲突 */
 const REPLAY_PAN_CLAMP_EPS = 0.5;
 
+/** 双指下滑唤醒曝光/对焦条：中点下移阈值（px），与捏合区分 */
+const AE_TWO_FINGER_DOWN_PX = 52;
+/** 双指间距变化超过此比例视为缩放手势，不触发下滑唤醒 */
+const AE_PINCH_VS_SWIPE_DIST_RATIO = 0.06;
+/** 直播态曝光控件无操作自动隐藏（ms） */
+const AE_LIVE_AUTO_HIDE_MS = 3000;
+/** 变焦结束后静默中心对焦防抖（ms），避免捏合过程中重复调 API */
+const AE_POST_ZOOM_SILENT_FOCUS_MS = 300;
+/** 录制中曝光条 setData 节流（ms），减轻与编码器同机竞争 */
+const AE_EXPOSURE_SETDATA_THROTTLE_MS = 100;
+/** 单击锁定对焦：最大位移判定为轻点（px） */
+const AE_PRE_TAP_SLOP_PX = 20;
+/** 对焦点方框边长（rpx），与 live.wxss 中 .ae-focus-bracket 一致 */
+const AE_BRACKET_RPX = 56;
+/**
+ * 仅对焦方框+下方提示的预估额外高度（rpx），靠底边夹紧时用。
+ */
+const AE_CLUSTER_EXTRA_BELOW_RPX = 40;
+
 Page({
   data: {
     matchConfig: {
@@ -151,6 +170,34 @@ Page({
     teamGroupWidthPxA: 0,
     teamGroupWidthPxB: 0,
     showGuide: false,
+
+    /** 画质引导：未点击锁焦前在画面中央显示脉冲提示（与 isRecording 解耦，避免 rolling 起录后无窗口期） */
+    showFocusGuidePulse: false,
+    /** 是否已完成过至少一次开赛前对焦点位（本会话内） */
+    focusGuideCompleted: false,
+    /** 共用：对焦框 + 小太阳条是否显示 */
+    aeControlsVisible: false,
+    /** 对焦/曝光 UI 来源：开赛前 pre、直播中手势唤醒 live */
+    aeContext: '',
+    /** 小太阳在竖条上的 0–100%（自上向下：亮→暗 依 evNorm 映射） */
+    aeSunTopPct: 50,
+    /** 开赛前在点击点展示整簇；false 为几何中心整簇 */
+    aeFocusIsTapPosition: true,
+    /** 对焦+曝光簇左上角 rpx（仅 tap 模式用内联；与 {@link AE_BRACKET_RPX} 配套） */
+    aeClusterLeftRpx: 0,
+    aeClusterTopRpx: 0,
+    /** 对焦点位成功后的短反馈（高亮/缩放动画的开关） */
+    aeFocusLockFlash: false,
+    /** 用户双击方框后锁定态（在相同归一化坐标上再调 setTargetFocus） */
+    aeFocusUserLocked: false,
+    /** 是否显示「双击方框锁焦」提示（出框后短时显示，锁焦后关闭） */
+    aeShowDoubleTapHint: false,
+    /**
+     * 当前机型 cameraContext 是否支持硬件 EV 接口（setExposureCompensation / setEV / setExposureOffset 任一存在）。
+     * 不支持时曝光滑条不展示，也不提供任何“软补光”兜底（软补光只改预览 overlay，不影响录制结果，
+     * 反而误导用户，且录制过程中多一层半透明 view 合成对低端机型是负担）。
+     */
+    aeExposureHardwareSupported: false,
 
     /** 是否通过 GET /api/auth/check-status 且 isVip 为 true */
     liveStreamAllowed: false,
@@ -446,6 +493,61 @@ Page({
       diag: this.getLiveRollingDiagSnapshot({})
     });
     this.updatePipelineHealth();
+  },
+
+  /**
+   * 解析高光条目的创建时间（兼容 createdAt 缺失/脏数据场景，避免误删最新片段）。
+   * @param {Record<string, unknown>} item
+   * @returns {number}
+   */
+  resolveHighlightCreatedAt: function(item) {
+    if (!item || typeof item !== 'object') return 0;
+    const rawCreatedAt = item.createdAt;
+    if (typeof rawCreatedAt === 'number' && Number.isFinite(rawCreatedAt) && rawCreatedAt > 0) {
+      return rawCreatedAt;
+    }
+    const rawId = item.id != null ? String(item.id) : '';
+    const parsedFromId = Number(rawId);
+    if (Number.isFinite(parsedFromId) && parsedFromId > 0) return parsedFromId;
+    return 0;
+  },
+
+  /**
+   * 配额熔断：在明确文件配额耗尽时暂停自动滚动录制，避免进入 hard recover 循环风暴。
+   * @param {string} reason
+   * @param {string} [errMsg]
+   * @returns {void}
+   */
+  activateFileQuotaCircuitBreaker: function(reason, errMsg) {
+    const now = Date.now();
+    const holdMs = 45 * 1000;
+    const until = this._fileQuotaCircuitUntil || 0;
+    if (until > now) {
+      this.appendHealthLog('file_quota_circuit_already_open', {
+        reason: reason || 'unknown',
+        remainMs: until - now
+      });
+      return;
+    }
+    this._fileQuotaCircuitUntil = now + holdMs;
+    this.appendHealthLog('file_quota_circuit_open', {
+      reason: reason || 'unknown',
+      holdMs,
+      errMsg: errMsg || ''
+    });
+    this.rollingActive = false;
+    this.startRecordFailStreak = 0;
+    this.segmentStartFailStormCycles = 0;
+    this.lastRecordStartAt = 0;
+    this.setData({ isRecording: false });
+    this.markNeedManualRelaunch('file_quota_exhausted');
+    try {
+      wx.showToast({
+        title: '存储已满，已暂停自动录制',
+        icon: 'none',
+        duration: 2400
+      });
+    } catch (eToast) {}
   },
 
   /**
@@ -1290,6 +1392,26 @@ Page({
       this._rollingKickoffTimer = null;
     }
     this._cameraInitDone = true;
+    /**
+     * 硬件 EV 能力探测：只要 cameraContext 上存在任一官方/灰度接口即视为支持。
+     * 不支持的机型直接隐藏曝光滑条——小程序 <camera> 是原生层渲染，JS 无法介入视频流像素，
+     * 所谓“软补光”只能在预览层叠加半透明遮罩，既不会写入录制文件，又会误导用户，
+     * 因此不给不支持的机型提供任何“软补光”兜底（参考本次需求说明）。
+     */
+    this.detectExposureHardwareSupport();
+    /**
+     * 相机上下文若被系统回收/重建，恢复上次用户设置，避免“重启后锁焦与曝光丢失”。
+     * 注：AF/AE 是否真正生效仍取决于机型能力，但会尽最大可能重放参数。
+     */
+    if (this._lastFocusNorm && this.data.aeControlsVisible) {
+      this.invokeSetTargetFocus(this._lastFocusNorm.nx, this._lastFocusNorm.ny);
+    }
+    if (typeof this._exposureNormPending === 'number' && this.data.aeExposureHardwareSupported) {
+      this.applyExposureFromNorm(this._exposureNormPending);
+    }
+    if (!this.data.focusGuideCompleted) {
+      this.setData({ showFocusGuidePulse: true });
+    }
     if (this._hardRecoverAwaitingCamera) {
       this._hardRecoverAwaitingCamera = false;
       if (this._recoveryGuardTimer) {
@@ -1538,7 +1660,8 @@ Page({
     try {
       const si = wx.getSystemInfoSync();
       if (si && si.platform === 'android') {
-        return Math.min(2600, 100 + streak * 115);
+        /** 小米等机型在 Native 录制态回收偏慢，冲突时拉长退避避免“is recording”风暴。 */
+        return Math.min(5200, 900 + streak * 240);
       }
       if (si && si.platform === 'ios') {
         return Math.min(1500, 70 + streak * 75);
@@ -1732,6 +1855,13 @@ Page({
    * @returns {void}
    */
   tryStartRollingWhenCameraReady: function() {
+    const now = Date.now();
+    if (this._fileQuotaCircuitUntil && now < this._fileQuotaCircuitUntil) {
+      this.appendHealthLog('rolling_start_blocked_by_file_quota_circuit', {
+        remainMs: this._fileQuotaCircuitUntil - now
+      });
+      return;
+    }
     if (!this.rollingActive || !this._cameraInitDone) return;
     if (!this.data.cameraContext) return;
     this.startRollingRecording();
@@ -1751,6 +1881,8 @@ Page({
         zoom: actualZoom
       });
     }
+    // 缩放手势与「下滑唤醒」互斥在 touch 层区分；变焦稳定后晚一点再对中心做一次静默对焦
+    this.maybeSchedulePostZoomSilentFocus();
   },
 
 
@@ -1767,16 +1899,58 @@ Page({
   // 双指缩放逻辑
   onTouchStart: function(e) {
     if (e.touches && e.touches.length >= 2) {
+      this._everHadMultiTouch = true;
+      this._aeTwoFinger = {
+        startMidY: (e.touches[0].pageY + e.touches[1].pageY) / 2,
+        startDist: this.getDistance(e.touches[0], e.touches[1]) || 1,
+        maxDown: 0,
+        zoomed: false
+      };
       this.isPinching = true;
       this.isMultiTouch = true;
       this.pinchStartDistance = this.getDistance(e.touches[0], e.touches[1]);
       this.pinchStartZoom = this.data.zoom;
+    } else if (e.touches && e.touches.length === 1) {
+      this._everHadMultiTouch = false;
+      this._preTapValid = true;
+      this._tapStart = { x: e.touches[0].pageX, y: e.touches[0].pageY };
+      /**
+       * 旧逻辑：live 态下单指在画面任意处竖滑调 EV，但这会吃掉“点击画面移动对焦框”的 tap。
+       * 现在 EV 仅由右侧小太阳滑条负责，画面 tap 始终用于移动对焦框，互不干扰。
+       */
+      this._aeLiveAdjustStartY = null;
+      this._aeLiveAdjustStartNorm = 0.5;
     }
   },
 
   onTouchMove: function(e) {
+    // EV 调节已收敛到右侧小太阳滑条，画面单指移动不再抢占 EV，避免与 tap 对焦冲突
+    if (e.touches && e.touches.length === 1 && this._tapStart) {
+      const t = e.touches[0];
+      const dx = t.pageX - this._tapStart.x;
+      const dy = t.pageY - this._tapStart.y;
+      if (Math.abs(dx) > AE_PRE_TAP_SLOP_PX || Math.abs(dy) > AE_PRE_TAP_SLOP_PX) {
+        this._preTapValid = false;
+      }
+    }
     if (e.touches && e.touches.length >= 2) {
       this.isMultiTouch = true;
+      if (this._aeTwoFinger && e.touches.length >= 2) {
+        const d0 = this.getDistance(e.touches[0], e.touches[1]);
+        if (d0 > 0 && this._aeTwoFinger.startDist > 0) {
+          if (
+            Math.abs(d0 - this._aeTwoFinger.startDist) / this._aeTwoFinger.startDist
+            > AE_PINCH_VS_SWIPE_DIST_RATIO
+          ) {
+            this._aeTwoFinger.zoomed = true;
+          }
+        }
+        const midY = (e.touches[0].pageY + e.touches[1].pageY) / 2;
+        const down = midY - this._aeTwoFinger.startMidY;
+        if (down > this._aeTwoFinger.maxDown) {
+          this._aeTwoFinger.maxDown = down;
+        }
+      }
     }
     if (!this.isPinching || !e.touches || e.touches.length < 2 || this.pinchStartDistance <= 0) {
       return;
@@ -1791,6 +1965,37 @@ Page({
 
   onTouchEnd: function(e) {
     this.onScoreTouchEnd(); // 防止干扰记分长按
+    if (e.touches && e.touches.length === 0) {
+      if (this._aeTwoFinger) {
+        this._aeTwoFinger = null;
+      }
+      if (
+        !this._everHadMultiTouch
+        && this._preTapValid
+        && this._tapStart
+        && (
+          (this.data.showFocusGuidePulse && !this.data.focusGuideCompleted)
+          /** pre/live 两种上下文都允许 tap 移动对焦框（未锁定时）；长按呼出后“点哪对哪”。 */
+          || (
+            this.data.aeControlsVisible
+            && (this.data.aeContext === 'pre' || this.data.aeContext === 'live')
+            && !this.data.aeFocusUserLocked
+          )
+        )
+        && (e.changedTouches && e.changedTouches[0])
+      ) {
+        const t = e.changedTouches[0];
+        const dx = t.pageX - this._tapStart.x;
+        const dy = t.pageY - this._tapStart.y;
+        if (Math.abs(dx) < AE_PRE_TAP_SLOP_PX && Math.abs(dy) < AE_PRE_TAP_SLOP_PX) {
+          this.applyPreGameFocusAtPage(t.pageX, t.pageY);
+        }
+      }
+      this._aeLiveAdjustStartY = null;
+      this._aeLiveAdjustStartNorm = 0.5;
+      this._tapStart = null;
+      this._preTapValid = true;
+    }
     if (!e.touches || e.touches.length === 0) {
       this.isPinching = false;
       this.pinchStartDistance = 0;
@@ -1808,10 +2013,386 @@ Page({
     }
   },
 
+  /**
+   * 长按节次触发对焦/曝光控件唤起（替代双指下滑）。
+   * 仅在直播主画面可交互且无抽屉时触发，避免与管理层手势冲突。
+   * @returns {void}
+   */
+  onPeriodLongPressFocusControl: function() {
+    if (this.data.drawerMode !== 0) return;
+    if (!this.data.cameraMounted || !this.data.cameraContext || !this._cameraInitDone) return;
+    this.wakeLiveAeControls();
+  },
+
   getDistance: function(p1, p2) {
     const x = p2.pageX - p1.pageX;
     const y = p2.pageY - p1.pageY;
     return Math.sqrt(x * x + y * y);
+  },
+
+  /**
+   * 将页面坐标归一化到 0–1，与 camera 全屏（含溢出裁切）视窗对齐；用于点对焦与静默中心重锁。
+   * @param {number} pageX
+   * @param {number} pageY
+   * @returns {{nx: number, ny: number}}
+   */
+  pageXYToCameraNorm: function(pageX, pageY) {
+    let w = 375;
+    let h = 667;
+    try {
+      const si = wx.getSystemInfoSync();
+      w = si.windowWidth || w;
+      h = si.windowHeight || h;
+    } catch (e) {}
+    const nx = Math.max(0, Math.min(1, pageX / w));
+    const ny = Math.max(0, Math.min(1, pageY / h));
+    return { nx, ny };
+  },
+
+  /**
+   * 在部分基础库/灰度中存在的对焦 API；官方文档常滞后。不存在时仅作 UI 提示，不抛错。
+   * @param {number} nx 0–1
+   * @param {number} ny 0–1
+   * @returns {void}
+   */
+  invokeSetTargetFocus: function(nx, ny) {
+    const ctx = this.data.cameraContext;
+    if (!ctx) return;
+    if (typeof ctx.setTargetFocus === 'function') {
+      try {
+        ctx.setTargetFocus({ x: nx, y: ny });
+        return;
+      } catch (e) {}
+    }
+  },
+
+  /**
+   * 探测当前相机上下文是否支持硬件 EV 调节。
+   * 仅在 onCameraInit（或重建后）调用一次，探测结果写入 {@link data.aeExposureHardwareSupported}。
+   * 判定口径：只要 cameraContext 暴露 setExposureCompensation / setEV / setExposureOffset 任一接口，即视为支持。
+   * 注意：小程序内 <camera> 组件在部分机型（尤其低版本基础库的 Android）上不提供上述接口——
+   * 此时完全不展示曝光滑条，避免“界面能动但实际不生效”的伪交互。
+   * @returns {boolean}
+   */
+  detectExposureHardwareSupport: function() {
+    const ctx = this.data.cameraContext;
+    const supported = !!(
+      ctx
+      && (
+        typeof ctx.setExposureCompensation === 'function'
+        || typeof ctx.setEV === 'function'
+        || typeof ctx.setExposureOffset === 'function'
+      )
+    );
+    if (this.data.aeExposureHardwareSupported !== supported) {
+      this.setData({ aeExposureHardwareSupported: supported });
+    }
+    return supported;
+  },
+
+  /**
+   * 将「小太阳」归一化位映射为曝光补偿，仅走硬件 EV 接口。
+   * 硬件不支持的机型不调用任何伪补偿逻辑——见 {@link detectExposureHardwareSupport} 设计说明。
+   * 性能：录制中用 {@link _flushExposureNormToData} 节流，避免与编码同帧连打 setData。
+   * @param {number} norm 0=偏暗, 0.5=中心, 1=偏亮
+   * @returns {void}
+   */
+  applyExposureFromNorm: function(norm) {
+    if (!this.data.aeExposureHardwareSupported) return;
+    const n = Math.max(0, Math.min(1, norm));
+    this._exposureNormPending = n;
+    this._exposureValueEV = (n - 0.5) * 4;
+    const ctx = this.data.cameraContext;
+    if (!ctx) {
+      this._flushExposureNormToData(true);
+      return;
+    }
+    const ev = this._exposureValueEV;
+    if (typeof ctx.setExposureCompensation === 'function') {
+      try { ctx.setExposureCompensation({ value: ev }); } catch (e) {}
+    } else if (typeof ctx.setEV === 'function') {
+      try { ctx.setEV({ ev: ev }); } catch (e) {}
+    } else if (typeof ctx.setExposureOffset === 'function') {
+      try { ctx.setExposureOffset({ offset: ev }); } catch (e) {}
+    }
+    if (this.data.isRecording) {
+      this._flushExposureNormToData(false);
+    } else {
+      this._flushExposureNormToData(true);
+    }
+  },
+
+  /**
+   * 将内部曝光 norm 写回小太阳位置；录制中可节流，交互结束可 force。
+   * @param {boolean} force 是否跳过节流立即 setData
+   * @returns {void}
+   */
+  _flushExposureNormToData: function(force) {
+    const n = typeof this._exposureNormPending === 'number' ? this._exposureNormPending : 0.5;
+    const now = Date.now();
+    if (!force && this.data.isRecording) {
+      if (now - (this._lastExposureSetDataAt || 0) < AE_EXPOSURE_SETDATA_THROTTLE_MS) {
+        if (this._exposureSetDataTimer) clearTimeout(this._exposureSetDataTimer);
+        this._exposureSetDataTimer = setTimeout(() => {
+          this._exposureSetDataTimer = null;
+          this._flushExposureNormToData(true);
+        }, AE_EXPOSURE_SETDATA_THROTTLE_MS);
+        return;
+      }
+    }
+    this._lastExposureSetDataAt = now;
+    this.setData({ aeSunTopPct: Math.round((1 - n) * 100) });
+  },
+
+  /**
+   * 双指离开且变焦静止后，对几何中心执行一次不展示 UI 的对焦，缓解数码变焦后虚焦。
+   * 通过 {@link updateZoom} 内防抖触发，避免捏合过程高频调用。
+   * @returns {void}
+   */
+  silentRefocusGeometricCenter: function() {
+    this.invokeSetTargetFocus(0.5, 0.5);
+  },
+
+  /**
+   * 变焦量变化时重置静默对焦定时器；与缩放手势「争用」：仅响应 zoom 的实质变化，而非手指 xy。
+   * @returns {void}
+   */
+  maybeSchedulePostZoomSilentFocus: function() {
+    if (this._postZoomFocusTimer) {
+      clearTimeout(this._postZoomFocusTimer);
+      this._postZoomFocusTimer = null;
+    }
+    this._postZoomFocusTimer = setTimeout(() => {
+      this._postZoomFocusTimer = null;
+      this.silentRefocusGeometricCenter();
+    }, AE_POST_ZOOM_SILENT_FOCUS_MS);
+  },
+
+  /**
+   * 在预览区任意点击位置放置/移动对焦框：开赛前（pre）和长按节次呼出（live）共用。
+   * live 态下每次点击都会续期 3s 自动隐藏计时器，且会把“中心模式簇”切换到“点击点模式簇”，
+   * 确保“长按呼出后用户想对准哪就点哪”的直觉一致。
+   * @param {number} pageX
+   * @param {number} pageY
+   * @returns {void}
+   */
+  applyPreGameFocusAtPage: function(pageX, pageY) {
+    const { nx, ny } = this.pageXYToCameraNorm(pageX, pageY);
+    this.invokeSetTargetFocus(nx, ny);
+    let rpxFactor = 750 / 375;
+    let rpxH = 1334;
+    try {
+      const si = wx.getSystemInfoSync();
+      rpxFactor = 750 / (si.windowWidth || 375);
+      rpxH = (si.windowHeight || 667) * rpxFactor;
+    } catch (e) {
+      rpxH = 1334;
+    }
+    const halfB = AE_BRACKET_RPX / 2;
+    let rpxX = pageX * rpxFactor;
+    let rpxY = pageY * rpxFactor;
+    /** 方框中心与点击点一致；曝光条在屏幕右侧独立层，不占用本簇宽度。 */
+    this._lastFocusNorm = { nx, ny };
+    let clusterLeft = rpxX - halfB;
+    let clusterTop = rpxY - halfB;
+    const maxL = Math.max(0, 750 - AE_BRACKET_RPX);
+    const maxT = Math.max(0, rpxH - AE_BRACKET_RPX - AE_CLUSTER_EXTRA_BELOW_RPX);
+    clusterLeft = Math.max(0, Math.min(maxL, clusterLeft));
+    clusterTop = Math.max(0, Math.min(maxT, clusterTop));
+    if (this._aeFocusLockFlashTimer) {
+      clearTimeout(this._aeFocusLockFlashTimer);
+      this._aeFocusLockFlashTimer = null;
+    }
+    if (this._aeDoubleTapHintTimer) {
+      clearTimeout(this._aeDoubleTapHintTimer);
+      this._aeDoubleTapHintTimer = null;
+    }
+    try {
+      wx.vibrateShort({ type: 'light' });
+    } catch (eV) {}
+    /** 直播长按呼出后继续保持 live 上下文，避免 3s 自动隐藏失效；开赛前首次 tap 切到 pre。 */
+    const nextCtx = (this.data.aeContext === 'live') ? 'live' : 'pre';
+    const patch = {
+      focusGuideCompleted: true,
+      showFocusGuidePulse: false,
+      aeControlsVisible: true,
+      aeContext: nextCtx,
+      aeFocusIsTapPosition: true,
+      aeClusterLeftRpx: clusterLeft,
+      aeClusterTopRpx: clusterTop,
+      aeFocusLockFlash: true,
+      aeFocusUserLocked: false,
+      aeShowDoubleTapHint: true
+    };
+    /** 仅在支持硬件 EV 的机型上把滑块复位到 50%；不支持时该字段无视觉意义。 */
+    if (this.data.aeExposureHardwareSupported) {
+      patch.aeSunTopPct = 50;
+    }
+    this.setData(patch);
+    if (this.data.aeExposureHardwareSupported) {
+      this._exposureNormPending = 0.5;
+      this.applyExposureFromNorm(0.5);
+    }
+    if (nextCtx === 'live') {
+      this.scheduleAeLiveHide();
+    }
+    this._aeFocusLockFlashTimer = setTimeout(() => {
+      this._aeFocusLockFlashTimer = null;
+      this.setData({ aeFocusLockFlash: false });
+    }, 520);
+    this._aeDoubleTapHintTimer = setTimeout(() => {
+      this._aeDoubleTapHintTimer = null;
+      this.setData({ aeShowDoubleTapHint: false });
+    }, 8000);
+  },
+
+  /**
+   * 直播/录制中长按节次唤醒：对焦框先置于几何中心，曝光条（若支持）可拖调。
+   * 用户可继续单击画面任意位置，让对焦框移到点击处——走 {@link applyPreGameFocusAtPage}。
+   * 不强制复位既有 EV，避免打断用户之前的曝光选择。
+   * @returns {void}
+   */
+  wakeLiveAeControls: function() {
+    this.clearAeLiveHideTimer();
+    this._lastFocusNorm = { nx: 0.5, ny: 0.5 };
+    this.invokeSetTargetFocus(0.5, 0.5);
+    if (this._aeDoubleTapHintTimer) {
+      clearTimeout(this._aeDoubleTapHintTimer);
+      this._aeDoubleTapHintTimer = null;
+    }
+    this.setData({
+      aeControlsVisible: true,
+      aeContext: 'live',
+      aeFocusIsTapPosition: false,
+      aeFocusLockFlash: true,
+      aeFocusUserLocked: false,
+      aeShowDoubleTapHint: true
+    });
+    this.scheduleAeLiveHide();
+    if (this._aeFocusLockFlashTimer) {
+      clearTimeout(this._aeFocusLockFlashTimer);
+      this._aeFocusLockFlashTimer = null;
+    }
+    this._aeFocusLockFlashTimer = setTimeout(() => {
+      this._aeFocusLockFlashTimer = null;
+      this.setData({ aeFocusLockFlash: false });
+    }, 420);
+    this._aeDoubleTapHintTimer = setTimeout(() => {
+      this._aeDoubleTapHintTimer = null;
+      this.setData({ aeShowDoubleTapHint: false });
+    }, 8000);
+  },
+
+  /**
+   * 双击对焦框：再次下发当前归一化对焦点，并进入「锁定」态；微信侧对 AF 锁能力因机型而异，仅作意图强化。
+   * @returns {void}
+   */
+  onAeFocusBracketTap: function() {
+    if (!this.data.aeControlsVisible) return;
+    if (this.data.aeContext !== 'pre' && this.data.aeContext !== 'live') return;
+    if (this.data.aeFocusUserLocked) {
+      try {
+        wx.showToast({ title: '对焦已锁定', icon: 'none', duration: 1000 });
+      } catch (e) {}
+      return;
+    }
+    const now = Date.now();
+    if (now - (this._aeBracketLastTapAt || 0) < 420) {
+      this._aeBracketLastTapAt = 0;
+      const p = this._lastFocusNorm || { nx: 0.5, ny: 0.5 };
+      this.invokeSetTargetFocus(p.nx, p.ny);
+      if (this._aeDoubleTapHintTimer) {
+        clearTimeout(this._aeDoubleTapHintTimer);
+        this._aeDoubleTapHintTimer = null;
+      }
+      this.setData({ aeFocusUserLocked: true, aeShowDoubleTapHint: false });
+      try {
+        wx.vibrateShort({ type: 'medium' });
+      } catch (e) {}
+      try {
+        wx.showToast({ title: '对焦已锁定', icon: 'success', duration: 1400 });
+      } catch (eT) {}
+    } else {
+      this._aeBracketLastTapAt = now;
+    }
+  },
+
+  /**
+   * 无操作 3s 后隐藏 live 态控件（开赛前 pre 不自动关，由起录时收起）。
+   * @returns {void}
+   */
+  scheduleAeLiveHide: function() {
+    this.clearAeLiveHideTimer();
+    this._aeLiveHideTimer = setTimeout(() => {
+      this._aeLiveHideTimer = null;
+      if (this.data.aeContext === 'live') {
+        this.setData({ aeControlsVisible: false, aeContext: '' });
+      }
+    }, AE_LIVE_AUTO_HIDE_MS);
+  },
+
+  /**
+   * @returns {void}
+   */
+  clearAeLiveHideTimer: function() {
+    if (this._aeLiveHideTimer) {
+      clearTimeout(this._aeLiveHideTimer);
+      this._aeLiveHideTimer = null;
+    }
+  },
+
+  /**
+   * 开赛前/直播态在小太阳条上拖动调节曝光（catch 避免与底层缩放手势冲突）。
+   * @param {WechatMiniprogram.TouchEvent} e
+   * @returns {void}
+   */
+  onAeSunTouchStart: function(e) {
+    if (!this.data.aeExposureHardwareSupported) return;
+    if (!this.data.aeControlsVisible) return;
+    if (this.data.aeContext !== 'pre' && this.data.aeContext !== 'live') return;
+    if (!e.touches || !e.touches[0]) return;
+    this._aePreSunStartY = e.touches[0].pageY;
+    this._aePreSunStartNorm = typeof this._exposureNormPending === 'number'
+      ? this._exposureNormPending
+      : 0.5;
+  },
+
+  /**
+   * 滑条与全局手势层分离（catch），避免与缩放手势串扰；开赛前/直播态共用同一套数值。
+   * @param {WechatMiniprogram.TouchEvent} e
+   * @returns {void}
+   */
+  onAeSunTouchMove: function(e) {
+    if (!this.data.aeExposureHardwareSupported) return;
+    if (!this.data.aeControlsVisible) return;
+    if (this.data.aeContext !== 'pre' && this.data.aeContext !== 'live') return;
+    if (!e.touches || !e.touches[0] || this._aePreSunStartY == null) return;
+    let h = 667;
+    try {
+      h = wx.getSystemInfoSync().windowHeight || h;
+    } catch (err) {
+      h = 667;
+    }
+    const delta = (this._aePreSunStartY - e.touches[0].pageY) / h;
+    let next = (this._aePreSunStartNorm || 0.5) + delta * 1.15;
+    next = Math.max(0, Math.min(1, next));
+    this.applyExposureFromNorm(next);
+    if (this.data.aeContext === 'live') {
+      this.clearAeLiveHideTimer();
+      this.scheduleAeLiveHide();
+    }
+  },
+
+  /**
+   * @returns {void}
+   */
+  onAeSunTouchEnd: function() {
+    this._aePreSunStartY = null;
+    this._aePreSunStartNorm = 0.5;
+    if (this.data.aeContext === 'live' && this.data.aeControlsVisible) {
+      this.clearAeLiveHideTimer();
+      this.scheduleAeLiveHide();
+    }
   },
 
   hexToRgba: function(hex, opacity) {
@@ -2208,6 +2789,23 @@ Page({
       this.rollingWatchdogTimer = null;
     }
     this.appendHealthLog('page_unload', {});
+    if (this._postZoomFocusTimer) {
+      clearTimeout(this._postZoomFocusTimer);
+      this._postZoomFocusTimer = null;
+    }
+    if (this._exposureSetDataTimer) {
+      clearTimeout(this._exposureSetDataTimer);
+      this._exposureSetDataTimer = null;
+    }
+    this.clearAeLiveHideTimer();
+    if (this._aeDoubleTapHintTimer) {
+      clearTimeout(this._aeDoubleTapHintTimer);
+      this._aeDoubleTapHintTimer = null;
+    }
+    if (this._aeFocusLockFlashTimer) {
+      clearTimeout(this._aeFocusLockFlashTimer);
+      this._aeFocusLockFlashTimer = null;
+    }
     this.setData({
       cameraMounted: false,
       cameraContext: null,
@@ -2486,6 +3084,18 @@ Page({
   hardRecoverLivePipeline: function(trigger) {
     if (this._recoveryLock) return;
     const source = trigger || 'manual';
+    const now = Date.now();
+    if (
+      source.indexOf('auto:') === 0
+      && this._fileQuotaCircuitUntil
+      && now < this._fileQuotaCircuitUntil
+    ) {
+      this.appendHealthLog('hard_recover_blocked_by_file_quota_circuit', {
+        trigger: source,
+        remainMs: this._fileQuotaCircuitUntil - now
+      });
+      return;
+    }
     if (!this._livePageVisible) {
       this.appendHealthLog('hard_recover_skip_page_hidden', {
         trigger: source,
@@ -2493,7 +3103,6 @@ Page({
       });
       return;
     }
-    const now = Date.now();
     const cooldownUntil = this._insertCameraRecoverCooldownUntil || 0;
     const isAutoRecover = source.indexOf('auto:') === 0;
     if (isAutoRecover && now < cooldownUntil) {
@@ -2956,7 +3565,14 @@ Page({
         this.segmentStartFailStormCycles = 0;
         this._currentRollingSegmentRecordStartMs = Date.now();
         this.lastRecordStartAt = Date.now();
-        this.setData({ isRecording: true });
+        const nextRec = { isRecording: true };
+        if (this.data.aeContext === 'pre' && this.data.aeControlsVisible) {
+          nextRec.aeControlsVisible = false;
+          nextRec.aeContext = '';
+          nextRec.aeShowDoubleTapHint = false;
+          nextRec.aeFocusUserLocked = false;
+        }
+        this.setData(nextRec);
         if (
           this._highlightSaveAwaitingResume
           && this._highlightSaveSessionId === sessionId
@@ -2997,14 +3613,28 @@ Page({
             retryCount,
             failStreak: this.startRecordFailStreak
           });
+          /**
+           * 关键修复：is recording 冲突在部分安卓机（如小米）常由 Native 状态滞后引发，
+           * 继续硬恢复会放大“重启风暴”。这里改为长冷却重试，不再直接硬恢复。
+           */
           if (this.startRecordFailStreak >= 10) {
             this.clearSegmentStartRetryTimer();
             this._segmentStartRecoveringFromIsRecording = false;
-            this.appendHealthLog('segment_start_is_recording_force_hard_recover', {
+            this.appendHealthLog('segment_start_is_recording_conflict_cooldown', {
               streak: this.startRecordFailStreak
             });
             this.startRecordFailStreak = 0;
-            this.hardRecoverLivePipeline('auto:start:is_recording_storm');
+            const retryLater = () => {
+              this.scheduleStartOneSegmentRetry(sessionId, 0, 4600);
+            };
+            try {
+              this.data.cameraContext.stopRecord({
+                complete: retryLater,
+                fail: retryLater
+              });
+            } catch (eStopRec) {
+              retryLater();
+            }
             return;
           }
           this._segmentStartRecoveringFromIsRecording = true;
@@ -3577,7 +4207,11 @@ Page({
         if (errMsg && isRollingTempMissingErr(errMsg)) {
           return false;
         }
-        if (!this.isMiniProgramFileQuotaExceeded(errMsg) || quotaReliefTriedForThisSegment) {
+        if (!this.isMiniProgramFileQuotaExceeded(errMsg)) {
+          return false;
+        }
+        if (quotaReliefTriedForThisSegment) {
+          this.activateFileQuotaCircuitBreaker('persist_quota_relief_exhausted', errMsg);
           return false;
         }
         quotaReliefTriedForThisSegment = true;
@@ -3607,6 +4241,14 @@ Page({
           resolve();
           return;
         }
+        if (tempPathTerminalMissing) {
+          this.appendHealthLog('rolling_persist_temp_missing_fast_abort', {
+            segNo,
+            phase
+          });
+          finalizeSegment('');
+          return;
+        }
         if (phase === 0 || phase === 1) {
           if (!fs.copyFile) {
             attemptRollingPersist(2);
@@ -3618,6 +4260,9 @@ Page({
             success: () => finalizeSegment(rollingPath),
             fail: (errCf) => {
               const msg = errCf && errCf.errMsg ? String(errCf.errMsg) : '';
+              if (isRollingTempMissingErr(msg)) {
+                tempPathTerminalMissing = true;
+              }
               this.appendHealthLog('rolling_persist_copy_fail', {
                 phase,
                 segNo,
@@ -3641,6 +4286,9 @@ Page({
               finalizeSegment((r && r.savedFilePath) ? r.savedFilePath : rollingPath),
             fail: (errSf) => {
               const msg = errSf && errSf.errMsg ? String(errSf.errMsg) : '';
+              if (isRollingTempMissingErr(msg)) {
+                tempPathTerminalMissing = true;
+              }
               this.appendHealthLog('rolling_persist_save_fail', {
                 phase,
                 segNo,
@@ -3689,6 +4337,9 @@ Page({
                   success: () => finalizeSegment(rollingPath),
                   fail: (errCf4) => {
                     const msg = errCf4 && errCf4.errMsg ? String(errCf4.errMsg) : '';
+                    if (isRollingTempMissingErr(msg)) {
+                      tempPathTerminalMissing = true;
+                    }
                     this.appendHealthLog('rolling_persist_copy_fail', {
                       phase: 4,
                       segNo,
@@ -3717,6 +4368,9 @@ Page({
                 success: () => finalizeSegment(rollingPath),
                 fail: (errCf4b) => {
                   const msg = errCf4b && errCf4b.errMsg ? String(errCf4b.errMsg) : '';
+                  if (isRollingTempMissingErr(msg)) {
+                    tempPathTerminalMissing = true;
+                  }
                   this.appendHealthLog('rolling_persist_copy_fail', {
                     phase: 4,
                     segNo,
@@ -3771,6 +4425,9 @@ Page({
             },
             fail: (errAlt) => {
               const msg = errAlt && errAlt.errMsg ? String(errAlt.errMsg) : '';
+              if (isRollingTempMissingErr(msg)) {
+                tempPathTerminalMissing = true;
+              }
               this.appendHealthLog('rolling_persist_copy_fail', {
                 phase: 6,
                 segNo,
@@ -3881,6 +4538,7 @@ Page({
             fail: () => {
               attempt += 1;
               if (attempt >= maxAttempts) {
+                tempPathTerminalMissing = true;
                 this.appendHealthLog('rolling_persist_temp_gone_presync', {
                   segNo,
                   attempts: attempt,
@@ -3968,8 +4626,15 @@ Page({
   },
 
   /**
-   * temp 文件在 stopRecord 后连续出现“终态丢失”时执行硬恢复。
-   * 该问题在部分机型会持续返回不可用 temp 路径，仅 tryStart 软恢复无法跳出死循环。
+   * temp 文件在 stopRecord 后连续出现“终态丢失”时的处理。
+   *
+   * 经 iOS 现网验证：硬恢复 camera 组件对该场景无改善，反而会引发
+   * 「seg1/seg2 即 hard recover」的重启风暴；真正的根因往往是上一段
+   * stopRecord 的落盘时序问题，下一段自然分段回到正常节拍即可自愈。
+   *
+   * 因此这里**只记录日志并清空计数**，不再主动硬恢复或配额熔断，避免
+   * 误弹“存储已满”或反复重启相机影响直播观感。
+   *
    * @param {number} streak 当前连续失败次数
    * @param {number} segNo 触发时片段号
    * @returns {void}
@@ -3977,21 +4642,8 @@ Page({
   maybeHardRecoverForTempMissingStorm: function(streak, segNo) {
     const n = Number(streak || 0);
     if (n < 2) return;
-    const now = Date.now();
-    const gapMs = 12000;
-    if (this._lastTempMissingStormRecoverAt && now - this._lastTempMissingStormRecoverAt < gapMs) {
-      this.appendHealthLog('temp_missing_storm_recover_throttled', {
-        streak: n,
-        segNo,
-        sinceLastMs: now - this._lastTempMissingStormRecoverAt
-      });
-      return;
-    }
-    this._lastTempMissingStormRecoverAt = now;
-    this.appendHealthLog('temp_missing_storm_force_hard_recover', { streak: n, segNo });
+    this.appendHealthLog('temp_missing_storm_observed', { streak: n, segNo });
     this._rollingTempTerminalFailStreak = 0;
-    if (this.data.isRecovering || this._recoveryLock) return;
-    this.hardRecoverLivePipeline('auto:segment_temp_missing_storm');
   },
 
   /**
@@ -4080,8 +4732,15 @@ Page({
     const list = Array.isArray(clipsMap[key]) ? clipsMap[key] : [];
     const maxCount = this.highlightsMaxCount || 100;
     if (list.length <= maxCount) return;
-    const removed = list.splice(maxCount);
-    clipsMap[key] = list;
+    const sorted = list
+      .slice()
+      .sort(
+        (a, b) =>
+          this.resolveHighlightCreatedAt(/** @type {Record<string, unknown>} */ (b))
+          - this.resolveHighlightCreatedAt(/** @type {Record<string, unknown>} */ (a))
+      );
+    const removed = sorted.slice(maxCount);
+    clipsMap[key] = sorted.slice(0, maxCount);
     clipsStorage.writeClipsMapSafe(clipsMap);
     removed.forEach((it) => {
       const segs = it && Array.isArray(it.segments) ? it.segments : [];
@@ -4114,9 +4773,10 @@ Page({
    * @param {string} [reason] 触发来源（诊断日志用）
    * @returns {number} 实际删除条数
    */
-  pruneOldestHighlightClipsFromStorage: function(maxRemove, reason) {
+  pruneOldestHighlightClipsFromStorage: function(maxRemove, reason, opts) {
     const cap = typeof maxRemove === 'number' && maxRemove > 0 ? Math.min(maxRemove, 30) : 1;
     const why = typeof reason === 'string' ? reason : '';
+    const options = opts && typeof opts === 'object' ? opts : {};
     const fs = wx.getFileSystemManager();
     const clipsMap = clipsStorage.readClipsMapSafe();
     if (!clipsMap) return 0;
@@ -4129,14 +4789,17 @@ Page({
         if (!it || typeof it !== 'object') return;
         const id = it.id != null ? String(it.id) : '';
         if (!id) return;
-        const createdAt = typeof it.createdAt === 'number' ? it.createdAt : 0;
+        const createdAt = this.resolveHighlightCreatedAt(/** @type {Record<string, unknown>} */ (it));
         entries.push({ matchId, id, createdAt });
       });
     });
     if (entries.length === 0) {
       return 0;
     }
-    const minKeep = Math.max(0, Number(this.highlightsEmergencyMinKeepCount || 0));
+    const optMinKeep = Number(options.minKeepOverride);
+    const minKeep = Number.isFinite(optMinKeep)
+      ? Math.max(0, Math.floor(optMinKeep))
+      : Math.max(0, Number(this.highlightsEmergencyMinKeepCount || 0));
     const removableBudget = Math.max(0, entries.length - minKeep);
     if (removableBudget <= 0) {
       this.appendHealthLog('live_prune_skipped_min_keep', {
@@ -4382,16 +5045,31 @@ Page({
       }
       const totalClips = this.getTotalHighlightClipCount();
       const minKeep = Math.max(0, Number(this.highlightsEmergencyMinKeepCount || 0));
+      let minKeepForPrune = minKeep;
       if (totalClips <= minKeep) {
-        this.appendHealthLog('rolling_clip_prune_min_keep_skip', {
-          reason: r,
-          totalClips,
-          minKeep
-        });
-        return;
+        const emergencyFloor = Math.max(4, Number(this.highlightsEmergencyHardFloor || 8));
+        if (totalClips > emergencyFloor) {
+          minKeepForPrune = emergencyFloor;
+          this.appendHealthLog('rolling_clip_prune_break_min_keep', {
+            reason: r,
+            totalClips,
+            minKeep,
+            emergencyFloor
+          });
+        } else {
+          this.appendHealthLog('rolling_clip_prune_min_keep_skip', {
+            reason: r,
+            totalClips,
+            minKeep
+          });
+          this.activateFileQuotaCircuitBreaker('clip_prune_blocked_by_min_keep');
+          return;
+        }
       }
       this._lastEmergencyClipPruneAt = nowPr;
-      const pr = this.pruneOldestHighlightClipsFromStorage(clipPrune, r);
+      const pr = this.pruneOldestHighlightClipsFromStorage(clipPrune, r, {
+        minKeepOverride: minKeepForPrune
+      });
       if (pr > 0) {
         this.appendHealthLog('rolling_clip_prune_with_quota_free', { pruned: pr, reason: r });
       }
