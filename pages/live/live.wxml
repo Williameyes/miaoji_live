@@ -184,7 +184,7 @@
   </view>
 
   <view class="replay-overlay" wx:if="{{isReplaying}}">
-    <!-- 可拖拽缩放视频容器：双指缩放 + 全向拖动 -->
+    <!-- 可拖拽缩放视频容器：双指缩放 + 全向拖动（均为 movable-view 原生能力） -->
     <movable-area class="replay-movable-area">
       <movable-view
         class="replay-movable-view"
@@ -197,6 +197,8 @@
         scale-value="{{replayViewScale}}"
         bindscale="onReplayViewScale"
         bindchange="onReplayViewChange"
+        capture-bindtouchstart="onReplayPinchCaptureStart"
+        capture-bindtouchmove="onReplayPinchCaptureMove"
         bindtouchend="onReplayMovableTouchEnd"
         bindtouchcancel="onReplayMovableTouchCancel"
         out-of-bounds="{{false}}"
@@ -229,14 +231,6 @@
             bindloadedmetadata="onReplayVideoALoadedMeta"
             bindended="onReplayVideoAEnded">
           </video>
-          <view
-            id="replayTouchBridge0"
-            class="replay-touch-bridge"
-            data-slot="0"
-            bindtap="onReplayBridgeTap"
-            bindtouchend="onReplayBridgeTouchEnd"
-            bindtouchcancel="onReplayBridgeTouchCancel"
-          ></view>
         </view>
 
         <!-- Slot B：预加载第二段，切换时瞬间置顶 -->
@@ -260,14 +254,6 @@
             bindloadedmetadata="onReplayVideoBLoadedMeta"
             bindended="onReplayVideoBEnded">
           </video>
-          <view
-            id="replayTouchBridge1"
-            class="replay-touch-bridge"
-            data-slot="1"
-            bindtap="onReplayBridgeTap"
-            bindtouchend="onReplayBridgeTouchEnd"
-            bindtouchcancel="onReplayBridgeTouchCancel"
-          ></view>
         </view>
       </movable-view>
     </movable-area>

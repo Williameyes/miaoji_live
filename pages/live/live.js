@@ -7,24 +7,31 @@ const storageEst = require('../../utils/file-storage-estimate.js');
 const clipsStorage = require('../../utils/miaoxie-clips-storage.js');
 const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
 
-/** 回放双击缩放档位（每次双击 +0.5x，至 3x 后下一轮回到 1x，与 movable-view scale-max 一致） */
+/** 回放缩放离散档位（捏合吸附 / 双击等共用，至 3x 后下一轮回到 1x） */
 const REPLAY_ZOOM_LEVELS = [1, 1.5, 2, 2.5, 3];
-/** 与档位比较的容差，避免浮点与捏合缩放后的数值抖动 */
+/** 与档位比较的容差，避免浮点抖动 */
 const REPLAY_ZOOM_LEVEL_EPS = 0.04;
 /** 判定为同一点双击的最大间隔（ms） */
-const REPLAY_DOUBLE_TAP_INTERVAL_MS = 280;
+const REPLAY_DOUBLE_TAP_INTERVAL_MS = 340;
 /** 两次点击允许的最大位移（px） */
-const REPLAY_DOUBLE_TAP_SLOP_PX = 35;
-/** 单次点击允许的最长按下时间（ms），超过则不计入双击候选 */
-const REPLAY_TAP_MAX_DURATION_MS = 380;
-/** 双击缩放动画时长（ms），缓动为 ease-out（立方） */
-const REPLAY_ZOOM_ANIM_MS = 300;
-/** 判定为拖拽的最小位移（px），超过则取消本次单击/双击识别 */
-const REPLAY_TAP_MOVE_SLOP_PX = 15;
+const REPLAY_DOUBLE_TAP_SLOP_PX = 48;
 /**
  * 全指抬起后仍用捏合焦点公式处理 bindscale 的时长（ms），避免末帧 scale 落在 touchend 之后导致回弹到 (0,0)。
  */
 const REPLAY_PINCH_SCALE_TAIL_MS = 120;
+/** 捏合松手后等待原生末帧 bindscale 再吸附（ms） */
+const REPLAY_PINCH_SNAP_DEFER_MS = 56;
+/** 捏合吸附 + 居中动画时长（ms），略长于双击动画减轻突兀感 */
+const REPLAY_PINCH_SNAP_ANIM_MS = 420;
+/** 相对捏合起始 scale 判定「张开 / 捏拢」意图的阈值 */
+const REPLAY_PINCH_INTENT_DELTA = 0.07;
+/** 捏合吸附：位移与 scale 均过小则跳过动画，避免微抖 */
+const REPLAY_PINCH_SNAP_EPS_SCALE = 0.018;
+const REPLAY_PINCH_SNAP_EPS_PX = 2.5;
+/** 双击缩放动画时长（ms），缓动为 ease-out（立方） */
+const REPLAY_ZOOM_ANIM_MS = 300;
+/** 判定为拖拽的最小位移（px），超过则取消本次单击/双击识别 */
+const REPLAY_TAP_MOVE_SLOP_PX = 15;
 /** 边界夹紧时的浮点余量，减轻与原生 out-of-bounds 判定冲突 */
 const REPLAY_PAN_CLAMP_EPS = 0.5;
 
@@ -5564,10 +5571,13 @@ Page({
     }
 
     this._cancelReplayZoomAnim();
-    this._replayBridgeTapLast = null;
+    this._replayDoubleTapLast = null;
     this._replayMultiTouchActive = false;
     this._replayHadMultiTouchThisGesture = false;
     this._replayPinchFormulaUntil = 0;
+    this._replayPinchSnapSession = false;
+    this._replayPinchBaselineScale = 1;
+    this._clearReplayPinchSnapTimer();
     this._resetReplayTransformCache();
 
     this.setData({
@@ -5665,10 +5675,13 @@ Page({
     this._replayPrimedSlot0 = false;
     this._replayPrimedSlot1 = false;
     this._cancelReplayZoomAnim();
-    this._replayBridgeTapLast = null;
+    this._replayDoubleTapLast = null;
     this._replayMultiTouchActive = false;
     this._replayHadMultiTouchThisGesture = false;
     this._replayPinchFormulaUntil = 0;
+    this._replayPinchSnapSession = false;
+    this._replayPinchBaselineScale = 1;
+    this._clearReplayPinchSnapTimer();
     this._resetReplayTransformCache();
     if (stopPlayer) {
       try {
@@ -6047,17 +6060,20 @@ Page({
    */
   onReplayResetView: function() {
     this._cancelReplayZoomAnim();
-    this._replayBridgeTapLast = null;
+    this._clearReplayPinchSnapTimer();
+    this._replayDoubleTapLast = null;
     this._replayMultiTouchActive = false;
     this._replayHadMultiTouchThisGesture = false;
     this._replayPinchFormulaUntil = 0;
+    this._replayPinchSnapSession = false;
+    this._replayPinchBaselineScale = 1;
     this._resetReplayTransformCache();
     this.setData({ replayViewScale: 1, replayViewX: 0, replayViewY: 0 });
   },
 
   /**
    * 拖动 movable-view 时同步 x/y；双指过程中不同步，避免与 bindscale 的 x/y 打架。
-   * @param {WechatMiniprogram.CustomEvent} e detail.x / detail.y
+   * @param {WechatMiniprogram.CustomEvent} e detail.x / detail.y / detail.source
    * @returns {void}
    */
   onReplayViewChange: function(e) {
@@ -6066,7 +6082,7 @@ Page({
     if (typeof d.x !== 'number' || typeof d.y !== 'number') return;
     if (isNaN(d.x) || isNaN(d.y)) return;
     if (d.source === 'touch') {
-      // 单指拖动回调到达时，强制解除多指锁，避免“捏合后无法拖动”。
+      // 单指拖动回调到达时，强制解除多指锁，避免「捏合后无法拖动」。
       this._replayMultiTouchActive = false;
     }
     this._touchReplayMergeCache({ x: d.x, y: d.y });
@@ -6074,7 +6090,8 @@ Page({
   },
 
   /**
-   * 缩放时始终与 scale 同次 setData 提交 x/y；捏合期间按双指中点焦点公式修正，避免视觉中心丢失。
+   * 双指缩放回调：scale 与 x/y 在同一次 setData 提交；
+   * 若 detail 自带 x/y 则直接采用，否则用「双指中点 + 焦点公式」推导避免视觉中心偏移。
    * 公式：x_new = x_old - (scale_new/scale_old - 1) * (focalX - x_old)（y 同理）。
    * @param {WechatMiniprogram.CustomEvent} e detail.scale / detail.x / detail.y
    * @returns {void}
@@ -6086,6 +6103,7 @@ Page({
     const prevScale = this.data.replayViewScale || 1;
     if (Math.abs(scaleNew - prevScale) > 0.02) {
       this._replayHadMultiTouchThisGesture = true;
+      this._replayMultiTouchActive = true;
     }
     const base = this._replayTransformCache || {
       x: this.data.replayViewX || 0,
@@ -6112,7 +6130,7 @@ Page({
     let yNew;
 
     if (hasNativeXY) {
-      // 优先使用原生返回的 x/y，避免手动公式与内核手势解算冲突导致回弹。
+      // 优先使用原生返回的 x/y，避免与内核手势解算冲突导致回弹。
       xNew = d.x;
       yNew = d.y;
     } else if (usePinchFocal) {
@@ -6145,49 +6163,40 @@ Page({
   },
 
   /**
-   * video 上方透明桥接层 bindtap：video 会吞触摸；tap 的 detail.x/y 为相对桥接层左上角，需换算为 client 再双击判定。
-   * 不在此层绑定 touchmove，避免抢走 movable-view 的拖动/捏合。
+   * 捕获阶段 touchstart：双指落下时记录捏合起始 scale，并更新双指中点（供 bindscale 焦点公式与松手居中）。
    * @param {WechatMiniprogram.TouchEvent} e
    * @returns {void}
    */
-  onReplayBridgeTap: function(e) {
-    if (!this.data.isReplaying) return;
-    const slot = parseInt((e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.slot) || '-1', 10);
-    if (slot !== this.data.replayActiveSlot) return;
-    const d = (e && e.detail) || {};
-    if (typeof d.x !== 'number' || typeof d.y !== 'number' || isNaN(d.x) || isNaN(d.y)) {
-      return;
+  onReplayPinchCaptureStart: function(e) {
+    if (!this.data.isReplaying || this._replayZoomAnimating) return;
+    const touches = (e && e.touches) || [];
+    if (touches.length < 2) return;
+    this._replayUpdatePinchFocal(touches);
+    if (!this._replayPinchSnapSession) {
+      this._replayPinchSnapSession = true;
+      const t = this._replayTransformCache || {
+        scale: this.data.replayViewScale || 1
+      };
+      this._replayPinchBaselineScale =
+        typeof t.scale === 'number' && !isNaN(t.scale) ? t.scale : 1;
     }
-    const sel = slot === 0 ? '#replayTouchBridge0' : '#replayTouchBridge1';
-    const self = this;
-    const lx = d.x;
-    const ly = d.y;
-    const q = wx.createSelectorQuery().in(this);
-    q.select(sel).boundingClientRect();
-    q.exec((res) => {
-      if (!self.data.isReplaying) return;
-      const rect = res && res[0];
-      if (!rect) return;
-      const cx = rect.left + lx;
-      const cy = rect.top + ly;
-      const now = Date.now();
-      const last = self._replayBridgeTapLast;
-      if (
-        last &&
-        now - last.ts <= REPLAY_DOUBLE_TAP_INTERVAL_MS &&
-        (cx - last.x) * (cx - last.x) + (cy - last.y) * (cy - last.y) <=
-          REPLAY_DOUBLE_TAP_SLOP_PX * REPLAY_DOUBLE_TAP_SLOP_PX
-      ) {
-        self._replayBridgeTapLast = null;
-        self._replayApplyDoubleTapZoom(cx, cy);
-        return;
-      }
-      self._replayBridgeTapLast = { x: cx, y: cy, ts: now };
-    });
   },
 
   /**
-   * movable-view 上 touchend：维护捏合尾窗（桥接层不绑 touchmove，捏合仍落在 movable-view）。
+   * 捕获阶段 touchmove：持续更新双指中点。
+   * @param {WechatMiniprogram.TouchEvent} e
+   * @returns {void}
+   */
+  onReplayPinchCaptureMove: function(e) {
+    if (!this.data.isReplaying || this._replayZoomAnimating) return;
+    const touches = (e && e.touches) || [];
+    if (touches.length >= 2) {
+      this._replayUpdatePinchFocal(touches);
+    }
+  },
+
+  /**
+   * movable-view 上 touchend：维护捏合尾窗；若本轮为双指捏合，延迟吸附档位并将捏合中心平滑移到屏幕中心。
    * @param {WechatMiniprogram.TouchEvent} e
    * @returns {void}
    */
@@ -6199,34 +6208,25 @@ Page({
       this._replayHadMultiTouchThisGesture = false;
       this._replayPinchFormulaUntil = Date.now() + REPLAY_PINCH_SCALE_TAIL_MS;
     }
+    if (touches.length === 0 && this._replayPinchSnapSession) {
+      this._replayPinchSnapSession = false;
+      const self = this;
+      this._clearReplayPinchSnapTimer();
+      this._replayPinchSnapTimer = setTimeout(() => {
+        self._replayPinchSnapTimer = null;
+        self._finishReplayPinchSnap();
+      }, REPLAY_PINCH_SNAP_DEFER_MS);
+    }
   },
 
   /**
-   * movable-view touchcancel：清空双击候选并结束捏合尾窗。
+   * movable-view touchcancel：取消待执行的捏合吸附。
    * @param {WechatMiniprogram.TouchEvent} e
    * @returns {void}
    */
   onReplayMovableTouchCancel: function(e) {
-    this._replayBridgeTapLast = null;
-    this.onReplayMovableTouchEnd(e);
-  },
-
-  /**
-   * 桥接层 touchend：与 movable-view 一致，用于捏合松手后的 scale 尾窗。
-   * @param {WechatMiniprogram.TouchEvent} e
-   * @returns {void}
-   */
-  onReplayBridgeTouchEnd: function(e) {
-    this.onReplayMovableTouchEnd(e);
-  },
-
-  /**
-   * 桥接层 touchcancel：清空双击候选并同步捏合尾窗。
-   * @param {WechatMiniprogram.TouchEvent} e
-   * @returns {void}
-   */
-  onReplayBridgeTouchCancel: function(e) {
-    this._replayBridgeTapLast = null;
+    this._replayPinchSnapSession = false;
+    this._clearReplayPinchSnapTimer();
     this.onReplayMovableTouchEnd(e);
   },
 
@@ -6242,6 +6242,17 @@ Page({
       this._replayZoomRafId = null;
     }
     this._replayZoomAnimating = false;
+  },
+
+  /**
+   * 清除捏合松手后延迟执行的 setTimeout，避免退出回放后仍改 scale。
+   * @returns {void}
+   */
+  _clearReplayPinchSnapTimer: function() {
+    if (this._replayPinchSnapTimer != null) {
+      clearTimeout(this._replayPinchSnapTimer);
+      this._replayPinchSnapTimer = null;
+    }
   },
 
   /**
@@ -6321,6 +6332,119 @@ Page({
       }
     }
     return 1;
+  },
+
+  /**
+   * 取与 s 最接近的离散缩放档位。
+   * @param {number} s
+   * @returns {number}
+   */
+  _replayNearestDiscreteLevel: function(s) {
+    let best = REPLAY_ZOOM_LEVELS[0];
+    let bestD = Infinity;
+    for (let i = 0; i < REPLAY_ZOOM_LEVELS.length; i += 1) {
+      const lv = REPLAY_ZOOM_LEVELS[i];
+      const d = Math.abs(s - lv);
+      if (d < bestD) {
+        bestD = d;
+        best = lv;
+      }
+    }
+    return best;
+  },
+
+  /**
+   * 取与 s 最接近档位在 REPLAY_ZOOM_LEVELS 中的下标。
+   * @param {number} s
+   * @returns {number}
+   */
+  _replayDiscreteLevelIndex: function(s) {
+    let bestI = 0;
+    let bestD = Infinity;
+    for (let i = 0; i < REPLAY_ZOOM_LEVELS.length; i += 1) {
+      const d = Math.abs(s - REPLAY_ZOOM_LEVELS[i]);
+      if (d < bestD) {
+        bestD = d;
+        bestI = i;
+      }
+    }
+    return bestI;
+  },
+
+  /**
+   * 根据捏合起始 scale 与松手时 scale 判定目标档位：明显张开升一档，明显捏拢降一档，否则对齐最近档。
+   * 最大档再张开时回到 1x（与双击循环一致）。
+   * @param {number} baseline 双指刚落下时的 scale
+   * @param {number} endScale 松手时（末帧）scale
+   * @returns {number}
+   */
+  _replayPickPinchSnapScale: function(baseline, endScale) {
+    const b = typeof baseline === 'number' && !isNaN(baseline) ? baseline : 1;
+    const e = typeof endScale === 'number' && !isNaN(endScale) ? endScale : 1;
+    const i0 = this._replayDiscreteLevelIndex(b);
+    const last = REPLAY_ZOOM_LEVELS.length - 1;
+    if (e > b + REPLAY_PINCH_INTENT_DELTA) {
+      if (i0 >= last) return 1;
+      return REPLAY_ZOOM_LEVELS[i0 + 1];
+    }
+    if (e < b - REPLAY_PINCH_INTENT_DELTA) {
+      if (i0 <= 0) return 1;
+      return REPLAY_ZOOM_LEVELS[i0 - 1];
+    }
+    return this._replayNearestDiscreteLevel(e);
+  },
+
+  /**
+   * 捏合手势完全结束后：吸附档位并将双指中心点对应的内容移到屏幕中心（带缓动）。
+   * @returns {void}
+   */
+  _finishReplayPinchSnap: function() {
+    if (!this.data.isReplaying || this._replayZoomAnimating) return;
+    const base = this._replayTransformCache || {
+      x: this.data.replayViewX || 0,
+      y: this.data.replayViewY || 0,
+      scale: this.data.replayViewScale || 1
+    };
+    const baseline =
+      typeof this._replayPinchBaselineScale === 'number' && !isNaN(this._replayPinchBaselineScale)
+        ? this._replayPinchBaselineScale
+        : 1;
+    const s0 = base.scale;
+    const x0 = base.x;
+    const y0 = base.y;
+    const vp = this._getReplayViewportPx();
+    const w = vp.w;
+    const h = vp.h;
+    const sTarget = this._replayPickPinchSnapScale(baseline, s0);
+    const fx =
+      typeof this._replayPinchFocalX === 'number' && !isNaN(this._replayPinchFocalX)
+        ? this._replayPinchFocalX
+        : w * 0.5;
+    const fy =
+      typeof this._replayPinchFocalY === 'number' && !isNaN(this._replayPinchFocalY)
+        ? this._replayPinchFocalY
+        : h * 0.5;
+    let x1;
+    let y1;
+    if (sTarget <= 1 + REPLAY_ZOOM_LEVEL_EPS) {
+      x1 = 0;
+      y1 = 0;
+    } else {
+      const sm = Math.max(0.001, s0);
+      const ux = (fx - x0) / sm;
+      const uy = (fy - y0) / sm;
+      x1 = w * 0.5 - ux * sTarget;
+      y1 = h * 0.5 - uy * sTarget;
+      const cl = this._clampReplayPan(x1, y1, sTarget, w, h);
+      x1 = cl.x;
+      y1 = cl.y;
+    }
+    const skip =
+      Math.abs(sTarget - s0) < REPLAY_PINCH_SNAP_EPS_SCALE &&
+      Math.abs(x1 - x0) < REPLAY_PINCH_SNAP_EPS_PX &&
+      Math.abs(y1 - y0) < REPLAY_PINCH_SNAP_EPS_PX;
+    if (skip) return;
+    this._runReplayPanZoomAnim(x0, y0, s0, x1, y1, sTarget, w, h, REPLAY_PINCH_SNAP_ANIM_MS);
   },
 
   /**
@@ -6414,6 +6538,56 @@ Page({
           w,
           h
         );
+        this._replayTransformCache = { x: fin.x, y: fin.y, scale: s1 };
+        this.setData({
+          replayViewScale: s1,
+          replayViewX: fin.x,
+          replayViewY: fin.y
+        });
+        return;
+      }
+      this.setData({
+        replayViewScale: s,
+        replayViewX: cl.x,
+        replayViewY: cl.y
+      });
+      this._replayZoomRafId = wx.requestAnimationFrame(tick);
+    };
+    this._replayZoomRafId = wx.requestAnimationFrame(tick);
+  },
+
+  /**
+   * 同步插值 x/y/scale（ease-out），用于捏合松手后的档位吸附 + 居中，避免突变闪屏。
+   * @param {number} x0
+   * @param {number} y0
+   * @param {number} s0
+   * @param {number} x1
+   * @param {number} y1
+   * @param {number} s1
+   * @param {number} w
+   * @param {number} h
+   * @param {number} durationMs
+   * @returns {void}
+   */
+  _runReplayPanZoomAnim: function(x0, y0, s0, x1, y1, s1, w, h, durationMs) {
+    this._cancelReplayZoomAnim();
+    this._replayZoomAnimating = true;
+    const dur =
+      typeof durationMs === 'number' && durationMs > 0 ? durationMs : REPLAY_PINCH_SNAP_ANIM_MS;
+    const tStart = Date.now();
+    const tick = () => {
+      const elapsed = Date.now() - tStart;
+      const p = dur <= 0 ? 1 : Math.min(1, elapsed / dur);
+      const e = this._easeOutCubic(p);
+      const s = s0 + (s1 - s0) * e;
+      const x = x0 + (x1 - x0) * e;
+      const y = y0 + (y1 - y0) * e;
+      const cl = this._clampReplayPan(x, y, s, w, h);
+      this._replayTransformCache = { x: cl.x, y: cl.y, scale: s };
+      if (p >= 1) {
+        this._replayZoomRafId = null;
+        this._replayZoomAnimating = false;
+        const fin = this._clampReplayPan(x1, y1, s1, w, h);
         this._replayTransformCache = { x: fin.x, y: fin.y, scale: s1 };
         this.setData({
           replayViewScale: s1,
