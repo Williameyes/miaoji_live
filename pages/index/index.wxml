@@ -136,8 +136,15 @@
             data-matchid="{{item.matchId}}"
           >
             <view class="video-placeholder">
+              <!-- VK 等带位图封面：用 image 缩略图（video 首帧常黑 + poster 兼容性差）；点击仍走 videoPath 播放 -->
+              <image
+                wx:if="{{video.videoPath && video.videoPoster}}"
+                class="cover"
+                mode="aspectFill"
+                src="{{video.videoPoster}}"
+              />
               <video
-                wx:if="{{video.videoPath}}"
+                wx:elif="{{video.videoPath}}"
                 class="cover"
                 src="{{video.videoPath}}"
                 controls="{{false}}"

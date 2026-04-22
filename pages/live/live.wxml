@@ -1,20 +1,30 @@
 <page-meta background-color="#000000" background-color-top="#000000" background-color-bottom="#000000" page-style="background: #000000;"></page-meta>
 <wxs module="c" src="./live.wxs"></wxs>
 <view class="container landscape {{isRecording ? 'container--rec-performance' : ''}}">
-  <!-- Level 0: 全屏相机预览 -->
+  <!-- Level 0: 全屏相机预览（系统相机保持活跃，承担 startRecord 与 onCameraFrame 吐帧） -->
   <camera
     wx:if="{{cameraMounted && liveStreamAllowed}}"
     device-position="back" 
     flash="off" 
-    frame-size="max" 
+    frame-size="{{enhanceCanvasVisible ? 'large' : 'max'}}" 
     resolution="high"
-    class="camera-bg"
+    class="camera-bg {{enhanceCanvasVisible ? 'camera-bg--under-enhance' : ''}}"
     mode="normal"
     zoom="{{zoom}}"
     bindstop="onCameraStop"
     binderror="onCameraError"
     bindinitdone="onCameraInit">
   </camera>
+
+  <!-- Level 0.1: WebGL 锐化画布；pointer-events:none 使手势层继续生效
+       - 原生家族（standard/strong）：canvas 在 camera 之上，CSS opacity 0.01 把 camera 抹掉
+       - VK 家族（enhanceMode==='vk'）：camera 已 unmount，canvas 独自承载预览
+       - 判定条件不再强依赖 cameraMounted，以支持 VK 模式独立运转 -->
+  <canvas
+    wx:if="{{liveStreamAllowed && enhanceCanvasVisible}}"
+    type="webgl"
+    id="enhanceCanvas"
+    class="enhance-canvas"></canvas>
 
   <!-- 硬恢复间隙：静态低透明度遮罩（无文字、无 Toast、不盖 live 预览逻辑上的循环 video） -->
   <view wx:if="{{showRecoveryVeil}}" class="recovery-veil" catchtouchmove="noopCatchMove">
@@ -413,6 +423,33 @@
 
     <!-- 遮罩：点击关闭（z-index 低于面板，不拦截面板内点击） -->
     <view class="drawer-mode-backdrop" catchtap="closeAllDrawers"></view>
+
+    <!-- 高清渲染调试工具条：仅白名单机型显示；抽屉打开时常驻顶部，便于对比画质 + 观测 FPS -->
+    <view wx:if="{{enhanceWhitelisted}}" class="enhance-mode-toolbar {{enhanceVkTransitioning ? 'enhance-mode-toolbar--transitioning' : ''}}" catchtap="stopEnhanceToolbarBubble">
+      <view class="enhance-mode-status">
+        <text class="enhance-mode-k">画质</text>
+        <text class="enhance-mode-v">{{c.enhanceModeLabel(enhanceMode)}} · {{enhanceFpsText}}</text>
+      </view>
+      <view class="enhance-mode-group">
+        <view
+          class="enhance-mode-btn {{enhanceMode === 'off' ? 'enhance-mode-btn--active' : ''}}"
+          catchtap="onEnhanceModePick" data-mode="off"
+        >关闭</view>
+        <view
+          class="enhance-mode-btn {{enhanceMode === 'standard' ? 'enhance-mode-btn--active' : ''}}"
+          catchtap="onEnhanceModePick" data-mode="standard"
+        >标准</view>
+        <view
+          class="enhance-mode-btn {{enhanceMode === 'strong' ? 'enhance-mode-btn--active' : ''}}"
+          catchtap="onEnhanceModePick" data-mode="strong"
+        >高性能</view>
+        <view
+          wx:if="{{enhanceVkSupported}}"
+          class="enhance-mode-btn enhance-mode-btn--vk {{enhanceMode === 'vk' ? 'enhance-mode-btn--active' : ''}}"
+          catchtap="onEnhanceModePick" data-mode="vk"
+        >VK</view>
+      </view>
+    </view>
 
     <!-- 左侧：比赛卡片列表（与右侧高光缩略图完全一致的矩形） -->
     <view class="left-drawer" catchtap="stopLeftDrawerBubbling">

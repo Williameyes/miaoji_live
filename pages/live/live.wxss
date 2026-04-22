@@ -21,12 +21,13 @@ page {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
+/* 与 WebGL 画布均用 100vw×100vh，避免 110% 溢出 + cover 放大边缘畸变；几何与系统 window 一致 */
 .camera-bg {
-  width: 110vw;
-  height: 110vh;
+  width: 100vw;
+  height: 100vh;
   position: fixed;
-  top: -5vh;
-  left: -5vw;
+  top: 0;
+  left: 0;
   object-fit: cover;
   background-color: #000000;
   z-index: 0;
@@ -35,10 +36,10 @@ page {
 /* 硬恢复相机卸载间隙：静态遮罩（pointer-events:none，不挡状态灯与记分 UI） */
 .recovery-veil {
   position: fixed;
-  top: -5vh;
-  left: -5vw;
-  width: 110vw;
-  height: 110vh;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
   z-index: 1;
   pointer-events: none;
   background: #050608;
@@ -172,10 +173,10 @@ page {
 /* 透明手势层 */
 .gesture-layer {
   position: absolute;
-  top: -5vh;
-  left: -5vw;
-  width: 110vw;
-  height: 110vh;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
   z-index: 5; /* 位于相机之上，UI 之下 */
 }
 
@@ -1823,4 +1824,113 @@ page {
   .ae-sun-rail--dock-right {
     right: 1.5%;
   }
+}
+
+/* ===== Enhance render canvas =====
+ * WebGL 锐化画布：全屏覆盖在 <camera> 之上；指针事件透传给 .gesture-layer
+ * 仅在 render-pipeline 启动成功后由 data.enhanceCanvasVisible 触发进入视图树。
+ */
+/* 增强渲染画布：与 .camera-bg 同尺寸/位置，顶点 shader 做 object-fit:cover 与原生预览对齐。 */
+.enhance-canvas {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 1;
+  background: transparent;
+}
+
+/* 开启增强时 <camera> 只承担 onCameraFrame 吐帧，视觉上被 canvas 替代。
+   微信原生层级在部分机型（尤其 iOS）对 z-index 不敏感，直接把 camera
+   视觉上近乎透明，强制让 canvas 成为用户眼中的预览层；
+   opacity 不能是 0（部分基础库会把"完全不可见"的 camera 判死，停止 onCameraFrame）。 */
+.camera-bg--under-enhance {
+  opacity: 0.01;
+}
+
+/* ===== Enhance render debug toolbar =====
+ * 抽屉（drawerMode===1）顶部常驻胶囊条；展示当前档位 + FPS，提供 3 档切换。
+ * 仅在机型通过白名单（enhanceWhitelisted）时进入视图树。
+ */
+.enhance-mode-toolbar {
+  position: fixed;
+  top: 14rpx;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 220;
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  padding: 5rpx 8rpx 5rpx 10rpx;
+  background: rgba(18, 20, 26, 0.78);
+  border: 1rpx solid rgba(255, 255, 255, 0.12);
+  border-radius: 999rpx;
+  pointer-events: auto;
+  box-shadow: 0 2rpx 14rpx rgba(0, 0, 0, 0.28);
+  max-width: 96vw;
+  box-sizing: border-box;
+}
+.enhance-mode-status {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+  padding: 0 2rpx 0 4rpx;
+  min-width: 0;
+  max-width: 38vw;
+}
+.enhance-mode-k {
+  font-size: 12rpx;
+  color: rgba(255, 255, 255, 0.5);
+  letter-spacing: 0.5rpx;
+}
+.enhance-mode-v {
+  font-size: 16rpx;
+  color: rgba(255, 255, 255, 0.9);
+  /* FPS 数字等宽对齐，跳动时不抖 */
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.enhance-mode-group {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 2rpx;
+  padding: 1rpx;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 999rpx;
+  flex-shrink: 0;
+}
+.enhance-mode-btn {
+  font-size: 16rpx;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.62);
+  padding: 4rpx 12rpx;
+  border-radius: 999rpx;
+  line-height: 1.2;
+}
+.enhance-mode-btn--active {
+  color: #fff;
+  background: linear-gradient(135deg, #2563EB, #7C3AED);
+  box-shadow: 0 2rpx 10rpx rgba(99, 102, 241, 0.38);
+}
+
+/* VK 模式按钮：独立家族，用橙红色调以视觉区隔，暗示"破坏性动作"（会暂停精彩回放）。 */
+.enhance-mode-btn--vk {
+  color: #fca5a5;
+  border: 1rpx solid rgba(239, 68, 68, 0.38);
+}
+.enhance-mode-btn--vk.enhance-mode-btn--active {
+  color: #fff;
+  background: linear-gradient(135deg, #E64340, #F97316);
+  box-shadow: 0 2rpx 10rpx rgba(230, 67, 64, 0.45);
+  border-color: transparent;
+}
+
+/* 切换中的 toolbar：禁用点击 + 降低透明度，防止 orchestrator 执行期间用户连点乱序 */
+.enhance-mode-toolbar--transitioning {
+  opacity: 0.55;
+  pointer-events: none;
 }

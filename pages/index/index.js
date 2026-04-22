@@ -177,6 +177,22 @@ const EXTENDED_COLORS = [
   '#22D3EE', '#06B6D4', '#0891B2', '#0E7490', '#155E75', '#164E63'
 ];
 
+/**
+ * 从封面字段推导 `<video poster>`：仅 wxfile/http(s) 等位图路径可用。
+ * `defaultCover` 为深色 SVG data URL，作 poster 时部分基础库会整层盖住解码后的视频画面（缩略图发灰/发黑）。
+ *
+ * @param {string} cover 已含默认回退后的展示用 cover（可能与 defaultCover 相同）
+ * @param {string} defaultCover 与 data.defaultCover 一致，用于判「无独立封面」
+ * @returns {string} 可作 poster 则返回路径，否则空串（勿绑 poster）
+ */
+function videoPosterFromCover(cover, defaultCover) {
+  const c = typeof cover === 'string' ? cover.trim() : '';
+  if (!c || c === defaultCover) return '';
+  /** 任意 data:（含 SVG）作 poster 均可能触发原生层异常遮罩 */
+  if (c.indexOf('data:') === 0) return '';
+  return c;
+}
+
 Page({
   data: {
     statusBarHeight: 0,
@@ -746,6 +762,7 @@ Page({
         const dateStr = this.formatDate(match.createdAt);
         const sortedClips = matchClips.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
         const clipTotal = sortedClips.length;
+        const dc = this.data.defaultCover;
         groupedList.push({
           matchId: match.id,
           matchTitle: `${match.teamA.name || 'A'} VS ${match.teamB.name || 'B'}`,
@@ -753,16 +770,20 @@ Page({
           scoreInfo: `${match.teamA.score} : ${match.teamB.score}`,
           dateStr,
           clipCount: clipTotal,
-          videos: sortedClips.map((v, idx) => ({
-            ...v,
-            timeText:
-              (v.timeText || this.formatTime(v.createdAt)) +
-              (v.exportedToAlbum ? ' · 已导出相册' : ''),
-            cover: v.cover || this.data.defaultCover,
-            videoPath: v.replaySegment || (v.segments && v.segments[0]) || '',
-            videoIndex: idx + 1,
-            videoTotal: clipTotal
-          }))
+          videos: sortedClips.map((v, idx) => {
+            const cover = v.cover || dc;
+            return {
+              ...v,
+              timeText:
+                (v.timeText || this.formatTime(v.createdAt)) +
+                (v.exportedToAlbum ? ' · 已导出相册' : ''),
+              cover,
+              videoPoster: videoPosterFromCover(cover, dc),
+              videoPath: v.replaySegment || (v.segments && v.segments[0]) || '',
+              videoIndex: idx + 1,
+              videoTotal: clipTotal
+            };
+          })
         });
       }
     });
@@ -778,20 +799,25 @@ Page({
           .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
         if (orphanVideos.length === 0) return;
         const orphanTotal = orphanVideos.length;
+        const dcOr = this.data.defaultCover;
         groupedList.push({
           matchId: id,
           matchTitle: `${firstClip.matchName || '已删比赛'} (遗留)`,
           clipCount: orphanTotal,
-          videos: orphanVideos.map((v, idx) => ({
-            ...v,
-            timeText:
-              (v.timeText || this.formatTime(v.createdAt)) +
-              (v.exportedToAlbum ? ' · 已导出相册' : ''),
-            cover: v.cover || this.data.defaultCover,
-            videoPath: v.replaySegment || (v.segments && v.segments[0]) || '',
-            videoIndex: idx + 1,
-            videoTotal: orphanTotal
-          }))
+          videos: orphanVideos.map((v, idx) => {
+            const cover = v.cover || dcOr;
+            return {
+              ...v,
+              timeText:
+                (v.timeText || this.formatTime(v.createdAt)) +
+                (v.exportedToAlbum ? ' · 已导出相册' : ''),
+              cover,
+              videoPoster: videoPosterFromCover(cover, dcOr),
+              videoPath: v.replaySegment || (v.segments && v.segments[0]) || '',
+              videoIndex: idx + 1,
+              videoTotal: orphanTotal
+            };
+          })
         });
       }
     });

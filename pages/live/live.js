@@ -5,6 +5,8 @@ const { API_PATH_CLIENT_DIAGNOSTIC_LOG } = require('../../config/api.js');
 const { parseExpireAtToMs } = require('../../utils/referral.js');
 const storageEst = require('../../utils/file-storage-estimate.js');
 const clipsStorage = require('../../utils/miaoxie-clips-storage.js');
+const renderPipelineMod = require('../../utils/render/render-pipeline.js');
+const vkCanvasRecorderMod = require('../../utils/render/vk-canvas-recorder.js');
 const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
 
 /** 回放缩放离散档位（捏合吸附 / 双击等共用，至 3x 后下一轮回到 1x） */
@@ -53,6 +55,13 @@ const AE_BRACKET_RPX = 56;
  * 仅对焦方框+下方提示的预估额外高度（rpx），靠底边夹紧时用。
  */
 const AE_CLUSTER_EXTRA_BELOW_RPX = 40;
+/** 卸原生 camera 后再起 VKSession 的等待（ms）；iOS 句柄释放更慢，过短易黑屏 / start 失败 */
+const VK_BOOT_DELAY_MS_ANDROID = 760;
+const VK_BOOT_DELAY_MS_IOS = 980;
+/** 从 VK 切回原生：rebuild 回调后额外延迟再 mount camera（ms），给 GL/VK 释放留窗 */
+const VK_POST_TEARDOWN_MOUNT_EXTRA_MS_IOS = 220;
+/** 画质档位连点防抖（ms），覆盖 VK 与相机重建重叠窗口 */
+const ENHANCE_SWITCH_GUARD_MS = 1000;
 
 Page({
   data: {
@@ -208,7 +217,38 @@ Page({
     vipGateTitle: '',
     vipGateSubtext: '',
     vipGateMinor: '',
-    vipGateRetryVisible: false
+    vipGateRetryVisible: false,
+
+    /**
+     * 增强渲染：WebGL 锐化画布是否进入视图树。由 render-pipeline 根据模式驱动，
+     * 关闭时回退为仅 <camera> 的原生预览。
+     */
+    enhanceCanvasVisible: false,
+    /**
+     * 增强渲染当前档位：'off' | 'lite' | 'standard' | 'strong' | 'vk'；由 render-pipeline 写回。
+     * 注意：'vk' 属于独立家族，此时 <camera> 已 unmount、rolling 已停；切出时须通过
+     * `switchToNonVkMode` orchestrator 回到原生家族。
+     */
+    enhanceMode: 'off',
+    /**
+     * 机型是否通过增强渲染白名单（由 app.js 冷启动评估）；决定调试工具条是否展示。
+     * 即使当前 mode==='off'，白名单机型仍可从工具条中手动切回 standard/strong。
+     */
+    enhanceWhitelisted: false,
+    /**
+     * 本机是否支持 VK 模式；由 app.js 冷启动用 `evaluateVkSupportCached` 判定。
+     * 为 true 时工具条显示"VK 模式"按钮；进入 VK 需用户确认（精彩回放会暂停）。
+     */
+    enhanceVkSupported: false,
+    /**
+     * VK 模式切换过程中的占位态（stop rolling → unmount camera → VK start），
+     * 用于置灰工具条与屏蔽其他手势；orchestrator 结束后复位。
+     */
+    enhanceVkTransitioning: false,
+    /**
+     * 抽屉打开时工具条展示的实时 FPS 文案（如 "28 fps"）；未启用时显示 "— fps"。
+     */
+    enhanceFpsText: '— fps'
   },
 
   /**
@@ -398,7 +438,7 @@ Page({
         }
 
         this.rebuildCameraComponent(() => {
-          const nextCtx = wx.createCameraContext();
+          const nextCtx = wx.createCameraContext(this);
           this.setData(
             {
               liveEntitlementChecking: false,
@@ -556,12 +596,15 @@ Page({
    */
   _liveCoreOnShowAfterEntitlement: function() {
     /**
-     * 页实例未销毁时再次进入（如切 tab 后再 navigateTo 本页）不会走 onLoad，
-     * 若仍保留 _liveStorageEntryModalShown / _liveSevereKickoffPruneDone，severe 弹窗与 kickoff 清理会被误挡。
-     * 每次拉起直播核心前重置，使本轮 kickoff 探测行为与首次进入一致。
+     * kickoff 级 severe：`{@link _liveSevereKickoffPruneDone}` 避免同一会话内重复做 rolling 急救；
+     * `{@link _liveStorageEntryModalShown}` 仅控制 Modal，勿在每次 onShow 清零 Modal 门闩（否则反复打断）。
+     * 注意：已保存高光不在 kickoff 路径自动按条删除（见 `freeRollingFileStorageAggressive`）。
      */
-    this._liveStorageEntryModalShown = false;
-    this._liveSevereKickoffPruneDone = false;
+    /**
+     * 权益通过后立刻用首页/他处已写入的 globalData 试弹一次严重水位框，勿等待 stopRecord 链路上的异步探测
+     * （stopRecord 偶发迟回调会导致 kickoff 探测永远不跑）。
+     */
+    this.maybeToastFileStoragePressureFromGlobal();
     this.rollingActive = true;
     this.rollingSessionId += 1;
     const sessionIdForRolling = this.rollingSessionId;
@@ -621,10 +664,13 @@ Page({
     };
     this.stopRollingRecording(() => {
       this.ensureRollingDir()
+        /**
+         * 必须先于 clearStaleRollingFiles 探测：否则入场即清空 _rolling 缓冲，
+         * 沙盒总占用被低估，severe 弹窗与水位逻辑可能永远不触发。
+         */
+        .then(() => this.probeLiveSandboxStorage('kickoff', true))
         .then(() => this.clearStaleRollingFiles())
         .finally(() => {
-          /** 开播前探测本机文件占用，与首页估算互补；不阻塞相机 kickoff */
-          this.probeLiveSandboxStorage('kickoff', true);
           kickoffRolling();
         });
     });
@@ -636,6 +682,29 @@ Page({
     } else {
       setTimeout(() => this.updateTeamGroupWidth(true), 0);
     }
+    /**
+     * 小程序进后台再回前台（如切换抖音开播）后，部分机型 camera 组件不触发 bindinitdone；
+     * 超时仍未就绪则强制重建并绑定本页 CameraContext。
+     */
+    if (this._cameraShowInitWatchTimer) {
+      clearTimeout(this._cameraShowInitWatchTimer);
+      this._cameraShowInitWatchTimer = null;
+    }
+    const selfWatch = this;
+    this._cameraShowInitWatchTimer = setTimeout(() => {
+      selfWatch._cameraShowInitWatchTimer = null;
+      if (!selfWatch._livePageVisible || !selfWatch.data.liveStreamAllowed) return;
+      if (!selfWatch.data.cameraMounted || selfWatch.data.isRecovering) return;
+      if (selfWatch._cameraInitDone) return;
+      selfWatch.appendHealthLog('camera_init_watchdog_rebuild', {});
+      selfWatch.rebuildCameraComponent(() => {
+        if (!selfWatch._livePageVisible || !selfWatch.data.liveStreamAllowed) return;
+        selfWatch.setData({
+          cameraMounted: true,
+          cameraContext: wx.createCameraContext(selfWatch)
+        });
+      });
+    }, 2600);
   },
 
   // 辅助变量
@@ -694,6 +763,15 @@ Page({
   /** 保存高光期间若用户点了回放，暂存条目，待 {@link endHighlightSaving} 后再真正进入回放 */
   _replayDeferredItem: null,
   _highlightRequestLock: false,
+  /**
+   * 画质档位切换防抖截止时间（ms 时间戳）；此前拦截工具条连点，减轻 VK 与 camera 互切黑屏。
+   * @type {number}
+   */
+  _enhanceModeSwitchGuardUntil: 0,
+  /** 原生画质：零帧自愈后应 setMode 的目标档位（off|lite|standard|strong） */
+  _pendingEnhanceModeAfterRecover: null,
+  /** {@link onEnhanceModePick} 安排的零帧检测定时器 */
+  _enhanceZeroFrameRecoverTimer: null,
   segmentBuffer: [],
   rollingActive: false,
   rollingSessionId: 0,
@@ -758,6 +836,16 @@ Page({
   onLoad: function() {
     /** 相机 bindinitdone 完成前禁止 startRecord，否则部分机型预览一直黑屏 */
     this._cameraInitDone = false;
+    // 机型白名单：由 app.js 冷启动评估；live 页只读镜像一份到 data，驱动调试工具条可见性。
+    this.setData({
+      enhanceWhitelisted: !!(app.globalData && app.globalData.enableEnhanceRender),
+      // VK 入口与增强白名单绑定：若因熔断或机型未过白名单导致 enableEnhanceRender=false，
+      // 则 VK 入口一并隐藏（否则 VK 切出→standard 时 _maybeBootEnhanceRender 会 early return，
+      // 导致相机重建后无锐化、_pendingEnhanceModeAfterVk 永不被消费）。
+      enhanceVkSupported: !!(app.globalData
+        && app.globalData.vkModeSupported
+        && app.globalData.enableEnhanceRender)
+    });
     this._rollingKickoffTimer = null;
     this._opsToolsTimer = null;
     this._opsAckTimer = null;
@@ -773,6 +861,8 @@ Page({
     this._lastPeriodicSevereClipPruneAt = 0;
     /** 紧急释放中，上次执行高光实体删最旧的时间戳。 */
     this._lastEmergencyClipPruneAt = 0;
+    /** onShow 后若相机 init 回调丢失，超时强制重建（见 _liveCoreOnShowAfterEntitlement）。 */
+    this._cameraShowInitWatchTimer = null;
     this.rollingFsBusy = false;
     this._rollingPersistInFlight = 0;
     this._postUserLocalPersistCooldownMs = 0;
@@ -1384,9 +1474,24 @@ Page({
 
   // 相机初始化完成回调
   onCameraInit: function(e) {
+    if (this._cameraShowInitWatchTimer) {
+      clearTimeout(this._cameraShowInitWatchTimer);
+      this._cameraShowInitWatchTimer = null;
+    }
     const maxZoom = e.detail.maxZoom || 5;
-    this.setData({ maxZoom: maxZoom });
-    this.updateZoom(1.0);
+    this.setData({ maxZoom: maxZoom, zoom: 1 });
+    /**
+     * VK 模式下尚无可用 cameraContext.setZoom；若仍调 updateZoom(1) 会被 vk 守卫拦截。
+     * 原生相机就绪后强制 1x，避免 VK 期间误改的 zoom 残留导致「人变矮/拉伸」错觉。
+     */
+    if (this.data.enhanceMode !== 'vk') {
+      if (this.data.cameraContext && this.data.cameraContext.setZoom) {
+        try {
+          this.data.cameraContext.setZoom({ zoom: 1 });
+        } catch (ez) {}
+      }
+      this.maybeSchedulePostZoomSilentFocus();
+    }
     if (this._rollingKickoffTimer) {
       clearTimeout(this._rollingKickoffTimer);
       this._rollingKickoffTimer = null;
@@ -1452,7 +1557,405 @@ Page({
     }
     this._insertConflictRecovering = false;
     this.appendHealthLog('camera_init', { maxZoom: maxZoom });
+    // 增强渲染（灰度）：仅在 app.globalData.enableEnhanceRender=true 时拉起；
+    // 与 rolling startRecord 通过 onCameraFrame 共存，不占用相机独占权。
+    this._maybeBootEnhanceRender();
     this.tryStartRollingWhenCameraReady();
+  },
+
+  /**
+   * 按 app.globalData.enableEnhanceRender 决定是否拉起增强渲染管线。
+   * 幂等：存在旧管线先销毁再重建（硬恢复后调用同样安全）。
+   * @returns {void}
+   */
+  _maybeBootEnhanceRender: function() {
+    var enabled = !!(app.globalData && app.globalData.enableEnhanceRender);
+    if (!enabled) return;
+    if (!this.data.cameraContext) return;
+    if (this._renderPipeline) {
+      try { this._renderPipeline.destroy(); } catch (eDestroy) {}
+      this._renderPipeline = null;
+    }
+    var cssW = 375;
+    var cssH = 667;
+    try {
+      var si = wx.getSystemInfoSync();
+      cssW = si.windowWidth || cssW;
+      cssH = si.windowHeight || cssH;
+    } catch (eInfo) {}
+    var self = this;
+    // 先挂 canvas 节点（wx:if），下一 tick 再 init，确保节点已进入渲染树。
+    this.setData({ enhanceCanvasVisible: true }, function() {
+      var pipeline = renderPipelineMod.createRenderPipeline();
+      self._renderPipeline = pipeline;
+      pipeline.init({
+        page: self,
+        cameraContext: self.data.cameraContext,
+        canvasSelector: '#enhanceCanvas',
+        cssW: cssW,
+        cssH: cssH,
+        // VK 分支保留接口但本轮不启用：保守优先，避免与 startRecord 冲突
+        preferVk: false
+      }).then(function() {
+        if (self._renderPipeline !== pipeline) return;
+        var initial = (app.globalData && app.globalData.enhanceInitialMode) || 'standard';
+        pipeline.setMode(initial, { reason: 'user', force: true });
+        pipeline.start();
+        self.appendHealthLog('enhance_render_boot', {
+          mode: pipeline.getMode(),
+          reason: (app.globalData && app.globalData.enhanceWhitelistReason) || '',
+          device: (app.globalData && app.globalData.enhanceDeviceTag) || ''
+        });
+        // 若刚从 VK 切回，消费 pending 目标档位（可能是 'off' / 'standard' / 'strong'）
+        if (typeof self._applyPendingEnhanceModeAfterVk === 'function') {
+          self._applyPendingEnhanceModeAfterVk();
+        }
+        if (typeof self._applyPendingEnhanceModeAfterRecover === 'function') {
+          self._applyPendingEnhanceModeAfterRecover();
+        }
+      }).catch(function(err) {
+        self._pendingEnhanceModeAfterRecover = null;
+        self.appendHealthLog('enhance_render_boot_fail', {
+          errMsg: (err && err.message) || String(err),
+          reason: (app.globalData && app.globalData.enhanceWhitelistReason) || '',
+          device: (app.globalData && app.globalData.enhanceDeviceTag) || ''
+        });
+        self.setData({ enhanceCanvasVisible: false, enhanceMode: 'off' });
+        if (self._renderPipeline === pipeline) {
+          try { pipeline.destroy(); } catch (eD) {}
+          self._renderPipeline = null;
+        }
+      });
+    });
+  },
+
+  /**
+   * 销毁增强渲染管线并隐藏 canvas；幂等，未启用时无副作用。
+   * 必须在 onHide / onUnload / rebuildCameraComponent 调用，避免旧 cameraContext 的
+   * onCameraFrame listener / VKSession / GL 资源悬挂。
+   * @returns {void}
+   */
+  _teardownEnhanceRender: function() {
+    this._cleanupVkCanvasHighlightRecording('teardown_enhance');
+    if (this._renderPipeline) {
+      try { this._renderPipeline.destroy(); } catch (e) {}
+      this._renderPipeline = null;
+    }
+    if (this.data.enhanceCanvasVisible || this.data.enhanceMode !== 'off') {
+      this.setData({ enhanceCanvasVisible: false, enhanceMode: 'off' });
+    }
+  },
+
+  /**
+   * 启动 VK 独立管线（VKSession v2）。
+   *
+   * 前置条件（调用方保证）：
+   *  - 已 stopRollingRecording 并等待其回调完成（否则 startRecord 与 VK 会抢相机）
+   *  - cameraMounted 已置 false 且 setData 回调已经触发（原生 camera 层已卸）
+   *
+   * 失败处理：
+   *  - VK init 抛错 → toast + 自动 orchestrate 切回 standard（重新 mount camera + 重启 rolling）
+   *  - VK 运行中 onVkDegrade 触发（FPS<20 / stalled / no frame）→ 同上
+   *
+   * @returns {void}
+   */
+  _bootVkPipeline: function() {
+    if (!this.data.enhanceVkSupported) return;
+    var self = this;
+    var cssW = 375, cssH = 667;
+    try {
+      var si = wx.getSystemInfoSync();
+      cssW = si.windowWidth || cssW;
+      cssH = si.windowHeight || cssH;
+    } catch (eInfo) {}
+    // 清理旧管线
+    if (this._renderPipeline) {
+      try { this._renderPipeline.destroy(); } catch (eD) {}
+      this._renderPipeline = null;
+    }
+    this.setData({ enhanceCanvasVisible: true }, function() {
+      var pipeline = renderPipelineMod.createRenderPipeline();
+      self._renderPipeline = pipeline;
+      pipeline.init({
+        page: self,
+        cameraContext: null,
+        canvasSelector: '#enhanceCanvas',
+        cssW: cssW,
+        cssH: cssH,
+        sourceKind: 'vk',
+        onVkDegrade: function(info) {
+          self._cleanupVkCanvasHighlightRecording('vk_degrade');
+          // VK 家族自动降级：orchestrator 切回 standard；向用户 toast 说明
+          self.appendHealthLog('vk_auto_degrade', info);
+          var reason = info && info.reason;
+          var errMsg = info && info.err;
+          var title;
+          if (reason === 'vk_fatal') {
+            // 运行中帧源出事：走 human 文案分派
+            title = self._vkErrorToHuman(errMsg || '');
+          } else {
+            // FPS / stalled 触发的软降级
+            title = 'VK 帧率不稳，已回到标准模式';
+          }
+          try { console.warn('[live][vk] auto-degrade', info); } catch (_) {}
+          wx.showToast({
+            title: title,
+            icon: 'none',
+            duration: 3000
+          });
+          self._orchestrateSwitchFromVk('standard');
+          setTimeout(function() {
+            try { self.updatePipelineHealth(); } catch (eH) {}
+          }, 500);
+        }
+      }).then(function() {
+        if (self._renderPipeline !== pipeline) return;
+        pipeline.setMode('vk', { reason: 'user', force: true });
+        pipeline.start();
+        try {
+          if (typeof pipeline.setVkZoom === 'function') {
+            pipeline.setVkZoom(self.data.zoom || 1);
+          }
+        } catch (eZ0) {}
+        self.setData({ enhanceVkTransitioning: false });
+        self.appendHealthLog('vk_boot_ok', {
+          device: (app.globalData && app.globalData.enhanceDeviceTag) || '',
+          reason: (app.globalData && app.globalData.vkModeReason) || ''
+        });
+      }).catch(function(err) {
+        var msg = (err && (err.message || err.errMsg)) || String(err);
+        var code = (err && err.errCode) ? String(err.errCode) : '';
+        self.appendHealthLog('vk_boot_fail', {
+          errMsg: msg,
+          errCode: code,
+          device: (app.globalData && app.globalData.enhanceDeviceTag) || ''
+        });
+        try { console.error('[live][vk] boot failed', err); } catch (_) {}
+        try { pipeline.destroy(); } catch (eD) {}
+        if (self._renderPipeline === pipeline) self._renderPipeline = null;
+        // 失败 → 自动切回 standard（重建 camera + 重启 rolling）
+        self._orchestrateSwitchFromVk('standard');
+        // 给用户看真实失败环节（create/start/frame），便于报告定位；不阻塞 orchestrator。
+        var human = self._vkErrorToHuman(msg);
+        wx.showToast({
+          title: human,
+          icon: 'none',
+          duration: 3200
+        });
+      });
+    });
+  },
+
+  /**
+   * orchestrator：从原生家族（off/standard/strong）切入 VK。
+   *
+   * 流程：
+   *   1. 二次确认（showModal）
+   *   2. setData enhanceVkTransitioning=true
+   *   3. 停 rolling（stopRollingRecording 回调）
+   *   4. 销毁原有增强管线（原生 onCameraFrame listener）
+   *   5. rebuildCameraComponent with cameraMounted=false（占用方式：借道 _cameraRebuildLock）
+   *   6. 等待 camera unmount + 硬件释放（一般 400ms 冷却）
+   *   7. _bootVkPipeline() 启 VKSession
+   *
+   * 任何一步失败：置 false、toast、自动回滚到 standard（包含重新启 rolling）。
+   *
+   * @returns {void}
+   */
+  _orchestrateSwitchToVk: function() {
+    if (!this.data.enhanceVkSupported) return;
+    if (this.data.enhanceMode === 'vk') return;
+    if (this.data.enhanceVkTransitioning) return;
+    var self = this;
+    wx.showModal({
+      title: 'VK 高性能模式',
+      content: 'VK 仅支持双指数字放大（约 1×～上限），无法像原生相机那样切换超广角。切换期间可能短暂黑屏。确认进入？',
+      confirmText: '进入 VK',
+      cancelText: '取消',
+      confirmColor: '#E64340',
+      success: function(res) {
+        if (!res || !res.confirm) return;
+        self._enhanceModeSwitchGuardUntil = Date.now() + ENHANCE_SWITCH_GUARD_MS;
+        self.setData({ enhanceVkTransitioning: true });
+        self.appendHealthLog('vk_switch_in_begin', {});
+        // 先停 rolling；stopRollingRecording 是幂等的，完成后回调内继续。
+        self.stopRollingRecording(function() {
+          // 销毁原生增强管线
+          self._teardownEnhanceRender();
+          // 卸 camera（利用 rebuildCameraComponent 的锁语义，但我们不重新 mount）
+          self.setData({
+            cameraMounted: false,
+            cameraContext: null,
+            isRecording: false
+          }, function() {
+            // 留足时间让原生 camera 句柄释放，避免 VKSession.start 与硬件争用黑屏。
+            var bootDelay = VK_BOOT_DELAY_MS_ANDROID;
+            try {
+              var siVk = wx.getSystemInfoSync();
+              if (siVk && siVk.platform === 'ios') bootDelay = VK_BOOT_DELAY_MS_IOS;
+            } catch (eVkD) {}
+            setTimeout(function() {
+              if (!self._livePageVisible) {
+                // 中途切后台 → 直接取消
+                self.setData({ enhanceVkTransitioning: false });
+                return;
+              }
+              self._bootVkPipeline();
+            }, bootDelay);
+          });
+        });
+      }
+    });
+  },
+
+  /**
+   * orchestrator：从 VK 家族切回原生家族（off/standard/strong）。
+   *
+   * 流程：
+   *   1. 立即销毁 VK pipeline（停 VKSession / 释放 GL）
+   *   2. setData enhanceVkTransitioning=true
+   *   3. rebuildCameraComponent → 重新 mount 原生 <camera>
+   *   4. onCameraInit 里走原有 _maybeBootEnhanceRender + tryStartRollingWhenCameraReady
+   *   5. 首次 camera 就绪后调 pipeline.setMode(targetMode)
+   *
+   * 稳定性策略：
+   *  - 若 targetMode='off'，则仅走 camera 重建 + 重启 rolling，不启 WebGL 管线
+   *  - 若 targetMode ∈ {standard, strong}，等 _maybeBootEnhanceRender 后由它自己 setMode
+   *
+   * @param {'off'|'standard'|'strong'} targetMode
+   */
+  _orchestrateSwitchFromVk: function(targetMode) {
+    if (this.data.enhanceMode !== 'vk' && !this.data.enhanceVkTransitioning) {
+      // 已不在 VK 模式且没在切换中：仅做普通 setMode
+      if (typeof this.setEnhanceMode === 'function') this.setEnhanceMode(targetMode);
+      return;
+    }
+    var self = this;
+    self._enhanceModeSwitchGuardUntil = Date.now() + ENHANCE_SWITCH_GUARD_MS;
+    self.setData({ enhanceVkTransitioning: true });
+    self.appendHealthLog('vk_switch_out_begin', { targetMode: targetMode });
+    // 销毁 VK 管线
+    self._teardownEnhanceRender();
+    // 记下 VK 切出目标，供 onCameraInit 里 boot 后调用 setMode
+    self._pendingEnhanceModeAfterVk = targetMode;
+    // 重建 camera 组件（rebuildCameraComponent 里会调 _teardownEnhanceRender + mount=false）
+    // 然后我们在其回调里 setData({cameraMounted:true}) 触发新组件渲染与 bindinitdone
+    self.rebuildCameraComponent(function() {
+      var mountExtra = 0;
+      try {
+        var siMount = wx.getSystemInfoSync();
+        if (siMount && siMount.platform === 'ios') mountExtra = VK_POST_TEARDOWN_MOUNT_EXTRA_MS_IOS;
+      } catch (eM) {}
+      setTimeout(function() {
+        self.setData({ cameraMounted: true, cameraContext: wx.createCameraContext(self) }, function() {
+          // camera 的 onCameraInit 会触发 tryStartRollingWhenCameraReady 与 _maybeBootEnhanceRender
+          // 这里只负责把转场标志撤掉；真正的 setMode 在 _maybeBootEnhanceRender 完成后被 _applyPendingEnhanceModeAfterVk 消费
+          self.setData({ enhanceVkTransitioning: false });
+        });
+      }, mountExtra);
+    });
+  },
+
+  /**
+   * 在 _maybeBootEnhanceRender 成功后被调用，消费 _pendingEnhanceModeAfterVk 并 setMode。
+   * 若目标是 'off'，直接销毁刚启动的增强管线并隐藏 canvas。
+   * @returns {void}
+   */
+  _applyPendingEnhanceModeAfterVk: function() {
+    var target = this._pendingEnhanceModeAfterVk;
+    if (!target) return;
+    this._pendingEnhanceModeAfterVk = null;
+    if (target === 'off') {
+      this._teardownEnhanceRender();
+      return;
+    }
+    if (this._renderPipeline && typeof this._renderPipeline.setMode === 'function') {
+      try { this._renderPipeline.setMode(target, { reason: 'user', force: true }); } catch (e) {}
+    }
+  },
+
+  /**
+   * 零帧自愈重建管线成功后，将档位设回用户所选（非 VK）。
+   * @returns {void}
+   */
+  _applyPendingEnhanceModeAfterRecover: function() {
+    var target = this._pendingEnhanceModeAfterRecover;
+    if (!target) return;
+    this._pendingEnhanceModeAfterRecover = null;
+    if (target === 'off') {
+      this._teardownEnhanceRender();
+      return;
+    }
+    if (this._renderPipeline && typeof this._renderPipeline.setMode === 'function') {
+      try { this._renderPipeline.setMode(target, { reason: 'user', force: true }); } catch (e) {}
+    }
+  },
+
+  /**
+   * 把 vk 管线内部抛出的 error message 翻译成一句面向用户的 toast 文案。
+   * frame-source.js 里统一前缀为 [vk:create|start|frame]，这里按前缀分派。
+   * @param {string} msg
+   * @returns {string}
+   */
+  _vkErrorToHuman: function(msg) {
+    if (!msg) return 'VK 模式启动失败，已回到标准模式';
+    if (msg.indexOf('[vk:create]') !== -1) {
+      return 'VK 初始化失败，本机暂不支持，已回到标准';
+    }
+    if (msg.indexOf('[vk:start]') !== -1) {
+      // session.start 常见：相机未释放干净、权限、机型不在 VK v2 白名单
+      return 'VK 启动被相机拒绝，已回到标准（请退出重进）';
+    }
+    if (msg.indexOf('getCameraBuffer') !== -1) {
+      return 'VK 帧通道不兼容当前微信，已回到标准';
+    }
+    if (msg.indexOf('no_frame_streak') !== -1) {
+      return 'VK 未拿到帧，已回到标准（相机占用中）';
+    }
+    if (msg.indexOf('[vk:frame]') !== -1) {
+      return 'VK 帧处理异常，已回到标准';
+    }
+    return 'VK 模式启动失败，已回到标准';
+  },
+
+  /**
+   * 动态切换档位（调试入口 / 未来设置页入口）。
+   * 管线尚未拉起且非 'off' 时会尝试首次 boot；失败由 pipeline 内部回退到 off。
+   * @param {'off'|'lite'|'standard'|'strong'} mode
+   * @returns {void}
+   */
+  setEnhanceMode: function(mode) {
+    if (this._cameraRebuildLock) {
+      try {
+        wx.showToast({ title: '相机重建中，请稍候', icon: 'none', duration: 1200 });
+      } catch (eT) {}
+      return;
+    }
+    /**
+     * 「关闭」必须销毁整条增强管线：WXML 用 wx:if 控制 canvas，仅 stop 帧源会卸掉节点导致 GL 丢失，
+     * 再点标准/高性能会黑屏且互切无效。
+     */
+    if (mode === 'off') {
+      this._teardownEnhanceRender();
+      return;
+    }
+    if (!this._renderPipeline) {
+      this._maybeBootEnhanceRender();
+      return;
+    }
+    this._renderPipeline.setMode(mode, { reason: 'user', force: true });
+  },
+
+  /**
+   * 由 render-pipeline 在档位落到 off（含自动降级/异常）后下一 tick 调用；须比对实例，避免误杀用户新起的管线。
+   *
+   * @param {Object|null} pipeRef createRenderPipeline() 返回的同一引用
+   * @returns {void}
+   */
+  _deferTeardownEnhanceForPipeline: function(pipeRef) {
+    if (!this._livePageVisible) return;
+    if (!pipeRef || this._renderPipeline !== pipeRef) return;
+    this._teardownEnhanceRender();
   },
 
   /**
@@ -1579,6 +2082,8 @@ Page({
     }
     this._cameraRebuildLock = true;
     this._cameraInitDone = false;
+    // 重建 camera 必然产生新的 cameraContext；先销毁旧增强管线，避免 listener / GL 资源悬挂
+    this._teardownEnhanceRender();
     this.setData({
       cameraMounted: false,
       cameraContext: null,
@@ -1868,10 +2373,21 @@ Page({
   },
 
   updateZoom: function(zoomVal) {
+    /** VK 与原生均不低于 1×（VKSession 无系统变焦接口，见微信 VisionKit 文档）。 */
     const actualZoom = Math.max(1, Math.min(this.data.maxZoom, zoomVal));
-    
+
     // 只在数值发生实质变化时更新，减少 setData 频率
     if (Math.abs(this.data.zoom - actualZoom) < 0.01) return;
+
+    if (this.data.enhanceMode === 'vk') {
+      this.setData({ zoom: actualZoom });
+      if (this._renderPipeline && typeof this._renderPipeline.setVkZoom === 'function') {
+        try {
+          this._renderPipeline.setVkZoom(actualZoom);
+        } catch (eZ) {}
+      }
+      return;
+    }
 
     this.setData({
       zoom: actualZoom
@@ -2164,6 +2680,11 @@ Page({
     }
     this._postZoomFocusTimer = setTimeout(() => {
       this._postZoomFocusTimer = null;
+      // 捏合过程会导致短时帧时升高（UI setData 密集），统一先告知渲染管线暂停一次自动降级评估，
+      // 再下发静默中心对焦；避免「变焦→误判掉帧→被拉到 lite」。
+      if (this._renderPipeline && typeof this._renderPipeline.pauseAutoDegradeOnce === 'function') {
+        this._renderPipeline.pauseAutoDegradeOnce();
+      }
       this.silentRefocusGeometricCenter();
     }, AE_POST_ZOOM_SILENT_FOCUS_MS);
   },
@@ -2465,7 +2986,6 @@ Page({
       clipsStorage.mergeDefaultClipBucketIfTargetEmpty(String(cid || '').trim());
     } catch (eMerge) {}
     this.appendHealthLog('page_show', {});
-    this.maybeToastFileStoragePressureFromGlobal();
 
     wx.setKeepScreenOn({
       keepScreenOn: true,
@@ -2484,26 +3004,42 @@ Page({
   },
 
   /**
-   * 进入直播时检查存储水位——Toast 已移除，严重水位由 probeLiveSandboxStorage kickoff 弹一次 Modal 处理。
-   * 保留此函数签名以兼容 onShow 调用点，内部已无操作。
+   * 权益通过后、异步沙盒遍历完成前：若 globalData 已有首页等写入的严重水位估算，则立刻弹 Modal。
+   * 依赖 `fileStorageEstimate.clipBytes` / `userDataBytes`（与首页一致）；直播页 probe 也会写回这两字段。
+   *
    * @returns {void}
    */
-  maybeToastFileStoragePressureFromGlobal: function() {},
+  maybeToastFileStoragePressureFromGlobal: function() {
+    try {
+      if (this._liveStorageEntryModalShown) return;
+      const est = app.globalData && app.globalData.fileStorageEstimate;
+      if (!est || est.healthLevel !== 'severe') return;
+      const at = typeof est.at === 'number' ? est.at : 0;
+      /** 过久则避免用陈旧首页数据误导，交给 kickoff probe 为准 */
+      if (!at || Date.now() - at > 10 * 60 * 1000) return;
+      const cb = est.clipBytes;
+      const ub = est.userDataBytes;
+      if (typeof cb !== 'number' || typeof ub !== 'number') return;
+      const hint = storageEst.getClipStorageHealthHint(cb, ub);
+      if (hint.level !== 'severe') return;
+      this.maybeNotifyLiveStoragePressure(hint, 'kickoff');
+    } catch (eToast) {}
+  },
 
   /**
    * 异步估算 USER_DATA_PATH 与高光片段体积，写入健康日志并可选提示用户。
    * @param {string} [trigger] kickoff | periodic 等
    * @param {boolean} [force] 为 true 时跳过短时间防抖（开播首次探测）
-   * @returns {void}
+   * @returns {Promise<void>}
    */
   probeLiveSandboxStorage: function(trigger, force) {
     const t = typeof trigger === 'string' ? trigger : '';
     const now = Date.now();
     if (!force && this._lastLiveStorageProbeAt && now - this._lastLiveStorageProbeAt < 25000) {
-      return;
+      return Promise.resolve();
     }
     this._lastLiveStorageProbeAt = now;
-    Promise.all([
+    return Promise.all([
       storageEst.estimateClipSegmentsBytesFromStorage(),
       storageEst.estimateUserDataPathUsageBytes()
     ])
@@ -2522,6 +3058,8 @@ Page({
         try {
           if (app.globalData) {
             app.globalData.fileStorageEstimate = {
+              clipBytes,
+              userDataBytes: userBytes,
               clipMb: hint.clipMb,
               totalMb: hint.totalMb,
               healthLevel: hint.level,
@@ -2544,6 +3082,7 @@ Page({
           const gap = 8 * 60 * 1000;
           if (!this._lastPeriodicSevereClipPruneAt || n - this._lastPeriodicSevereClipPruneAt >= gap) {
             this._lastPeriodicSevereClipPruneAt = n;
+            this.pruneHighlightClipsWithInvalidFiles('live_periodic_severe_orphan_first');
             const pr = this.pruneOldestHighlightClipsFromStorage(2, 'live_periodic_severe');
             if (pr > 0) {
               this.appendHealthLog('live_periodic_severe_prune', { pruned: pr });
@@ -2556,8 +3095,8 @@ Page({
 
   /**
    * 按档位提示存储压力。
-   * - severe：在 kickoff 探测且本页尚未在本轮展示过 Modal 时弹出（门闩在
-   *   {@link _liveCoreOnShowAfterEntitlement} 开头重置）；periodic 不弹，避免直播中反复打断。
+   * - severe：在 kickoff 探测且本页尚未展示过 Modal 时弹出（门闩 {@link _liveStorageEntryModalShown}
+   *   仅在 {@link onLoad} 置 false；showModal 失败会解锁）；periodic 不弹，避免直播中反复打断。
    * - warn：静默记录日志，不弹任何 Toast，避免打断直播。
    * @param {{ clipMb: number, totalMb: number, level: string, hintText: string }} hint
    * @param {string} [trigger] kickoff | periodic 等，由 probeLiveSandboxStorage 传入
@@ -2571,20 +3110,37 @@ Page({
       if (trigger !== 'kickoff') return;
       if (this._liveStorageEntryModalShown) return;
       this._liveStorageEntryModalShown = true;
-      try {
-        wx.showModal({
-          title: '存储空间紧张',
-          content: `${hint.hintText}\n`,
-          showCancel: true,
-          cancelText: '知道了',
-          confirmText: '下载并清空',
-          success: (res) => {
-            if (res.confirm) {
-              this.onDownloadHighlightsToAlbumAndClearCache();
+      const openStorageModal = () => {
+        try {
+          wx.showModal({
+            title: '存储空间紧张',
+            content: `${hint.hintText}\n`,
+            showCancel: true,
+            cancelText: '知道了',
+            confirmText: '下载并清空',
+            success: (res) => {
+              if (res.confirm) {
+                this.onDownloadHighlightsToAlbumAndClearCache();
+              }
+            },
+            fail: () => {
+              /** API 失败时不闩死，允许后续 kickoff 探测或 global 路径再试 */
+              this._liveStorageEntryModalShown = false;
             }
-          }
-        });
-      } catch (eM) {}
+          });
+        } catch (eM) {
+          this._liveStorageEntryModalShown = false;
+        }
+      };
+      try {
+        if (wx.nextTick) {
+          wx.nextTick(openStorageModal);
+        } else {
+          setTimeout(openStorageModal, 0);
+        }
+      } catch (eSched) {
+        openStorageModal();
+      }
     }
   },
 
@@ -2755,6 +3311,10 @@ Page({
       clearTimeout(this._insertCameraRetryTimer);
       this._insertCameraRetryTimer = null;
     }
+    if (this._cameraShowInitWatchTimer) {
+      clearTimeout(this._cameraShowInitWatchTimer);
+      this._cameraShowInitWatchTimer = null;
+    }
     if (this._relaunchPressTimer) {
       clearTimeout(this._relaunchPressTimer);
       this._relaunchPressTimer = null;
@@ -2806,6 +3366,13 @@ Page({
       clearTimeout(this._aeFocusLockFlashTimer);
       this._aeFocusLockFlashTimer = null;
     }
+    if (this._enhanceZeroFrameRecoverTimer) {
+      clearTimeout(this._enhanceZeroFrameRecoverTimer);
+      this._enhanceZeroFrameRecoverTimer = null;
+    }
+    this._pendingEnhanceModeAfterRecover = null;
+    this._teardownEnhanceRender();
+    this.stopEnhanceFpsPolling();
     this.setData({
       cameraMounted: false,
       cameraContext: null,
@@ -2816,6 +3383,10 @@ Page({
   },
 
   onHide: function() {
+    if (this._cameraShowInitWatchTimer) {
+      clearTimeout(this._cameraShowInitWatchTimer);
+      this._cameraShowInitWatchTimer = null;
+    }
     this._livePageVisible = false;
     /** 切后台不打断保存，但取消「保存完成后自动回放」，避免隐藏态误开全屏回放 */
     this._replayDeferredItem = null;
@@ -2866,6 +3437,13 @@ Page({
     }
     this.appendHealthLog('page_hide', {});
     this._cameraInitDone = false;
+    if (this._enhanceZeroFrameRecoverTimer) {
+      clearTimeout(this._enhanceZeroFrameRecoverTimer);
+      this._enhanceZeroFrameRecoverTimer = null;
+    }
+    this._pendingEnhanceModeAfterRecover = null;
+    this._teardownEnhanceRender();
+    this.stopEnhanceFpsPolling();
     this.setData({ cameraMounted: false, cameraContext: null, isRecording: false });
     this.stopRollingRecording();
   },
@@ -2910,6 +3488,9 @@ Page({
     let health = 'ok';
     let text = 'PAUSE';
     let actionable = false;
+    /** VK 模式故意停 rolling / 无分段，不得判为采集中断 ERR。 */
+    const vkOrVkTransition =
+      this.data.enhanceMode === 'vk' || !!this.data.enhanceVkTransitioning;
     if (this._needManualRelaunch) {
       if (
         this.data.pipelineHealth !== 'warn'
@@ -2942,6 +3523,9 @@ Page({
     if (this.data.isRecovering) {
       health = 'recovering';
       text = '...';
+    } else if (vkOrVkTransition) {
+      health = 'ok';
+      text = 'VK';
     } else if (captureLikelyBlocked) {
       health = 'warn';
       text = 'ERR';
@@ -3143,8 +3727,8 @@ Page({
       // 超时后二次强制重建一次，避免 iOS 在 stop 后偶发不再触发 initdone。
       this.rebuildCameraComponent(() => {
         this.setData({ cameraMounted: true }, () => {
-          const bindCameraContext = () => {
-            const nextCameraContext = wx.createCameraContext();
+            const bindCameraContext = () => {
+            const nextCameraContext = wx.createCameraContext(this);
             this.setData({ cameraContext: nextCameraContext, isRecording: false });
           };
           if (wx.nextTick) wx.nextTick(bindCameraContext);
@@ -3207,7 +3791,7 @@ Page({
         this.lastSegmentAt = Date.now();
         this.setData({ cameraMounted: true }, () => {
           const bindCameraContext = () => {
-            const nextCameraContext = wx.createCameraContext();
+            const nextCameraContext = wx.createCameraContext(this);
             this.setData({ cameraContext: nextCameraContext, isRecording: false }, () => {
               this.rollingActive = true;
               this.rollingSessionId += 1;
@@ -3236,7 +3820,7 @@ Page({
       this._recoveryFabLongPressConsumed = false;
       return;
     }
-    if (this.data.pipelineHealth === 'recording') {
+    if (this.data.pipelineHealth === 'recording' || this.data.enhanceMode === 'vk') {
       this.requestHighlightCapture();
       return;
     }
@@ -3863,12 +4447,29 @@ Page({
       }
     };
     if (this.data.cameraContext && this.data.isRecording) {
+      let stopFinished = false;
+      const stopSafetyMs = 3200;
+      const safetyTimer = setTimeout(() => {
+        if (stopFinished) return;
+        stopFinished = true;
+        try {
+          this.appendHealthLog('stop_record_kickoff_timeout', {});
+        } catch (eLog) {}
+        finish();
+      }, stopSafetyMs);
+      const finishFromStop = () => {
+        if (stopFinished) return;
+        stopFinished = true;
+        clearTimeout(safetyTimer);
+        finish();
+      };
       try {
         this.data.cameraContext.stopRecord({
-          success: finish,
-          fail: finish
+          success: finishFromStop,
+          fail: finishFromStop
         });
       } catch (e) {
+        clearTimeout(safetyTimer);
         finish();
       }
     } else {
@@ -4853,6 +5454,88 @@ Page({
   },
 
   /**
+   * 移除「索引存在但视频文件已全部不可用」的高光（缺失或过小），优先于按时间删最旧。
+   *
+   * @param {string} [reason] 诊断日志
+   * @returns {number} 删除条数
+   */
+  pruneHighlightClipsWithInvalidFiles: function(reason) {
+    const why = typeof reason === 'string' ? reason : '';
+    const fs = wx.getFileSystemManager();
+    const clipsMap = clipsStorage.readClipsMapSafe();
+    if (!clipsMap) return 0;
+    /**
+     * @param {string} p
+     * @returns {boolean} true 表示不可播放
+     */
+    const isPathUnusable = (p) => {
+      if (!p || typeof p !== 'string') return true;
+      try {
+        const st = fs.statSync(p);
+        const sz = st && typeof st.size === 'number' ? st.size : 0;
+        return sz < 64;
+      } catch (eStat) {
+        return true;
+      }
+    };
+    /**
+     * @param {Record<string, unknown>} it
+     * @returns {boolean}
+     */
+    const itemIsDead = (it) => {
+      if (!it || typeof it !== 'object') return false;
+      /** @type {string[]} */
+      const paths = [];
+      const segs = it.segments;
+      if (Array.isArray(segs)) {
+        segs.forEach((seg) => {
+          if (seg && typeof seg === 'string') paths.push(seg);
+        });
+      }
+      const rp = it.replaySegment;
+      if (rp && typeof rp === 'string') paths.push(rp);
+      if (paths.length === 0) return true;
+      return paths.every(isPathUnusable);
+    };
+    let removed = 0;
+    Object.keys(clipsMap).forEach((matchId) => {
+      const list = clipsMap[matchId];
+      if (!Array.isArray(list)) return;
+      for (let i = list.length - 1; i >= 0; i -= 1) {
+        const it = list[i];
+        if (!itemIsDead(it)) continue;
+        const toUnlink = new Set();
+        const segs2 = it.segments;
+        if (Array.isArray(segs2)) {
+          segs2.forEach((p) => {
+            if (p && typeof p === 'string') toUnlink.add(p);
+          });
+        }
+        if (it.replaySegment && typeof it.replaySegment === 'string') {
+          toUnlink.add(it.replaySegment);
+        }
+        toUnlink.forEach((p) => {
+          try {
+            fs.unlinkSync(p);
+          } catch (eUn) {}
+        });
+        list.splice(i, 1);
+        removed += 1;
+      }
+    });
+    if (removed > 0) {
+      clipsStorage.writeClipsMapSafe(clipsMap);
+      this.appendHealthLog('live_pruned_dead_highlights', { removed, reason: why });
+      try {
+        if (typeof this.refreshDrawerHighlights === 'function') {
+          this.refreshDrawerHighlights();
+        }
+      } catch (eR) {}
+    }
+    return removed;
+  },
+
+  /**
    * 评估 Storage 水位并执行分级治理。
    * @returns {number}
    */
@@ -5027,10 +5710,17 @@ Page({
     let clipPrune = 0;
     if (r === 'persist_io_fail' || r === 'phase7_user_save_exhausted') {
       clipPrune = 4;
-    } else if (r === 'live_storage_severe_kickoff') {
-      clipPrune = 2;
     }
+    /**
+     * 不在「入场 severe kickoff」自动删已保存高光：用户每次从首页进直播都会走 onLoad，
+     * `_liveSevereKickoffPruneDone` 会重置，若此处 clipPrune=2 会反复每次少 2 条直到触及 minKeep。
+     * 严重水位仅清理 rolling 临时层 + 孤儿文件；索引高光交给用户点「下载并清空」或 persist 真失败路径。
+     */
     if (clipPrune > 0) {
+      const deadRm = this.pruneHighlightClipsWithInvalidFiles(r + '_orphan_first');
+      if (deadRm > 0) {
+        this.appendHealthLog('rolling_clip_prune_dead_first', { removed: deadRm, reason: r });
+      }
       const nowPr = Date.now();
       const emergencyPruneGapMs = 15 * 60 * 1000;
       if (
@@ -5167,6 +5857,7 @@ Page({
     if (!segments.length || !task.id) {
       return Promise.resolve();
     }
+    const coverTempPath = typeof task.coverTempPath === 'string' ? task.coverTempPath : '';
     const fs = wx.getFileSystemManager();
     const dir = this.getHighlightDir();
     const copyOne = (srcPath, idx) => new Promise((resolve) => {
@@ -5200,12 +5891,21 @@ Page({
         }
         const list = Array.isArray(clipsMap[matchId]) ? clipsMap[matchId] : [];
         const idx = list.findIndex((it) => it && String(it.id) === String(task.id));
-        if (idx >= 0) {
+        /**
+         * VK 等场景封面为临时 jpg，与视频一并拷入高光目录，避免 temp 回收后首页缩略图失效。
+         * @param {string} coverDest
+         * @returns {void}
+         */
+        const applyClipUpdate = (coverDest) => {
+          if (idx < 0) return;
           if (savedPaths.length > 0) {
             const replaySegment = savedPaths[savedPaths.length - 1] || savedPaths[0] || '';
             list[idx].segments = savedPaths;
             list[idx].replaySegment = replaySegment;
             list[idx].status = 'materialized';
+            if (coverDest) {
+              list[idx].cover = coverDest;
+            }
           } else {
             list[idx].status = 'failed';
           }
@@ -5213,6 +5913,17 @@ Page({
           if (!clipsStorage.writeClipsMapSafe(clipsMap)) {
             this.appendHealthLog('highlight_materialize_clips_write_fail', { id: task.id });
           }
+        };
+        if (savedPaths.length > 0 && coverTempPath && fs.copyFile) {
+          const coverDest = `${dir}/${task.id}_cover.jpg`;
+          fs.copyFile({
+            srcPath: coverTempPath,
+            destPath: coverDest,
+            success: () => applyClipUpdate(coverDest),
+            fail: () => applyClipUpdate('')
+          });
+        } else {
+          applyClipUpdate('');
         }
         if (!savedPaths.length) {
           const retryCount = Number(task.retryCount || 0);
@@ -5247,17 +5958,322 @@ Page({
   },
 
   /**
+   * 停止 VK 画布 MediaRecorder 并解除管线 hook（页面切换 / 管线销毁 / 降级时调用）。
+   * @param {string} [reason]
+   * @returns {void}
+   */
+  _cleanupVkCanvasHighlightRecording: function(reason) {
+    if (this._vkHighlightFpsTimer) {
+      clearInterval(this._vkHighlightFpsTimer);
+      this._vkHighlightFpsTimer = null;
+    }
+    if (this._vkHighlightStopTimer) {
+      clearTimeout(this._vkHighlightStopTimer);
+      this._vkHighlightStopTimer = null;
+    }
+    if (this._renderPipeline && typeof this._renderPipeline.setVkRecordingHook === 'function') {
+      try {
+        this._renderPipeline.setVkRecordingHook(null);
+      } catch (eH) {}
+    }
+    var rec = this._vkCanvasRecorder;
+    this._vkCanvasRecorder = null;
+    if (rec && typeof rec.destroy === 'function') {
+      try {
+        rec.destroy();
+      } catch (eD) {}
+    }
+    if (reason) {
+      try {
+        this.appendHealthLog('vk_canvas_highlight_cleanup', { reason: reason });
+      } catch (eL) {}
+    }
+  },
+
+  /**
+   * VK 模式：用 wx.createMediaRecorder(enhanceCanvas) 录制「已锐化」画布，时长约 {@link highlightPlaybackWindowMs}。
+   * @param {{id:string,now:number,createdAt:number,startSegNo:number,matchName:string,matchId:string,cover:string}} meta
+   * @returns {void}
+   */
+  _requestVkCanvasHighlightCapture: function(meta) {
+    var self = this;
+    var recorder = vkCanvasRecorderMod.createVkCanvasRecorder();
+    if (!recorder.isApiSupported()) {
+      wx.showToast({
+        title: '当前模式仅支持高清预览直播，无法保存高光视频',
+        icon: 'none',
+        duration: 3200
+      });
+      this.appendHealthLog('vk_highlight_recorder_api_missing', {});
+      this.endHighlightSaving();
+      return;
+    }
+    var pipeline = this._renderPipeline;
+    if (!pipeline || typeof pipeline.getCanvasNode !== 'function') {
+      this.appendHealthLog('vk_highlight_no_pipeline', {});
+      this.endHighlightSaving();
+      return;
+    }
+    var canvasNode = pipeline.getCanvasNode();
+    if (!canvasNode || !canvasNode.width || !canvasNode.height) {
+      wx.showToast({
+        title: '当前模式仅支持高清预览直播，无法保存高光视频',
+        icon: 'none',
+        duration: 3200
+      });
+      this.appendHealthLog('vk_highlight_no_canvas_node', {});
+      this.endHighlightSaving();
+      return;
+    }
+    this._cleanupVkCanvasHighlightRecording('pre_start');
+    this._vkCanvasRecorder = recorder;
+    var recordMs = Math.max(5000, this.highlightPlaybackWindowMs || 8000);
+    var durationSec = Math.max(5, Math.ceil(recordMs / 1000) + 2);
+    recorder
+      .start(canvasNode, {
+        durationSec: durationSec,
+        fps: 24,
+        videoBitsPerSecond: 1800
+      })
+      .then(function() {
+        if (self._vkCanvasRecorder !== recorder) {
+          try {
+            recorder.destroy();
+          } catch (e0) {}
+          return;
+        }
+        pipeline.setVkRecordingHook(function() {
+          return recorder.beforeDraw();
+        });
+        /**
+         * MediaRecorder 产出的 mp4 在列表 `<video>` 首帧常为黑屏；首页用 poster / 封面依赖真实位图。
+         * 在 hook 已挂载后短延迟再 toTempFilePath，确保至少一帧已绘制。
+         */
+        var scheduleAfterCover = function() {
+          self._vkHighlightFpsTimer = setInterval(function() {
+            var snap = pipeline.snapshot();
+            if (snap && recorder) {
+              recorder.noteRenderFps(snap.avgFps);
+            }
+          }, 1000);
+          self.startHighlightSaveProgressAnim(meta.now, meta.now + recordMs);
+          self._vkHighlightStopTimer = setTimeout(function() {
+            self._finalizeVkCanvasHighlightMeta(meta, recorder);
+          }, recordMs);
+          self.appendHealthLog('vk_canvas_highlight_record_start', {
+            recordMs: recordMs,
+            w: canvasNode.width,
+            h: canvasNode.height
+          });
+        };
+        setTimeout(function() {
+          try {
+            if (typeof wx.canvasToTempFilePath !== 'function') {
+              scheduleAfterCover();
+              return;
+            }
+            var dw = canvasNode.width;
+            var dh = canvasNode.height;
+            if (dw > 480 || dh > 480) {
+              var s = 480 / Math.max(dw, dh);
+              dw = Math.max(160, Math.round(dw * s));
+              dh = Math.max(90, Math.round(dh * s));
+            }
+            wx.canvasToTempFilePath(
+              {
+                canvas: canvasNode,
+                destWidth: dw,
+                destHeight: dh,
+                fileType: 'jpg',
+                quality: 0.85,
+                success: function(res) {
+                  if (res && res.tempFilePath) {
+                    meta.cover = res.tempFilePath;
+                  }
+                },
+                fail: function() {
+                  /* 无封面则仍依赖首页 poster 的 defaultCover */
+                },
+                complete: function() {
+                  scheduleAfterCover();
+                }
+              },
+              self
+            );
+          } catch (eSnap) {
+            scheduleAfterCover();
+          }
+        }, 72);
+      })
+      .catch(function(err) {
+        self._vkCanvasRecorder = null;
+        try {
+          recorder.destroy();
+        } catch (e1) {}
+        wx.showToast({
+          title: '当前模式仅支持高清预览直播，无法保存高光视频',
+          icon: 'none',
+          duration: 3200
+        });
+        self.appendHealthLog('vk_canvas_highlight_record_start_fail', {
+          err: (err && err.message) || String(err)
+        });
+        self.endHighlightSaving();
+      });
+  },
+
+  /**
+   * VK 画布录制结束：stop MediaRecorder → temp 路径走既有 finalizeHighlight。
+   * @param {{id:string,createdAt:number,startSegNo:number,matchName:string,matchId:string,cover:string}} meta
+   * @param {{stop:function():Promise,destroy:function():void}} recorder
+   * @returns {void}
+   */
+  _finalizeVkCanvasHighlightMeta: function(meta, recorder) {
+    var self = this;
+    if (this._vkHighlightStopTimer) {
+      clearTimeout(this._vkHighlightStopTimer);
+      this._vkHighlightStopTimer = null;
+    }
+    if (this._vkHighlightFpsTimer) {
+      clearInterval(this._vkHighlightFpsTimer);
+      this._vkHighlightFpsTimer = null;
+    }
+    if (this._renderPipeline && typeof this._renderPipeline.setVkRecordingHook === 'function') {
+      try {
+        this._renderPipeline.setVkRecordingHook(null);
+      } catch (eH) {}
+    }
+    this._vkCanvasRecorder = null;
+    var r = recorder;
+    if (!r || typeof r.stop !== 'function') {
+      this.endHighlightSaving();
+      return;
+    }
+    /**
+     * stop 前再截一帧作封面：录制末帧画面已稳定；依赖 VK WebGL preserveDrawingBuffer，否则仍为黑图。
+     * @returns {void}
+     */
+    var vkStopOnce = false;
+    var runStopAndFinalize = function() {
+      if (vkStopOnce) return;
+      vkStopOnce = true;
+      r.stop()
+        .then(function(res) {
+          var path = res && res.tempFilePath ? String(res.tempFilePath) : '';
+          try {
+            if (r.destroy) r.destroy();
+          } catch (e2) {}
+          if (!path) {
+            wx.showToast({ title: '高光导出失败', icon: 'none' });
+            self.endHighlightSaving();
+            return;
+          }
+          var syntheticSegNo = 900000 + (Date.now() % 100000);
+          var plan = self.buildVkCanvasHighlightPlan(path);
+          self.finalizeHighlight({
+            id: meta.id,
+            createdAt: meta.createdAt,
+            startSegNo: meta.startSegNo,
+            matchName: meta.matchName,
+            matchId: meta.matchId,
+            cover: meta.cover || self.data.defaultCover,
+            finalizing: false,
+            sourceSegNo: syntheticSegNo,
+            preSegments: plan.preSegments,
+            postSegments: [],
+            replayInitialTimeSec: plan.replayInitialTimeSec,
+            replayUseChain: plan.replayUseChain,
+            replayMediaStopAtSec: plan.replayMediaStopAtSec,
+            replayChainPart2StopAtSec: plan.replayChainPart2StopAtSec
+          });
+        })
+        .catch(function(err) {
+          try {
+            if (r.destroy) r.destroy();
+          } catch (e3) {}
+          wx.showToast({ title: '高光导出失败', icon: 'none' });
+          self.appendHealthLog('vk_canvas_highlight_stop_fail', {
+            err: (err && err.message) || String(err)
+          });
+          self.endHighlightSaving();
+        });
+    };
+    var pipeFin = self._renderPipeline;
+    var nodeFin =
+      pipeFin && typeof pipeFin.getCanvasNode === 'function' ? pipeFin.getCanvasNode() : null;
+    if (nodeFin && typeof wx.canvasToTempFilePath === 'function') {
+      var dwF = nodeFin.width;
+      var dhF = nodeFin.height;
+      if (dwF > 480 || dhF > 480) {
+        var sF = 480 / Math.max(dwF, dhF);
+        dwF = Math.max(160, Math.round(dwF * sF));
+        dhF = Math.max(90, Math.round(dhF * sF));
+      }
+      try {
+        wx.canvasToTempFilePath(
+          {
+            canvas: nodeFin,
+            destWidth: dwF,
+            destHeight: dhF,
+            fileType: 'jpg',
+            quality: 0.88,
+            success: function(res) {
+              if (res && res.tempFilePath) {
+                meta.cover = res.tempFilePath;
+              }
+            },
+            fail: function() {
+              runStopAndFinalize();
+            },
+            complete: function() {
+              runStopAndFinalize();
+            }
+          },
+          self
+        );
+      } catch (eTf) {
+        runStopAndFinalize();
+      }
+    } else {
+      runStopAndFinalize();
+    }
+  },
+
+  /**
+   * 单文件画布高光回放计划（整段播放）。
+   * @param {string} tempPath
+   * @returns {{
+   *   preSegments: string[],
+   *   replayInitialTimeSec: number,
+   *   replayUseChain: boolean,
+   *   replayMediaStopAtSec: null,
+   *   replayChainPart2StopAtSec: null
+   * }}
+   */
+  buildVkCanvasHighlightPlan: function(tempPath) {
+    return {
+      preSegments: [tempPath],
+      replayInitialTimeSec: 0,
+      replayUseChain: false,
+      replayMediaStopAtSec: null,
+      replayChainPart2StopAtSec: null
+    };
+  },
+
+  /**
    * 保存高光：由右下角状态钮在管线为「录制中」（界面显示 REC）时单击触发。
    * 录制中时不主动 stopRecord，仅登记元数据，待「自然分段」完成后再 finalize，避免额外 encoder 切换。
    * 非录制中则使用缓冲内最近已完成 rolling 段；逻辑回放窗口见 {@link highlightPlaybackWindowMs}。
+   * VK 模式：改为 Canvas MediaRecorder，见 {@link _requestVkCanvasHighlightCapture}。
    * 不额外拍照封面，避免与录制并行增加相机压力与闪屏。
    */
   requestHighlightCapture: function() {
     if (this._highlightRequestLock || this.data.isSavingHighlight) {
       return;
     }
-    if (this.data.isRecovering || this._recoveryLock || !this._cameraInitDone) {
-      this.appendHealthLog('highlight_skip_camera_not_ready', {});
+    const vkHighlight = this.data.enhanceMode === 'vk';
+    if (this.data.isRecovering || this._recoveryLock || (!vkHighlight && !this._cameraInitDone)) {
+      this.appendHealthLog('highlight_skip_camera_not_ready', { vk: vkHighlight });
       return;
     }
     if (this.data.drawerMode > 0) {
@@ -5299,6 +6315,19 @@ Page({
     const startSegNo = this.segmentCounter;
     const consumed = this.lastHighlightConsumedSegNo || 0;
     const freshEntry = this.pickBestRollingEntryAfterConsumed(consumed);
+
+    if (vkHighlight) {
+      this._requestVkCanvasHighlightCapture({
+        id: id,
+        now: now,
+        createdAt: now,
+        startSegNo: startSegNo,
+        matchName: matchName,
+        matchId: currentMatchId,
+        cover: this.data.defaultCover
+      });
+      return;
+    }
 
     if (this.data.isRecording) {
       const sessionId = this.rollingSessionId;
@@ -5466,10 +6495,15 @@ Page({
     list.unshift(item);
     wx.setStorageSync('highlight_list', list);
     this.retainRollingSegmentsByPaths(segments);
+    const dcFin = this.data.defaultCover;
+    const coverRaw = typeof pending.cover === 'string' ? pending.cover : dcFin;
+    const coverTempPath =
+      coverRaw !== dcFin && coverRaw.indexOf('data:') !== 0 ? coverRaw : '';
     this.enqueueHighlightMaterializeTask({
       id: pending.id,
       matchId,
       segments: segments.slice(),
+      coverTempPath: coverTempPath,
       retryCount: 0
     });
     this.highlightMissStreak = 0;
@@ -5517,6 +6551,139 @@ Page({
     this.openDrawerMode1();
   },
 
+  /**
+   * 调试工具条点击切档：
+   *  - 机型未通过白名单直接忽略（不应出现，但防御）。
+   *  - 用户显式切档走 force，穿透 render-pipeline 的 MIN_SWITCH_GAP_MS 防抖。
+   *  - 切档后记录健康日志，便于真机对比时回溯。
+   * @param {WechatMiniprogram.TouchEvent} e data-mode: off|standard|strong
+   */
+  onEnhanceModePick: function(e) {
+    if (!this.data.enhanceWhitelisted) return;
+    if (this.data.enhanceVkTransitioning) return;
+    if (Date.now() < (this._enhanceModeSwitchGuardUntil || 0)) {
+      try {
+        wx.showToast({ title: '相机切换中，请稍候', icon: 'none', duration: 1200 });
+      } catch (eG) {}
+      return;
+    }
+    var mode = e && e.currentTarget && e.currentTarget.dataset
+      ? e.currentTarget.dataset.mode
+      : null;
+    var allowed = ['off', 'lite', 'standard', 'strong', 'vk'];
+    if (allowed.indexOf(mode) < 0) return;
+
+    // 进入 / 离开 VK 走专用 orchestrator（涉及 rolling 停起 + camera 重建）
+    if (mode === 'vk') {
+      if (!this.data.enhanceVkSupported) {
+        wx.showToast({ title: '本机不支持 VK 模式', icon: 'none', duration: 2000 });
+        return;
+      }
+      if (this.data.enhanceMode === 'vk') return;
+      this.appendHealthLog('enhance_mode_manual_pick', { mode: 'vk', orchestrator: 'in' });
+      this._orchestrateSwitchToVk();
+      try { wx.vibrateShort({ type: 'light' }); } catch (eV1) {}
+      return;
+    }
+    if (this.data.enhanceMode === 'vk') {
+      this.appendHealthLog('enhance_mode_manual_pick', { mode: mode, orchestrator: 'out' });
+      this._orchestrateSwitchFromVk(mode);
+    } else if (typeof this.setEnhanceMode === 'function') {
+      this.appendHealthLog('enhance_mode_manual_pick', { mode: mode, fromDrawer: true });
+      this.setEnhanceMode(mode);
+      /**
+       * 多次互切后偶现「canvas 盖在画面上但 framesRendered=0」：关闭可用（不盖 canvas），其它档黑屏。
+       * 延迟检测后 teardown + 重建并恢复所选档位（仅原生家族）。
+       */
+      if (mode !== 'off') {
+        var self = this;
+        var picked = mode;
+        if (this._enhanceZeroFrameRecoverTimer) {
+          clearTimeout(this._enhanceZeroFrameRecoverTimer);
+          this._enhanceZeroFrameRecoverTimer = null;
+        }
+        this._enhanceZeroFrameRecoverTimer = setTimeout(function() {
+          self._enhanceZeroFrameRecoverTimer = null;
+          if (self.data.enhanceMode === 'vk') return;
+          if (self.data.enhanceMode !== picked) return;
+          if (!self._renderPipeline || !self.data.cameraMounted || !self.data.cameraContext) return;
+          var d = typeof self._renderPipeline.diagnostics === 'function'
+            ? self._renderPipeline.diagnostics()
+            : null;
+          if (!d || d.framesRendered > 0) return;
+          self.appendHealthLog('enhance_native_zero_frames_recover', { mode: picked, diag: d });
+          self._pendingEnhanceModeAfterRecover = picked;
+          self._teardownEnhanceRender();
+          if (wx.nextTick) {
+            wx.nextTick(function() {
+              if (!self.data.cameraContext) return;
+              self._maybeBootEnhanceRender();
+            });
+          } else {
+            setTimeout(function() {
+              if (!self.data.cameraContext) return;
+              self._maybeBootEnhanceRender();
+            }, 0);
+          }
+        }, 2400);
+      }
+    }
+    try { wx.vibrateShort({ type: 'light' }); } catch (eV) {}
+  },
+
+  /** 工具条自身吞事件，避免点胶囊内部时触发遮罩 closeAllDrawers。 */
+  stopEnhanceToolbarBubble: function() {},
+
+  /**
+   * 启动 1s 轮询把 render-pipeline 的 FPS 拉到 data.enhanceFpsText；
+   * 仅在抽屉打开期间运行，避免长驻开销。未启用增强渲染时显示 "— fps"。
+   * @returns {void}
+   */
+  startEnhanceFpsPolling: function() {
+    if (!this.data.enhanceWhitelisted) return;
+    if (this._enhanceFpsPollTimer) return;
+    var self = this;
+    var poll = function() {
+      if (!self._livePageVisible || self.data.drawerMode !== 1) {
+        self.stopEnhanceFpsPolling();
+        return;
+      }
+      var text = '— fps';
+      try {
+        var pipeline = self._renderPipeline;
+        if (pipeline) {
+          var diag = typeof pipeline.diagnostics === 'function' ? pipeline.diagnostics() : null;
+          var snap = typeof pipeline.snapshot === 'function' ? pipeline.snapshot() : null;
+          var curMode = diag ? diag.mode : (self.data.enhanceMode || 'off');
+          if (curMode === 'off') {
+            text = '已关闭';
+          } else if (!diag || diag.framesRendered === 0) {
+            text = '⚠ 无帧';
+          } else if (diag.sinceLastFrameMs > 1200) {
+            text = '⚠ 停滞 ' + Math.round(diag.sinceLastFrameMs / 100) / 10 + 's';
+          } else if (snap && typeof snap.avgFps === 'number' && isFinite(snap.avgFps)) {
+            text = Math.round(snap.avgFps) + ' fps · ' + diag.framesRendered + '帧';
+          } else {
+            text = diag.framesRendered + '帧 · 采样中';
+          }
+        }
+      } catch (eSnap) {}
+      if (text !== self.data.enhanceFpsText) {
+        self.setData({ enhanceFpsText: text });
+      }
+    };
+    poll();
+    this._enhanceFpsPollTimer = setInterval(poll, 1000);
+  },
+
+  /** @returns {void} */
+  stopEnhanceFpsPolling: function() {
+    if (this._enhanceFpsPollTimer) {
+      clearInterval(this._enhanceFpsPollTimer);
+      this._enhanceFpsPollTimer = null;
+    }
+  },
+
   dismissGuide: function() {
     this.setData({ showGuide: false });
     wx.setStorageSync('hasReadGuide', true);
@@ -5529,6 +6696,8 @@ Page({
     this.refreshDrawerHighlights();
     this.loadMatchList();
     this.setData({ drawerMode: 1 });
+    // 仅白名单机型内部拉起 FPS 轮询；内部已二次判定，调用幂等
+    this.startEnhanceFpsPolling();
   },
 
   /**
@@ -5538,6 +6707,7 @@ Page({
     if (this.data.drawerMode !== 0) {
       this.setData({ drawerMode: 0 });
     }
+    this.stopEnhanceFpsPolling();
   },
 
   /** 向后兼容：内部调用 closeDrawer 的地方统一走 closeAllDrawers */
@@ -6075,6 +7245,18 @@ Page({
     if (!this._rollingPausedForReplay) return;
     this._rollingPausedForReplay = false;
     if (!this.data.liveStreamAllowed || this.data.isRecovering || this._recoveryLock) return;
+    /**
+     * VK 模式无原生 <camera>，此处若按「相机未就绪」走 hardRecover 会 rebuildCameraComponent →
+     * _teardownEnhanceRender，误销毁 VKSession 并退出 VK。回放仅暂停了 rolling 标志位，VK 预览应原样继续。
+     */
+    if (this.data.enhanceMode === 'vk') {
+      this.appendHealthLog('replay_resume_vk_skip_native', {});
+      this.rollingActive = true;
+      try {
+        this.updatePipelineHealth();
+      } catch (eH) {}
+      return;
+    }
     if (!this.data.cameraMounted || !this.data.cameraContext || !this._cameraInitDone) {
       if (Date.now() < (this._insertCameraRecoverCooldownUntil || 0)) {
         this.appendHealthLog('replay_resume_wait_insert_cooldown', {});

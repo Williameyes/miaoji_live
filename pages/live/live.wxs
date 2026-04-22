@@ -33,8 +33,22 @@ function limitTeamName(name) {
   return safe.slice(0, 12);
 }
 
+/**
+ * 增强渲染档位转中文标签（抽屉工具条展示用）。
+ * @param {string} mode  off | lite | standard | strong
+ * @returns {string}
+ */
+function enhanceModeLabel(mode) {
+  if (mode === 'vk') return 'VK';
+  if (mode === 'strong') return '高性能';
+  if (mode === 'standard') return '标准';
+  if (mode === 'lite') return '轻量';
+  return '关闭';
+}
+
 module.exports = {
   eqColor: eqColor,
   ballActive: ballActive,
-  limitTeamName: limitTeamName
+  limitTeamName: limitTeamName,
+  enhanceModeLabel: enhanceModeLabel
 };
