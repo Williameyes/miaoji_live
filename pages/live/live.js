@@ -611,6 +611,10 @@ Page({
     this._lastLiveStorageProbeLevel = 'ok';
     /** 每次 onLoad 重置，确保 severe Modal 只在当次开播 kickoff 时弹一次 */
     this._liveStorageEntryModalShown = false;
+    /** 当次进入 live 页是否已对 severe 档位执行过一次「删最旧高光 + 清 rolling」 */
+    this._liveSevereKickoffPruneDone = false;
+    /** 长直播 periodic 探测下，上次因 severe 自动删高光的时间戳 */
+    this._lastPeriodicSevereClipPruneAt = 0;
     this.rollingFsBusy = false;
     this._rollingPersistInFlight = 0;
     this._postUserLocalPersistCooldownMs = 0;
@@ -1009,11 +1013,13 @@ Page({
     const deferred = this._replayDeferredItem;
     this._replayDeferredItem = null;
     if (deferred && typeof deferred === 'object') {
-      const run = () => {
+      /**
+       * 略延迟：避免与刚结束的 stopRecord/落盘同一帧抢相机；并与 pauseRollingForReplay 真正完成对齐。
+       */
+      setTimeout(() => {
+        if (!this._livePageVisible) return;
         this.startReplay(deferred);
-      };
-      if (wx.nextTick) wx.nextTick(run);
-      else setTimeout(run, 0);
+      }, 320);
     }
   },
 
@@ -1078,6 +1084,10 @@ Page({
     this._highlightPipelineDoneFinalize = false;
     this._highlightPipelineDoneResume = false;
     this._highlightSaveSessionId = 0;
+    if (this._highlightResumeUnlockFallbackTimer) {
+      clearTimeout(this._highlightResumeUnlockFallbackTimer);
+      this._highlightResumeUnlockFallbackTimer = null;
+    }
     if (this._highlightResumeGuardTimer) {
       clearTimeout(this._highlightResumeGuardTimer);
       this._highlightResumeGuardTimer = null;
@@ -1099,6 +1109,37 @@ Page({
       this.clearHighlightSavePipelineState();
       this.endHighlightSaving();
     }
+  },
+
+  /**
+   * finalize 已完成但下一段 startRecord 迟迟未成功时，解锁保存锁并触发延迟回放，避免界面永久卡住。
+   * @returns {void}
+   */
+  scheduleHighlightResumeUnlockFallback: function() {
+    if (this._highlightResumeUnlockFallbackTimer) {
+      clearTimeout(this._highlightResumeUnlockFallbackTimer);
+      this._highlightResumeUnlockFallbackTimer = null;
+    }
+    if (!this._highlightSaveAwaitingResume || !this._highlightPipelineDoneFinalize) {
+      return;
+    }
+    let fallbackMs = 4000;
+    try {
+      const si = wx.getSystemInfoSync();
+      if (si && si.platform === 'android') {
+        fallbackMs = 5600;
+      }
+    } catch (e) {
+      fallbackMs = 4000;
+    }
+    this._highlightResumeUnlockFallbackTimer = setTimeout(() => {
+      this._highlightResumeUnlockFallbackTimer = null;
+      if (!this._highlightSaveAwaitingResume) return;
+      if (!this._highlightPipelineDoneFinalize) return;
+      this.appendHealthLog('highlight_resume_unlock_fallback', {});
+      this._highlightPipelineDoneResume = true;
+      this.maybeReleaseHighlightSaveLock();
+    }, fallbackMs);
   },
 
   /**
@@ -1425,6 +1466,28 @@ Page({
     }
     const n = typeof this.segmentCounter === 'number' ? this.segmentCounter : 0;
     return Math.min(920, 380 + Math.floor(n / 4) * 36);
+  },
+
+  /**
+   * 连续收到 operateCamera is recording 时，在 scheduleAfterStopRecord 之后再追加的启动延迟。
+   * 小米等 Android：第二次及以后若不再 stopRecord、仅靠短重试会永久与 Native 录制态脱节。
+   * @returns {number}
+   */
+  getIsRecordingConflictExtraStartDelayMs: function() {
+    const streak = typeof this.startRecordFailStreak === 'number' ? this.startRecordFailStreak : 0;
+    if (streak < 2) return 0;
+    try {
+      const si = wx.getSystemInfoSync();
+      if (si && si.platform === 'android') {
+        return Math.min(2600, 100 + streak * 115);
+      }
+      if (si && si.platform === 'ios') {
+        return Math.min(1500, 70 + streak * 75);
+      }
+    } catch (e) {
+      return Math.min(2200, 90 + streak * 100);
+    }
+    return Math.min(2200, 90 + streak * 100);
   },
 
   /**
@@ -1823,6 +1886,25 @@ Page({
         } catch (eG) {}
         this.maybeNotifyLiveStoragePressure(hint, t);
         this._lastLiveStorageProbeLevel = hint.level;
+        if (hint.level === 'severe' && t === 'kickoff' && !this._liveSevereKickoffPruneDone) {
+          this._liveSevereKickoffPruneDone = true;
+          this.freeRollingFileStorageAggressive('live_storage_severe_kickoff');
+        }
+        if (
+          hint.level === 'severe'
+          && t === 'periodic'
+          && this.rollingActive
+        ) {
+          const n = Date.now();
+          const gap = 8 * 60 * 1000;
+          if (!this._lastPeriodicSevereClipPruneAt || n - this._lastPeriodicSevereClipPruneAt >= gap) {
+            this._lastPeriodicSevereClipPruneAt = n;
+            const pr = this.pruneOldestHighlightClipsFromStorage(2);
+            if (pr > 0) {
+              this.appendHealthLog('live_periodic_severe_prune', { pruned: pr });
+            }
+          }
+        }
       })
       .catch(() => {});
   },
@@ -1849,11 +1931,10 @@ Page({
           content: `${hint.hintText}\n`,
           showCancel: true,
           cancelText: '知道了',
-          confirmText: '打开抽屉',
+          confirmText: '下载并清空',
           success: (res) => {
             if (res.confirm) {
-              this.setData({ drawerMode: 1 });
-              this.refreshDrawerHighlights();
+              this.onDownloadHighlightsToAlbumAndClearCache();
             }
           }
         });
@@ -2075,6 +2156,10 @@ Page({
     this._livePageVisible = false;
     /** 切后台不打断保存，但取消「保存完成后自动回放」，避免隐藏态误开全屏回放 */
     this._replayDeferredItem = null;
+    if (this._highlightResumeUnlockFallbackTimer) {
+      clearTimeout(this._highlightResumeUnlockFallbackTimer);
+      this._highlightResumeUnlockFallbackTimer = null;
+    }
     if (this._replayPauseWaitTimer) {
       clearTimeout(this._replayPauseWaitTimer);
       this._replayPauseWaitTimer = null;
@@ -2407,6 +2492,8 @@ Page({
     }
     this.pendingHighlight = null;
     this.clearHighlightSavePipelineState();
+    /** 避免 isSavingHighlight 仍为 true 时阻塞 FAB / 自动恢复，且与 Native is recording 假死叠加 */
+    this.endHighlightSaving();
     this.rollingFsBusy = false;
     this._rollingPersistInFlight = 0;
     this.lastRecordStartAt = 0;
@@ -2840,25 +2927,43 @@ Page({
         const lowerErr = errMsg.toLowerCase();
         const isRecordingConflict = lowerErr.indexOf('is recording') >= 0;
         if (isRecordingConflict) {
-          if (this._segmentStartRecoveringFromIsRecording) {
-            this.scheduleStartOneSegmentRetry(sessionId, 0, 380);
-            return;
-          }
-          this._segmentStartRecoveringFromIsRecording = true;
           this.appendHealthLog('segment_start_realign_is_recording_conflict', {
             retryCount,
             failStreak: this.startRecordFailStreak
           });
+          if (this.startRecordFailStreak >= 10) {
+            this.clearSegmentStartRetryTimer();
+            this._segmentStartRecoveringFromIsRecording = false;
+            this.appendHealthLog('segment_start_is_recording_force_hard_recover', {
+              streak: this.startRecordFailStreak
+            });
+            this.startRecordFailStreak = 0;
+            this.hardRecoverLivePipeline('auto:start:is_recording_storm');
+            return;
+          }
+          this._segmentStartRecoveringFromIsRecording = true;
           const restartAfterStop = () => {
             this.setData({ isRecording: false });
             this.lastRecordStartAt = 0;
+            const extraAlign = this.getIsRecordingConflictExtraStartDelayMs();
             this.scheduleAfterStopRecord(() => {
               this._segmentStartRecoveringFromIsRecording = false;
-              this.startOneSegment(sessionId, 0);
+              if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
+              if (extraAlign > 0) {
+                setTimeout(() => {
+                  if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
+                  this.startOneSegment(sessionId, 0);
+                }, extraAlign);
+              } else {
+                this.startOneSegment(sessionId, 0);
+              }
             });
           };
           try {
-            this.data.cameraContext.stopRecord({ complete: restartAfterStop });
+            this.data.cameraContext.stopRecord({
+              complete: restartAfterStop,
+              fail: restartAfterStop
+            });
           } catch (eStopRec) {
             restartAfterStop();
           }
@@ -3114,9 +3219,7 @@ Page({
       let highlightPersistUnstableRetries = 0;
       /** 本段仅做一次配额急救（删热层/孤儿）后整管重试，避免与 maximum file storage limit 死循环 */
       let quotaReliefTriedForThisSegment = false;
-      /** iOS：优先尽快 user save；并跳过整文件 readFile（大视频易失败或拖慢导致 temp 失效） */
-      let iosPrimaryUserTried = false;
-      let iosPrimaryUserRetry = 0;
+      /** iOS：phase 4 再尝试 user save 兜底（与 Android 一致优先 copy→_rolling，避免 saveFile 占满用户文件配额） */
       let iosEarlyUserTried = false;
       let iosUserSaveRetry = 0;
       /** 本段 temp 已确认丢失：快速终止后续 phase，避免无效重试风暴。 */
@@ -3388,8 +3491,9 @@ Page({
       };
 
       /**
-       * 多阶段重试落盘：Android 易锁文件；iOS 忌整段 readFile、且宜尽早 user save 以免 temp 过期。
-       * 顺序：copy×2 → save×2 →（iOS 抢先 user save）→ 延迟 copy → read/write（非 iOS）→ alt copy → user save + iOS 重试。
+       * 多阶段重试落盘：Android 易锁文件；iOS 忌整段 readFile。
+       * 顺序：copy×2 → save×2 →（phase4 iOS user save 兜底）→ 延迟 copy → read/write（非 iOS）→ alt copy → user save + iOS 重试。
+       * iOS 与 Android 均优先 copy 至 _rolling，避免首选 saveFile 占满用户文件配额。
        * @param {number} phase 0–7
        * @returns {void}
        */
@@ -3421,10 +3525,8 @@ Page({
             resolve();
             return;
           }
-          iosPrimaryUserTried = false;
           iosEarlyUserTried = false;
           preReadFileDelayedCopyTried = false;
-          iosPrimaryUserRetry = 0;
           iosUserSaveRetry = 0;
           attemptRollingPersist(0);
         }, 140);
@@ -3433,46 +3535,6 @@ Page({
       const attemptRollingPersist = (phase) => {
         if (!sessionOk()) {
           resolve();
-          return;
-        }
-        if (phase === 0 && persistIsIos && !iosPrimaryUserTried) {
-          iosPrimaryUserTried = true;
-          trySaveTempToUserLocal({
-            onOk: (p) => {
-              this.appendHealthLog('rolling_persist_ok_ios_primary_user_save', {});
-              applyUserLocalPersistSuccess(p, { skipUserLocalLog: true });
-            },
-            onEmptyOrFail: (failMsg) => {
-              const missingTemp = isRollingTempMissingErr(failMsg);
-              if (missingTemp) {
-                this.appendHealthLog('rolling_persist_ios_primary_temp_missing', {
-                  segNo,
-                  attempt: iosPrimaryUserRetry + 1,
-                  errMsg: failMsg || ''
-                });
-              }
-              if (iosPrimaryUserRetry < 3) {
-                iosPrimaryUserRetry += 1;
-                iosPrimaryUserTried = false;
-                /** temp 已不在时清缓存无意义，且会触发 aggressive 节流刷屏 */
-                if (!missingTemp && iosPrimaryUserRetry >= 2) {
-                  this.freeRollingFileStorageAggressive('ios_primary_save_empty');
-                }
-                const backoff = missingTemp
-                  ? Math.min(520, 100 + iosPrimaryUserRetry * 130)
-                  : 120 + iosPrimaryUserRetry * 140;
-                setTimeout(() => {
-                  if (!sessionOk()) {
-                    resolve();
-                    return;
-                  }
-                  attemptRollingPersist(0);
-                }, backoff);
-                return;
-              }
-              attemptRollingPersist(1);
-            }
-          });
           return;
         }
         if (phase === 0 || phase === 1) {
@@ -3690,10 +3752,8 @@ Page({
                       resolve();
                       return;
                     }
-                    iosPrimaryUserTried = false;
                     iosEarlyUserTried = false;
                     preReadFileDelayedCopyTried = false;
-                    iosPrimaryUserRetry = 0;
                     iosUserSaveRetry = 0;
                     attemptRollingPersist(0);
                   }, 160);
@@ -3934,6 +3994,67 @@ Page({
   },
 
   /**
+   * 按创建时间删除最旧的高光条目并 unlink 片段文件，缓解小程序「文件存储」上限（非 KV）。
+   * @param {number} maxRemove 最多删除几条（跨场次全局最旧）
+   * @returns {number} 实际删除条数
+   */
+  pruneOldestHighlightClipsFromStorage: function(maxRemove) {
+    const cap = typeof maxRemove === 'number' && maxRemove > 0 ? Math.min(maxRemove, 30) : 1;
+    const fs = wx.getFileSystemManager();
+    const clipsMap = wx.getStorageSync('MIAOXIE_CLIPS') || {};
+    /** @type {{ matchId: string, id: string, createdAt: number }[]} */
+    const entries = [];
+    Object.keys(clipsMap).forEach((matchId) => {
+      const list = clipsMap[matchId];
+      if (!Array.isArray(list)) return;
+      list.forEach((it) => {
+        if (!it || typeof it !== 'object') return;
+        const id = it.id != null ? String(it.id) : '';
+        if (!id) return;
+        const createdAt = typeof it.createdAt === 'number' ? it.createdAt : 0;
+        entries.push({ matchId, id, createdAt });
+      });
+    });
+    if (entries.length === 0) {
+      return 0;
+    }
+    entries.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+    let removed = 0;
+    for (let i = 0; i < entries.length && removed < cap; i += 1) {
+      const { matchId, id } = entries[i];
+      const list = clipsMap[matchId];
+      if (!Array.isArray(list)) continue;
+      const idx = list.findIndex((x) => x && String(x.id) === id);
+      if (idx < 0) continue;
+      const item = list[idx];
+      const toUnlink = new Set();
+      (item.segments || []).forEach((p) => {
+        if (p && typeof p === 'string') toUnlink.add(p);
+      });
+      if (item.replaySegment && typeof item.replaySegment === 'string') {
+        toUnlink.add(item.replaySegment);
+      }
+      toUnlink.forEach((p) => {
+        try {
+          fs.unlinkSync(p);
+        } catch (eUn) {}
+      });
+      list.splice(idx, 1);
+      removed += 1;
+    }
+    if (removed > 0) {
+      wx.setStorageSync('MIAOXIE_CLIPS', clipsMap);
+      this.appendHealthLog('live_pruned_oldest_highlights', { removed, requested: cap });
+      try {
+        if (typeof this.refreshDrawerHighlights === 'function') {
+          this.refreshDrawerHighlights();
+        }
+      } catch (eR) {}
+    }
+    return removed;
+  },
+
+  /**
    * 评估 Storage 水位并执行分级治理。
    * @returns {number}
    */
@@ -4058,10 +4179,16 @@ Page({
    */
   freeRollingFileStorageAggressive: function(reason) {
     const now = Date.now();
-    const gapMs = reason === 'persist_io_fail' || reason === 'phase7_user_save_exhausted' ? 450 : 2400;
+    const r = typeof reason === 'string' ? reason : '';
+    const gapMs =
+      r === 'persist_io_fail' || r === 'phase7_user_save_exhausted'
+        ? 450
+        : r === 'live_storage_severe_kickoff'
+          ? 800
+          : 2400;
     if (this._lastRollingAggressiveFreeAt && now - this._lastRollingAggressiveFreeAt < gapMs) {
       this.appendHealthLog('rolling_aggressive_free_throttled', {
-        reason: reason || '',
+        reason: r,
         sinceLastMs: now - this._lastRollingAggressiveFreeAt
       });
       return;
@@ -4069,7 +4196,7 @@ Page({
     this._lastRollingAggressiveFreeAt = now;
     const fs = wx.getFileSystemManager();
     const rollingDir = this.getRollingDir();
-    this.appendHealthLog('rolling_file_quota_emergency_free', { reason: reason || '' });
+    this.appendHealthLog('rolling_file_quota_emergency_free', { reason: r });
     this.pruneIosSegmentBufferUserLocals(2);
     this.trimRollingSegmentBufferForQuota(5);
     try {
@@ -4099,6 +4226,18 @@ Page({
         }
       }
     } catch (eR) {}
+    let clipPrune = 0;
+    if (r === 'persist_io_fail' || r === 'phase7_user_save_exhausted') {
+      clipPrune = 4;
+    } else if (r === 'live_storage_severe_kickoff') {
+      clipPrune = 2;
+    }
+    if (clipPrune > 0) {
+      const pr = this.pruneOldestHighlightClipsFromStorage(clipPrune);
+      if (pr > 0) {
+        this.appendHealthLog('rolling_clip_prune_with_quota_free', { pruned: pr, reason: r });
+      }
+    }
   },
 
   /**
@@ -4408,6 +4547,9 @@ Page({
       if (this._highlightSaveAwaitingResume) {
         this._highlightPipelineDoneFinalize = true;
         this.maybeReleaseHighlightSaveLock();
+        if (this._highlightSaveAwaitingResume) {
+          this.scheduleHighlightResumeUnlockFallback();
+        }
       } else {
         this.endHighlightSaving();
       }
@@ -4445,6 +4587,9 @@ Page({
     if (this._highlightSaveAwaitingResume) {
       this._highlightPipelineDoneFinalize = true;
       this.maybeReleaseHighlightSaveLock();
+      if (this._highlightSaveAwaitingResume) {
+        this.scheduleHighlightResumeUnlockFallback();
+      }
     } else {
       this.endHighlightSaving();
     }
@@ -4954,11 +5099,22 @@ Page({
   },
 
   /**
-   * 进入回放前暂停滚动录制，降低 iOS 下 camera 与 video 并行造成的录制失败概率。
+   * 进入回放前暂停滚动录制，降低 camera 与 video 并行造成的失败/闪退概率。
+   * rollingFsBusy 时必须等待后再继续，禁止调用方在未停录时启动回放（此前会直接导致卡死或微信崩溃）。
+   * @param {function(): void} [onPaused] 录制已停止、可安全起播时回调
    * @returns {void}
    */
-  pauseRollingForReplay: function() {
-    if (this._rollingPausedForReplay) return;
+  pauseRollingForReplay: function(onPaused) {
+    const done = () => {
+      if (typeof onPaused === 'function') {
+        if (wx.nextTick) wx.nextTick(onPaused);
+        else setTimeout(onPaused, 0);
+      }
+    };
+    if (this._rollingPausedForReplay) {
+      done();
+      return;
+    }
     /**
      * 必须等 rolling 落盘结束再 bump rollingSessionId。
      * iOS 串行落盘较慢；若 busy 时仍 ++，onSegmentRecorded 内 sessionOk 变 false，整段不落盘 → segment_persist_reject_temp_unstable。
@@ -4980,7 +5136,7 @@ Page({
       }
       this._replayPauseWaitTimer = setTimeout(() => {
         this._replayPauseWaitTimer = null;
-        this.pauseRollingForReplay();
+        this.pauseRollingForReplay(onPaused);
       }, 100);
       return;
     }
@@ -4991,6 +5147,7 @@ Page({
     this.rollingSessionId += 1;
     this.stopRollingRecording(() => {
       this.setData({ isRecording: false });
+      done();
     });
   },
 
@@ -5096,8 +5253,6 @@ Page({
     }
     this._replayPrimedSlot0 = false;
     this._replayPrimedSlot1 = false;
-    const useChain = !!(item && item.replayUseChain && item.segments && item.segments.length >= 2);
-    const paths = useChain ? item.segments.slice() : [];
     if (item && item.exportedToAlbum) {
       wx.showToast({
         title: '已导出至系统相册，小程序无法直连播放，请到相册查看',
@@ -5112,7 +5267,26 @@ Page({
         ? item.segments[item.segments.length - 1]
         : '');
     if (!target) return;
-    this.pauseRollingForReplay();
+    this.pauseRollingForReplay(() => {
+      this.startReplayContinue(item);
+    });
+  },
+
+  /**
+   * 在 {@link pauseRollingForReplay} 真正停录后再绑定 video、起播（必须与相机互斥）。
+   * @param {object} item 高光条目
+   * @returns {void}
+   */
+  startReplayContinue: function(item) {
+    if (!item || typeof item !== 'object') return;
+    const useChain = !!(item.replayUseChain && item.segments && item.segments.length >= 2);
+    const paths = useChain ? item.segments.slice() : [];
+    const target =
+      (item.replaySegment)
+      || ((Array.isArray(item.segments) && item.segments[item.segments.length - 1])
+        ? item.segments[item.segments.length - 1]
+        : '');
+    if (!target) return;
 
     const fs = wx.getFileSystemManager();
     const toCheck = useChain ? paths : [target];
