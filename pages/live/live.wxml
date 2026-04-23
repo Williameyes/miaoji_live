@@ -536,6 +536,30 @@
 
   </view>
 
+  <!--
+    严重存储：统一用页面 fixed 遮罩（z-index 高于 WebGL canvas），勿用 camera 内 cover-view。
+    cover-view 对 flex/min/百分比宽度支持差，VK 切换重建相机后易宽度坍缩导致图二错乱。
+  -->
+  <view
+    class="storage-pressure-overlay"
+    wx:if="{{showStoragePressureModal}}"
+    catchtouchmove="noopCatchMove"
+  >
+    <view class="storage-pressure-backdrop" bindtap="onStoragePressureModalDismiss"></view>
+    <view class="storage-pressure-panel" catchtap="stopColorModalBubbling">
+      <view class="storage-pressure-title">存储空间紧张</view>
+      <view class="storage-pressure-text">{{storagePressureModalText}}</view>
+      <view class="storage-pressure-row">
+        <view class="storage-pressure-btn storage-pressure-btn--secondary" catchtap="onStoragePressureModalDismiss">
+          知道了
+        </view>
+        <view class="storage-pressure-btn storage-pressure-btn--primary" catchtap="onStoragePressureModalConfirm">
+          下载并清空
+        </view>
+      </view>
+    </view>
+  </view>
+
   <!-- ── 颜色设置浮层：极致透明、动态占比 ── -->
   <view class="color-modal-overlay" wx:if="{{showColorModal}}" catchtap="closeColorModal">
     <view class="color-modal-container" catchtap="stopColorModalBubbling">

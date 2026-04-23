@@ -62,6 +62,11 @@ const VK_BOOT_DELAY_MS_IOS = 980;
 const VK_POST_TEARDOWN_MOUNT_EXTRA_MS_IOS = 220;
 /** 画质档位连点防抖（ms），覆盖 VK 与相机重建重叠窗口 */
 const ENHANCE_SWITCH_GUARD_MS = 1000;
+/**
+ * 严重存储弹窗延迟（ms）：避免与横屏 setPageOrientation、权益通过后的 setData 同帧抢 wx.showModal，
+ * 部分基础库在首帧/nextTick 调 showModal 会静默失败。
+ */
+const LIVE_STORAGE_SEVERE_MODAL_DELAY_MS = 560;
 
 Page({
   data: {
@@ -218,6 +223,13 @@ Page({
     vipGateSubtext: '',
     vipGateMinor: '',
     vipGateRetryVisible: false,
+
+    /**
+     * 严重存储提示：原生 `wx.showModal` 在部分机型 `<camera>` 页不可靠，用页面级 fixed 遮罩；
+     * 勿嵌 camera 内 cover-view（flex/宽度在 VK 重建后易错乱）。
+     */
+    showStoragePressureModal: false,
+    storagePressureModalText: '',
 
     /**
      * 增强渲染：WebGL 锐化画布是否进入视图树。由 render-pipeline 根据模式驱动，
@@ -863,6 +875,8 @@ Page({
     this._lastEmergencyClipPruneAt = 0;
     /** onShow 后若相机 init 回调丢失，超时强制重建（见 _liveCoreOnShowAfterEntitlement）。 */
     this._cameraShowInitWatchTimer = null;
+    /** {@link maybeNotifyLiveStoragePressure} 延迟 showModal 的句柄；hide/unload 时清除 */
+    this._liveStorageSevereModalTimer = null;
     this.rollingFsBusy = false;
     this._rollingPersistInFlight = 0;
     this._postUserLocalPersistCooldownMs = 0;
@@ -3004,25 +3018,76 @@ Page({
   },
 
   /**
-   * 权益通过后、异步沙盒遍历完成前：若 globalData 已有首页等写入的严重水位估算，则立刻弹 Modal。
-   * 依赖 `fileStorageEstimate.clipBytes` / `userDataBytes`（与首页一致）；直播页 probe 也会写回这两字段。
+   * 权益通过后：若 globalData 中已有首页写入的 severe，则安排弹窗（与异步 kickoff 探测并行）。
+   * 策略说明（历史踩坑）：
+   * - 原 10 分钟过期 + 必须有 clipBytes，极易在用户稍晚进直播时整段跳过；
+   * - 用字节再算一遍若已因删片段降到非 severe，会误拦截，与首页红色严重提示不一致；
+   * - 故：以 `healthLevel === 'severe'` 为准，缺字节时用 clipMb/totalMb + 兜底文案；24h 内信任首页快照。
    *
    * @returns {void}
    */
   maybeToastFileStoragePressureFromGlobal: function() {
     try {
       if (this._liveStorageEntryModalShown) return;
-      const est = app.globalData && app.globalData.fileStorageEstimate;
-      if (!est || est.healthLevel !== 'severe') return;
+
+      /**
+       * @param {unknown} raw
+       * @returns {Record<string, unknown>|null}
+       */
+      const asSevereEstimate = (raw) => {
+        if (!raw || typeof raw !== 'object') return null;
+        const hl = String(/** @type {{ healthLevel?: string }} */ (raw).healthLevel || '')
+          .trim()
+          .toLowerCase();
+        if (hl !== 'severe') return null;
+        return /** @type {Record<string, unknown>} */ (raw);
+      };
+
+      let est = asSevereEstimate(app.globalData && app.globalData.fileStorageEstimate);
+      if (!est) {
+        const snap = storageEst.readFileStorageEstimateSnapshot();
+        const cand = asSevereEstimate(snap);
+        const sat = cand && typeof cand.at === 'number' ? cand.at : 0;
+        if (cand && sat && Date.now() - sat <= 24 * 60 * 60 * 1000) {
+          est = cand;
+        }
+      }
+      if (!est) return;
+
       const at = typeof est.at === 'number' ? est.at : 0;
-      /** 过久则避免用陈旧首页数据误导，交给 kickoff probe 为准 */
-      if (!at || Date.now() - at > 10 * 60 * 1000) return;
-      const cb = est.clipBytes;
-      const ub = est.userDataBytes;
-      if (typeof cb !== 'number' || typeof ub !== 'number') return;
-      const hint = storageEst.getClipStorageHealthHint(cb, ub);
-      if (hint.level !== 'severe') return;
-      this.maybeNotifyLiveStoragePressure(hint, 'kickoff');
+      if (at && Date.now() - at > 24 * 60 * 60 * 1000) return;
+
+      const cm = typeof est.clipMb === 'number' && Number.isFinite(est.clipMb) ? est.clipMb : 0;
+      const tm = typeof est.totalMb === 'number' && Number.isFinite(est.totalMb) ? est.totalMb : 0;
+      let hintText = typeof est.hintText === 'string' ? est.hintText.trim() : '';
+
+      const cb = /** @type {number|undefined} */ (est.clipBytes);
+      const ub = /** @type {number|undefined} */ (est.userDataBytes);
+      if (
+        typeof cb === 'number'
+        && typeof ub === 'number'
+        && Number.isFinite(cb)
+        && Number.isFinite(ub)
+      ) {
+        const recalc = storageEst.getClipStorageHealthHint(cb, ub);
+        if (recalc.level === 'severe') {
+          hintText = recalc.hintText;
+        } else if (!hintText) {
+          hintText =
+            `高光片段约 ${recalc.clipMb} MB，本机小程序文件约 ${recalc.totalMb} MB（首页仍为严重水位）：` +
+            '保存仍可能失败，请尽快「下载至相册并清空」或删除旧片段';
+        }
+      }
+      if (!hintText) {
+        hintText =
+          `高光片段约 ${cm} MB，本机小程序文件约 ${tm} MB（空间严重紧张）：` +
+          '保存极易失败，请尽快「下载至相册并清空」或删除旧片段';
+      }
+
+      this.maybeNotifyLiveStoragePressure(
+        { clipMb: cm, totalMb: tm, level: 'severe', hintText },
+        'kickoff'
+      );
     } catch (eToast) {}
   },
 
@@ -3063,8 +3128,10 @@ Page({
               clipMb: hint.clipMb,
               totalMb: hint.totalMb,
               healthLevel: hint.level,
+              hintText: hint.hintText,
               at: Date.now()
             };
+            storageEst.writeFileStorageEstimateSnapshot(app.globalData.fileStorageEstimate);
           }
         } catch (eG) {}
         this.maybeNotifyLiveStoragePressure(hint, t);
@@ -3090,13 +3157,20 @@ Page({
           }
         }
       })
-      .catch(() => {});
+      .catch((eProbe) => {
+        try {
+          this.appendHealthLog('live_sandbox_storage_probe_fail', {
+            trigger: t,
+            err: (eProbe && eProbe.message) || String(eProbe || '')
+          });
+        } catch (eLog) {}
+      });
   },
 
   /**
    * 按档位提示存储压力。
-   * - severe：在 kickoff 探测且本页尚未展示过 Modal 时弹出（门闩 {@link _liveStorageEntryModalShown}
-   *   仅在 {@link onLoad} 置 false；showModal 失败会解锁）；periodic 不弹，避免直播中反复打断。
+   * - severe：kickoff 时用页面级自定义浮层（避免 `wx.showModal` 与 camera 内 cover-view 布局缺陷）；
+   *   门闩 {@link _liveStorageEntryModalShown} 仅在 {@link onLoad} 置 false；periodic 不弹。
    * - warn：静默记录日志，不弹任何 Toast，避免打断直播。
    * @param {{ clipMb: number, totalMb: number, level: string, hintText: string }} hint
    * @param {string} [trigger] kickoff | periodic 等，由 probeLiveSandboxStorage 传入
@@ -3110,37 +3184,33 @@ Page({
       if (trigger !== 'kickoff') return;
       if (this._liveStorageEntryModalShown) return;
       this._liveStorageEntryModalShown = true;
-      const openStorageModal = () => {
-        try {
-          wx.showModal({
-            title: '存储空间紧张',
-            content: `${hint.hintText}\n`,
-            showCancel: true,
-            cancelText: '知道了',
-            confirmText: '下载并清空',
-            success: (res) => {
-              if (res.confirm) {
-                this.onDownloadHighlightsToAlbumAndClearCache();
-              }
-            },
-            fail: () => {
-              /** API 失败时不闩死，允许后续 kickoff 探测或 global 路径再试 */
-              this._liveStorageEntryModalShown = false;
-            }
-          });
-        } catch (eM) {
-          this._liveStorageEntryModalShown = false;
-        }
-      };
-      try {
-        if (wx.nextTick) {
-          wx.nextTick(openStorageModal);
-        } else {
-          setTimeout(openStorageModal, 0);
-        }
-      } catch (eSched) {
-        openStorageModal();
+      const self = this;
+      let text = typeof hint.hintText === 'string' ? hint.hintText.trim() : '';
+      if (!text) {
+        text =
+          '本机小程序存储占用过高，保存极易失败，请尽快「下载至相册并清空」或删除旧片段';
       }
+      if (this._liveStorageSevereModalTimer) {
+        clearTimeout(this._liveStorageSevereModalTimer);
+        this._liveStorageSevereModalTimer = null;
+      }
+      const openStorageModal = () => {
+        self._liveStorageSevereModalTimer = null;
+        if (!self._livePageVisible) {
+          self._liveStorageEntryModalShown = false;
+          return;
+        }
+        try {
+          self.appendHealthLog('live_storage_severe_modal_show', {
+            trigger: trigger || ''
+          });
+        } catch (eLog) {}
+        self.setData({
+          showStoragePressureModal: true,
+          storagePressureModalText: text
+        });
+      };
+      this._liveStorageSevereModalTimer = setTimeout(openStorageModal, LIVE_STORAGE_SEVERE_MODAL_DELAY_MS);
     }
   },
 
@@ -3370,6 +3440,10 @@ Page({
       clearTimeout(this._enhanceZeroFrameRecoverTimer);
       this._enhanceZeroFrameRecoverTimer = null;
     }
+    if (this._liveStorageSevereModalTimer) {
+      clearTimeout(this._liveStorageSevereModalTimer);
+      this._liveStorageSevereModalTimer = null;
+    }
     this._pendingEnhanceModeAfterRecover = null;
     this._teardownEnhanceRender();
     this.stopEnhanceFpsPolling();
@@ -3377,7 +3451,8 @@ Page({
       cameraMounted: false,
       cameraContext: null,
       isRecording: false,
-      showRecoveryVeil: false
+      showRecoveryVeil: false,
+      showStoragePressureModal: false
     });
     this.stopRollingRecording();
   },
@@ -3386,6 +3461,15 @@ Page({
     if (this._cameraShowInitWatchTimer) {
       clearTimeout(this._cameraShowInitWatchTimer);
       this._cameraShowInitWatchTimer = null;
+    }
+    if (this._liveStorageSevereModalTimer) {
+      clearTimeout(this._liveStorageSevereModalTimer);
+      this._liveStorageSevereModalTimer = null;
+      /** 未真正弹出前离开页面，解锁以便下次 onShow 再排期 */
+      this._liveStorageEntryModalShown = false;
+    }
+    if (this.data.showStoragePressureModal) {
+      this.setData({ showStoragePressureModal: false });
     }
     this._livePageVisible = false;
     /** 切后台不打断保存，但取消「保存完成后自动回放」，避免隐藏态误开全屏回放 */
@@ -6858,8 +6942,10 @@ Page({
                     clipMb: h.clipMb,
                     totalMb: h.totalMb,
                     healthLevel: h.level,
+                    hintText: h.hintText,
                     at: Date.now()
                   };
+                  storageEst.writeFileStorageEstimateSnapshot(app.globalData.fileStorageEstimate);
                 } catch (eG) {}
                 if (this.data.showColorModal) {
                   this.setData({
@@ -6931,6 +7017,23 @@ Page({
 
   /** 阻止颜色浮层内部点击冒泡到遮罩关闭 */
   stopColorModalBubbling: function() { return; },
+
+  /**
+   * 严重存储自定义浮层：用户点「知道了」关闭。
+   * @returns {void}
+   */
+  onStoragePressureModalDismiss: function() {
+    this.setData({ showStoragePressureModal: false });
+  },
+
+  /**
+   * 严重存储自定义浮层：跳转与 `wx.showModal` 确认一致，执行下载并清空。
+   * @returns {void}
+   */
+  onStoragePressureModalConfirm: function() {
+    this.setData({ showStoragePressureModal: false });
+    this.onDownloadHighlightsToAlbumAndClearCache();
+  },
 
   /**
    * 浮层中选中队伍名，切换共用色盘指向

@@ -6,7 +6,8 @@ const {
   estimateUserDataPathUsageBytes,
   estimateClipSegmentsBytesFromStorage,
   getClipStorageHealthHint,
-  getKvStorageInfoSafe
+  getKvStorageInfoSafe,
+  writeFileStorageEstimateSnapshot
 } = require('../../utils/file-storage-estimate.js');
 const clipsStorage = require('../../utils/miaoxie-clips-storage.js');
 
@@ -308,8 +309,10 @@ Page({
             clipMb: hint.clipMb,
             totalMb: hint.totalMb,
             healthLevel: hint.level,
+            hintText: hint.hintText,
             at: Date.now()
           };
+          writeFileStorageEstimateSnapshot(app.globalData.fileStorageEstimate);
         } catch (eG) {}
         this.setData({
           fileStorageLoading: false,

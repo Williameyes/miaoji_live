@@ -217,6 +217,61 @@ function getUserFileStorageHint(usedBytes) {
   return getClipStorageHealthHint(usedBytes, usedBytes);
 }
 
+/** 本地快照键：缓存最后一次估算，供直播页与 globalData 对齐 */
+const FILE_STORAGE_LIVE_SNAPSHOT_KEY = 'miaoxie_file_storage_snapshot';
+
+/**
+ * 将估算结果写入本地快照（与 `app.globalData.fileStorageEstimate` 同步），避免仅依赖内存被覆盖或未写完就跳页。
+ *
+ * @param {{
+ *   clipBytes?: number,
+ *   userDataBytes?: number,
+ *   clipMb?: number,
+ *   totalMb?: number,
+ *   healthLevel?: string,
+ *   hintText?: string,
+ *   at?: number
+ * }} est
+ * @returns {void}
+ */
+function writeFileStorageEstimateSnapshot(est) {
+  if (!est || typeof est !== 'object') return;
+  try {
+    wx.setStorageSync(FILE_STORAGE_LIVE_SNAPSHOT_KEY, {
+      clipBytes: est.clipBytes,
+      userDataBytes: est.userDataBytes,
+      clipMb: est.clipMb,
+      totalMb: est.totalMb,
+      healthLevel: est.healthLevel,
+      hintText: est.hintText,
+      at: typeof est.at === 'number' && Number.isFinite(est.at) ? est.at : Date.now()
+    });
+  } catch (e) {}
+}
+
+/**
+ * 读取最近一次存储估算快照（可能为 null）。
+ *
+ * @returns {{
+ *   clipBytes?: number,
+ *   userDataBytes?: number,
+ *   clipMb?: number,
+ *   totalMb?: number,
+ *   healthLevel?: string,
+ *   hintText?: string,
+ *   at?: number
+ * }|null}
+ */
+function readFileStorageEstimateSnapshot() {
+  try {
+    const r = wx.getStorageSync(FILE_STORAGE_LIVE_SNAPSHOT_KEY);
+    if (!r || typeof r !== 'object') return null;
+    return r;
+  } catch (e) {
+    return null;
+  }
+}
+
 module.exports = {
   CLIP_STORAGE_WARN_BYTES,
   CLIP_STORAGE_SEVERE_BYTES,
@@ -227,5 +282,7 @@ module.exports = {
   getKvStorageInfoSafe,
   getClipStorageHealthHint,
   getUserFileStorageHint,
-  fileSizeBytesAsync
+  fileSizeBytesAsync,
+  writeFileStorageEstimateSnapshot,
+  readFileStorageEstimateSnapshot
 };
