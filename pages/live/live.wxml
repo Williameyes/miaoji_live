@@ -1,30 +1,34 @@
 <page-meta background-color="#000000" background-color-top="#000000" background-color-bottom="#000000" page-style="background: #000000;"></page-meta>
 <wxs module="c" src="./live.wxs"></wxs>
 <view class="container landscape {{isRecording ? 'container--rec-performance' : ''}}">
-  <!-- Level 0: 全屏相机预览（系统相机保持活跃，承担 startRecord 与 onCameraFrame 吐帧） -->
-  <camera
-    wx:if="{{cameraMounted && liveStreamAllowed}}"
-    device-position="back" 
-    flash="off" 
-    frame-size="{{enhanceCanvasVisible ? 'large' : 'max'}}" 
-    resolution="high"
-    class="camera-bg {{enhanceCanvasVisible ? 'camera-bg--under-enhance' : ''}}"
-    mode="normal"
-    zoom="{{zoom}}"
-    bindstop="onCameraStop"
-    binderror="onCameraError"
-    bindinitdone="onCameraInit">
-  </camera>
+  <!-- Level 0: 16:9 内接取景框（与 computeLiveStage16x9 一致），避免全屏与相机典型 16:9 输出比例差导致的非等比拉伸感 -->
+  <view
+    wx:if="{{liveStreamAllowed && (cameraMounted || enhanceCanvasVisible)}}"
+    class="live-stage"
+    id="liveStage"
+    style="{{liveStageInlineStyle}}">
+    <!-- 全屏相机：承担 startRecord 与 onCameraFrame 吐帧 -->
+    <camera
+      wx:if="{{cameraMounted && liveStreamAllowed}}"
+      device-position="back"
+      flash="off"
+      frame-size="{{enhanceCanvasVisible ? 'large' : 'max'}}"
+      resolution="high"
+      class="camera-bg {{enhanceCanvasVisible ? 'camera-bg--under-enhance' : ''}}"
+      mode="normal"
+      zoom="{{zoom}}"
+      bindstop="onCameraStop"
+      binderror="onCameraError"
+      bindinitdone="onCameraInit">
+    </camera>
 
-  <!-- Level 0.1: WebGL 锐化画布；pointer-events:none 使手势层继续生效
-       - 原生家族（standard/strong）：canvas 在 camera 之上，CSS opacity 0.01 把 camera 抹掉
-       - VK 家族（enhanceMode==='vk'）：camera 已 unmount，canvas 独自承载预览
-       - 判定条件不再强依赖 cameraMounted，以支持 VK 模式独立运转 -->
-  <canvas
-    wx:if="{{liveStreamAllowed && enhanceCanvasVisible}}"
-    type="webgl"
-    id="enhanceCanvas"
-    class="enhance-canvas"></canvas>
+    <!-- WebGL 锐化：standard/strong 盖在 camera 上；VK 时 camera 可已卸载仅 canvas 出图 -->
+    <canvas
+      wx:if="{{liveStreamAllowed && enhanceCanvasVisible}}"
+      type="webgl"
+      id="enhanceCanvas"
+      class="enhance-canvas"></canvas>
+  </view>
 
   <!-- 硬恢复间隙：静态低透明度遮罩（无文字、无 Toast、不盖 live 预览逻辑上的循环 video） -->
   <view wx:if="{{showRecoveryVeil}}" class="recovery-veil" catchtouchmove="noopCatchMove">
@@ -78,34 +82,61 @@
 
   <!-- Level 1: 记分 UI 遮罩层 (沉浸式，不避让状态栏) -->
   <view class="overlay immersive">
-    <view
-      class="recover-fab recover-fab--{{pipelineHealth}} {{isRecovering ? 'recover-fab--busy' : ''}} {{opsControlActionable ? 'recover-fab--actionable' : ''}} {{opsControlAck ? 'recover-fab--ack' : ''}}"
-      catchtap="onRecoveryFabTap"
-      bindtouchstart="onRecoveryFabTouchStart"
-      bindtouchend="onRecoveryFabTouchEnd"
-      bindtouchcancel="onRecoveryFabTouchEnd"
-      catchlongpress="onRecoveryFabLongPress"
-    >
-      <view class="recover-fab-ring">
-        <view
-          wx:if="{{isRecovering}}"
-          class="recover-fab-progress"
-          style="background: conic-gradient(from -90deg, rgba(74, 222, 128, 0.5) 0deg, rgba(74, 222, 128, 0.5) {{recoveryConicEndDeg}}deg, rgba(48, 52, 58, 0.38) 0deg);"
-        ></view>
-        <view
-          wx:elif="{{isSavingHighlight}}"
-          class="recover-fab-progress recover-fab-progress--highlight-save"
-          style="background: conic-gradient(from -90deg, rgba(74, 222, 128, 0.5) 0deg, rgba(74, 222, 128, 0.5) {{highlightSaveConicEndDeg}}deg, rgba(48, 52, 58, 0.38) 0deg);"
-        ></view>
-        <view
-          wx:else
-          class="recover-fab-progress"
-          style="background: conic-gradient(from -90deg, rgba(48, 52, 58, 0.38) 0deg, rgba(48, 52, 58, 0.38) 360deg);"
-        ></view>
-        <view class="recover-fab-inner">
-          <text class="recover-fab-text">{{opsControlText}}</text>
+    <view class="recover-fab-stack">
+      <view
+        class="recover-fab recover-fab--{{pipelineHealth}} {{isRecovering ? 'recover-fab--busy' : ''}} {{opsControlActionable ? 'recover-fab--actionable' : ''}} {{opsControlAck ? 'recover-fab--ack' : ''}}"
+        catchtap="onRecoveryFabTap"
+        bindtouchstart="onRecoveryFabTouchStart"
+        bindtouchend="onRecoveryFabTouchEnd"
+        bindtouchcancel="onRecoveryFabTouchEnd"
+        catchlongpress="onRecoveryFabLongPress"
+      >
+        <view class="recover-fab-ring">
+          <view
+            wx:if="{{isRecovering}}"
+            class="recover-fab-progress"
+            style="background: conic-gradient(from -90deg, rgba(74, 222, 128, 0.5) 0deg, rgba(74, 222, 128, 0.5) {{recoveryConicEndDeg}}deg, rgba(48, 52, 58, 0.38) 0deg);"
+          ></view>
+          <view
+            wx:elif="{{isSavingHighlight}}"
+            class="recover-fab-progress recover-fab-progress--highlight-save"
+            style="background: conic-gradient(from -90deg, rgba(74, 222, 128, 0.5) 0deg, rgba(74, 222, 128, 0.5) {{highlightSaveConicEndDeg}}deg, rgba(48, 52, 58, 0.38) 0deg);"
+          ></view>
+          <view
+            wx:else
+            class="recover-fab-progress"
+            style="background: conic-gradient(from -90deg, rgba(48, 52, 58, 0.38) 0deg, rgba(48, 52, 58, 0.38) 360deg);"
+          ></view>
+          <view class="recover-fab-inner">
+            <text class="recover-fab-text">{{opsControlText}}</text>
+          </view>
         </view>
       </view>
+      <!-- 缓存灯：severe 时 EX 可点，立即批量导出最旧可删片段（最多3条）至相册；WT=仅注意；OK=正常 -->
+      <view
+        class="recover-fab recover-fab--cache recover-fab--cache--{{cacheStorageLampLevel}} {{cacheStorageLampActionable ? 'recover-fab--cache-tap' : 'recover-fab--cache-locked'}}"
+        catchtap="onCacheStorageLampTap"
+      >
+        <view class="recover-fab-ring">
+          <view
+            wx:if="{{!cacheStorageLampActionable}}"
+            class="recover-fab-progress"
+            style="background: conic-gradient(from -90deg, rgba(48, 52, 58, 0.38) 0deg, rgba(48, 52, 58, 0.38) 360deg);"
+          ></view>
+          <view wx:else class="recover-fab-progress recover-fab-progress--cache-alert"></view>
+          <view class="recover-fab-inner">
+            <text class="recover-fab-text">{{cacheStorageLampText}}</text>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <view
+      class="light-hint"
+      wx:if="{{lightHintText}}"
+      style="opacity: {{lightHintOpacity}};"
+    >
+      <text class="light-hint__text">{{lightHintText}}</text>
     </view>
 
     <!-- 核心记分区域：位于正下方居中 -->
@@ -232,6 +263,8 @@
   </view>
 
   <view class="replay-overlay" wx:if="{{isReplaying}}">
+    <!-- 与直播 live-stage 同尺寸的 16:9 内接区域，画幅与取景一致 -->
+    <view class="replay-stage" style="{{liveStageInlineStyle}}">
     <!-- 可拖拽缩放视频容器：双指缩放 + 全向拖动（均为 movable-view 原生能力） -->
     <movable-area class="replay-movable-area">
       <movable-view
@@ -338,6 +371,7 @@
         </view>
       </view>
     </view>
+    </view>
   </view>
 
   <!-- Level 3: 操作指南弹窗（毛玻璃深色双列布局） -->
@@ -427,7 +461,7 @@
     <!-- 高清渲染调试工具条：仅白名单机型显示；抽屉打开时常驻顶部，便于对比画质 + 观测 FPS -->
     <view wx:if="{{enhanceWhitelisted}}" class="enhance-mode-toolbar {{enhanceVkTransitioning ? 'enhance-mode-toolbar--transitioning' : ''}}" catchtap="stopEnhanceToolbarBubble">
       <view class="enhance-mode-status">
-        <text class="enhance-mode-k">画质</text>
+        <text class="enhance-mode-k">画质增强</text>
         <text class="enhance-mode-v">{{c.enhanceModeLabel(enhanceMode)}} · {{enhanceFpsText}}</text>
       </view>
       <view class="enhance-mode-group">

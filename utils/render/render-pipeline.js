@@ -550,6 +550,22 @@ function createRenderPipeline() {
   }
 
   /**
+   * 与页面 16:9 取景框（CSS px）同步后备缓冲，避免全屏与画布尺寸不一导致锐化/比例错位。
+   *
+   * @param {number} cssW
+   * @param {number} cssH
+   * @returns {void}
+   */
+  function resizeToCssPixels(cssW, cssH) {
+    if (!renderer || typeof renderer.resizeCanvas !== 'function') return;
+    try {
+      var w = Math.max(1, Math.floor(Number(cssW)));
+      var h = Math.max(1, Math.floor(Number(cssH)));
+      renderer.resizeCanvas(w, h);
+    } catch (e) {}
+  }
+
+  /**
    * 取 WebGL canvas node（MediaRecorder 用）。
    * @returns {Object|null}
    */
@@ -585,6 +601,7 @@ function createRenderPipeline() {
     stop: stop,
     destroy: destroy,
     setVkZoom: setVkZoom,
+    resizeToCssPixels: resizeToCssPixels,
     getCanvasNode: getCanvasNode,
     setVkRecordingHook: setVkRecordingHook,
     hintThermalPressure: hintThermalPressure,

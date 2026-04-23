@@ -189,22 +189,22 @@ function getClipStorageHealthHint(clipBytes, userDataBytes) {
   if (level === 'severe') {
     if (clipSevere && totalSevere) {
       hintText =
-        `高光片段约 ${clipMb} MB，本机小程序文件约 ${totalMb} MB（空间严重紧张）：保存极易失败，请尽快「下载至相册并清空」或删除旧片段`;
+        `高光片段约 ${clipMb} MB，本机小程序文件约 ${totalMb} MB（空间严重紧张）：新片段可能保存失败，请删除旧片段或使用「下载至相册并清空」`;
     } else if (clipSevere) {
       hintText =
-        `高光片段文件约 ${clipMb} MB（≥100MB 严重）：保存极易因空间失败，请删除旧片段或使用「下载至相册并清空」`;
+        `高光片段文件约 ${clipMb} MB（≥100MB ）：新片段可能保存失败，请删除旧片段或使用「下载至相册并清空」`;
     } else {
       hintText =
-        `本机小程序文件约 ${totalMb} MB（含录像缓冲等，偏高）：保存极易因空间失败，请删除旧片段或使用「下载至相册并清空」`;
+        `本机小程序文件约 ${totalMb} MB（含录像缓冲等，偏高）：新片段可能保存失败，请删除旧片段或使用「下载至相册并清空」`;
     }
   } else if (level === 'warn') {
     if (clipWarn && totalWarn) {
       hintText =
         `高光片段约 ${clipMb} MB，本机小程序文件约 ${totalMb} MB（注意）：长时间开播前建议清理或导出至相册`;
     } else if (clipWarn) {
-      hintText = `高光片段文件约 ${clipMb} MB（≥50MB 注意）：长时间开播前建议清理或导出至相册`;
+      hintText = `高光片段文件约 ${clipMb} MB（≥50MB ）：长时间开播前建议清理或导出至相册`;
     } else {
-      hintText = `本机小程序文件约 ${totalMb} MB（≥100MB 注意）：长时间开播前建议清理或导出高光至相册`;
+      hintText = `本机小程序文件约 ${totalMb} MB（≥100MB ）：长时间开播前建议清理或导出高光至相册`;
     }
   } else {
     hintText = `高光片段约 ${clipMb} MB，本机约 ${totalMb} MB`;

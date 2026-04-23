@@ -68,6 +68,45 @@ const ENHANCE_SWITCH_GUARD_MS = 1000;
  */
 const LIVE_STORAGE_SEVERE_MODAL_DELAY_MS = 560;
 
+/**
+ * 在窗口内得到最大内接 16:9 矩形（px），与常见相机/编码 16:9 长宽比一致，避免全屏时视口与传感器比例严重错位。
+ *
+ * @param {number} winW
+ * @param {number} winH
+ * @returns {{ w: number, h: number }}
+ */
+function computeLiveStage16x9SizePx(winW, winH) {
+  var ww = Math.max(1, winW);
+  var wh = Math.max(1, winH);
+  var ar = 16 / 9;
+  if (ww / wh > ar) {
+    var h1 = wh;
+    var w1 = h1 * ar;
+    return { w: w1, h: h1 };
+  }
+  var w0 = ww;
+  var h0 = w0 / ar;
+  return { w: w0, h: h0 };
+}
+
+/**
+ * 16:9 内接矩形在窗口中的位置（px，左上为原点），与 liveStageInlineStyle 居中逻辑一致。
+ *
+ * @param {number} winW
+ * @param {number} winH
+ * @returns {{ w: number, h: number, left: number, top: number }}
+ */
+function computeLiveStage16x9RectPx(winW, winH) {
+  var box = computeLiveStage16x9SizePx(winW, winH);
+  var ww = Math.max(1, winW);
+  var wh = Math.max(1, winH);
+  var ar = 16 / 9;
+  if (ww / wh > ar) {
+    return { w: box.w, h: box.h, left: (ww - box.w) * 0.5, top: 0 };
+  }
+  return { w: box.w, h: box.h, left: 0, top: (wh - box.h) * 0.5 };
+}
+
 Page({
   data: {
     matchConfig: {
@@ -101,6 +140,24 @@ Page({
     isRecording: false,
     longPressTimer: null,
     periodFlash: false,
+    /** 缓存空间灯：与 file-storage-estimate 的 getClipStorageHealthHint.level 一致 */
+    cacheStorageLampLevel: 'ok',
+    /**
+     * 与 cacheStorageLampLevel==='severe' 同步；为 true 时禁起新 rolling 段、禁保存高光，下灯可点按批量导出清空间。
+     * @type {boolean}
+     */
+    storageSevereLock: false,
+    /** 同 storageSevereLock，供 wxml 复用可点态 */
+    cacheStorageLampActionable: false,
+    /** 与顶部状态灯同系：OK / WT(warn) / EX(severe) */
+    cacheStorageLampText: 'OK',
+    /**
+     * 轻提示（自绘半透明，替代 wx.showToast，避免与直播抢焦点）；opacity 0~0.7，短时长。
+     * @type {string}
+     */
+    lightHintText: '',
+    /** @type {number} */
+    lightHintOpacity: 0,
 
     /** 抽屉模式: 0=隐藏 1=抽屉打开 */
     drawerMode: 0,
@@ -236,6 +293,8 @@ Page({
      * 关闭时回退为仅 <camera> 的原生预览。
      */
     enhanceCanvasVisible: false,
+    /** 16:9 取景框内联样式（等比内接于窗口，黑边在容器外，见 live.wxss .live-stage） */
+    liveStageInlineStyle: '',
     /**
      * 增强渲染当前档位：'off' | 'lite' | 'standard' | 'strong' | 'vk'；由 render-pipeline 写回。
      * 注意：'vk' 属于独立家族，此时 <camera> 已 unmount、rolling 已停；切出时须通过
@@ -869,8 +928,6 @@ Page({
     this._liveStorageEntryModalShown = false;
     /** 当次进入 live 页是否已对 severe 档位执行过一次「删最旧高光 + 清 rolling」 */
     this._liveSevereKickoffPruneDone = false;
-    /** 长直播 periodic 探测下，上次因 severe 自动删高光的时间戳 */
-    this._lastPeriodicSevereClipPruneAt = 0;
     /** 紧急释放中，上次执行高光实体删最旧的时间戳。 */
     this._lastEmergencyClipPruneAt = 0;
     /** onShow 后若相机 init 回调丢失，超时强制重建（见 _liveCoreOnShowAfterEntitlement）。 */
@@ -1003,6 +1060,21 @@ Page({
     } catch (e) {
       // 低版本基础库忽略
     }
+
+    this._windowResizeListener = function() {
+      try {
+        this._updateLiveStageLayout();
+        this.updateTeamGroupWidth(true);
+      } catch (eRz) {}
+    }.bind(this);
+    if (wx.onWindowResize) {
+      try {
+        wx.onWindowResize(this._windowResizeListener);
+      } catch (eWz) {}
+    }
+    try {
+      this._updateLiveStageLayout();
+    } catch (eL0) {}
 
     // 直播核心拉起统一放在 onShow，避免 onLoad + onShow 并发触发 camera 重建。
   },
@@ -1597,6 +1669,10 @@ Page({
       cssW = si.windowWidth || cssW;
       cssH = si.windowHeight || cssH;
     } catch (eInfo) {}
+    var stageBox = computeLiveStage16x9SizePx(cssW, cssH);
+    try {
+      this._updateLiveStageLayout();
+    } catch (eL2) {}
     var self = this;
     // 先挂 canvas 节点（wx:if），下一 tick 再 init，确保节点已进入渲染树。
     this.setData({ enhanceCanvasVisible: true }, function() {
@@ -1606,8 +1682,8 @@ Page({
         page: self,
         cameraContext: self.data.cameraContext,
         canvasSelector: '#enhanceCanvas',
-        cssW: cssW,
-        cssH: cssH,
+        cssW: stageBox.w,
+        cssH: stageBox.h,
         // VK 分支保留接口但本轮不启用：保守优先，避免与 startRecord 冲突
         preferVk: false
       }).then(function() {
@@ -1661,6 +1737,30 @@ Page({
   },
 
   /**
+   * 将直播取景区设为窗口内接 16:9，并同步增强/VK 的 WebGL 画布 CSS 像素，避免全屏与相机比例不一致。
+   * 边距为页底黑。工程内未对左右黑边做全屏毛玻璃/模糊补全（避免无收益的高 GPU 与合成开销）。
+   * @returns {void}
+   */
+  _updateLiveStageLayout: function() {
+    var sysW = 375;
+    var sysH = 667;
+    try {
+      var si = wx.getSystemInfoSync();
+      sysW = si.windowWidth || sysW;
+      sysH = si.windowHeight || sysH;
+    } catch (e) {}
+    var box = computeLiveStage16x9SizePx(sysW, sysH);
+    var style = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);' +
+      'width:' + box.w + 'px;height:' + box.h + 'px;';
+    this.setData({ liveStageInlineStyle: style });
+    if (this._renderPipeline && typeof this._renderPipeline.resizeToCssPixels === 'function') {
+      try {
+        this._renderPipeline.resizeToCssPixels(box.w, box.h);
+      } catch (e1) {}
+    }
+  },
+
+  /**
    * 启动 VK 独立管线（VKSession v2）。
    *
    * 前置条件（调用方保证）：
@@ -1676,12 +1776,17 @@ Page({
   _bootVkPipeline: function() {
     if (!this.data.enhanceVkSupported) return;
     var self = this;
-    var cssW = 375, cssH = 667;
+    var cssW = 375;
+    var cssH = 667;
     try {
       var si = wx.getSystemInfoSync();
       cssW = si.windowWidth || cssW;
       cssH = si.windowHeight || cssH;
     } catch (eInfo) {}
+    var stageBoxVk = computeLiveStage16x9SizePx(cssW, cssH);
+    try {
+      this._updateLiveStageLayout();
+    } catch (eL3) {}
     // 清理旧管线
     if (this._renderPipeline) {
       try { this._renderPipeline.destroy(); } catch (eD) {}
@@ -1694,8 +1799,8 @@ Page({
         page: self,
         cameraContext: null,
         canvasSelector: '#enhanceCanvas',
-        cssW: cssW,
-        cssH: cssH,
+        cssW: stageBoxVk.w,
+        cssH: stageBoxVk.h,
         sourceKind: 'vk',
         onVkDegrade: function(info) {
           self._cleanupVkCanvasHighlightRecording('vk_degrade');
@@ -3011,6 +3116,23 @@ Page({
     if (wx.setPageOrientation) {
       wx.setPageOrientation({ orientation: 'landscape' });
     }
+    try {
+      this._updateLiveStageLayout();
+    } catch (eLs) {}
+    try {
+      const snap = storageEst.readFileStorageEstimateSnapshot();
+      if (
+        snap
+        && typeof snap.clipBytes === 'number'
+        && Number.isFinite(snap.clipBytes)
+        && typeof snap.userDataBytes === 'number'
+        && Number.isFinite(snap.userDataBytes)
+      ) {
+        this._syncCacheStorageLampData(
+          storageEst.getClipStorageHealthHint(snap.clipBytes, snap.userDataBytes)
+        );
+      }
+    } catch (eSnap) {}
 
     this.refreshLiveEntitlementAndResume(() => {
       this._liveCoreOnShowAfterEntitlement();
@@ -3109,10 +3231,11 @@ Page({
       storageEst.estimateUserDataPathUsageBytes()
     ])
       .then(([clipBytes, userBytes]) => {
+        const hint = storageEst.getClipStorageHealthHint(clipBytes, userBytes);
+        this._syncCacheStorageLampData(hint);
         if (t === 'periodic' && !this.rollingActive) {
           return;
         }
-        const hint = storageEst.getClipStorageHealthHint(clipBytes, userBytes);
         this.appendHealthLog('live_sandbox_storage_probe', {
           trigger: t,
           clipMb: hint.clipMb,
@@ -3140,21 +3263,10 @@ Page({
           this._liveSevereKickoffPruneDone = true;
           this.freeRollingFileStorageAggressive('live_storage_severe_kickoff');
         }
-        if (
-          hint.level === 'severe'
-          && t === 'periodic'
-          && this.rollingActive
-        ) {
-          const n = Date.now();
-          const gap = 8 * 60 * 1000;
-          if (!this._lastPeriodicSevereClipPruneAt || n - this._lastPeriodicSevereClipPruneAt >= gap) {
-            this._lastPeriodicSevereClipPruneAt = n;
-            this.pruneHighlightClipsWithInvalidFiles('live_periodic_severe_orphan_first');
-            const pr = this.pruneOldestHighlightClipsFromStorage(2, 'live_periodic_severe');
-            if (pr > 0) {
-              this.appendHealthLog('live_periodic_severe_prune', { pruned: pr });
-            }
-          }
+        if (hint.level === 'severe' && t === 'periodic' && this.rollingActive) {
+          try {
+            this.appendHealthLog('live_periodic_severe_lock_only', { noAutoClipPrune: true });
+          } catch (eL) {}
         }
       })
       .catch((eProbe) => {
@@ -3165,6 +3277,266 @@ Page({
           });
         } catch (eLog) {}
       });
+  },
+
+  /**
+   * 同步缓存角标灯与严重水位锁：severe 时 storageSevereLock，禁新分段/禁高光，仅此时下灯 EX 可点按批量导出。
+   *
+   * @param {{ level?: string, clipMb?: number, totalMb?: number, hintText?: string }} hint
+   * @returns {void}
+   */
+  _syncCacheStorageLampData: function(hint) {
+    if (!hint || typeof hint !== 'object') return;
+    const raw = String(hint.level || 'ok')
+      .trim()
+      .toLowerCase();
+    const lv = raw === 'warn' || raw === 'severe' || raw === 'ok' ? raw : 'ok';
+    const storageSevereLock = lv === 'severe';
+    let txt = 'OK';
+    if (lv === 'warn') txt = 'WT';
+    if (lv === 'severe') txt = 'EX';
+    if (
+      lv === this.data.cacheStorageLampLevel
+      && storageSevereLock === this.data.storageSevereLock
+      && txt === this.data.cacheStorageLampText
+    ) {
+      return;
+    }
+    this.setData({
+      cacheStorageLampLevel: lv,
+      storageSevereLock: storageSevereLock,
+      cacheStorageLampActionable: storageSevereLock,
+      cacheStorageLampText: txt
+    });
+  },
+
+  /**
+   * 自绘轻提示：半透明、短时长、2 次 setData 以内，不调用 wx.showToast。
+   * @param {string} message
+   * @returns {void}
+   */
+  _showLightHint: function(message) {
+    const t = String(message || '')
+      .trim();
+    if (!t) return;
+    if (this._lightHintFadeTimer) {
+      try {
+        clearTimeout(this._lightHintFadeTimer);
+      } catch (e) {}
+      this._lightHintFadeTimer = null;
+    }
+    this.setData({ lightHintText: t, lightHintOpacity: 0.7 });
+    const self = this;
+    this._lightHintFadeTimer = setTimeout(function() {
+      self.setData({ lightHintOpacity: 0 });
+      self._lightHintFadeTimer = setTimeout(function() {
+        self.setData({ lightHintText: '' });
+        self._lightHintFadeTimer = null;
+      }, 200);
+    }, 260);
+  },
+
+  /**
+   * 选最旧 1 条、带本地路径且未标相册导出的片段。
+   * 在 storageSevereLock 下 minKeep 按 0 计：否则会出现「条数=应急保留量 → 可删 0 条」却仍为 severe 的死锁。
+   * @returns {{ matchId: string, item: Record<string, unknown> }|null}
+   */
+  _getOneOldestPrunableClipForCacheLamp: function() {
+    const clipsMap = clipsStorage.readClipsMapSafe();
+    if (!clipsMap) return null;
+    const entries = [];
+    Object.keys(clipsMap).forEach((matchId) => {
+      const list = clipsMap[matchId];
+      if (!Array.isArray(list)) return;
+      list.forEach((it) => {
+        if (!it || typeof it !== 'object') return;
+        if (it.exportedToAlbum) return;
+        const id = it.id != null ? String(it.id) : '';
+        if (!id) return;
+        const segs = Array.isArray(it.segments) ? it.segments.filter((p) => p && typeof p === 'string') : [];
+        const ex = it.replaySegment && typeof it.replaySegment === 'string' ? [it.replaySegment] : [];
+        const hasPaths = [...new Set([...segs, ...ex])].length > 0;
+        if (!hasPaths) return;
+        const createdAt = this.resolveHighlightCreatedAt(/** @type {Record<string, unknown>} */ (it));
+        entries.push({ matchId, id, createdAt });
+      });
+    });
+    if (entries.length === 0) return null;
+    const baseMin = Math.max(0, Number(this.highlightsEmergencyMinKeepCount || 0));
+    const minKeep = this.data.storageSevereLock ? 0 : baseMin;
+    const removableBudget = Math.max(0, entries.length - minKeep);
+    if (removableBudget <= 0) return null;
+    entries.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+    const first = entries[0];
+    const list = clipsMap[first.matchId];
+    if (!Array.isArray(list)) return null;
+    const it = list.find((x) => x && String(x.id) === first.id);
+    if (!it || typeof it !== 'object') return null;
+    return { matchId: first.matchId, item: it };
+  },
+
+  /**
+   * 将单条高光对应本地视频依次保存至相册、unlink、索引标记为已导出；与全量「下载并清空」同一语义，不直接删 Storage 行。
+   *
+   * @param {string} matchId
+   * @param {Record<string, unknown>} item
+   * @param {(err: string|null) => void} onDone
+   * @returns {void}
+   */
+  _exportOneClipToAlbumForCacheLamp: function(matchId, item, onDone) {
+    const done = typeof onDone === 'function' ? onDone : function() {};
+    const fs = wx.getFileSystemManager();
+    const clipsMap = clipsStorage.readClipsMapSafe();
+    if (!clipsMap) {
+      done('map');
+      return;
+    }
+    const segs = Array.isArray(item.segments) ? item.segments.filter((p) => p && typeof p === 'string') : [];
+    const extra = item.replaySegment && typeof item.replaySegment === 'string' ? [item.replaySegment] : [];
+    const paths = [...new Set([...segs, ...extra])];
+    if (paths.length === 0) {
+      done('paths');
+      return;
+    }
+    const runPaths = (pi, failStreak) => {
+      if (pi >= paths.length) {
+        const list = clipsMap[matchId];
+        if (Array.isArray(list)) {
+          const id = item.id != null ? String(item.id) : '';
+          const idx = list.findIndex((x) => x && String(x.id) === id);
+          if (idx >= 0) {
+            list[idx].segments = [];
+            list[idx].replaySegment = '';
+            list[idx].exportedToAlbum = true;
+            list[idx].exportedToAlbumAt = Date.now();
+          }
+        }
+        if (clipsStorage.writeClipsMapSafe(clipsMap)) {
+          try {
+            if (typeof this.refreshDrawerHighlights === 'function') this.refreshDrawerHighlights();
+          } catch (eR) {}
+          try {
+            this.appendHealthLog('cache_lamp_export_one', {
+              matchId: String(matchId),
+              id: String(item.id),
+              saveFailCount: failStreak
+            });
+          } catch (eL) {}
+          done(failStreak > 0 ? 'partial' : null);
+        } else {
+          done('write');
+        }
+        return;
+      }
+      const p = paths[pi];
+      const nextPi = pi + 1;
+      let failCount = failStreak;
+      wx.saveVideoToPhotosAlbum({
+        filePath: p,
+        success: () => {
+          try {
+            fs.unlinkSync(p);
+          } catch (eUn) {}
+          runPaths(nextPi, failCount);
+        },
+        fail: () => {
+          failCount += 1;
+          runPaths(nextPi, failCount);
+        }
+      });
+    };
+    const start = () => runPaths(0, 0);
+    wx.getSetting({
+      success: (res) => {
+        if (res.authSetting && res.authSetting['scope.writePhotosAlbum']) {
+          start();
+        } else {
+          wx.authorize({
+            scope: 'scope.writePhotosAlbum',
+            success: start,
+            fail: () => {
+              try {
+                wx.showModal({
+                  title: '需要相册权限',
+                  content: '导出后可释放本机空间',
+                  showCancel: false
+                });
+              } catch (e) {}
+              done('auth');
+            }
+          });
+        }
+      },
+      fail: () => done('set')
+    });
+  },
+
+  /**
+   * 严重水位下点按：立即按序导出最旧可删的若干条到相册并 unlink 本地（不排队）；单次最多 3 条，降低与相机 I/O 冲突。
+   * @returns {void}
+   */
+  onCacheStorageLampTap: function() {
+    if (!this.data.storageSevereLock) return;
+    if (this._cacheLampBatchRunning) {
+      this._showLightHint('处理中');
+      return;
+    }
+    if (this.data.isRecording || this.data.isSavingHighlight) {
+      this._showLightHint('请稍候');
+      return;
+    }
+    const batchMax = 3;
+    this._cacheLampBatchRunning = true;
+    const self = this;
+    let doneCount = 0;
+    try {
+      this.appendHealthLog('cache_lamp_tap_batch', { max: batchMax });
+    } catch (eL) {}
+    const finishBatch = (hintKey) => {
+      self._cacheLampBatchRunning = false;
+      if (doneCount === 0) {
+        self._showLightHint('无未导出的本地文件');
+      } else {
+        self._showLightHint('已导' + String(doneCount) + '条');
+      }
+      try {
+        self.probeLiveSandboxStorage(hintKey || 'after_cache_lamp_batch', true);
+      } catch (e) {}
+    };
+    const runNext = (left) => {
+      if (left <= 0) {
+        finishBatch('after_cache_lamp_batch');
+        return;
+      }
+      const t = self._getOneOldestPrunableClipForCacheLamp();
+      if (!t) {
+        finishBatch('after_cache_lamp_batch');
+        return;
+      }
+      self._exportOneClipToAlbumForCacheLamp(t.matchId, t.item, function(err) {
+        if (err === 'auth') {
+          self._cacheLampBatchRunning = false;
+          self._showLightHint('需相册权限');
+          if (doneCount > 0) {
+            self.probeLiveSandboxStorage('after_cache_lamp_batch_partial', true);
+          }
+          return;
+        }
+        if (!err || err === 'partial') {
+          doneCount += 1;
+          runNext(left - 1);
+          return;
+        }
+        self._cacheLampBatchRunning = false;
+        if (doneCount > 0) {
+          self._showLightHint('已导' + String(doneCount) + '条');
+          self.probeLiveSandboxStorage('after_cache_lamp_batch_err', true);
+        } else {
+          self._showLightHint('未完成');
+        }
+      });
+    };
+    runNext(batchMax);
   },
 
   /**
@@ -3272,6 +3644,9 @@ Page({
   },
 
   onReady: function() {
+    try {
+      this._updateLiveStageLayout();
+    } catch (eL1) {}
     if (wx.nextTick) {
       wx.nextTick(() => this.updateTeamGroupWidth(true));
     } else {
@@ -3354,6 +3729,12 @@ Page({
   },
 
   onUnload: function() {
+    if (this._windowResizeListener && wx.offWindowResize) {
+      try {
+        wx.offWindowResize(this._windowResizeListener);
+      } catch (eRz) {}
+      this._windowResizeListener = null;
+    }
     this._replayDeferredItem = null;
     if (this._replayPauseWaitTimer) {
       clearTimeout(this._replayPauseWaitTimer);
@@ -3472,6 +3853,14 @@ Page({
       this.setData({ showStoragePressureModal: false });
     }
     this._livePageVisible = false;
+    this._cacheLampBatchRunning = false;
+    if (this._lightHintFadeTimer) {
+      try {
+        clearTimeout(this._lightHintFadeTimer);
+      } catch (e) {}
+      this._lightHintFadeTimer = null;
+    }
+    this.setData({ lightHintText: '', lightHintOpacity: 0 });
     /** 切后台不打断保存，但取消「保存完成后自动回放」，避免隐藏态误开全屏回放 */
     this._replayDeferredItem = null;
     if (this._highlightResumeUnlockFallbackTimer) {
@@ -3598,7 +3987,8 @@ Page({
       && this._cameraInitDone
       && (now - (this.lastSegmentAt || 0) > this.segmentDurationMs * 3.5)
       && !this.data.isRecording
-      && !this.rollingFsBusy;
+      && !this.rollingFsBusy
+      && !this.data.storageSevereLock;
     const captureLikelyBlocked =
       this.highlightMissStreak > 0
       || this.startRecordFailStreak >= 3
@@ -3617,6 +4007,10 @@ Page({
     } else if (this.data.isRecording) {
       health = 'recording';
       text = 'REC';
+    } else if (this.data.storageSevereLock) {
+      /** 严重水位停分段：非 ERR，避免与采集中断混淆 */
+      health = 'ok';
+      text = 'STO';
     }
     if (
       health !== this.data.pipelineHealth
@@ -3897,6 +4291,10 @@ Page({
    */
   onRecoveryFabTap: function() {
     if (this.data.isRecovering) return;
+    if (this.data.storageSevereLock) {
+      this._showLightHint('请先清理空间');
+      return;
+    }
     if (this.data.isSavingHighlight || this.pendingHighlight) {
       return;
     }
@@ -4206,6 +4604,7 @@ Page({
           return;
         }
         if (this.data.isRecording) return;
+        if (this.data.storageSevereLock) return;
         const streamIdleTooLong = now - this.lastSegmentAt > this.segmentDurationMs * 3;
         if (!streamIdleTooLong) return;
         this.startOneSegment(sessionId, 0);
@@ -4217,6 +4616,12 @@ Page({
   startOneSegment: function(sessionId, retryCount = 0) {
     if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
     if (!this.data.cameraContext) return;
+    if (this.data.storageSevereLock) {
+      try {
+        this.appendHealthLog('segment_start_skipped_storage_severe', { retryCount });
+      } catch (eL) {}
+      return;
+    }
     if (this._needManualRelaunch) return;
     if (this._startOneSegmentInFlight) return;
     this._startOneSegmentInFlight = true;
@@ -4442,6 +4847,12 @@ Page({
           );
           const kickNextSegment = () => {
             if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
+            if (this.data.storageSevereLock) {
+              try {
+                this.appendHealthLog('next_segment_suppressed_storage_severe', {});
+              } catch (eN) {}
+              return;
+            }
             this.scheduleAfterStopRecord(() => this.startOneSegment(sessionId));
           };
           let iosSerialPersist = false;
@@ -4472,6 +4883,12 @@ Page({
           return;
         }
         this.abortHighlightAfterStopIfNeeded(sessionId, 'empty_temp_path');
+        if (this.data.storageSevereLock) {
+          try {
+            this.appendHealthLog('next_segment_suppressed_storage_severe', { reason: 'empty_temp' });
+          } catch (eE) {}
+          return;
+        }
         this.scheduleAfterStopRecord(() => this.startOneSegment(sessionId));
       },
       fail: (err) => {
@@ -4484,6 +4901,12 @@ Page({
         this.setData({ isRecording: false });
         this.lastRecordStartAt = 0;
         this.abortHighlightAfterStopIfNeeded(sessionId, 'stop_record_fail');
+        if (this.data.storageSevereLock) {
+          try {
+            this.appendHealthLog('next_segment_suppressed_storage_severe', { reason: 'stop_fail' });
+          } catch (eF) {}
+          return;
+        }
         this.scheduleAfterStopRecord(() => this.startOneSegment(sessionId));
       }
     });
@@ -6353,6 +6776,13 @@ Page({
    */
   requestHighlightCapture: function() {
     if (this._highlightRequestLock || this.data.isSavingHighlight) {
+      return;
+    }
+    if (this.data.storageSevereLock) {
+      this._showLightHint('请先清理空间');
+      try {
+        this.appendHealthLog('highlight_skip_storage_severe', {});
+      } catch (e) {}
       return;
     }
     const vkHighlight = this.data.enhanceMode === 'vk';
@@ -8254,23 +8684,33 @@ Page({
     if (!touches || touches.length < 2) return;
     const a = touches[0];
     const b = touches[1];
-    this._replayPinchFocalX = (a.clientX + b.clientX) * 0.5;
-    this._replayPinchFocalY = (a.clientY + b.clientY) * 0.5;
+    const vp = this._getReplayViewportPx();
+    const offL = typeof vp.left === 'number' ? vp.left : 0;
+    const offT = typeof vp.top === 'number' ? vp.top : 0;
+    this._replayPinchFocalX = (a.clientX + b.clientX) * 0.5 - offL;
+    this._replayPinchFocalY = (a.clientY + b.clientY) * 0.5 - offT;
   },
 
   /**
-   * 读取可视区域宽高（px），与 movable-area 全屏一致。
-   * @returns {{ w: number, h: number }}
+   * 读取回放 movable-area 与 live-stage 一致的 16:9 内接框（px）及在窗口内偏移，供平移钳位与捏合焦点换算。
+   * @returns {{ w: number, h: number, left: number, top: number }}
    */
   _getReplayViewportPx: function() {
+    var winW = 375;
+    var winH = 667;
     try {
       if (typeof wx.getWindowInfo === 'function') {
-        const w = wx.getWindowInfo();
-        return { w: w.windowWidth, h: w.windowHeight };
+        const wi = wx.getWindowInfo();
+        winW = wi.windowWidth || winW;
+        winH = wi.windowHeight || winH;
+      } else {
+        const s = wx.getSystemInfoSync();
+        winW = s.windowWidth || winW;
+        winH = s.windowHeight || winH;
       }
     } catch (err) {}
-    const s = wx.getSystemInfoSync();
-    return { w: s.windowWidth, h: s.windowHeight };
+    var r = computeLiveStage16x9RectPx(winW, winH);
+    return { w: r.w, h: r.h, left: r.left, top: r.top };
   },
 
   /**

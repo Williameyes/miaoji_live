@@ -21,7 +21,7 @@ page {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
-/* 与 WebGL 画布均用 100vw×100vh，避免 110% 溢出 + cover 放大边缘畸变；几何与系统 window 一致 */
+/* 全屏时相机/画布（无 .live-stage 包裹的旧路径保留）：用 cover 等比裁切。 */
 .camera-bg {
   width: 100vw;
   height: 100vh;
@@ -31,6 +31,32 @@ page {
   object-fit: cover;
   background-color: #000000;
   z-index: 0;
+}
+
+/* 16:9 取景框内：铺满父级（与窗口内接 16:9 一致，典型相机 16:9 时约 1:1 等比、无长条全屏强拉） */
+.live-stage {
+  position: fixed;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.live-stage .camera-bg,
+.live-stage .enhance-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain;
+  pointer-events: none;
+  z-index: 1;
+  background: transparent;
+}
+
+.live-stage .camera-bg {
+  z-index: 0;
+  background-color: #000000;
 }
 
 /* 硬恢复相机卸载间隙：静态遮罩（pointer-events:none，不挡状态灯与记分 UI） */
@@ -66,12 +92,24 @@ page {
   pointer-events: none;
 }
 
-/* 常驻状态钮：更小、更通透，内盘显示 OK / REC / ↻ */
-.recover-fab {
+/* 底角双灯：上=推流/健康，下=缓存空间；整体对齐 safe-area */
+.recover-fab-stack {
   position: absolute;
   right: 10rpx;
   bottom: calc(10rpx + env(safe-area-inset-bottom));
+  bottom: calc(10rpx + constant(safe-area-inset-bottom));
   z-index: 24;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14rpx;
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
+/* 常驻状态钮：更小、更通透，内盘显示 OK / REC / ↻ */
+.recover-fab {
+  position: relative;
   width: 40rpx;
   height: 40rpx;
   pointer-events: auto;
@@ -168,6 +206,63 @@ page {
   100% {
     box-shadow: 0 0 0 10rpx rgba(95, 217, 95, 0);
   }
+}
+
+/* 第二颗状态灯：与上颗相同 DOM，复用 .recover-fab-text；副标题 OK / EX 区分 */
+.recover-fab--cache-locked {
+  pointer-events: none;
+}
+
+.recover-fab--cache-tap.recover-fab {
+  opacity: 0.72;
+}
+
+.recover-fab--cache--ok .recover-fab-ring {
+  box-shadow: 0 0 0 1rpx rgba(95, 217, 95, 0.28);
+}
+
+.recover-fab--cache--warn .recover-fab-ring,
+.recover-fab--cache--severe .recover-fab-ring {
+  box-shadow: 0 0 0 1rpx rgba(255, 114, 114, 0.35);
+}
+
+.recover-fab--cache--ok .recover-fab-inner {
+  background: rgba(10, 14, 12, 0.46);
+  border: 1rpx solid rgba(95, 217, 95, 0.22);
+}
+
+.recover-fab--cache-tap .recover-fab-inner {
+  background: rgba(52, 18, 18, 0.45);
+  border: 1rpx solid rgba(255, 180, 180, 0.25);
+}
+
+.recover-fab-progress--cache-alert {
+  background: rgba(255, 88, 88, 0.32);
+}
+
+/* 自绘轻提示：半透明条，短 transition，无 wx.showToast */
+.light-hint {
+  position: fixed;
+  left: 50%;
+  bottom: 22%;
+  z-index: 90;
+  max-width: 78vw;
+  padding: 8rpx 20rpx;
+  border-radius: 999rpx;
+  background: rgba(6, 8, 12, 0.42);
+  box-shadow: 0 2rpx 12rpx rgba(0, 0, 0, 0.28);
+  transform: translateX(-50%);
+  pointer-events: none;
+  box-sizing: border-box;
+  transition: opacity 0.16s ease-out;
+}
+
+.light-hint__text {
+  font-size: 18rpx;
+  line-height: 1.3;
+  color: rgba(255, 255, 255, 0.86);
+  font-weight: 500;
+  text-align: center;
 }
 
 /* 透明手势层 */
@@ -385,21 +480,29 @@ page {
   background: #000;
 }
 
-/* 可拖拽缩放区域：全屏铺满，承载 movable-view */
+/* 与 .live-stage 同逻辑：内联 liveStageInlineStyle 定宽高档位置；子级 100% 相对此框 */
+.replay-stage {
+  overflow: hidden;
+  box-sizing: border-box;
+  z-index: 1;
+  pointer-events: auto;
+}
+
+/* 可拖拽缩放区域：在 16:9 replay-stage 内铺满，承载 movable-view */
 .replay-movable-area {
   position: absolute;
   left: 0;
   top: 0;
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  height: 100%;
   z-index: 1;
   overflow: hidden;
 }
 
 /* 可拖拽缩放视图：与 movable-area 等大，内部视频居中 */
 .replay-movable-view {
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  height: 100%;
   position: relative;
 }
 
@@ -799,13 +902,13 @@ page {
 
 /* 浮层主体容器：width 85%，动态高度 */
 .color-modal-container {
-  width: 86%;
-  max-width: 620rpx;
+  width: 78%;
+  max-width: 520rpx;
   background: rgba(255, 255, 255, 0.42);
   backdrop-filter: blur(50rpx);
   -webkit-backdrop-filter: blur(50rpx);
-  border-radius: 32rpx;
-  padding: 28rpx 28rpx 32rpx;
+  border-radius: 24rpx;
+  padding: 20rpx 22rpx 24rpx;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -816,12 +919,12 @@ page {
 /* ── 队名卡片显示层 ── */
 .cm-teams-header {
   width: 100%;
-  min-height: 40rpx;
+  min-height: 36rpx;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 2%;
-  margin-bottom: 12rpx;
+  margin-bottom: 8rpx;
   padding: 0 4rpx;
   box-sizing: border-box;
 }
@@ -1068,16 +1171,16 @@ page {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
   transform: translate(-50%, -50%);
 }
 
 /* 竖屏录像在横屏回放时旋转 90 度铺满可视区域 */
 .replay-video-fullscreen--rotated {
-  width: 100vh;
-  height: 100vw;
+  width: 100%;
+  height: 100%;
   transform: translate(-50%, -50%) rotate(90deg);
 }
 
@@ -1390,18 +1493,18 @@ page {
   width: 100%;
   display: grid;
   grid-template-columns: repeat(12, 1fr);
-  column-gap: 1.5%;
-  row-gap: 12rpx;
-  margin: 18rpx 0 0;
-  padding: 0 4rpx;
+  column-gap: 1.4%;
+  row-gap: 10rpx;
+  margin: 12rpx 0 0;
+  padding: 0 2rpx;
   box-sizing: border-box;
   justify-items: center;
   align-items: center;
 }
 
 .cm-matrix-ball {
-  width: 28rpx;
-  height: 28rpx;
+  width: 24rpx;
+  height: 24rpx;
   border-radius: 50%;
   border: 1rpx solid rgba(255, 255, 255, 0.22);
   box-sizing: border-box;
@@ -1830,7 +1933,7 @@ page {
  * WebGL 锐化画布：全屏覆盖在 <camera> 之上；指针事件透传给 .gesture-layer
  * 仅在 render-pipeline 启动成功后由 data.enhanceCanvasVisible 触发进入视图树。
  */
-/* 增强渲染画布：与 .camera-bg 同尺寸/位置，顶点 shader 做 object-fit:cover 与原生预览对齐。 */
+/* 全屏时 WebGL 画布（无 .live-stage 时回退，当前直播页用 .live-stage 子级规则） */
 .enhance-canvas {
   position: fixed;
   top: 0;

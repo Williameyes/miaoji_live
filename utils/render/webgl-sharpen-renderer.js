@@ -47,6 +47,7 @@ function createWebglSharpenRenderer() {
    */
   var uniformLocs = {
     uTex: null, uTexel: null,
+    uInvTexel: null,
     uAmount: null, uContrast: null,
     uGamma: null, uSaturation: null,
     uVkZoom: null,
@@ -125,6 +126,7 @@ function createWebglSharpenRenderer() {
     attribLocs.aUv = gl.getAttribLocation(program, 'aUv');
     uniformLocs.uTex = gl.getUniformLocation(program, 'uTex');
     uniformLocs.uTexel = gl.getUniformLocation(program, 'uTexel');
+    uniformLocs.uInvTexel = gl.getUniformLocation(program, 'uInvTexel');
     uniformLocs.uAmount = gl.getUniformLocation(program, 'uAmount');
     uniformLocs.uContrast = gl.getUniformLocation(program, 'uContrast');
     uniformLocs.uGamma = gl.getUniformLocation(program, 'uGamma');
@@ -167,6 +169,28 @@ function createWebglSharpenRenderer() {
    * @param {number} texH 纹理像素高
    * @returns {{ su: number, sv: number, u0: number, v0: number }}
    */
+  /**
+   * 与片元着色器解耦的视口尺寸：须用 gl.drawingBuffer 与光栅一致，避免与 canvas 属性舍入不一致导致 cover 二次畸变。
+   * @returns {{ w: number, h: number }}
+   */
+  function getGlDrawBufferSize() {
+    if (!gl) {
+      return { w: 2, h: 2 };
+    }
+    var dw = gl.drawingBufferWidth;
+    var dh = gl.drawingBufferHeight;
+    if (dw > 0 && dh > 0) {
+      return { w: Math.max(2, dw), h: Math.max(2, dh) };
+    }
+    if (canvasNode) {
+      return {
+        w: Math.max(2, canvasNode.width),
+        h: Math.max(2, canvasNode.height)
+      };
+    }
+    return { w: 2, h: 2 };
+  }
+
   function computeCoverUvScaleOffset(viewW, viewH, texW, texH) {
     var o = orientTexDimsForView(viewW, viewH, texW, texH);
     var tw = o.tw;
@@ -194,7 +218,69 @@ function createWebglSharpenRenderer() {
   }
 
   /**
-   * 为当前锐化 program 设置顶点 UV 变换（onCameraFrame 纹理 → 屏幕）。
+   * object-fit: contain：整幅纹理可见，视口不足处为边带；与页面 16:9 框 + CSS contain 一致，减轻 cover 强裁边引起的边缘「挤拧」。
+   * vUv 在边带外可超出 [0,1]，片元置黑。
+   *
+   * @param {number} viewW
+   * @param {number} viewH
+   * @param {number} texW
+   * @param {number} texH
+   * @returns {{ su: number, sv: number, u0: number, v0: number }}
+   */
+  function computeContainUvScaleOffset(viewW, viewH, texW, texH) {
+    var o = orientTexDimsForView(viewW, viewH, texW, texH);
+    var tw = o.tw;
+    var th = o.th;
+    var cw = Math.max(1, viewW);
+    var ch = Math.max(1, viewH);
+    var viewAsp = cw / ch;
+    var texAsp = tw / th;
+    var su;
+    var sv;
+    var u0;
+    var v0;
+    if (Math.abs(viewAsp - texAsp) < 0.0001) {
+      return { su: 1, sv: 1, u0: 0, v0: 0 };
+    }
+    if (viewAsp > texAsp) {
+      var span = texAsp / viewAsp;
+      var g = (1 - span) * 0.5;
+      su = 1 / span;
+      u0 = -g / span;
+      sv = 1;
+      v0 = 0;
+    } else {
+      var spanV = viewAsp / texAsp;
+      var g2 = (1 - spanV) * 0.5;
+      su = 1;
+      u0 = 0;
+      sv = 1 / spanV;
+      v0 = -g2 / spanV;
+    }
+    return { su: su, sv: sv, u0: u0, v0: v0 };
+  }
+
+  /**
+   * 为当前锐化 program 设置顶点 UV：onCameraFrame 纹理按 contain 映射到画布（与原生层 object-fit:contain 对齐）。
+   *
+   * @param {number} frameTexW
+   * @param {number} frameTexH
+   * @returns {void}
+   */
+  function setSharpenProgramUvContainForCameraFrame(frameTexW, frameTexH) {
+    if (!gl || !program) return;
+    if (uniformLocs.uUvScale == null || uniformLocs.uUvOffset == null) return;
+    if (!canvasNode) return;
+    var db = getGlDrawBufferSize();
+    var cw = db.w;
+    var ch = db.h;
+    var c = computeContainUvScaleOffset(cw, ch, frameTexW, frameTexH);
+    gl.uniform2f(uniformLocs.uUvScale, c.su, c.sv);
+    gl.uniform2f(uniformLocs.uUvOffset, c.u0, c.v0);
+  }
+
+  /**
+   * 为当前锐化 program 设置顶点 UV 变换（cover，保留供对照；原生档现用 contain）。
    *
    * @param {number} frameTexW
    * @param {number} frameTexH
@@ -204,8 +290,9 @@ function createWebglSharpenRenderer() {
     if (!gl || !program) return;
     if (uniformLocs.uUvScale == null || uniformLocs.uUvOffset == null) return;
     if (!canvasNode) return;
-    var cw = Math.max(2, canvasNode.width);
-    var ch = Math.max(2, canvasNode.height);
+    var db = getGlDrawBufferSize();
+    var cw = db.w;
+    var ch = db.h;
     var c = computeCoverUvScaleOffset(cw, ch, frameTexW, frameTexH);
     gl.uniform2f(uniformLocs.uUvScale, c.su, c.sv);
     gl.uniform2f(uniformLocs.uUvOffset, c.u0, c.v0);
@@ -331,6 +418,10 @@ function createWebglSharpenRenderer() {
    * @returns {{ width: number, height: number }}
    */
   function getBackingSize() {
+    if (gl) {
+      var db = getGlDrawBufferSize();
+      return { width: db.w, height: db.h };
+    }
     if (!canvasNode) return { width: 1280, height: 720 };
     return {
       width: Math.max(2, canvasNode.width),
@@ -439,8 +530,9 @@ function createWebglSharpenRenderer() {
   function drawVkCameraFrame(vkFrame) {
     if (!gl || !program || !vkFrame || !vbo || !canvasNode) return 999;
     var t0 = Date.now();
-    var w = Math.max(2, canvasNode.width);
-    var h = Math.max(2, canvasNode.height);
+    var dbVk = getGlDrawBufferSize();
+    var w = dbVk.w;
+    var h = dbVk.h;
     try {
       var cam = vkFrame.getCameraTexture(gl, 'yuv');
       if (!cam) return 999;
@@ -553,7 +645,12 @@ function createWebglSharpenRenderer() {
       gl.vertexAttribPointer(attribLocs.aUv, 2, gl.FLOAT, false, 16, 8);
       gl.activeTexture(gl.TEXTURE0);
       gl.uniform1i(uniformLocs.uTex, 0);
-      gl.uniform2f(uniformLocs.uTexel, 1 / w, 1 / h);
+      if (uniformLocs.uTexel) {
+        gl.uniform2f(uniformLocs.uTexel, 1 / w, 1 / h);
+      }
+      if (uniformLocs.uInvTexel) {
+        gl.uniform2f(uniformLocs.uInvTexel, 1 / w, 1 / h);
+      }
       if (uniformLocs.uAmount && typeof currentUniforms.uAmount === 'number') {
         gl.uniform1f(uniformLocs.uAmount, currentUniforms.uAmount);
       }
@@ -572,7 +669,7 @@ function createWebglSharpenRenderer() {
       if (uniformLocs.uVkZoom) {
         gl.uniform1f(uniformLocs.uVkZoom, vkZoomVal);
       }
-      setSharpenProgramUvCoverForCameraFrame(w, h);
+      setSharpenProgramUvContainForCameraFrame(w, h);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     } catch (e) {
       // 渲染链路异常：返回一个明显过大的耗时，让 PerfMonitor 迅速进入降级路径
@@ -644,6 +741,7 @@ function createWebglSharpenRenderer() {
     attribLocs = { aPos: -1, aUv: -1 };
     uniformLocs = {
       uTex: null, uTexel: null,
+      uInvTexel: null,
       uAmount: null, uContrast: null,
       uGamma: null, uSaturation: null,
       uVkZoom: null,
