@@ -29,6 +29,46 @@ var perfMod = require('./perf-monitor.js');
 var rendererMod = require('./webgl-sharpen-renderer.js');
 var frameMod = require('./frame-source.js');
 
+/** 中心块统计用的边长（像素），与 motion 的 CPU 成本线性相关。 */
+var MOTION_LUMA_PATCH = 8;
+/** VK：帧间 wall clock 间隔 (ms) 归一为 raw motion 的分母；约 30fps 单帧 33ms → raw≈0.33。 */
+var VK_MOTION_BENCH_MS = 100;
+/** motion EMA 系数：new 权重 0.2，与历史 0.8 融合。 */
+var MOTION_SMOOTH_ALPHA = 0.2;
+
+/**
+ * 对 RGBA 相机帧取中心块平均亮度 [0,1]（同 shader 中 luma 权重），供轻量 motion 估计。
+ * @param {ArrayBuffer} data
+ * @param {number} w
+ * @param {number} h
+ * @returns {number|null}
+ */
+function estimateCenterAvgLumaFromRgba(data, w, h) {
+  if (!data || w < 1 || h < 1) return null;
+  var u8 = new Uint8Array(data);
+  var stride = w * 4;
+  var pw = Math.min(MOTION_LUMA_PATCH, w);
+  var ph = Math.min(MOTION_LUMA_PATCH, h);
+  var x0 = Math.floor((w - pw) / 2);
+  var y0 = Math.floor((h - ph) / 2);
+  if (x0 < 0) x0 = 0;
+  if (y0 < 0) y0 = 0;
+  var sum = 0;
+  var n = 0;
+  for (var j = 0; j < ph; j++) {
+    var row = (y0 + j) * stride;
+    for (var i = 0; i < pw; i++) {
+      var o = row + (x0 + i) * 4;
+      var r = u8[o] / 255;
+      var g = u8[o + 1] / 255;
+      var b = u8[o + 2] / 255;
+      sum += 0.299 * r + 0.587 * g + 0.114 * b;
+      n++;
+    }
+  }
+  return n > 0 ? sum / n : null;
+}
+
 /** 原生家族档位由低到高的索引顺序；升降档以此为序。'vk' 不在此数组内。 */
 var ORDER = ['off', 'lite', 'standard', 'strong'];
 /** 任意两次切换的最小间隔，抑制抖动。 */
@@ -92,8 +132,93 @@ function createRenderPipeline() {
    * @type {null|function(): (void|Promise<void>)}
    */
   var _vkBeforeDraw = null;
+  /**
+   * 上一帧中心平均 luma；仅原生 onCameraFrame 有 RGBA 缓冲时递推。VK/无 data 时清空。
+   * @type {number|null}
+   */
+  var _motionPrevLuma = null;
+  /**
+   * 指数平滑后的 motion，传入 Shader，减轻 raw 跳变与「呼吸感」。
+   * @type {number|null}
+   */
+  var _motionSmoothed = null;
+  /**
+   * VK 仅：上一帧 onFrame 的 wall 时间 (ms)，用于帧间间隔估计弱 motion。
+   * @type {number|null}
+   */
+  var _vkLastFrameWallTime = null;
 
   function _now() { return Date.now(); }
+
+  /**
+   * 清空与 motion 相关的可恢复状态；与 off/destroy 对齐。
+   * @returns {void}
+   */
+  function _resetMotionState() {
+    _motionPrevLuma = null;
+    _motionSmoothed = null;
+    _vkLastFrameWallTime = null;
+  }
+
+  /**
+   * 对 raw motion 做 EMA 后写入 renderer uMotion。原生：中心 luma 差；VK：帧间间隔 / 分母，首帧 0.3。
+   * @param {*} frame
+   * @returns {void}
+   */
+  function applyMotionUniformForFrame(frame) {
+    var applySmoothed = function(raw) {
+      if (_motionSmoothed == null) {
+        _motionSmoothed = raw;
+      } else {
+        _motionSmoothed = _motionSmoothed * (1.0 - MOTION_SMOOTH_ALPHA) + raw * MOTION_SMOOTH_ALPHA;
+      }
+      try {
+        if (renderer && typeof renderer.setMotionLevel === 'function') {
+          renderer.setMotionLevel(_motionSmoothed);
+        }
+      } catch (e) {}
+    };
+
+    if (frame && frame.vkFrame) {
+      var t = _now();
+      var rawVk;
+      if (_vkLastFrameWallTime == null) {
+        _vkLastFrameWallTime = t;
+        rawVk = 0.3;
+      } else {
+        var interval = t - _vkLastFrameWallTime;
+        _vkLastFrameWallTime = t;
+        rawVk = Math.min(1, interval / VK_MOTION_BENCH_MS);
+      }
+      applySmoothed(rawVk);
+      return;
+    }
+    if (frame && frame.data && frame.width && frame.height) {
+      var curr = estimateCenterAvgLumaFromRgba(frame.data, frame.width, frame.height);
+      if (curr === null) {
+        _resetMotionState();
+        try {
+          if (renderer && typeof renderer.setMotionLevel === 'function') {
+            renderer.setMotionLevel(0);
+          }
+        } catch (e0) {}
+        return;
+      }
+      var rawNative = 0;
+      if (_motionPrevLuma !== null) {
+        rawNative = Math.min(1, Math.abs(curr - _motionPrevLuma));
+      }
+      _motionPrevLuma = curr;
+      applySmoothed(rawNative);
+      return;
+    }
+    _resetMotionState();
+    try {
+      if (renderer && typeof renderer.setMotionLevel === 'function') {
+        renderer.setMotionLevel(0);
+      }
+    } catch (e1) {}
+  }
 
   /**
    * 初始化（异步）。成功后 mode 仍为 'off'，需再调用 setMode('standard'|'vk') 启动。
@@ -134,6 +259,7 @@ function createRenderPipeline() {
        * @returns {void|Promise<void>}
        */
       function onFrame(frame) {
+        applyMotionUniformForFrame(frame);
         function doDraw() {
           var ms = frame && frame.vkFrame
             ? renderer.drawVkCameraFrame(frame.vkFrame)
@@ -224,6 +350,7 @@ function createRenderPipeline() {
       inTransition = false;
       if (err) {
         mode = 'off';
+        _resetMotionState();
         if (source && source.isRunning && source.isRunning()) {
           try { source.stop(); } catch (e) {}
         }
@@ -241,6 +368,9 @@ function createRenderPipeline() {
         return;
       }
       mode = nextMode;
+      if (toOff) {
+        _resetMotionState();
+      }
       // 切入/离开 vk 时重置降级触发状态
       if (mode !== 'vk') {
         _vkLowFpsStreakSec = 0;
@@ -271,6 +401,7 @@ function createRenderPipeline() {
         return;
       }
       if (fromOff) {
+        _resetMotionState();
         renderer.setShaderLevel(nextMode);
         var sp = source.start();
         if (!sp || typeof sp.then !== 'function') {
@@ -402,6 +533,7 @@ function createRenderPipeline() {
     _vkLowFpsStreakSec = 0;
     _vkDegradeFired = false;
     _vkBeforeDraw = null;
+    _resetMotionState();
     framesRendered = 0;
     lastFrameAt = 0;
   }

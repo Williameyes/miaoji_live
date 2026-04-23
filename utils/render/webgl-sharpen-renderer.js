@@ -50,11 +50,14 @@ function createWebglSharpenRenderer() {
     uAmount: null, uContrast: null,
     uGamma: null, uSaturation: null,
     uVkZoom: null,
+    uMotion: null,
     uUvScale: null,
     uUvOffset: null
   };
   /** VK 数字变焦（中心裁切放大，倍率 ≥1）；与页面 zoom 同步。 */
   var vkZoomVal = 1;
+  /** 每帧由 render-pipeline 写入 [0,1]，驱动 fragment 中 motion 锐化包络；VK 无 CPU 像素路径时为 0。 */
+  var motionUniform = 0;
   var texW = 0;
   var texH = 0;
   var pixelRatio = 1;
@@ -127,6 +130,7 @@ function createWebglSharpenRenderer() {
     uniformLocs.uGamma = gl.getUniformLocation(program, 'uGamma');
     uniformLocs.uSaturation = gl.getUniformLocation(program, 'uSaturation');
     uniformLocs.uVkZoom = gl.getUniformLocation(program, 'uVkZoom');
+    uniformLocs.uMotion = gl.getUniformLocation(program, 'uMotion');
     uniformLocs.uUvScale = gl.getUniformLocation(program, 'uUvScale');
     uniformLocs.uUvOffset = gl.getUniformLocation(program, 'uUvOffset');
   }
@@ -355,6 +359,19 @@ function createWebglSharpenRenderer() {
   }
 
   /**
+   * 设置帧间运动强度，传入 sharpen fragment 的 uMotion；与「中心块平均 luma 差分」同量纲 [0,1]。
+   * @param {number} v
+   * @returns {void}
+   */
+  function setMotionLevel(v) {
+    var n = Number(v);
+    if (!isFinite(n)) n = 0;
+    if (n < 0) n = 0;
+    if (n > 1) n = 1;
+    motionUniform = n;
+  }
+
+  /**
    * 分配/重建 YUV→RGBA 用的 FBO（尺寸与 canvas 后备缓冲一致）。
    * @param {number} w
    * @param {number} h
@@ -464,6 +481,9 @@ function createWebglSharpenRenderer() {
       if (uniformLocs.uAmount && typeof currentUniforms.uAmount === 'number') {
         gl.uniform1f(uniformLocs.uAmount, currentUniforms.uAmount);
       }
+      if (uniformLocs.uMotion) {
+        gl.uniform1f(uniformLocs.uMotion, motionUniform);
+      }
       if (uniformLocs.uContrast && typeof currentUniforms.uContrast === 'number') {
         gl.uniform1f(uniformLocs.uContrast, currentUniforms.uContrast);
       }
@@ -536,6 +556,9 @@ function createWebglSharpenRenderer() {
       gl.uniform2f(uniformLocs.uTexel, 1 / w, 1 / h);
       if (uniformLocs.uAmount && typeof currentUniforms.uAmount === 'number') {
         gl.uniform1f(uniformLocs.uAmount, currentUniforms.uAmount);
+      }
+      if (uniformLocs.uMotion) {
+        gl.uniform1f(uniformLocs.uMotion, motionUniform);
       }
       if (uniformLocs.uContrast && typeof currentUniforms.uContrast === 'number') {
         gl.uniform1f(uniformLocs.uContrast, currentUniforms.uContrast);
@@ -624,10 +647,12 @@ function createWebglSharpenRenderer() {
       uAmount: null, uContrast: null,
       uGamma: null, uSaturation: null,
       uVkZoom: null,
+      uMotion: null,
       uUvScale: null,
       uUvOffset: null
     };
     vkZoomVal = 1;
+    motionUniform = 0;
   }
 
   return {
@@ -639,6 +664,7 @@ function createWebglSharpenRenderer() {
     getBackingSize: getBackingSize,
     getCanvasNode: getCanvasNode,
     setVkZoom: setVkZoom,
+    setMotionLevel: setMotionLevel,
     setShaderLevel: setShaderLevel,
     getShaderLevel: getShaderLevel,
     destroy: destroy
