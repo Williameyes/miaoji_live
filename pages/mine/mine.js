@@ -614,6 +614,14 @@ Page({
     });
   },
 
+  /**
+   * 跳转使用帮助页。
+   * @returns {void}
+   */
+  onHelpTap: function () {
+    wx.navigateTo({ url: '/pages/help/help' });
+  },
+
   onAboutTap: function () {
     wx.showModal({
       title: '关于我们',

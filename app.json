@@ -2,7 +2,8 @@
   "pages": [
     "pages/index/index",
     "pages/live/live",
-    "pages/mine/mine"
+    "pages/mine/mine",
+    "pages/help/help"
   ],
   "window": {
     "backgroundTextStyle": "light",

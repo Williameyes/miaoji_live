@@ -1,0 +1,156 @@
+<view class="help-page">
+  <view class="help-intro">
+    <text class="help-kicker">高光记分</text>
+    <text class="help-intro-desc">以下为常用说明与排障指引，建议首次使用前阅读。</text>
+  </view>
+
+  <view class="help-card help-card--warn">
+    <view class="help-card-head">
+      <text class="help-card-icon">⚠️</text>
+      <text class="help-card-title">数据存储说明</text>
+    </view>
+    <text class="help-p">
+      本应用不会在云端为您长期保存比赛场次、比分记录或高光视频片段等业务数据；相关内容主要保存在本机中。
+    </text>
+    <text class="help-p help-p--emph">
+      若您在系统或微信中「清除小程序数据」「删除并重新进入小程序」，上述本地数据将一并删除且通常无法恢复，请定期将重要高光导出或备份到相册。
+    </text>
+  </view>
+
+  <view class="help-card">
+    <view class="help-card-head">
+      <text class="help-card-icon">🚀</text>
+      <text class="help-card-title">快速上手</text>
+    </view>
+    <view class="help-steps">
+      <view class="help-step">
+        <text class="help-step-num">1</text>
+        <view class="help-step-body">
+          <text class="help-step-title">创建比赛</text>
+          <text class="help-step-text">在首页「记分」创建或选择一场比赛，完善队名、颜色等信息后进入直播记分。</text>
+        </view>
+      </view>
+      <view class="help-step">
+        <text class="help-step-num">2</text>
+        <view class="help-step-body">
+          <text class="help-step-title">直播中记分</text>
+          <text class="help-step-text">单击队名加分（+1），长按队名可连续加分；单击中间比分区域减分（-1）。点击节次可在节间切换。</text>
+        </view>
+      </view>
+      <view class="help-step">
+        <text class="help-step-num">3</text>
+        <view class="help-step-body">
+          <text class="help-step-title">片段与列表</text>
+          <text class="help-step-text">单击 REC 保存高光片段；长按空白处打开比赛与高光列表。左下 ◎ 可调快捷变焦与对焦。</text>
+        </view>
+      </view>
+      <view class="help-step help-step--last">
+        <text class="help-step-num">4</text>
+        <view class="help-step-body">
+          <text class="help-step-title">相机异常</text>
+          <text class="help-step-text">若预览异常，可尝试长按 REC 触发恢复相机（或切换增强模式为‘关闭’后再尝试切回）；仍无效请参考下文「相机黑屏」小节。</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="help-card">
+    <view class="help-card-head">
+      <text class="help-card-icon">📐</text>
+      <text class="help-card-title">直播画幅设置</text>
+    </view>
+    <text class="help-p">
+      本应用相机预览按 16:9 取景区域布局，与常见手机相机与编码比例一致，可减少画面被强行拉伸或出现多余黑边的情况。
+    </text>
+    <text class="help-p">
+      若您同时使用抖音等 App 进行手游模式直播，请在直播设置中选择「手游」并将「画面比例」设为「16:9」，路径一般为：开直播 → 手游 → 画面比例 → 选 16:9。比例不一致时，直播画面容易出现黑边或裁切观感不佳。
+    </text>
+
+    <view class="help-dy-demo">
+      <view class="help-dy-step">
+        <text class="help-dy-step__label">a. 设置入口</text>
+        <text class="help-dy-step__path">开直播 → 手游 → 画面比例</text>
+        <image class="help-dy-shot" src="/pages/live/images/rate1.png" mode="widthFix" />
+      </view>
+      <view class="help-dy-step help-dy-step--last">
+        <text class="help-dy-step__label">b. 选择比例</text>
+        <text class="help-dy-step__path">请选择「16:9」</text>
+        <image class="help-dy-shot" src="/pages/live/images/rate2.png" mode="widthFix" />
+      </view>
+    </view>
+
+    <text class="help-p help-p--tip">
+      上图与直播页「操作指南 → 直播画幅设置」中的示意一致，便于对照设置。
+    </text>
+  </view>
+
+  <view class="help-card">
+    <view class="help-card-head">
+      <text class="help-card-icon">📷</text>
+      <text class="help-card-title">相机黑屏怎么办</text>
+    </view>
+    <view class="help-bullets">
+      <view class="help-bullet">
+        <text class="help-bullet-dot">•</text>
+        <text class="help-bullet-text">确认已授权摄像头与麦克风；在手机系统设置中检查微信是否被关闭相机权限。</text>
+      </view>
+      <view class="help-bullet">
+        <text class="help-bullet-dot">•</text>
+        <text class="help-bullet-text">结束占用相机的其他应用（如系统相机、视频会议、其他直播软件）后重试。</text>
+      </view>
+      <view class="help-bullet">
+        <text class="help-bullet-dot">•</text>
+        <text class="help-bullet-text">在直播页长按 REC 尝试「恢复相机」；或暂时退出直播页再重新进入该场次。</text>
+      </view>
+      <view class="help-bullet">
+        <text class="help-bullet-dot">•</text>
+        <text class="help-bullet-text">低电量、过热降频或机型兼容问题可能导致组件启动失败，可待设备降温后重启微信再试。</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="help-card">
+    <view class="help-card-head">
+      <text class="help-card-icon">✨</text>
+      <text class="help-card-title">高光保存说明</text>
+    </view>
+    <text class="help-p">
+      单击 REC 会按当前策略截取并生成本地高光片段；生成与写入需要一定时间，请避免在存储空间将满时连续高频保存，以免失败或卡顿。
+    </text>
+    <text class="help-p">
+      片段列表与缩略图同样依赖本机存储；清理缓存、卸载重装或更换设备后，未导出的片段可能无法找回。
+    </text>
+    <text class="help-p help-p--tip">
+      重要片段建议保存后尽快使用系统相册或文件管理确认已成功落盘，必要时可分享到云盘备份。
+    </text>
+  </view>
+
+  <view class="help-card help-card--last">
+    <view class="help-card-head">
+      <text class="help-card-icon">❓</text>
+      <text class="help-card-title">其他常见问题</text>
+    </view>
+    <view class="help-faq">
+      <view class="help-faq-item">
+        <text class="help-faq-q">登录与会员提示？</text>
+        <text class="help-faq-a">部分能力需登录后使用；会员或试用到期时，按「我的」页提示续期或分享邀请即可。</text>
+      </view>
+      <view class="help-faq-item">
+        <text class="help-faq-q">横屏与手势？</text>
+        <text class="help-faq-a">直播页支持横屏使用；双指可尝试缩放取景。具体以当前版本直播页内指引为准。</text>
+      </view>
+      <view class="help-faq-item">
+        <text class="help-faq-q">画质增强选项？</text>
+        <text class="help-faq-a">部分机型在抽屉内提供画质增强档位；若出现卡顿或异常，请先切回「关闭」或「标准」以优先保证稳定性。</text>
+      </view>
+      <view class="help-faq-item">
+        <text class="help-faq-q">意见反馈？</text>
+        <text class="help-faq-a">欢迎在「我的 → 使用反馈」中留下建议，便于我们持续改进产品体验。</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="help-footer">
+    <text class="help-footer-text">内容随版本更新，请以应用内实际能力为准。</text>
+  </view>
+</view>

@@ -1,0 +1,8 @@
+{
+  "navigationBarTitleText": "使用帮助",
+  "navigationBarBackgroundColor": "#F8FAFC",
+  "navigationBarTextStyle": "black",
+  "backgroundColor": "#F8FAFC",
+  "navigationStyle": "default",
+  "usingComponents": {}
+}

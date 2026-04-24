@@ -2007,7 +2007,7 @@ Page({
     var self = this;
     wx.showModal({
       title: '超频模式',
-      content: '超频模式仅支持双指数字放大（约 1×～上限），无法像原生相机那样切换超广角。切换期间可能短暂黑屏。确认进入？',
+      content: '超频模式仅支持放大，无法像原生相机那样切换超广角。切换期间可能短暂黑屏。确认进入？',
       confirmText: '进入超频',
       cancelText: '取消',
       confirmColor: '#E64340',

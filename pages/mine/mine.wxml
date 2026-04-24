@@ -56,6 +56,11 @@
   </view>
 
   <view class="list-card">
+    <view class="list-item" hover-class="list-item-hover" bindtap="onHelpTap">
+      <text class="list-label">使用帮助</text>
+      <text class="list-arrow">›</text>
+    </view>
+    <view class="list-divider"></view>
     <view class="list-item" hover-class="list-item-hover" bindtap="onAboutTap">
       <text class="list-label">关于我们</text>
       <text class="list-arrow">›</text>
