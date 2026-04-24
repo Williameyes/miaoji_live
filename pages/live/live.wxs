@@ -39,7 +39,7 @@ function limitTeamName(name) {
  * @returns {string}
  */
 function enhanceModeLabel(mode) {
-  if (mode === 'vk') return 'VK';
+  if (mode === 'vk') return '超频';
   if (mode === 'strong') return '高性能';
   if (mode === 'standard') return '标准';
   if (mode === 'lite') return '轻量';

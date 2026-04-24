@@ -51,6 +51,8 @@ const AE_EXPOSURE_SETDATA_THROTTLE_MS = 100;
 const AE_PRE_TAP_SLOP_PX = 20;
 /** 对焦点方框边长（rpx），与 live.wxss 中 .ae-focus-bracket 一致 */
 const AE_BRACKET_RPX = 56;
+/** 对焦点方框上两次 tap 判为双击锁定的最大间隔（ms），略宽以适配部分机型的 tap 时序 */
+const AE_BRACKET_DOUBLE_TAP_MS = 650;
 /**
  * 仅对焦方框+下方提示的预估额外高度（rpx），靠底边夹紧时用。
  */
@@ -107,6 +109,69 @@ function computeLiveStage16x9RectPx(winW, winH) {
   return { w: box.w, h: box.h, left: 0, top: (wh - box.h) * 0.5 };
 }
 
+/**
+ * 角标 ◎/REC 放在 16:9 外黑边：有左右条时收进条内；全宽+上下条时收进底带并收紧 bottom，避免与取景区重叠。
+ *
+ * @param {number} winW
+ * @param {number} winH
+ * @param {{ w: number, h: number, left: number, top: number}} rect
+ * @param {{ sL: number, sR: number, sB: number}} safePx
+ * @returns {{ leftCameraFab: string, recoverStack: string, replayRail: string }}
+ */
+function buildCornerFabStylesInLetterboxPx(winW, winH, rect, safePx) {
+  var w = Math.max(1, winW);
+  var h = Math.max(1, winH);
+  var r = rect;
+  var factor = 750 / w;
+  var fabR = 40;
+  var mR = 10;
+  var gR = 8;
+  var sLr = safePx.sL * factor;
+  var sRr = safePx.sR * factor;
+  var sBr = safePx.sB * factor;
+  var barLeftR = r.left * factor;
+  var videoRightR = (r.left + r.w) * factor;
+  var Lmin = mR + sLr;
+  var Lmax = barLeftR - fabR - gR;
+  var Rmin = mR + sRr;
+  var Rmax = 750 - fabR - videoRightR - gR;
+  var bottomR;
+  if (h - (r.top + r.h) < 1) {
+    /** 取景区贴底，底边无条（典型：横屏左右黑条） */
+    bottomR = mR + sBr;
+  } else {
+    var fabWpx = (fabR * w) / 750;
+    var mpx = (mR * w) / 750;
+    var capBpx = h - (r.top + r.h) - fabWpx - 2;
+    var wantBpx = mpx + safePx.sB;
+    var bpx = wantBpx <= capBpx ? wantBpx : Math.max(0, capBpx);
+    bottomR = (bpx * 750) / w;
+  }
+  var fullW = r.left * factor < 0.1;
+  var leftR;
+  if (Lmax >= Lmin) {
+    leftR = Lmin;
+  } else if (fullW) {
+    leftR = Lmin;
+  } else {
+    leftR = Math.max(0, Lmax);
+  }
+  var rightR;
+  if (Rmax >= Rmin) {
+    rightR = Rmin;
+  } else if (fullW) {
+    rightR = Rmin;
+  } else {
+    rightR = Math.max(0, Rmax);
+  }
+  return {
+    leftCameraFab: 'left:' + leftR + 'rpx;bottom:' + bottomR + 'rpx;',
+    recoverStack: 'right:' + rightR + 'rpx;bottom:' + bottomR + 'rpx;',
+    /** 实时回看右侧工具列：与 REC 列同 right，垂直居中于视窗，不占用 16:9 画面内顶部空间 */
+    replayRail: 'right:' + rightR + 'rpx;top:50%;transform:translateY(-50%);'
+  };
+}
+
 Page({
   data: {
     matchConfig: {
@@ -151,6 +216,38 @@ Page({
     cacheStorageLampActionable: false,
     /** 与顶部状态灯同系：OK / WT(warn) / EX(severe) */
     cacheStorageLampText: 'OK',
+    /**
+     * 左下角「相机/变焦」快捷：展开态；与抽屉互斥，避免与列表手势冲突。
+     * @type {boolean}
+     */
+    cameraSettingsOpen: false,
+    /**
+     * 快捷倍率：展示文案与 setZoom 目标（微信端常见最小光学倍率≈1，故 0.5/1.0 档映射为不同但合法的离散倍率）。
+     * @type {Array<{ label: string, zoom: number }>}
+     */
+    cameraQuickZoomStops: [
+      { label: '0.5', zoom: 1 },
+      { label: '1.0', zoom: 1.2 },
+      { label: '1.5', zoom: 1.5 },
+      { label: '2.0', zoom: 2 }
+    ],
+    /**
+     * 相机设置呼出条：fixed 定位在 16:9 取景区内左侧（由 _updateLiveStageLayout 写入）。
+     * @type {string}
+     */
+    cameraSettingsPanelStyle: '',
+    /**
+     * ◎ 角标：16:9 外黑边内（与 recoverFabStackStyle 同时计算）。
+     * @type {string}
+     */
+    leftCameraFabStyle: 'left:10rpx;bottom:10rpx;',
+    /**
+     * REC+存储灯角标：16:9 外黑边内，与左对称。
+     * @type {string}
+     */
+    recoverFabStackStyle: 'right:10rpx;bottom:10rpx;',
+    /** 回放模式右侧倍速/关闭/还原列（与 {@link buildCornerFabStylesInLetterboxPx} 同步） */
+    replayRailStyle: 'right:10rpx;top:50%;transform:translateY(-50%);',
     /**
      * 轻提示（自绘半透明，替代 wx.showToast，避免与直播抢焦点）；opacity 0~0.7，短时长。
      * @type {string}
@@ -241,11 +338,9 @@ Page({
     teamGroupWidthPxA: 0,
     teamGroupWidthPxB: 0,
     showGuide: false,
+    /** 快速上手分步：0=操作说明，1=抖音直播 16:9 画幅引导（与 {@link dismissGuide} 复位一致） */
+    guideSubStep: 0,
 
-    /** 画质引导：未点击锁焦前在画面中央显示脉冲提示（与 isRecording 解耦，避免 rolling 起录后无窗口期） */
-    showFocusGuidePulse: false,
-    /** 是否已完成过至少一次开赛前对焦点位（本会话内） */
-    focusGuideCompleted: false,
     /** 共用：对焦框 + 小太阳条是否显示 */
     aeControlsVisible: false,
     /** 对焦/曝光 UI 来源：开赛前 pre、直播中手势唤醒 live */
@@ -686,7 +781,11 @@ Page({
 
     const hasReadGuide = wx.getStorageSync('hasReadGuide');
     if (!hasReadGuide) {
-      this.setData({ showGuide: true });
+      const patch = { showGuide: true };
+      if (!this.data.showGuide) {
+        patch.guideSubStep = 0;
+      }
+      this.setData(patch);
     }
 
     wx.getSetting({
@@ -1600,9 +1699,6 @@ Page({
     if (typeof this._exposureNormPending === 'number' && this.data.aeExposureHardwareSupported) {
       this.applyExposureFromNorm(this._exposureNormPending);
     }
-    if (!this.data.focusGuideCompleted) {
-      this.setData({ showFocusGuidePulse: true });
-    }
     if (this._hardRecoverAwaitingCamera) {
       this._hardRecoverAwaitingCamera = false;
       if (this._recoveryGuardTimer) {
@@ -1744,15 +1840,38 @@ Page({
   _updateLiveStageLayout: function() {
     var sysW = 375;
     var sysH = 667;
+    var sL = 0;
+    var sR = 0;
+    var sB = 0;
     try {
       var si = wx.getSystemInfoSync();
       sysW = si.windowWidth || sysW;
       sysH = si.windowHeight || sysH;
+      if (si.safeArea) {
+        sL = Math.max(0, si.safeArea.left || 0);
+        sB = Math.max(0, sysH - (si.safeArea.top + (si.safeArea.height || 0)));
+        sR = Math.max(0, sysW - (si.safeArea.left + (si.safeArea.width || 0)));
+      }
     } catch (e) {}
     var box = computeLiveStage16x9SizePx(sysW, sysH);
     var style = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);' +
       'width:' + box.w + 'px;height:' + box.h + 'px;';
-    this.setData({ liveStageInlineStyle: style });
+    var r = computeLiveStage16x9RectPx(sysW, sysH);
+    var factor = 750 / Math.max(1, sysW);
+    /** 取景区左内缘 + 间距（rpx），呼出条仅在画幅内展示 */
+    var panelInsetRpx = 12;
+    var leftRpx = r.left * factor + panelInsetRpx;
+    var topCenterRpx = (r.top + r.h * 0.5) * factor;
+    var cameraSettingsPanelStyle = 'left:' + leftRpx + 'rpx;top:' + topCenterRpx +
+      'rpx;transform:translateY(-50%);';
+    var corner = buildCornerFabStylesInLetterboxPx(sysW, sysH, r, { sL: sL, sR: sR, sB: sB });
+    this.setData({
+      liveStageInlineStyle: style,
+      cameraSettingsPanelStyle: cameraSettingsPanelStyle,
+      leftCameraFabStyle: corner.leftCameraFab,
+      recoverFabStackStyle: corner.recoverStack,
+      replayRailStyle: corner.replayRail
+    });
     if (this._renderPipeline && typeof this._renderPipeline.resizeToCssPixels === 'function') {
       try {
         this._renderPipeline.resizeToCssPixels(box.w, box.h);
@@ -1814,7 +1933,7 @@ Page({
             title = self._vkErrorToHuman(errMsg || '');
           } else {
             // FPS / stalled 触发的软降级
-            title = 'VK 帧率不稳，已回到标准模式';
+            title = '超频画面不稳，已回到标准模式';
           }
           try { console.warn('[live][vk] auto-degrade', info); } catch (_) {}
           wx.showToast({
@@ -1887,9 +2006,9 @@ Page({
     if (this.data.enhanceVkTransitioning) return;
     var self = this;
     wx.showModal({
-      title: 'VK 高性能模式',
-      content: 'VK 仅支持双指数字放大（约 1×～上限），无法像原生相机那样切换超广角。切换期间可能短暂黑屏。确认进入？',
-      confirmText: '进入 VK',
+      title: '超频模式',
+      content: '超频模式仅支持双指数字放大（约 1×～上限），无法像原生相机那样切换超广角。切换期间可能短暂黑屏。确认进入？',
+      confirmText: '进入超频',
       cancelText: '取消',
       confirmColor: '#E64340',
       success: function(res) {
@@ -2017,24 +2136,24 @@ Page({
    * @returns {string}
    */
   _vkErrorToHuman: function(msg) {
-    if (!msg) return 'VK 模式启动失败，已回到标准模式';
+    if (!msg) return '超频模式启动失败，已回到标准模式';
     if (msg.indexOf('[vk:create]') !== -1) {
-      return 'VK 初始化失败，本机暂不支持，已回到标准';
+      return '超频初始化失败，本机暂不支持，已回到标准';
     }
     if (msg.indexOf('[vk:start]') !== -1) {
       // session.start 常见：相机未释放干净、权限、机型不在 VK v2 白名单
-      return 'VK 启动被相机拒绝，已回到标准（请退出重进）';
+      return '超频启动被相机拒绝，已回到标准（请退出重进）';
     }
     if (msg.indexOf('getCameraBuffer') !== -1) {
-      return 'VK 帧通道不兼容当前微信，已回到标准';
+      return '超频通道不兼容当前微信，已回到标准';
     }
     if (msg.indexOf('no_frame_streak') !== -1) {
-      return 'VK 未拿到帧，已回到标准（相机占用中）';
+      return '超频未拿到画面，已回到标准（相机占用中）';
     }
     if (msg.indexOf('[vk:frame]') !== -1) {
-      return 'VK 帧处理异常，已回到标准';
+      return '超频画面处理异常，已回到标准';
     }
-    return 'VK 模式启动失败，已回到标准';
+    return '超频模式启动失败，已回到标准';
   },
 
   /**
@@ -2608,15 +2727,10 @@ Page({
         !this._everHadMultiTouch
         && this._preTapValid
         && this._tapStart
-        && (
-          (this.data.showFocusGuidePulse && !this.data.focusGuideCompleted)
-          /** pre/live 两种上下文都允许 tap 移动对焦框（未锁定时）；长按呼出后“点哪对哪”。 */
-          || (
-            this.data.aeControlsVisible
-            && (this.data.aeContext === 'pre' || this.data.aeContext === 'live')
-            && !this.data.aeFocusUserLocked
-          )
-        )
+        /** 仅当用户已主动呼出对焦/曝光（pre 或 live）时，单击预览区才移动对焦点，避免被动打扰。 */
+        && this.data.aeControlsVisible
+        && (this.data.aeContext === 'pre' || this.data.aeContext === 'live')
+        && !this.data.aeFocusUserLocked
         && (e.changedTouches && e.changedTouches[0])
       ) {
         const t = e.changedTouches[0];
@@ -2649,13 +2763,41 @@ Page({
   },
 
   /**
-   * 长按节次触发对焦/曝光控件唤起（替代双指下滑）。
-   * 仅在直播主画面可交互且无抽屉时触发，避免与管理层手势冲突。
+   * 左下角与 REC 对称的「相机」快捷：展开/收拢变焦+对焦行。
    * @returns {void}
    */
-  onPeriodLongPressFocusControl: function() {
+  onCameraSettingsFabTap: function() {
+    if (this.data.drawerMode !== 0) return;
+    if (!this.data.cameraMounted || !this.data.liveStreamAllowed || this.data.isReplaying) return;
+    try {
+      this._updateLiveStageLayout();
+    } catch (eU) {}
+    this.setData({ cameraSettingsOpen: !this.data.cameraSettingsOpen });
+  },
+
+  /**
+   * 快捷倍率：写入 camera zoom 并关闭侧栏以减轻挡视野。
+   * @param {WechatMiniprogram.TouchEvent} e
+   * @returns {void}
+   */
+  onCameraQuickZoomTap: function(e) {
+    if (this.data.drawerMode !== 0) return;
+    const z = e.currentTarget && e.currentTarget.dataset
+      ? Number(e.currentTarget.dataset.z)
+      : NaN;
+    if (Number.isNaN(z) || z <= 0) return;
+    this.updateZoom(z);
+    this.setData({ cameraSettingsOpen: false });
+  },
+
+  /**
+   * 「调焦/变焦」侧栏内「对焦」项：呼出对焦点与曝光条。
+   * @returns {void}
+   */
+  onCameraFocusControlTap: function() {
     if (this.data.drawerMode !== 0) return;
     if (!this.data.cameraMounted || !this.data.cameraContext || !this._cameraInitDone) return;
+    this.setData({ cameraSettingsOpen: false });
     this.wakeLiveAeControls();
   },
 
@@ -2666,10 +2808,11 @@ Page({
   },
 
   /**
-   * 将页面坐标归一化到 0–1，与 camera 全屏（含溢出裁切）视窗对齐；用于点对焦与静默中心重锁。
+   * 将点击坐标归一化到 0–1，与 16:9 取景内接框（{@link computeLiveStage16x9RectPx}）对齐；
+   * 全窗口映射会导致取景区外黑边上的点压在 0/1 边界，与 camera 全屏/裁切与 setTargetFocus 预期不一致。
    * @param {number} pageX
    * @param {number} pageY
-   * @returns {{nx: number, ny: number}}
+   * @returns {{ nx: number, ny: number }}
    */
   pageXYToCameraNorm: function(pageX, pageY) {
     let w = 375;
@@ -2679,9 +2822,13 @@ Page({
       w = si.windowWidth || w;
       h = si.windowHeight || h;
     } catch (e) {}
-    const nx = Math.max(0, Math.min(1, pageX / w));
-    const ny = Math.max(0, Math.min(1, pageY / h));
-    return { nx, ny };
+    const r = computeLiveStage16x9RectPx(w, h);
+    const nx0 = (pageX - r.left) / Math.max(1, r.w);
+    const ny0 = (pageY - r.top) / Math.max(1, r.h);
+    return {
+      nx: Math.max(0, Math.min(1, nx0)),
+      ny: Math.max(0, Math.min(1, ny0))
+    };
   },
 
   /**
@@ -2809,9 +2956,8 @@ Page({
   },
 
   /**
-   * 在预览区任意点击位置放置/移动对焦框：开赛前（pre）和长按节次呼出（live）共用。
-   * live 态下每次点击都会续期 3s 自动隐藏计时器，且会把“中心模式簇”切换到“点击点模式簇”，
-   * 确保“长按呼出后用户想对准哪就点哪”的直觉一致。
+   * 在预览区任意点击位置放置/移动对焦框：开赛前（pre）与直播态（含左下「相机 → 对焦」）共用。
+   * live 态下每次点击都会续期 3s 自动隐藏计时器，且会把“中心模式簇”切换到“点击点模式簇”。
    * @param {number} pageX
    * @param {number} pageY
    * @returns {void}
@@ -2853,8 +2999,6 @@ Page({
     /** 直播长按呼出后继续保持 live 上下文，避免 3s 自动隐藏失效；开赛前首次 tap 切到 pre。 */
     const nextCtx = (this.data.aeContext === 'live') ? 'live' : 'pre';
     const patch = {
-      focusGuideCompleted: true,
-      showFocusGuidePulse: false,
       aeControlsVisible: true,
       aeContext: nextCtx,
       aeFocusIsTapPosition: true,
@@ -2887,8 +3031,8 @@ Page({
   },
 
   /**
-   * 直播/录制中长按节次唤醒：对焦框先置于几何中心，曝光条（若支持）可拖调。
-   * 用户可继续单击画面任意位置，让对焦框移到点击处——走 {@link applyPreGameFocusAtPage}。
+   * 直播/录制中呼出对焦点+曝光条：对焦点先置于 16:9 取景区几何中心，曝光条（若支持）可拖调。
+   * 可继续单指点击预览或拖动方框以移动对焦点，见 {@link applyPreGameFocusAtPage} 与方框 touch 系列。
    * 不强制复位既有 EV，避免打断用户之前的曝光选择。
    * @returns {void}
    */
@@ -2924,7 +3068,7 @@ Page({
   },
 
   /**
-   * 双击对焦框：再次下发当前归一化对焦点，并进入「锁定」态；微信侧对 AF 锁能力因机型而异，仅作意图强化。
+   * 双击对焦框：在 {@link AE_BRACKET_DOUBLE_TAP_MS} 内连点两次方框则锁定；用 bindtap 且不使用 touchmove，避免与单击/连击判定冲突。
    * @returns {void}
    */
   onAeFocusBracketTap: function() {
@@ -2937,7 +3081,7 @@ Page({
       return;
     }
     const now = Date.now();
-    if (now - (this._aeBracketLastTapAt || 0) < 420) {
+    if (now - (this._aeBracketLastTapAt || 0) < AE_BRACKET_DOUBLE_TAP_MS) {
       this._aeBracketLastTapAt = 0;
       const p = this._lastFocusNorm || { nx: 0.5, ny: 0.5 };
       this.invokeSetTargetFocus(p.nx, p.ny);
@@ -3325,15 +3469,16 @@ Page({
       } catch (e) {}
       this._lightHintFadeTimer = null;
     }
-    this.setData({ lightHintText: t, lightHintOpacity: 0.7 });
+    /** 与 wx.showToast 常见停留时长（约 2s）一致，避免旧版 260ms 一闪即消 */
+    this.setData({ lightHintText: t, lightHintOpacity: 0.72 });
     const self = this;
     this._lightHintFadeTimer = setTimeout(function() {
       self.setData({ lightHintOpacity: 0 });
       self._lightHintFadeTimer = setTimeout(function() {
         self.setData({ lightHintText: '' });
         self._lightHintFadeTimer = null;
-      }, 200);
-    }, 260);
+      }, 220);
+    }, 2000);
   },
 
   /**
@@ -3999,7 +4144,7 @@ Page({
       text = '...';
     } else if (vkOrVkTransition) {
       health = 'ok';
-      text = 'VK';
+      text = '超频';
     } else if (captureLikelyBlocked) {
       health = 'warn';
       text = 'ERR';
@@ -7084,13 +7229,15 @@ Page({
     var mode = e && e.currentTarget && e.currentTarget.dataset
       ? e.currentTarget.dataset.mode
       : null;
+    /** 界面展示「超频」时 data-mode 仍须为 vk；若误写为中文，映射回内部档位 */
+    if (mode === '超频') mode = 'vk';
     var allowed = ['off', 'lite', 'standard', 'strong', 'vk'];
     if (allowed.indexOf(mode) < 0) return;
 
     // 进入 / 离开 VK 走专用 orchestrator（涉及 rolling 停起 + camera 重建）
     if (mode === 'vk') {
       if (!this.data.enhanceVkSupported) {
-        wx.showToast({ title: '本机不支持 VK 模式', icon: 'none', duration: 2000 });
+        wx.showToast({ title: '本机不支持超频模式', icon: 'none', duration: 2000 });
         return;
       }
       if (this.data.enhanceMode === 'vk') return;
@@ -7198,8 +7345,20 @@ Page({
     }
   },
 
+  /**
+   * 快速上手第一步结束，进入抖音直播画幅（16:9）说明。
+   * @returns {void}
+   */
+  onGuideToDyFrame: function() {
+    this.setData({ guideSubStep: 1 });
+  },
+
+  /**
+   * 关闭引导并写入已读；两步均视为完成。
+   * @returns {void}
+   */
   dismissGuide: function() {
-    this.setData({ showGuide: false });
+    this.setData({ showGuide: false, guideSubStep: 0 });
     wx.setStorageSync('hasReadGuide', true);
   },
 
@@ -7209,7 +7368,7 @@ Page({
   openDrawerMode1: function() {
     this.refreshDrawerHighlights();
     this.loadMatchList();
-    this.setData({ drawerMode: 1 });
+    this.setData({ drawerMode: 1, cameraSettingsOpen: false });
     // 仅白名单机型内部拉起 FPS 轮询；内部已二次判定，调用幂等
     this.startEnhanceFpsPolling();
   },
