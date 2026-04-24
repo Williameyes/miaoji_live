@@ -134,7 +134,7 @@
     <view
       class="left-camera-fab-stack"
       style="{{leftCameraFabStyle}}"
-      wx:if="{{cameraMounted && liveStreamAllowed && !isReplaying && drawerMode === 0}}"
+      wx:if="{{cameraMounted && liveStreamAllowed && !isReplaying && drawerMode === 0 && enhanceMode !== 'vk'}}"
     >
       <view class="recover-fab recover-fab--ok left-cam-fab" catchtap="onCameraSettingsFabTap">
         <view class="recover-fab-ring">
@@ -148,18 +148,18 @@
 
     <!-- 相机设置呼出：16:9 取景区内左侧（见 cameraSettingsPanelStyle），须放在 overlay 内以免被记分/角标压住 -->
     <view
-      wx:if="{{cameraSettingsOpen && cameraMounted && liveStreamAllowed && !isReplaying && drawerMode === 0}}"
+      wx:if="{{cameraSettingsOpen && cameraMounted && liveStreamAllowed && !isReplaying && drawerMode === 0 && enhanceMode !== 'vk'}}"
       class="camera-settings-panel-host"
       style="{{cameraSettingsPanelStyle}}"
     >
       <view class="left-camera-panel left-camera-panel--in-stage">
         <view
-          class="left-camera-pill"
-          wx:for="{{cameraQuickZoomStops}}"
-          wx:key="label"
-          catchtap="onCameraQuickZoomTap"
-          data-z="{{item.zoom}}"
-        >{{item.label}}×</view>
+          wx:for="{{cameraViewModeStops}}"
+          wx:key="mode"
+          class="left-camera-pill {{cameraViewMode === item.mode ? 'left-camera-pill--active' : ''}}"
+          catchtap="onCameraViewModeTap"
+          data-mode="{{item.mode}}"
+        >{{item.label}}</view>
         <view class="left-camera-pill left-camera-pill--focus" catchtap="onCameraFocusControlTap">对焦</view>
       </view>
     </view>
@@ -490,7 +490,7 @@
       <view class="guide-item guide-item-full">
         <text class="guide-action">左下 ◎</text>
         <text class="guide-sep">：</text>
-        <text class="guide-desc">快捷变焦 / 呼出对焦</text>
+        <text class="guide-desc">机位（广角/数字倍数）/ 呼出对焦</text>
       </view>
 
       <view class="guide-item guide-item-full">

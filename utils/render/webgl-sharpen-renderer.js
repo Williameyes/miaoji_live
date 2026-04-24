@@ -261,7 +261,7 @@ function createWebglSharpenRenderer() {
   }
 
   /**
-   * 为当前锐化 program 设置顶点 UV：onCameraFrame 纹理按 contain 映射到画布（与原生层 object-fit:contain 对齐）。
+   * 为当前锐化 program 设置顶点 UV：onCameraFrame 纹理按 contain 映射到画布（保留作对照）。
    *
    * @param {number} frameTexW
    * @param {number} frameTexH
@@ -280,7 +280,7 @@ function createWebglSharpenRenderer() {
   }
 
   /**
-   * 为当前锐化 program 设置顶点 UV 变换（cover，保留供对照；原生档现用 contain）。
+   * 为当前锐化 program 设置顶点 UV 变换（cover）。
    *
    * @param {number} frameTexW
    * @param {number} frameTexH
@@ -669,7 +669,11 @@ function createWebglSharpenRenderer() {
       if (uniformLocs.uVkZoom) {
         gl.uniform1f(uniformLocs.uVkZoom, vkZoomVal);
       }
-      setSharpenProgramUvContainForCameraFrame(w, h);
+      /**
+       * 原生增强路径改为 cover：与关闭模式（原生 camera 裁切）以及 VK 视觉口径一致，
+       * 避免在部分 Android 机型（如小米10s）上因帧宽高与 16:9 画布不一致出现上下黑边。
+       */
+      setSharpenProgramUvCoverForCameraFrame(w, h);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     } catch (e) {
       // 渲染链路异常：返回一个明显过大的耗时，让 PerfMonitor 迅速进入降级路径

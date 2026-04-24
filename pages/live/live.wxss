@@ -185,6 +185,12 @@ page {
   border-color: rgba(110, 231, 183, 0.35);
 }
 
+.left-camera-pill--active {
+  color: #f8fafc;
+  background: rgba(74, 222, 128, 0.22);
+  border-color: rgba(74, 222, 128, 0.45);
+}
+
 /* 呼出条：在 16:9 画幅内左侧，叠层高于角标/记分条热区 */
 .camera-settings-panel-host {
   position: fixed;

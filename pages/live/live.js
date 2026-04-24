@@ -71,6 +71,39 @@ const ENHANCE_SWITCH_GUARD_MS = 1000;
 const LIVE_STORAGE_SEVERE_MODAL_DELAY_MS = 560;
 
 /**
+ * 本地存储键：是否已展示「超频模式无机位切换」提示（仅首次）。
+ */
+const STORAGE_VK_VIEW_MODE_HINT = 'miaoji_live_vk_view_mode_hint_v1';
+
+/**
+ * 直播机位：广角 / 标准 / 特写；与回放 REPLAY_ZOOM_LEVELS 无耦合。
+ * @readonly
+ */
+const CameraViewMode = {
+  WIDE: 'wide',
+  NORMAL: 'normal',
+  CLOSE: 'close'
+};
+
+/** 特写机位默认目标变焦（受 {@link data.maxZoom} 夹持） */
+const VIEW_MODE_CLOSE_ZOOM = 2;
+
+/**
+ * 将 zoom 值格式化为按钮文案（如 1x / 2x / 2.5x）。
+ * @param {number} z
+ * @returns {string}
+ */
+function formatCameraZoomLabel(z) {
+  var n = Number(z);
+  if (!isFinite(n) || n <= 0) n = 1;
+  var rounded = Math.round(n * 10) / 10;
+  if (Math.abs(rounded - Math.round(rounded)) < 0.01) {
+    return String(Math.round(rounded)) + 'x';
+  }
+  return String(rounded) + 'x';
+}
+
+/**
  * 在窗口内得到最大内接 16:9 矩形（px），与常见相机/编码 16:9 长宽比一致，避免全屏时视口与传感器比例严重错位。
  *
  * @param {number} winW
@@ -222,15 +255,16 @@ Page({
      */
     cameraSettingsOpen: false,
     /**
-     * 快捷倍率：展示文案与 setZoom 目标（微信端常见最小光学倍率≈1，故 0.5/1.0 档映射为不同但合法的离散倍率）。
-     * @type {Array<{ label: string, zoom: number }>}
+     * 机位快捷项：广角 + 数字倍数；按机型能力动态生成（支持才显示广角）。
+     * @type {Array<{ label: string, mode: string, zoom: number }>}
      */
-    cameraQuickZoomStops: [
-      { label: '0.5', zoom: 1 },
-      { label: '1.0', zoom: 1.2 },
-      { label: '1.5', zoom: 1.5 },
-      { label: '2.0', zoom: 2 }
+    cameraViewModeStops: [
+      { label: '广角', mode: CameraViewMode.WIDE, zoom: 0.5 },
+      { label: '1x', mode: CameraViewMode.NORMAL, zoom: 1 },
+      { label: '2x', mode: CameraViewMode.CLOSE, zoom: 2 }
     ],
+    /** 当前选中的机位（与 pinch 变焦可短暂不同步，仅影响药丸高亮） */
+    cameraViewMode: CameraViewMode.NORMAL,
     /**
      * 相机设置呼出条：fixed 定位在 16:9 取景区内左侧（由 _updateLiveStageLayout 写入）。
      * @type {string}
@@ -332,6 +366,7 @@ Page({
     // 相机焦距相关
     zoom: 1,
     maxZoom: 10,
+    minZoom: 1,
     distance: 0,
     lastZoom: 1,
     /** 左右球队色块宽度（px），按队名字符数估算，避免 flex:1 拉满半屏 */
@@ -771,6 +806,7 @@ Page({
      * （stopRecord 偶发迟回调会导致 kickoff 探测永远不跑）。
      */
     this.maybeToastFileStoragePressureFromGlobal();
+    this.resetViewModeToNormal();
     this.rollingActive = true;
     this.rollingSessionId += 1;
     const sessionIdForRolling = this.rollingSessionId;
@@ -1664,7 +1700,13 @@ Page({
       this._cameraShowInitWatchTimer = null;
     }
     const maxZoom = e.detail.maxZoom || 5;
-    this.setData({ maxZoom: maxZoom, zoom: 1 });
+    const minZoom = typeof e.detail.minZoom === 'number' ? e.detail.minZoom : 1;
+    this.setData({
+      maxZoom: maxZoom,
+      minZoom: minZoom,
+      zoom: 1,
+      cameraViewMode: CameraViewMode.NORMAL
+    });
     /**
      * VK 模式下尚无可用 cameraContext.setZoom；若仍调 updateZoom(1) 会被 vk 守卫拦截。
      * 原生相机就绪后强制 1x，避免 VK 期间误改的 zoom 残留导致「人变矮/拉伸」错觉。
@@ -1676,6 +1718,10 @@ Page({
         } catch (ez) {}
       }
       this.maybeSchedulePostZoomSilentFocus();
+      this.detectCameraCapabilities({
+        minZoom: minZoom,
+        maxZoom: maxZoom
+      });
     }
     if (this._rollingKickoffTimer) {
       clearTimeout(this._rollingKickoffTimer);
@@ -1738,7 +1784,7 @@ Page({
       this._relaunchPressTimer = null;
     }
     this._insertConflictRecovering = false;
-    this.appendHealthLog('camera_init', { maxZoom: maxZoom });
+    this.appendHealthLog('camera_init', { maxZoom: maxZoom, minZoom: minZoom });
     // 增强渲染（灰度）：仅在 app.globalData.enableEnhanceRender=true 时拉起；
     // 与 rolling startRecord 通过 onCameraFrame 共存，不占用相机独占权。
     this._maybeBootEnhanceRender();
@@ -1952,10 +1998,15 @@ Page({
         pipeline.start();
         try {
           if (typeof pipeline.setVkZoom === 'function') {
-            pipeline.setVkZoom(self.data.zoom || 1);
+            pipeline.setVkZoom(1);
           }
         } catch (eZ0) {}
-        self.setData({ enhanceVkTransitioning: false });
+        self.setData({
+          enhanceVkTransitioning: false,
+          zoom: 1,
+          cameraViewMode: CameraViewMode.NORMAL
+        });
+        self._maybeToastVkViewModeOnce();
         self.appendHealthLog('vk_boot_ok', {
           device: (app.globalData && app.globalData.enhanceDeviceTag) || '',
           reason: (app.globalData && app.globalData.vkModeReason) || ''
@@ -2175,13 +2226,16 @@ Page({
      */
     if (mode === 'off') {
       this._teardownEnhanceRender();
+      this.resetViewModeToNormal();
       return;
     }
     if (!this._renderPipeline) {
       this._maybeBootEnhanceRender();
+      this.resetViewModeToNormal();
       return;
     }
     this._renderPipeline.setMode(mode, { reason: 'user', force: true });
+    this.resetViewModeToNormal();
   },
 
   /**
@@ -2611,14 +2665,19 @@ Page({
   },
 
   updateZoom: function(zoomVal) {
-    /** VK 与原生均不低于 1×（VKSession 无系统变焦接口，见微信 VisionKit 文档）。 */
-    const actualZoom = Math.max(1, Math.min(this.data.maxZoom, zoomVal));
+    /** 超频（VK）模式使用渲染管线数字变焦；原生家族使用 camera.setZoom。 */
+    var isVkMode = this.data.enhanceMode === 'vk';
+    var minZ = this._cameraCaps && typeof this._cameraCaps.minZoom === 'number'
+      ? this._cameraCaps.minZoom
+      : (this._cameraCaps && this._cameraCaps.hasUltraWide ? 0.5 : 1);
+    if (isVkMode) minZ = 1;
+    const actualZoom = Math.max(minZ, Math.min(this.data.maxZoom, zoomVal));
 
     // 只在数值发生实质变化时更新，减少 setData 频率
     if (Math.abs(this.data.zoom - actualZoom) < 0.01) return;
 
-    if (this.data.enhanceMode === 'vk') {
-      this.setData({ zoom: actualZoom });
+    this.setData({ zoom: actualZoom });
+    if (isVkMode) {
       if (this._renderPipeline && typeof this._renderPipeline.setVkZoom === 'function') {
         try {
           this._renderPipeline.setVkZoom(actualZoom);
@@ -2626,10 +2685,6 @@ Page({
       }
       return;
     }
-
-    this.setData({
-      zoom: actualZoom
-    });
     if (this.data.cameraContext && this.data.cameraContext.setZoom) {
       this.data.cameraContext.setZoom({
         zoom: actualZoom
@@ -2639,7 +2694,200 @@ Page({
     this.maybeSchedulePostZoomSilentFocus();
   },
 
+  /**
+   * 探测本机相机变焦能力：是否可设到 0.5×（超广）、以及 maxZoom（与 init 回调一致）。
+   * 通过一次 setZoom(0.5) 的成功回调推断超广；失败则视为不支持。探测结束后恢复当前 zoom。
+   * @param {{ minZoom?: number, maxZoom?: number }} [hint]
+   * @returns {void}
+   */
+  detectCameraCapabilities: function(hint) {
+    var maxZ = (hint && hint.maxZoom) || this.data.maxZoom || 10;
+    var minZHint = (hint && typeof hint.minZoom === 'number') ? hint.minZoom : this.data.minZoom;
+    var minZ = typeof minZHint === 'number' && minZHint > 0 ? minZHint : 1;
+    this._cameraCaps = {
+      hasUltraWide: minZ <= 0.5,
+      minZoom: minZ,
+      maxZoom: maxZ,
+      probed: minZ <= 0.5
+    };
+    if (minZ <= 0.5) {
+      this.rebuildCameraViewModeStops();
+      return;
+    }
+    var ctx = this.data.cameraContext;
+    if (!ctx || typeof ctx.setZoom !== 'function') {
+      this._cameraCaps.probed = true;
+      this.rebuildCameraViewModeStops();
+      return;
+    }
+    var self = this;
+    var caps = this._cameraCaps;
+    var settled = false;
+    /**
+     * 探测结束后恢复 1×（init 阶段 setData 可能尚未 flush，不能依赖 this.data.zoom）。
+     * @returns {void}
+     */
+    var restore = function() {
+      if (!self.data.cameraContext || typeof self.data.cameraContext.setZoom !== 'function') return;
+      try {
+        self.data.cameraContext.setZoom({ zoom: 1 });
+      } catch (er) {}
+    };
+    try {
+      ctx.setZoom({
+        zoom: 0.5,
+        success: function() {
+          if (settled) return;
+          settled = true;
+          caps.hasUltraWide = true;
+          caps.minZoom = 0.5;
+          caps.probed = true;
+          caps.maxZoom = self.data.maxZoom || caps.maxZoom;
+          self.rebuildCameraViewModeStops();
+          restore();
+        },
+        fail: function() {
+          if (settled) return;
+          settled = true;
+          caps.hasUltraWide = false;
+          caps.minZoom = 1;
+          caps.probed = true;
+          caps.maxZoom = self.data.maxZoom || caps.maxZoom;
+          self.rebuildCameraViewModeStops();
+          restore();
+        },
+        complete: function() {
+          setTimeout(function() {
+            if (settled) return;
+            settled = true;
+            caps.hasUltraWide = false;
+            caps.minZoom = 1;
+            caps.probed = true;
+            caps.maxZoom = self.data.maxZoom || caps.maxZoom;
+            self.rebuildCameraViewModeStops();
+            restore();
+          }, 0);
+        }
+      });
+    } catch (eProbe) {
+      caps.hasUltraWide = false;
+      caps.minZoom = 1;
+      caps.probed = true;
+      this.rebuildCameraViewModeStops();
+      restore();
+    }
+  },
 
+  /**
+   * 根据当前能力生成机位按钮：支持超广则显示「广角」，其余使用数字倍数。
+   * @returns {void}
+   */
+  rebuildCameraViewModeStops: function() {
+    var caps = this._cameraCaps || {};
+    var maxZ = this.data.maxZoom || caps.maxZoom || 10;
+    var closeZ = Math.min(VIEW_MODE_CLOSE_ZOOM, maxZ);
+    if (!isFinite(closeZ) || closeZ <= 1) closeZ = Math.max(1.2, Math.min(1.5, maxZ));
+    var stops = [];
+    if (caps.hasUltraWide) {
+      stops.push({
+        label: '广角',
+        mode: CameraViewMode.WIDE,
+        zoom: 0.5
+      });
+    }
+    stops.push({
+      label: formatCameraZoomLabel(1),
+      mode: CameraViewMode.NORMAL,
+      zoom: 1
+    });
+    stops.push({
+      label: formatCameraZoomLabel(closeZ),
+      mode: CameraViewMode.CLOSE,
+      zoom: closeZ
+    });
+    this.setData({ cameraViewModeStops: stops });
+  },
+
+  /**
+   * 将机位状态与预览恢复为「标准」1×；画质切换、相机重建、回前台时调用。
+   * @param {{ skipCamera?: boolean }} [opts] skipCamera：仅更新 data，不调 setZoom（如相机即将卸载）。
+   * @returns {void}
+   */
+  resetViewModeToNormal: function(opts) {
+    var skip = opts && opts.skipCamera;
+    this.setData({
+      cameraViewMode: CameraViewMode.NORMAL,
+      zoom: 1
+    });
+    if (skip || this.data.enhanceMode === 'vk') return;
+    if (this.data.cameraContext && this.data.cameraContext.setZoom) {
+      try {
+        this.data.cameraContext.setZoom({ zoom: 1 });
+      } catch (eZ) {}
+    }
+  },
+
+  /**
+   * 按机位切换预览变焦：原生家族统一走 camera.setZoom（含标准/高性能 WebGL 覆盖层，禁止 shader 假广角）。
+   * 超频（VK）模式不支持，入口应已隐藏 UI，本函数仍做守卫。
+   * @param {'wide'|'normal'|'close'} mode
+   * @returns {void}
+   */
+  applyViewMode: function(mode) {
+    if (this.data.enhanceMode === 'vk') {
+      try {
+        wx.showToast({ title: '超频模式已隐藏机位按钮，可双指缩放', icon: 'none', duration: 2000 });
+      } catch (eT) {}
+      return;
+    }
+    if (this.data.drawerMode !== 0) return;
+    if (!this.data.cameraMounted || !this.data.cameraContext || !this._cameraInitDone) return;
+    var stop = null;
+    var i;
+    for (i = 0; i < this.data.cameraViewModeStops.length; i++) {
+      if (this.data.cameraViewModeStops[i].mode === mode) {
+        stop = this.data.cameraViewModeStops[i];
+        break;
+      }
+    }
+    if (!stop) {
+      if (mode === CameraViewMode.WIDE) {
+        try {
+          wx.showToast({ title: '当前设备不支持广角', icon: 'none', duration: 2000 });
+        } catch (eNoW) {}
+      }
+      return;
+    }
+    var caps = this._cameraCaps && this._cameraCaps.probed
+      ? this._cameraCaps
+      : { hasUltraWide: false, maxZoom: this.data.maxZoom || 10 };
+    var maxZ = this.data.maxZoom || caps.maxZoom || 10;
+    var target = Math.max(1, Math.min(maxZ, Number(stop.zoom) || 1));
+    if (mode === CameraViewMode.WIDE) target = 0.5;
+    this.setData({ cameraViewMode: mode });
+    this.updateZoom(target);
+    if (this._renderPipeline && typeof this._renderPipeline.pauseAutoDegradeOnce === 'function') {
+      try {
+        this._renderPipeline.pauseAutoDegradeOnce();
+      } catch (eP) {}
+    }
+  },
+
+  /**
+   * 首次进入超频（VK）成功后提示无机位切换（本地存储去重）。
+   * @returns {void}
+   */
+  _maybeToastVkViewModeOnce: function() {
+    try {
+      if (wx.getStorageSync(STORAGE_VK_VIEW_MODE_HINT)) return;
+      wx.setStorageSync(STORAGE_VK_VIEW_MODE_HINT, '1');
+      wx.showToast({
+        title: '超频模式已隐藏机位按钮，可双指缩放',
+        icon: 'none',
+        duration: 2800
+      });
+    } catch (e) {}
+  },
 
   // 辅助变量
   lastZoomVal: 1.0,
@@ -2768,6 +3016,7 @@ Page({
    */
   onCameraSettingsFabTap: function() {
     if (this.data.drawerMode !== 0) return;
+    if (this.data.enhanceMode === 'vk') return;
     if (!this.data.cameraMounted || !this.data.liveStreamAllowed || this.data.isReplaying) return;
     try {
       this._updateLiveStageLayout();
@@ -2776,17 +3025,17 @@ Page({
   },
 
   /**
-   * 快捷倍率：写入 camera zoom 并关闭侧栏以减轻挡视野。
+   * 机位药丸：广角 / 数字倍数；关闭侧栏以减轻挡视野。
    * @param {WechatMiniprogram.TouchEvent} e
    * @returns {void}
    */
-  onCameraQuickZoomTap: function(e) {
+  onCameraViewModeTap: function(e) {
     if (this.data.drawerMode !== 0) return;
-    const z = e.currentTarget && e.currentTarget.dataset
-      ? Number(e.currentTarget.dataset.z)
-      : NaN;
-    if (Number.isNaN(z) || z <= 0) return;
-    this.updateZoom(z);
+    var mode = e.currentTarget && e.currentTarget.dataset
+      ? e.currentTarget.dataset.mode
+      : '';
+    if (!mode) return;
+    this.applyViewMode(mode);
     this.setData({ cameraSettingsOpen: false });
   },
 
