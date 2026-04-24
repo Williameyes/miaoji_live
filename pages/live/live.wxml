@@ -160,7 +160,7 @@
           catchtap="onCameraViewModeTap"
           data-mode="{{item.mode}}"
         >{{item.label}}</view>
-        <view class="left-camera-pill left-camera-pill--focus" catchtap="onCameraFocusControlTap">对焦</view>
+        <view class="left-camera-pill left-camera-pill--focus" catchtap="onCameraFocusControlTap">锁焦</view>
       </view>
     </view>
 

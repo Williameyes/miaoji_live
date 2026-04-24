@@ -104,6 +104,30 @@ function formatCameraZoomLabel(z) {
 }
 
 /**
+ * 是否 iOS 宿主（用于小程序 camera 与系统相机 zoom 刻度对齐）。
+ * @returns {boolean}
+ */
+function isLiveHostIos() {
+  try {
+    return String(wx.getSystemInfoSync().platform || '').toLowerCase() === 'ios';
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * 根据设备 maxZoom 得到进入直播时的默认预览倍率（iOS 上 zoom=2 更接近系统相机「1×」主摄）。
+ * @param {number} maxZoom
+ * @returns {number}
+ */
+function getDefaultPreviewZoomForMax(maxZoom) {
+  var mz = Number(maxZoom);
+  if (!isFinite(mz)) mz = 10;
+  if (isLiveHostIos() && mz >= 2) return 2;
+  return 1;
+}
+
+/**
  * 在窗口内得到最大内接 16:9 矩形（px），与常见相机/编码 16:9 长宽比一致，避免全屏时视口与传感器比例严重错位。
  *
  * @param {number} winW
@@ -1700,28 +1724,31 @@ Page({
       this._cameraShowInitWatchTimer = null;
     }
     const maxZoom = e.detail.maxZoom || 5;
-    const minZoom = typeof e.detail.minZoom === 'number' ? e.detail.minZoom : 1;
+    const minZoomRaw = typeof e.detail.minZoom === 'number' ? e.detail.minZoom : null;
+    const minZoom = minZoomRaw !== null ? minZoomRaw : 1;
+    var previewZ = getDefaultPreviewZoomForMax(maxZoom);
     this.setData({
       maxZoom: maxZoom,
       minZoom: minZoom,
-      zoom: 1,
+      zoom: previewZ,
       cameraViewMode: CameraViewMode.NORMAL
     });
     /**
      * VK 模式下尚无可用 cameraContext.setZoom；若仍调 updateZoom(1) 会被 vk 守卫拦截。
-     * 原生相机就绪后强制 1x，避免 VK 期间误改的 zoom 残留导致「人变矮/拉伸」错觉。
+     * iOS 上小程序 camera 的 zoom=2 更接近系统相机「1×」主摄，默认从此起播避免一进来就是最广视角。
      */
     if (this.data.enhanceMode !== 'vk') {
       if (this.data.cameraContext && this.data.cameraContext.setZoom) {
         try {
-          this.data.cameraContext.setZoom({ zoom: 1 });
+          this.data.cameraContext.setZoom({ zoom: previewZ });
         } catch (ez) {}
       }
       this.maybeSchedulePostZoomSilentFocus();
-      this.detectCameraCapabilities({
-        minZoom: minZoom,
-        maxZoom: maxZoom
-      });
+      this.detectCameraCapabilities(
+        minZoomRaw !== null
+          ? { minZoom: minZoomRaw, maxZoom: maxZoom }
+          : { maxZoom: maxZoom }
+      );
     }
     if (this._rollingKickoffTimer) {
       clearTimeout(this._rollingKickoffTimer);
@@ -1799,6 +1826,19 @@ Page({
   _maybeBootEnhanceRender: function() {
     var enabled = !!(app.globalData && app.globalData.enableEnhanceRender);
     if (!enabled) return;
+    var initial = this._pendingEnhanceModeAfterBoot
+      || this._pendingEnhanceModeAfterVk
+      || this._pendingEnhanceModeAfterRecover
+      || 'off';
+    if (initial === 'off') {
+      this._pendingEnhanceModeAfterBoot = null;
+      this._pendingEnhanceModeAfterVk = null;
+      this._pendingEnhanceModeAfterRecover = null;
+      if (this.data.enhanceCanvasVisible || this.data.enhanceMode !== 'off') {
+        this.setData({ enhanceCanvasVisible: false, enhanceMode: 'off' });
+      }
+      return;
+    }
     if (!this.data.cameraContext) return;
     if (this._renderPipeline) {
       try { this._renderPipeline.destroy(); } catch (eDestroy) {}
@@ -1830,9 +1870,16 @@ Page({
         preferVk: false
       }).then(function() {
         if (self._renderPipeline !== pipeline) return;
-        var initial = (app.globalData && app.globalData.enhanceInitialMode) || 'standard';
+        var initial = self._pendingEnhanceModeAfterBoot
+          || self._pendingEnhanceModeAfterVk
+          || self._pendingEnhanceModeAfterRecover
+          || 'off';
+        self._pendingEnhanceModeAfterBoot = null;
         pipeline.setMode(initial, { reason: 'user', force: true });
-        pipeline.start();
+        if (initial !== 'off') {
+          pipeline.start();
+        }
+        self.syncNativeEnhanceZoomCompensation(self.data.zoom || 1);
         self.appendHealthLog('enhance_render_boot', {
           mode: pipeline.getMode(),
           reason: (app.globalData && app.globalData.enhanceWhitelistReason) || '',
@@ -2230,12 +2277,17 @@ Page({
       return;
     }
     if (!this._renderPipeline) {
+      this._pendingEnhanceModeAfterBoot = mode;
       this._maybeBootEnhanceRender();
       this.resetViewModeToNormal();
       return;
     }
     this._renderPipeline.setMode(mode, { reason: 'user', force: true });
+    if (mode !== 'off' && this._renderPipeline && typeof this._renderPipeline.start === 'function') {
+      try { this._renderPipeline.start(); } catch (eS) {}
+    }
     this.resetViewModeToNormal();
+    this.syncNativeEnhanceZoomCompensation(1);
   },
 
   /**
@@ -2667,9 +2719,12 @@ Page({
   updateZoom: function(zoomVal) {
     /** 超频（VK）模式使用渲染管线数字变焦；原生家族使用 camera.setZoom。 */
     var isVkMode = this.data.enhanceMode === 'vk';
-    var minZ = this._cameraCaps && typeof this._cameraCaps.minZoom === 'number'
-      ? this._cameraCaps.minZoom
-      : (this._cameraCaps && this._cameraCaps.hasUltraWide ? 0.5 : 1);
+    var minZ = 1;
+    if (this._cameraCaps && typeof this._cameraCaps.minZoom === 'number' && this._cameraCaps.minZoom > 0) {
+      minZ = this._cameraCaps.minZoom;
+    } else if (this._cameraCaps && this._cameraCaps.hasUltraWide) {
+      minZ = isLiveHostIos() ? 1 : 0.5;
+    }
     if (isVkMode) minZ = 1;
     const actualZoom = Math.max(minZ, Math.min(this.data.maxZoom, zoomVal));
 
@@ -2690,92 +2745,182 @@ Page({
         zoom: actualZoom
       });
     }
+    this.syncNativeEnhanceZoomCompensation(actualZoom);
     // 缩放手势与「下滑唤醒」互斥在 touch 层区分；变焦稳定后晚一点再对中心做一次静默对焦
     this.maybeSchedulePostZoomSilentFocus();
   },
 
   /**
-   * 探测本机相机变焦能力：是否可设到 0.5×（超广）、以及 maxZoom（与 init 回调一致）。
-   * 通过一次 setZoom(0.5) 的成功回调推断超广；失败则视为不支持。探测结束后恢复当前 zoom。
+   * 将当前 zoom 同步为原生增强路径的补偿倍率（仅标准/高性能档生效）。
+   * 根因：onCameraFrame 在部分设备/基础库上与 camera.setZoom 视角不同步，需在 WebGL 侧补偿。
+   * @param {number} zoomVal
+   * @returns {void}
+   */
+  syncNativeEnhanceZoomCompensation: function(zoomVal) {
+    if (!this._renderPipeline || typeof this._renderPipeline.setNativeZoomCompensation !== 'function') return;
+    var mode = this.data.enhanceMode;
+    var caps = this._cameraCaps || {};
+    if (mode !== 'standard' && mode !== 'strong') {
+      try { this._renderPipeline.setNativeZoomCompensation(1); } catch (e0) {}
+      return;
+    }
+    if (!caps.hasUltraWide) {
+      try { this._renderPipeline.setNativeZoomCompensation(1); } catch (e1) {}
+      return;
+    }
+    var base = 1;
+    if (typeof caps.minZoom === 'number' && caps.minZoom > 0) {
+      base = caps.minZoom;
+    }
+    var z = Number(zoomVal);
+    if (!isFinite(z) || z <= 0) z = this.data.zoom || 1;
+    var comp = z / Math.max(0.2, base);
+    if (!isFinite(comp) || comp < 1) comp = 1;
+    try { this._renderPipeline.setNativeZoomCompensation(comp); } catch (e2) {}
+  },
+
+  /**
+   * 读取本机相机变焦能力并生成机位按钮。
+   * - iOS：系统相机 0.5/1/2 与小程序 zoom 刻度常不一致；在 maxZoom≥2 时按 1（最广）/ 2（≈系统1×）/ 4（≈系统2×）对齐。
+   * - Android：优先 bindinitdone.minZoom&lt;1；否则短序列探测 0.5→0.6（无 minZoom 字段机型）。
    * @param {{ minZoom?: number, maxZoom?: number }} [hint]
    * @returns {void}
    */
   detectCameraCapabilities: function(hint) {
     var maxZ = (hint && hint.maxZoom) || this.data.maxZoom || 10;
-    var minZHint = (hint && typeof hint.minZoom === 'number') ? hint.minZoom : this.data.minZoom;
-    var minZ = typeof minZHint === 'number' && minZHint > 0 ? minZHint : 1;
-    this._cameraCaps = {
-      hasUltraWide: minZ <= 0.5,
-      minZoom: minZ,
-      maxZoom: maxZ,
-      probed: minZ <= 0.5
-    };
-    if (minZ <= 0.5) {
+    var minRaw = hint && typeof hint.minZoom === 'number' ? hint.minZoom : null;
+    var isIos = isLiveHostIos();
+
+    if (minRaw !== null && minRaw < 0.999) {
+      this._cameraCaps = {
+        hasUltraWide: true,
+        minZoom: minRaw,
+        maxZoom: maxZ,
+        probed: true
+      };
       this.rebuildCameraViewModeStops();
       return;
     }
+    if (isIos && maxZ >= 2) {
+      this._cameraCaps = {
+        hasUltraWide: true,
+        minZoom: 1,
+        maxZoom: maxZ,
+        probed: true
+      };
+      this.rebuildCameraViewModeStops();
+      return;
+    }
+    if (!isIos && minRaw !== null) {
+      this._cameraCaps = {
+        hasUltraWide: false,
+        minZoom: 1,
+        maxZoom: maxZ,
+        probed: true
+      };
+      this.rebuildCameraViewModeStops();
+      return;
+    }
+    if (!isIos && minRaw === null) {
+      this._probeAndroidUltraWideZoom(maxZ);
+      return;
+    }
+    this._cameraCaps = {
+      hasUltraWide: false,
+      minZoom: 1,
+      maxZoom: maxZ,
+      probed: true
+    };
+    this.rebuildCameraViewModeStops();
+  },
+
+  /**
+   * Android 且 init 未带回 minZoom 时，尝试 0.5 / 0.6 判断是否具备更广焦段。
+   * @param {number} maxZ
+   * @returns {void}
+   */
+  _probeAndroidUltraWideZoom: function(maxZ) {
+    var self = this;
     var ctx = this.data.cameraContext;
     if (!ctx || typeof ctx.setZoom !== 'function') {
-      this._cameraCaps.probed = true;
+      this._cameraCaps = { hasUltraWide: false, minZoom: 1, maxZoom: maxZ, probed: true };
       this.rebuildCameraViewModeStops();
       return;
     }
-    var self = this;
-    var caps = this._cameraCaps;
-    var settled = false;
+    var restoreZ = self.getDeviceDefaultPreviewZoom();
     /**
-     * 探测结束后恢复 1×（init 阶段 setData 可能尚未 flush，不能依赖 this.data.zoom）。
+     * 探测结束后回到默认预览倍率。
      * @returns {void}
      */
     var restore = function() {
       if (!self.data.cameraContext || typeof self.data.cameraContext.setZoom !== 'function') return;
       try {
-        self.data.cameraContext.setZoom({ zoom: 1 });
+        self.data.cameraContext.setZoom({ zoom: restoreZ });
       } catch (er) {}
     };
-    try {
-      ctx.setZoom({
-        zoom: 0.5,
-        success: function() {
-          if (settled) return;
-          settled = true;
-          caps.hasUltraWide = true;
-          caps.minZoom = 0.5;
-          caps.probed = true;
-          caps.maxZoom = self.data.maxZoom || caps.maxZoom;
-          self.rebuildCameraViewModeStops();
-          restore();
-        },
-        fail: function() {
-          if (settled) return;
-          settled = true;
-          caps.hasUltraWide = false;
-          caps.minZoom = 1;
-          caps.probed = true;
-          caps.maxZoom = self.data.maxZoom || caps.maxZoom;
-          self.rebuildCameraViewModeStops();
-          restore();
-        },
-        complete: function() {
-          setTimeout(function() {
+    var candidates = [0.5, 0.6];
+    var ci = 0;
+    /**
+     * 当前候选失败则试下一档。
+     * @returns {void}
+     */
+    var onCandidateFail = function() {
+      ci++;
+      if (ci >= candidates.length) {
+        self._cameraCaps = { hasUltraWide: false, minZoom: 1, maxZoom: maxZ, probed: true };
+        self.rebuildCameraViewModeStops();
+        restore();
+        return;
+      }
+      tryCandidate(candidates[ci]);
+    };
+    /**
+     * @param {number} z
+     * @returns {void}
+     */
+    var tryCandidate = function(z) {
+      var settled = false;
+      try {
+        ctx.setZoom({
+          zoom: z,
+          success: function() {
             if (settled) return;
             settled = true;
-            caps.hasUltraWide = false;
-            caps.minZoom = 1;
-            caps.probed = true;
-            caps.maxZoom = self.data.maxZoom || caps.maxZoom;
+            self._cameraCaps = {
+              hasUltraWide: true,
+              minZoom: z,
+              maxZoom: maxZ,
+              probed: true
+            };
             self.rebuildCameraViewModeStops();
             restore();
-          }, 0);
-        }
-      });
-    } catch (eProbe) {
-      caps.hasUltraWide = false;
-      caps.minZoom = 1;
-      caps.probed = true;
-      this.rebuildCameraViewModeStops();
-      restore();
-    }
+          },
+          fail: function() {
+            if (settled) return;
+            settled = true;
+            onCandidateFail();
+          },
+          complete: function() {
+            setTimeout(function() {
+              if (settled) return;
+              settled = true;
+              onCandidateFail();
+            }, 0);
+          }
+        });
+      } catch (eTry) {
+        onCandidateFail();
+      }
+    };
+    tryCandidate(candidates[0]);
+  },
+
+  /**
+   * 进入页面 / 复位机位时使用的默认预览 zoom（iOS max≥2 时为 2，接近系统「1×」主摄）。
+   * @returns {number}
+   */
+  getDeviceDefaultPreviewZoom: function() {
+    return getDefaultPreviewZoomForMax(this.data.maxZoom || 10);
   },
 
   /**
@@ -2785,27 +2930,39 @@ Page({
   rebuildCameraViewModeStops: function() {
     var caps = this._cameraCaps || {};
     var maxZ = this.data.maxZoom || caps.maxZoom || 10;
-    var closeZ = Math.min(VIEW_MODE_CLOSE_ZOOM, maxZ);
-    if (!isFinite(closeZ) || closeZ <= 1) closeZ = Math.max(1.2, Math.min(1.5, maxZ));
+    var isIos = isLiveHostIos();
     var stops = [];
     if (caps.hasUltraWide) {
+      var wideZ =
+        typeof caps.minZoom === 'number' && caps.minZoom > 0 && caps.minZoom < 1 ? caps.minZoom : 1;
       stops.push({
         label: '广角',
         mode: CameraViewMode.WIDE,
-        zoom: 0.5
+        zoom: wideZ
       });
     }
+    var normZ = isIos && maxZ >= 2 ? 2 : 1;
     stops.push({
-      label: formatCameraZoomLabel(1),
+      label: formatCameraZoomLabel(normZ),
       mode: CameraViewMode.NORMAL,
-      zoom: 1
+      zoom: normZ
     });
-    stops.push({
-      label: formatCameraZoomLabel(closeZ),
-      mode: CameraViewMode.CLOSE,
-      zoom: closeZ
-    });
+    if (maxZ > normZ + 0.05) {
+      var closeZ = isIos && maxZ >= 4 ? 4 : Math.min(VIEW_MODE_CLOSE_ZOOM, maxZ);
+      closeZ = Math.min(closeZ, maxZ);
+      if (closeZ <= normZ) {
+        closeZ = maxZ;
+      }
+      if (closeZ > normZ) {
+        stops.push({
+          label: formatCameraZoomLabel(closeZ),
+          mode: CameraViewMode.CLOSE,
+          zoom: closeZ
+        });
+      }
+    }
     this.setData({ cameraViewModeStops: stops });
+    this.syncNativeEnhanceZoomCompensation(this.data.zoom || 1);
   },
 
   /**
@@ -2815,14 +2972,16 @@ Page({
    */
   resetViewModeToNormal: function(opts) {
     var skip = opts && opts.skipCamera;
+    var defZ = this.getDeviceDefaultPreviewZoom();
     this.setData({
       cameraViewMode: CameraViewMode.NORMAL,
-      zoom: 1
+      zoom: defZ
     });
+    this.syncNativeEnhanceZoomCompensation(defZ);
     if (skip || this.data.enhanceMode === 'vk') return;
     if (this.data.cameraContext && this.data.cameraContext.setZoom) {
       try {
-        this.data.cameraContext.setZoom({ zoom: 1 });
+        this.data.cameraContext.setZoom({ zoom: defZ });
       } catch (eZ) {}
     }
   },
@@ -2860,10 +3019,17 @@ Page({
     }
     var caps = this._cameraCaps && this._cameraCaps.probed
       ? this._cameraCaps
-      : { hasUltraWide: false, maxZoom: this.data.maxZoom || 10 };
+      : { hasUltraWide: false, minZoom: 1, maxZoom: this.data.maxZoom || 10 };
     var maxZ = this.data.maxZoom || caps.maxZoom || 10;
-    var target = Math.max(1, Math.min(maxZ, Number(stop.zoom) || 1));
-    if (mode === CameraViewMode.WIDE) target = 0.5;
+    var minTarget =
+      mode === CameraViewMode.WIDE
+        ? typeof caps.minZoom === 'number' && caps.minZoom > 0
+          ? caps.minZoom
+          : isLiveHostIos()
+            ? 1
+            : 0.5
+        : 1;
+    var target = Math.max(minTarget, Math.min(maxZ, Number(stop.zoom) || 1));
     this.setData({ cameraViewMode: mode });
     this.updateZoom(target);
     if (this._renderPipeline && typeof this._renderPipeline.pauseAutoDegradeOnce === 'function') {

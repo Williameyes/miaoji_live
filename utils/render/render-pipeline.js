@@ -550,6 +550,17 @@ function createRenderPipeline() {
   }
 
   /**
+   * 原生增强路径变焦补偿（仅 onCameraFrame + WebGL 路径使用）。
+   * @param {number} z
+   * @returns {void}
+   */
+  function setNativeZoomCompensation(z) {
+    if (renderer && typeof renderer.setNativeZoomCompensation === 'function') {
+      try { renderer.setNativeZoomCompensation(z); } catch (e) {}
+    }
+  }
+
+  /**
    * 与页面 16:9 取景框（CSS px）同步后备缓冲，避免全屏与画布尺寸不一导致锐化/比例错位。
    *
    * @param {number} cssW
@@ -601,6 +612,7 @@ function createRenderPipeline() {
     stop: stop,
     destroy: destroy,
     setVkZoom: setVkZoom,
+    setNativeZoomCompensation: setNativeZoomCompensation,
     resizeToCssPixels: resizeToCssPixels,
     getCanvasNode: getCanvasNode,
     setVkRecordingHook: setVkRecordingHook,

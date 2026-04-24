@@ -26,6 +26,7 @@ var shaderLib = require('./shader-library.js');
  *   init: (opts:{component:Object,selector:string,level?:ShaderLevel}) => Promise<void>,
  *   resizeCanvas: (cssWidth:number, cssHeight:number) => void,
  *   drawFrame: (frame:{data:ArrayBuffer,width:number,height:number}) => number,
+ *   setNativeZoomCompensation: (z:number) => void,
  *   setShaderLevel: (level:ShaderLevel) => void,
  *   getShaderLevel: () => ShaderLevel,
  *   destroy: () => void
@@ -57,6 +58,8 @@ function createWebglSharpenRenderer() {
   };
   /** VK 数字变焦（中心裁切放大，倍率 ≥1）；与页面 zoom 同步。 */
   var vkZoomVal = 1;
+  /** 原生 onCameraFrame 路径的额外数字变焦补偿（倍率 ≥1）。 */
+  var nativeZoomCompVal = 1;
   /** 每帧由 render-pipeline 写入 [0,1]，驱动 fragment 中 motion 锐化包络；VK 无 CPU 像素路径时为 0。 */
   var motionUniform = 0;
   var texW = 0;
@@ -294,8 +297,30 @@ function createWebglSharpenRenderer() {
     var cw = db.w;
     var ch = db.h;
     var c = computeCoverUvScaleOffset(cw, ch, frameTexW, frameTexH);
+    if (nativeZoomCompVal > 1.0001) {
+      var oldSu = c.su;
+      var oldSv = c.sv;
+      var newSu = oldSu / nativeZoomCompVal;
+      var newSv = oldSv / nativeZoomCompVal;
+      c.u0 += (oldSu - newSu) * 0.5;
+      c.v0 += (oldSv - newSv) * 0.5;
+      c.su = newSu;
+      c.sv = newSv;
+    }
     gl.uniform2f(uniformLocs.uUvScale, c.su, c.sv);
     gl.uniform2f(uniformLocs.uUvOffset, c.u0, c.v0);
+  }
+
+  /**
+   * 设置原生增强路径的额外变焦补偿（仅 drawFrame 使用）。
+   * @param {number} z
+   * @returns {void}
+   */
+  function setNativeZoomCompensation(z) {
+    var n = Number(z);
+    if (!isFinite(n) || n < 1) n = 1;
+    if (n > 8) n = 8;
+    nativeZoomCompVal = n;
   }
 
   /**
@@ -754,6 +779,7 @@ function createWebglSharpenRenderer() {
       uUvOffset: null
     };
     vkZoomVal = 1;
+    nativeZoomCompVal = 1;
     motionUniform = 0;
   }
 
@@ -766,6 +792,7 @@ function createWebglSharpenRenderer() {
     getBackingSize: getBackingSize,
     getCanvasNode: getCanvasNode,
     setVkZoom: setVkZoom,
+    setNativeZoomCompensation: setNativeZoomCompensation,
     setMotionLevel: setMotionLevel,
     setShaderLevel: setShaderLevel,
     getShaderLevel: getShaderLevel,
