@@ -28,7 +28,6 @@
 var perfMod = require('./perf-monitor.js');
 var rendererMod = require('./webgl-sharpen-renderer.js');
 var frameMod = require('./frame-source.js');
-
 /** 中心块统计用的边长（像素），与 motion 的 CPU 成本线性相关。 */
 var MOTION_LUMA_PATCH = 8;
 /** VK：帧间 wall clock 间隔 (ms) 归一为 raw motion 的分母；约 30fps 单帧 33ms → raw≈0.33。 */

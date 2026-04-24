@@ -36,7 +36,7 @@ page {
 /* 16:9 取景框内：铺满父级（与窗口内接 16:9 一致，典型相机 16:9 时约 1:1 等比、无长条全屏强拉） */
 .live-stage {
   position: fixed;
-  z-index: 0;
+  z-index: 1;
   pointer-events: none;
   overflow: hidden;
 }

@@ -89,6 +89,12 @@ const CameraViewMode = {
 const VIEW_MODE_CLOSE_ZOOM = 2;
 
 /**
+ * Android 超广探测：complete 早于 success 时若用 0ms 会误判失败，略延迟再试下一档。
+ * @readonly
+ */
+const ANDROID_ULTRAWIDE_PROBE_COMPLETE_MS = 280;
+
+/**
  * 将 zoom 值格式化为按钮文案（如 1x / 2x / 2.5x）。
  * @param {number} z
  * @returns {string}
@@ -473,7 +479,8 @@ Page({
     /**
      * 抽屉打开时工具条展示的实时 FPS 文案（如 "28 fps"）；未启用时显示 "— fps"。
      */
-    enhanceFpsText: '— fps'
+    enhanceFpsText: '— fps',
+    
   },
 
   /**
@@ -652,6 +659,7 @@ Page({
             vipGateMinor: '',
             vipGateRetryVisible: false
           }, () => {
+            this._entitlementEverAllowedInSession = true;
             if (typeof onAllowed === 'function') onAllowed();
             const queued = this._entitlementOnAllowedQueue.splice(0, this._entitlementOnAllowedQueue.length);
             queued.forEach((fn) => {
@@ -677,6 +685,7 @@ Page({
               vipGateRetryVisible: false
             },
             () => {
+              this._entitlementEverAllowedInSession = true;
               if (typeof onAllowed === 'function') {
                 onAllowed();
               }
@@ -690,6 +699,20 @@ Page({
         this._entitlementChecking = false;
       })
       .catch(() => {
+        if (this._entitlementEverAllowedInSession) {
+          this.setData({ liveEntitlementChecking: false });
+          if (typeof onAllowed === 'function') {
+            try {
+              onAllowed();
+            } catch (eCb) {}
+          }
+          const queued = this._entitlementOnAllowedQueue.splice(0, this._entitlementOnAllowedQueue.length);
+          queued.forEach((fn) => {
+            try { fn(); } catch (e) {}
+          });
+          this._entitlementChecking = false;
+          return;
+        }
         this.rollingActive = false;
         this.stopRollingRecording(() => {
           this.setData({
@@ -753,6 +776,7 @@ Page({
   markNeedManualRelaunch: function(reason) {
     if (this._needManualRelaunch) return;
     this._needManualRelaunch = true;
+    this._manualRelaunchReason = String(reason || 'unknown');
     this.appendHealthLog('manual_relaunch_required', {
       reason: reason || 'unknown',
       diag: this.getLiveRollingDiagSnapshot({})
@@ -1119,6 +1143,12 @@ Page({
     /** 权益校验串行锁，避免 onLoad/onShow/重试并发导致重复挂载 camera。 */
     this._entitlementChecking = false;
     this._entitlementOnAllowedQueue = [];
+    /** 进入 live 后首次权益通过即置 true；本次会话内 onShow 不再复检，避免直播中断网触发 teardown。 */
+    this._entitlementEverAllowedInSession = false;
+    /** severe 解除后的 rolling 恢复保护窗口（截止时间戳）；窗口内不应将短暂无段误判为 ERR。 */
+    this._storageSevereRecoveryUntil = 0;
+    /** 最近一次 manual relaunch 原因（用于按故障类型精准解锁）。 */
+    this._manualRelaunchReason = '';
     /** 相机重建锁，避免短时多次重建触发 “can insert only one camera”。 */
     this._cameraRebuildLock = false;
     this._cameraRebuildQueue = [];
@@ -1724,7 +1754,13 @@ Page({
       this._cameraShowInitWatchTimer = null;
     }
     const maxZoom = e.detail.maxZoom || 5;
-    const minZoomRaw = typeof e.detail.minZoom === 'number' ? e.detail.minZoom : null;
+    var minZoomRaw = null;
+    if (typeof e.detail.minZoom === 'number' && isFinite(e.detail.minZoom)) {
+      minZoomRaw = e.detail.minZoom;
+    } else if (e.detail.minZoom != null && e.detail.minZoom !== '') {
+      var parsedMz = parseFloat(String(e.detail.minZoom));
+      if (isFinite(parsedMz)) minZoomRaw = parsedMz;
+    }
     const minZoom = minZoomRaw !== null ? minZoomRaw : 1;
     var previewZ = getDefaultPreviewZoomForMax(maxZoom);
     this.setData({
@@ -1738,17 +1774,41 @@ Page({
      * iOS 上小程序 camera 的 zoom=2 更接近系统相机「1×」主摄，默认从此起播避免一进来就是最广视角。
      */
     if (this.data.enhanceMode !== 'vk') {
-      if (this.data.cameraContext && this.data.cameraContext.setZoom) {
-        try {
-          this.data.cameraContext.setZoom({ zoom: previewZ });
-        } catch (ez) {}
+      /**
+       * Android：&lt;camera zoom="{{zoom}}"&gt; 与 context.setZoom 需与 data.zoom 一致，否则下一帧属性会覆盖 setZoom，
+       * 小米等机型上表现为亚 1× 无效、广角与 1× 相同。iOS 保持同步调用。
+       */
+      if (isLiveHostIos()) {
+        if (this.data.cameraContext && this.data.cameraContext.setZoom) {
+          try {
+            this.data.cameraContext.setZoom({ zoom: previewZ });
+          } catch (ez) {}
+        }
+        this.maybeSchedulePostZoomSilentFocus();
+        this.detectCameraCapabilities({
+          minZoom: minZoomRaw,
+          maxZoom: maxZoom
+        });
+      } else {
+        var selfInit = this;
+        var pzInit = previewZ;
+        var capMz = minZoomRaw;
+        var capMax = maxZoom;
+        setTimeout(function() {
+          selfInit.setData({ zoom: pzInit }, function() {
+            if (selfInit.data.cameraContext && selfInit.data.cameraContext.setZoom) {
+              try {
+                selfInit.data.cameraContext.setZoom({ zoom: pzInit });
+              } catch (ez2) {}
+            }
+            selfInit.maybeSchedulePostZoomSilentFocus();
+            selfInit.detectCameraCapabilities({
+              minZoom: capMz,
+              maxZoom: capMax
+            });
+          });
+        }, 0);
       }
-      this.maybeSchedulePostZoomSilentFocus();
-      this.detectCameraCapabilities(
-        minZoomRaw !== null
-          ? { minZoom: minZoomRaw, maxZoom: maxZoom }
-          : { maxZoom: maxZoom }
-      );
     }
     if (this._rollingKickoffTimer) {
       clearTimeout(this._rollingKickoffTimer);
@@ -1927,7 +1987,7 @@ Page({
 
   /**
    * 将直播取景区设为窗口内接 16:9，并同步增强/VK 的 WebGL 画布 CSS 像素，避免全屏与相机比例不一致。
-   * 边距为页底黑。工程内未对左右黑边做全屏毛玻璃/模糊补全（避免无收益的高 GPU 与合成开销）。
+   * 边距为页底黑。
    * @returns {void}
    */
   _updateLiveStageLayout: function() {
@@ -2724,6 +2784,9 @@ Page({
       minZ = this._cameraCaps.minZoom;
     } else if (this._cameraCaps && this._cameraCaps.hasUltraWide) {
       minZ = isLiveHostIos() ? 1 : 0.5;
+    } else if (!isLiveHostIos() && (!this._cameraCaps || !this._cameraCaps.probed)) {
+      /** Android 超广探测完成前勿将 minZ 锁为 1，否则 setZoom(0.6) 会被钳成 1×。 */
+      minZ = 0.5;
     }
     if (isVkMode) minZ = 1;
     const actualZoom = Math.max(minZ, Math.min(this.data.maxZoom, zoomVal));
@@ -2731,8 +2794,24 @@ Page({
     // 只在数值发生实质变化时更新，减少 setData 频率
     if (Math.abs(this.data.zoom - actualZoom) < 0.01) return;
 
-    this.setData({ zoom: actualZoom });
+    var selfZ = this;
+    /**
+     * @returns {void}
+     */
+    var applyCtxZoomAndEnhance = function() {
+      if (selfZ.data.cameraContext && selfZ.data.cameraContext.setZoom) {
+        try {
+          selfZ.data.cameraContext.setZoom({
+            zoom: actualZoom
+          });
+        } catch (eCtx) {}
+      }
+      selfZ.syncNativeEnhanceZoomCompensation(actualZoom);
+      selfZ.maybeSchedulePostZoomSilentFocus();
+    };
+
     if (isVkMode) {
+      this.setData({ zoom: actualZoom });
       if (this._renderPipeline && typeof this._renderPipeline.setVkZoom === 'function') {
         try {
           this._renderPipeline.setVkZoom(actualZoom);
@@ -2740,14 +2819,12 @@ Page({
       }
       return;
     }
-    if (this.data.cameraContext && this.data.cameraContext.setZoom) {
-      this.data.cameraContext.setZoom({
-        zoom: actualZoom
-      });
+    if (isLiveHostIos()) {
+      this.setData({ zoom: actualZoom });
+      applyCtxZoomAndEnhance();
+    } else {
+      this.setData({ zoom: actualZoom }, applyCtxZoomAndEnhance);
     }
-    this.syncNativeEnhanceZoomCompensation(actualZoom);
-    // 缩放手势与「下滑唤醒」互斥在 touch 层区分；变焦稳定后晚一点再对中心做一次静默对焦
-    this.maybeSchedulePostZoomSilentFocus();
   },
 
   /**
@@ -2782,15 +2859,23 @@ Page({
   /**
    * 读取本机相机变焦能力并生成机位按钮。
    * - iOS：系统相机 0.5/1/2 与小程序 zoom 刻度常不一致；在 maxZoom≥2 时按 1（最广）/ 2（≈系统1×）/ 4（≈系统2×）对齐。
-   * - Android：优先 bindinitdone.minZoom&lt;1；否则短序列探测 0.5→0.6（无 minZoom 字段机型）。
+   * - Android：一律 setZoom 序列探测；init 的 minZoom 只作候选与全失败时的兜底（小米等常见 0.6）。
    * @param {{ minZoom?: number, maxZoom?: number }} [hint]
    * @returns {void}
    */
   detectCameraCapabilities: function(hint) {
     var maxZ = (hint && hint.maxZoom) || this.data.maxZoom || 10;
-    var minRaw = hint && typeof hint.minZoom === 'number' ? hint.minZoom : null;
+    var minRaw = hint && typeof hint.minZoom === 'number' && isFinite(hint.minZoom) ? hint.minZoom : null;
+    if (minRaw === null && hint && hint.minZoom != null && hint.minZoom !== '') {
+      var pr = parseFloat(String(hint.minZoom));
+      if (isFinite(pr)) minRaw = pr;
+    }
     var isIos = isLiveHostIos();
 
+    if (!isIos) {
+      this._probeAndroidUltraWideZoom(maxZ, minRaw);
+      return;
+    }
     if (minRaw !== null && minRaw < 0.999) {
       this._cameraCaps = {
         hasUltraWide: true,
@@ -2811,20 +2896,6 @@ Page({
       this.rebuildCameraViewModeStops();
       return;
     }
-    if (!isIos && minRaw !== null) {
-      this._cameraCaps = {
-        hasUltraWide: false,
-        minZoom: 1,
-        maxZoom: maxZ,
-        probed: true
-      };
-      this.rebuildCameraViewModeStops();
-      return;
-    }
-    if (!isIos && minRaw === null) {
-      this._probeAndroidUltraWideZoom(maxZ);
-      return;
-    }
     this._cameraCaps = {
       hasUltraWide: false,
       minZoom: 1,
@@ -2835,11 +2906,14 @@ Page({
   },
 
   /**
-   * Android 且 init 未带回 minZoom 时，尝试 0.5 / 0.6 判断是否具备更广焦段。
+   * Android：用 setZoom 短序列探测真超广倍率（小米常见 0.6）；init 的 minZoom 仅作候选提示，不因「假 1」跳过探测。
+   * 全部候选失败时，若 init 曾给出 0&lt;min&lt;1 则仍采信该值（部分机型回调不完整）。
+   * 仅 Android 调用；iOS 不走此函数。
    * @param {number} maxZ
+   * @param {number|null} [minRawHint] bindinitdone.minZoom，可能为 null
    * @returns {void}
    */
-  _probeAndroidUltraWideZoom: function(maxZ) {
+  _probeAndroidUltraWideZoom: function(maxZ, minRawHint) {
     var self = this;
     var ctx = this.data.cameraContext;
     if (!ctx || typeof ctx.setZoom !== 'function') {
@@ -2849,16 +2923,35 @@ Page({
     }
     var restoreZ = self.getDeviceDefaultPreviewZoom();
     /**
-     * 探测结束后回到默认预览倍率。
+     * 探测结束后回到默认预览倍率（须先写 data.zoom，再 setZoom，与 &lt;camera zoom&gt; 绑定一致）。
      * @returns {void}
      */
     var restore = function() {
       if (!self.data.cameraContext || typeof self.data.cameraContext.setZoom !== 'function') return;
-      try {
-        self.data.cameraContext.setZoom({ zoom: restoreZ });
-      } catch (er) {}
+      self.setData({ zoom: restoreZ }, function() {
+        try {
+          self.data.cameraContext.setZoom({ zoom: restoreZ });
+        } catch (er) {}
+      });
     };
-    var candidates = [0.5, 0.6];
+    var rawList = [0.6, 0.5, 0.55, 0.65, 2 / 3, 0.625];
+    if (typeof minRawHint === 'number' && minRawHint > 0 && minRawHint < 1) {
+      rawList.unshift(minRawHint);
+    }
+    var seen = {};
+    var candidates = [];
+    var ri;
+    for (ri = 0; ri < rawList.length; ri++) {
+      var rv = rawList[ri];
+      if (!isFinite(rv) || rv <= 0 || rv >= 1) continue;
+      var rk = String(Math.round(rv * 1000) / 1000);
+      if (seen[rk]) continue;
+      seen[rk] = true;
+      candidates.push(rv);
+    }
+    if (candidates.length === 0) {
+      candidates = [0.6, 0.5];
+    }
     var ci = 0;
     /**
      * 当前候选失败则试下一档。
@@ -2867,8 +2960,18 @@ Page({
     var onCandidateFail = function() {
       ci++;
       if (ci >= candidates.length) {
-        self._cameraCaps = { hasUltraWide: false, minZoom: 1, maxZoom: maxZ, probed: true };
-        self.rebuildCameraViewModeStops();
+        if (typeof minRawHint === 'number' && minRawHint > 0 && minRawHint < 0.999) {
+          self._cameraCaps = {
+            hasUltraWide: true,
+            minZoom: minRawHint,
+            maxZoom: maxZ,
+            probed: true
+          };
+          self.rebuildCameraViewModeStops();
+        } else {
+          self._cameraCaps = { hasUltraWide: false, minZoom: 1, maxZoom: maxZ, probed: true };
+          self.rebuildCameraViewModeStops();
+        }
         restore();
         return;
       }
@@ -2881,31 +2984,40 @@ Page({
     var tryCandidate = function(z) {
       var settled = false;
       try {
-        ctx.setZoom({
-          zoom: z,
-          success: function() {
-            if (settled) return;
-            settled = true;
-            self._cameraCaps = {
-              hasUltraWide: true,
-              minZoom: z,
-              maxZoom: maxZ,
-              probed: true
-            };
-            self.rebuildCameraViewModeStops();
-            restore();
-          },
-          fail: function() {
-            if (settled) return;
-            settled = true;
-            onCandidateFail();
-          },
-          complete: function() {
-            setTimeout(function() {
-              if (settled) return;
+        self.setData({ zoom: z }, function() {
+          try {
+            ctx.setZoom({
+              zoom: z,
+              success: function() {
+                if (settled) return;
+                settled = true;
+                self._cameraCaps = {
+                  hasUltraWide: true,
+                  minZoom: z,
+                  maxZoom: maxZ,
+                  probed: true
+                };
+                self.rebuildCameraViewModeStops();
+                restore();
+              },
+              fail: function() {
+                if (settled) return;
+                settled = true;
+                onCandidateFail();
+              },
+              complete: function() {
+                setTimeout(function() {
+                  if (settled) return;
+                  settled = true;
+                  onCandidateFail();
+                }, ANDROID_ULTRAWIDE_PROBE_COMPLETE_MS);
+              }
+            });
+          } catch (eInner) {
+            if (!settled) {
               settled = true;
               onCandidateFail();
-            }, 0);
+            }
           }
         });
       } catch (eTry) {
@@ -2973,16 +3085,39 @@ Page({
   resetViewModeToNormal: function(opts) {
     var skip = opts && opts.skipCamera;
     var defZ = this.getDeviceDefaultPreviewZoom();
-    this.setData({
-      cameraViewMode: CameraViewMode.NORMAL,
-      zoom: defZ
-    });
+    var selfR = this;
     this.syncNativeEnhanceZoomCompensation(defZ);
-    if (skip || this.data.enhanceMode === 'vk') return;
-    if (this.data.cameraContext && this.data.cameraContext.setZoom) {
-      try {
-        this.data.cameraContext.setZoom({ zoom: defZ });
-      } catch (eZ) {}
+    if (skip || this.data.enhanceMode === 'vk') {
+      this.setData({
+        cameraViewMode: CameraViewMode.NORMAL,
+        zoom: defZ
+      });
+      return;
+    }
+    if (isLiveHostIos()) {
+      this.setData({
+        cameraViewMode: CameraViewMode.NORMAL,
+        zoom: defZ
+      });
+      if (this.data.cameraContext && this.data.cameraContext.setZoom) {
+        try {
+          this.data.cameraContext.setZoom({ zoom: defZ });
+        } catch (eZ) {}
+      }
+    } else {
+      this.setData(
+        {
+          cameraViewMode: CameraViewMode.NORMAL,
+          zoom: defZ
+        },
+        function() {
+          if (selfR.data.cameraContext && selfR.data.cameraContext.setZoom) {
+            try {
+              selfR.data.cameraContext.setZoom({ zoom: defZ });
+            } catch (eZ2) {}
+          }
+        }
+      );
     }
   },
 
@@ -3021,15 +3156,19 @@ Page({
       ? this._cameraCaps
       : { hasUltraWide: false, minZoom: 1, maxZoom: this.data.maxZoom || 10 };
     var maxZ = this.data.maxZoom || caps.maxZoom || 10;
-    var minTarget =
-      mode === CameraViewMode.WIDE
-        ? typeof caps.minZoom === 'number' && caps.minZoom > 0
-          ? caps.minZoom
-          : isLiveHostIos()
-            ? 1
-            : 0.5
-        : 1;
-    var target = Math.max(minTarget, Math.min(maxZ, Number(stop.zoom) || 1));
+    var target;
+    if (mode === CameraViewMode.WIDE) {
+      var stopWide = Number(stop.zoom);
+      if (!isFinite(stopWide) || stopWide <= 0) stopWide = 0.6;
+      var wideFloor = 0.01;
+      if (caps.probed && caps.hasUltraWide && typeof caps.minZoom === 'number' && caps.minZoom > 0) {
+        wideFloor = caps.minZoom;
+      }
+      target = Math.max(wideFloor, Math.min(maxZ, stopWide));
+    } else {
+      var minTarget = 1;
+      target = Math.max(minTarget, Math.min(maxZ, Number(stop.zoom) || 1));
+    }
     this.setData({ cameraViewMode: mode });
     this.updateZoom(target);
     if (this._renderPipeline && typeof this._renderPipeline.pauseAutoDegradeOnce === 'function') {
@@ -3693,6 +3832,10 @@ Page({
       }
     } catch (eSnap) {}
 
+    if (this._entitlementEverAllowedInSession) {
+      this._liveCoreOnShowAfterEntitlement();
+      return;
+    }
     this.refreshLiveEntitlementAndResume(() => {
       this._liveCoreOnShowAfterEntitlement();
     });
@@ -3850,6 +3993,7 @@ Page({
       .trim()
       .toLowerCase();
     const lv = raw === 'warn' || raw === 'severe' || raw === 'ok' ? raw : 'ok';
+    const wasSevere = !!this.data.storageSevereLock;
     const storageSevereLock = lv === 'severe';
     let txt = 'OK';
     if (lv === 'warn') txt = 'WT';
@@ -3861,12 +4005,60 @@ Page({
     ) {
       return;
     }
-    this.setData({
-      cacheStorageLampLevel: lv,
-      storageSevereLock: storageSevereLock,
-      cacheStorageLampActionable: storageSevereLock,
-      cacheStorageLampText: txt
+    this.setData(
+      {
+        cacheStorageLampLevel: lv,
+        storageSevereLock: storageSevereLock,
+        cacheStorageLampActionable: storageSevereLock,
+        cacheStorageLampText: txt
+      },
+      () => {
+        if (wasSevere && !storageSevereLock) {
+          this._onStorageSevereLockReleased();
+        } else if (storageSevereLock) {
+          this._storageSevereRecoveryUntil = 0;
+        }
+      }
+    );
+  },
+
+  /**
+   * severe 解除后：自动尝试恢复 rolling，并在短窗口内抑制 idle-ERR 误判。
+   * @returns {void}
+   */
+  _onStorageSevereLockReleased: function() {
+    const now = Date.now();
+    const graceMs = Math.max(8000, Math.floor((this.segmentDurationMs || 16000) * 1.2));
+    this._storageSevereRecoveryUntil = now + graceMs;
+    this.lastSegmentAt = now;
+    this.startRecordFailStreak = 0;
+    this.segmentStartFailStormCycles = 0;
+    if (this._needManualRelaunch && String(this._manualRelaunchReason || '').indexOf('file_quota') >= 0) {
+      this._needManualRelaunch = false;
+      this._manualRelaunchReason = '';
+    }
+    if (this._fileQuotaCircuitUntil && this._fileQuotaCircuitUntil > now) {
+      this._fileQuotaCircuitUntil = 0;
+    }
+    try {
+      this.appendHealthLog('storage_severe_released_resume_rolling', {
+        graceMs,
+        rollingActive: !!this.rollingActive,
+        cameraReady: !!this._cameraInitDone
+      });
+    } catch (eLog) {}
+    if (!this.rollingActive || !this._cameraInitDone || !this.data.cameraContext || this.data.isRecording) {
+      this.updatePipelineHealth();
+      return;
+    }
+    const sessionId = this.rollingSessionId;
+    this.scheduleAfterStopRecord(() => {
+      if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
+      if (this.data.storageSevereLock) return;
+      if (this.data.isRecording) return;
+      this.startOneSegment(sessionId, 0);
     });
+    this.updatePipelineHealth();
   },
 
   /**
@@ -3936,7 +4128,7 @@ Page({
   },
 
   /**
-   * 将单条高光对应本地视频依次保存至相册、unlink、索引标记为已导出；与全量「下载并清空」同一语义，不直接删 Storage 行。
+   * 将单条高光对应本地视频依次保存至相册、unlink，并同步删除索引行（EX 清理语义：从列表与统计中消失）。
    *
    * @param {string} matchId
    * @param {Record<string, unknown>} item
@@ -3965,16 +4157,19 @@ Page({
           const id = item.id != null ? String(item.id) : '';
           const idx = list.findIndex((x) => x && String(x.id) === id);
           if (idx >= 0) {
-            list[idx].segments = [];
-            list[idx].replaySegment = '';
-            list[idx].exportedToAlbum = true;
-            list[idx].exportedToAlbumAt = Date.now();
+            list.splice(idx, 1);
+          }
+          if (list.length <= 0) {
+            delete clipsMap[matchId];
           }
         }
         if (clipsStorage.writeClipsMapSafe(clipsMap)) {
           try {
             if (typeof this.refreshDrawerHighlights === 'function') this.refreshDrawerHighlights();
           } catch (eR) {}
+          try {
+            if (typeof this.loadMatchList === 'function') this.loadMatchList();
+          } catch (eM) {}
           try {
             this.appendHealthLog('cache_lamp_export_one', {
               matchId: String(matchId),
@@ -4542,12 +4737,15 @@ Page({
     const pendingAgeMs = this.pendingHighlight
       ? (now - (this.pendingHighlight.createdAt || now))
       : 0;
+    const inStorageRecoveryWindow =
+      !!(this._storageSevereRecoveryUntil && now < this._storageSevereRecoveryUntil);
     const idleTooLong =
       this.rollingActive
       && this._cameraInitDone
       && (now - (this.lastSegmentAt || 0) > this.segmentDurationMs * 3.5)
       && !this.data.isRecording
       && !this.rollingFsBusy
+      && !inStorageRecoveryWindow
       && !this.data.storageSevereLock;
     const captureLikelyBlocked =
       this.highlightMissStreak > 0
@@ -7904,15 +8102,25 @@ Page({
     });
     if (tasks.length === 0) {
       try {
-        const { estimateClipSegmentsBytesFromStorage } = require('../../utils/file-storage-estimate.js');
-        estimateClipSegmentsBytesFromStorage().then((b) => {
+        const {
+          estimateClipSegmentsBytesFromStorage,
+          estimateUserDataPathUsageBytes,
+          getClipStorageHealthHint
+        } = require('../../utils/file-storage-estimate.js');
+        Promise.all([estimateClipSegmentsBytesFromStorage(), estimateUserDataPathUsageBytes()]).then(([b, userB]) => {
           const mb = Math.max(0, Math.round((b / (1024 * 1024)) * 10) / 10);
+          const empty = mb < 0.05;
+          let hint = null;
+          try {
+            hint = getClipStorageHealthHint(b, userB);
+            this._syncCacheStorageLampData(hint);
+          } catch (eHint) {}
           this.setData({
             colorModalCacheRowHint:
-              mb < 0.05
+              empty
                 ? '本地高光视频保存约 0 MB，暂无可导出的本地文件。'
                 : `本地高光视频保存约 ${mb} MB，暂无可导出的本地文件。`,
-            colorModalDownloadCleared: true
+            colorModalDownloadCleared: empty || !!(hint && hint.level !== 'severe')
           });
         });
       } catch (eZ) {}
@@ -7938,8 +8146,11 @@ Page({
             Promise.all([estimateUserDataPathUsageBytes(), estimateClipSegmentsBytesFromStorage()]).then(
               ([userB, clipB]) => {
                 const mb = Math.max(0, Math.round((clipB / (1024 * 1024)) * 10) / 10);
+                let levelNow = 'severe';
                 try {
                   const h = getClipStorageHealthHint(clipB, userB);
+                  levelNow = String(h.level || '').toLowerCase();
+                  this._syncCacheStorageLampData(h);
                   app.globalData.fileStorageEstimate = {
                     clipBytes: clipB,
                     userDataBytes: userB,
@@ -7952,9 +8163,10 @@ Page({
                   storageEst.writeFileStorageEstimateSnapshot(app.globalData.fileStorageEstimate);
                 } catch (eG) {}
                 if (this.data.showColorModal) {
+                  const emptied = mb < 0.05;
                   this.setData({
                     colorModalCacheRowHint: `本地高光视频保存约 ${mb} MB，已导出至系统相册。`,
-                    colorModalDownloadCleared: true
+                    colorModalDownloadCleared: emptied || levelNow !== 'severe'
                   });
                 }
               }
