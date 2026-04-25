@@ -2097,6 +2097,7 @@ Page({
           zoom: 1,
           cameraViewMode: CameraViewMode.NORMAL
         });
+        self._ensureVkTimeshiftRecorder({ keepSavingState: true });
         self._maybeToastVkViewModeOnce();
         self.appendHealthLog('vk_boot_ok', {
           device: (app.globalData && app.globalData.enhanceDeviceTag) || '',
@@ -7296,6 +7297,10 @@ Page({
       clearInterval(this._vkHighlightFpsTimer);
       this._vkHighlightFpsTimer = null;
     }
+    if (this._vkTimeshiftRotateTimer) {
+      clearTimeout(this._vkTimeshiftRotateTimer);
+      this._vkTimeshiftRotateTimer = null;
+    }
     if (this._vkHighlightStopTimer) {
       clearTimeout(this._vkHighlightStopTimer);
       this._vkHighlightStopTimer = null;
@@ -7307,6 +7312,7 @@ Page({
     }
     var rec = this._vkCanvasRecorder;
     this._vkCanvasRecorder = null;
+    this._vkTimeshiftStartAt = 0;
     if (rec && typeof rec.destroy === 'function') {
       try {
         rec.destroy();
@@ -7320,44 +7326,32 @@ Page({
   },
 
   /**
-   * VK 模式：用 wx.createMediaRecorder(enhanceCanvas) 录制「已锐化」画布，时长约 {@link highlightPlaybackWindowMs}。
-   * @param {{id:string,now:number,createdAt:number,startSegNo:number,matchName:string,matchId:string,cover:string}} meta
+   * VK 模式时移缓冲：持续录制已锐化画布，点击高光时立即 stop 取过去窗口。
+   * @param {{ keepSavingState?: boolean }} [opts]
    * @returns {void}
    */
-  _requestVkCanvasHighlightCapture: function(meta) {
+  _ensureVkTimeshiftRecorder: function(opts) {
+    var keepSavingState = !!(opts && opts.keepSavingState);
     var self = this;
+    if (this._vkCanvasRecorder) return;
     var recorder = vkCanvasRecorderMod.createVkCanvasRecorder();
     if (!recorder.isApiSupported()) {
-      wx.showToast({
-        title: '当前模式仅支持高清预览直播，无法保存高光视频',
-        icon: 'none',
-        duration: 3200
-      });
-      this.appendHealthLog('vk_highlight_recorder_api_missing', {});
-      this.endHighlightSaving();
+      if (!keepSavingState) this.endHighlightSaving();
       return;
     }
     var pipeline = this._renderPipeline;
     if (!pipeline || typeof pipeline.getCanvasNode !== 'function') {
-      this.appendHealthLog('vk_highlight_no_pipeline', {});
-      this.endHighlightSaving();
+      if (!keepSavingState) this.endHighlightSaving();
       return;
     }
     var canvasNode = pipeline.getCanvasNode();
     if (!canvasNode || !canvasNode.width || !canvasNode.height) {
-      wx.showToast({
-        title: '当前模式仅支持高清预览直播，无法保存高光视频',
-        icon: 'none',
-        duration: 3200
-      });
-      this.appendHealthLog('vk_highlight_no_canvas_node', {});
-      this.endHighlightSaving();
+      if (!keepSavingState) this.endHighlightSaving();
       return;
     }
-    this._cleanupVkCanvasHighlightRecording('pre_start');
+    this._cleanupVkCanvasHighlightRecording('vk_timeshift_restart');
     this._vkCanvasRecorder = recorder;
-    var recordMs = Math.max(5000, this.highlightPlaybackWindowMs || 8000);
-    var durationSec = Math.max(5, Math.ceil(recordMs / 1000) + 2);
+    this._vkTimeshiftStartAt = Date.now();
     var longEdge = Math.max(Number(canvasNode.width) || 0, Number(canvasNode.height) || 0);
     var videoBitsPerSecond = 2200;
     if (longEdge >= 1600) {
@@ -7367,6 +7361,8 @@ Page({
     } else if (longEdge >= 900) {
       videoBitsPerSecond = 2600;
     }
+    var rotateAfterMs = 85000;
+    var durationSec = 100;
     recorder
       .start(canvasNode, {
         durationSec: durationSec,
@@ -7375,99 +7371,68 @@ Page({
       })
       .then(function() {
         if (self._vkCanvasRecorder !== recorder) {
-          try {
-            recorder.destroy();
-          } catch (e0) {}
+          try { recorder.destroy(); } catch (e0) {}
           return;
         }
         pipeline.setVkRecordingHook(function() {
           return recorder.beforeDraw();
         });
-        /**
-         * MediaRecorder 产出的 mp4 在列表 `<video>` 首帧常为黑屏；首页用 poster / 封面依赖真实位图。
-         * 在 hook 已挂载后短延迟再 toTempFilePath，确保至少一帧已绘制。
-         */
-        var scheduleAfterCover = function() {
-          self._vkHighlightFpsTimer = setInterval(function() {
-            var snap = pipeline.snapshot();
-            if (snap && recorder) {
-              recorder.noteRenderFps(snap.avgFps);
-            }
-          }, 1000);
-          self.startHighlightSaveProgressAnim(meta.now, meta.now + recordMs);
-          self._vkHighlightStopTimer = setTimeout(function() {
-            self._finalizeVkCanvasHighlightMeta(meta, recorder);
-          }, recordMs);
-          self.appendHealthLog('vk_canvas_highlight_record_start', {
-            recordMs: recordMs,
-            w: canvasNode.width,
-            h: canvasNode.height
-          });
-        };
-        setTimeout(function() {
-          try {
-            if (typeof wx.canvasToTempFilePath !== 'function') {
-              scheduleAfterCover();
-              return;
-            }
-            var dw = canvasNode.width;
-            var dh = canvasNode.height;
-            if (dw > 480 || dh > 480) {
-              var s = 480 / Math.max(dw, dh);
-              dw = Math.max(160, Math.round(dw * s));
-              dh = Math.max(90, Math.round(dh * s));
-            }
-            wx.canvasToTempFilePath(
-              {
-                canvas: canvasNode,
-                destWidth: dw,
-                destHeight: dh,
-                fileType: 'jpg',
-                quality: 0.85,
-                success: function(res) {
-                  if (res && res.tempFilePath) {
-                    meta.cover = res.tempFilePath;
-                  }
-                },
-                fail: function() {
-                  /* 无封面则仍依赖首页 poster 的 defaultCover */
-                },
-                complete: function() {
-                  scheduleAfterCover();
-                }
-              },
-              self
-            );
-          } catch (eSnap) {
-            scheduleAfterCover();
+        self._vkHighlightFpsTimer = setInterval(function() {
+          var snap = pipeline.snapshot();
+          if (snap && recorder) {
+            recorder.noteRenderFps(snap.avgFps);
           }
-        }, 72);
+        }, 1000);
+        self._vkTimeshiftRotateTimer = setTimeout(function() {
+          self._vkTimeshiftRotateTimer = null;
+          if (!self._livePageVisible || self.data.enhanceMode !== 'vk') return;
+          self._cleanupVkCanvasHighlightRecording('vk_timeshift_rotate');
+          self._ensureVkTimeshiftRecorder({ keepSavingState: true });
+        }, rotateAfterMs);
       })
-      .catch(function(err) {
-        self._vkCanvasRecorder = null;
-        try {
-          recorder.destroy();
-        } catch (e1) {}
-        wx.showToast({
-          title: '当前模式仅支持高清预览直播，无法保存高光视频',
-          icon: 'none',
-          duration: 3200
-        });
-        self.appendHealthLog('vk_canvas_highlight_record_start_fail', {
-          err: (err && err.message) || String(err)
-        });
-        self.endHighlightSaving();
+      .catch(function() {
+        self._cleanupVkCanvasHighlightRecording('vk_timeshift_start_fail');
+        if (!keepSavingState) self.endHighlightSaving();
       });
+  },
+
+  /**
+   * VK 模式：点击时立即截取当前时移缓冲，保存最近窗口（默认约 8s）。
+   * @param {{id:string,now:number,createdAt:number,startSegNo:number,matchName:string,matchId:string,cover:string}} meta
+   * @returns {void}
+   */
+  _requestVkCanvasHighlightCapture: function(meta) {
+    if (!this._vkCanvasRecorder) {
+      this._ensureVkTimeshiftRecorder({ keepSavingState: true });
+      setTimeout(() => {
+        if (!this.data.isSavingHighlight) return;
+        if (!this._vkCanvasRecorder) {
+          this.endHighlightSaving();
+          return;
+        }
+        this._requestVkCanvasHighlightCapture(meta);
+      }, 160);
+      return;
+    }
+    var recorder = this._vkCanvasRecorder;
+    this._finalizeVkCanvasHighlightMeta(meta, recorder, {
+      clickWallMs: meta && typeof meta.now === 'number' ? meta.now : Date.now(),
+      keepTimeshiftAfterFinalize: true
+    });
   },
 
   /**
    * VK 画布录制结束：stop MediaRecorder → temp 路径走既有 finalizeHighlight。
    * @param {{id:string,createdAt:number,startSegNo:number,matchName:string,matchId:string,cover:string}} meta
    * @param {{stop:function():Promise,destroy:function():void}} recorder
+   * @param {{clickWallMs?:number,keepTimeshiftAfterFinalize?:boolean}} [opts]
    * @returns {void}
    */
-  _finalizeVkCanvasHighlightMeta: function(meta, recorder) {
+  _finalizeVkCanvasHighlightMeta: function(meta, recorder, opts) {
     var self = this;
+    var clickWallMs = opts && typeof opts.clickWallMs === 'number' ? opts.clickWallMs : Date.now();
+    var keepTimeshiftAfterFinalize = !!(opts && opts.keepTimeshiftAfterFinalize);
+    var elapsedMs = Math.max(0, clickWallMs - (this._vkTimeshiftStartAt || clickWallMs));
     if (this._vkHighlightStopTimer) {
       clearTimeout(this._vkHighlightStopTimer);
       this._vkHighlightStopTimer = null;
@@ -7482,9 +7447,13 @@ Page({
       } catch (eH) {}
     }
     this._vkCanvasRecorder = null;
+    this._vkTimeshiftStartAt = 0;
     var r = recorder;
     if (!r || typeof r.stop !== 'function') {
       this.endHighlightSaving();
+      if (keepTimeshiftAfterFinalize && this.data.enhanceMode === 'vk' && this._livePageVisible) {
+        this._ensureVkTimeshiftRecorder({ keepSavingState: true });
+      }
       return;
     }
     /**
@@ -7507,7 +7476,7 @@ Page({
             return;
           }
           var syntheticSegNo = 900000 + (Date.now() % 100000);
-          var plan = self.buildVkCanvasHighlightPlan(path);
+          var plan = self.buildVkCanvasHighlightPlan(path, elapsedMs / 1000);
           self.finalizeHighlight({
             id: meta.id,
             createdAt: meta.createdAt,
@@ -7524,6 +7493,9 @@ Page({
             replayMediaStopAtSec: plan.replayMediaStopAtSec,
             replayChainPart2StopAtSec: plan.replayChainPart2StopAtSec
           });
+          if (keepTimeshiftAfterFinalize && self.data.enhanceMode === 'vk' && self._livePageVisible) {
+            self._ensureVkTimeshiftRecorder({ keepSavingState: true });
+          }
         })
         .catch(function(err) {
           try {
@@ -7534,6 +7506,9 @@ Page({
             err: (err && err.message) || String(err)
           });
           self.endHighlightSaving();
+          if (keepTimeshiftAfterFinalize && self.data.enhanceMode === 'vk' && self._livePageVisible) {
+            self._ensureVkTimeshiftRecorder({ keepSavingState: true });
+          }
         });
     };
     var pipeFin = self._renderPipeline;
@@ -7580,6 +7555,7 @@ Page({
   /**
    * 单文件画布高光回放计划（整段播放）。
    * @param {string} tempPath
+   * @param {number} [elapsedSec]
    * @returns {{
    *   preSegments: string[],
    *   replayInitialTimeSec: number,
@@ -7588,12 +7564,18 @@ Page({
    *   replayChainPart2StopAtSec: null
    * }}
    */
-  buildVkCanvasHighlightPlan: function(tempPath) {
+  buildVkCanvasHighlightPlan: function(tempPath, elapsedSec) {
+    var elapsed = typeof elapsedSec === 'number' && isFinite(elapsedSec)
+      ? Math.max(0, elapsedSec)
+      : 0;
+    var winSec = (this.highlightPlaybackWindowMs || 8000) / 1000;
+    var startSec = Math.max(0, elapsed - winSec);
+    var stopSec = elapsed > 0.05 ? elapsed : null;
     return {
       preSegments: [tempPath],
-      replayInitialTimeSec: 0,
+      replayInitialTimeSec: startSec,
       replayUseChain: false,
-      replayMediaStopAtSec: null,
+      replayMediaStopAtSec: stopSec,
       replayChainPart2StopAtSec: null
     };
   },
