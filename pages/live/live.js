@@ -1683,40 +1683,24 @@ Page({
       || reason === 'empty_temp_path'
       || reason === 'segment_persist_unstable'
     ) {
-      /**
-       * 必须用「严格大于已消费序号」的片段，禁止 pickLatestRollingEntry：
-       * 否则缓冲区内最大 seg 未前进时，多次失败会反复落到同一路径，列表里多条高光内容完全相同。
-       */
-      const consumed = this.lastHighlightConsumedSegNo || 0;
-      const fallback = this.pickBestRollingEntryAfterConsumed(consumed);
-      if (fallback && fallback.path) {
-        const winSec = (this.highlightPlaybackWindowMs || 8000) / 1000;
-        const segLenSec = this.segmentDurationMs / 1000;
-        this.appendHealthLog('highlight_abort_fallback_rolling', {
-          reason,
-          pickedSeg: fallback.segNo,
-          consumed
-        });
-        this.finalizeHighlight({
+      const fallbackOk = this.tryFinalizeHighlightFromRollingBuffer(
+        {
           id: hm.id,
+          now: typeof hm.clickWallMs === 'number' ? hm.clickWallMs : hm.createdAt,
           createdAt: hm.createdAt,
           startSegNo: hm.startSegNo,
           matchName: hm.matchName,
           matchId: hm.matchId,
-          cover: hm.cover,
-          finalizing: false,
-          sourceSegNo: fallback.segNo,
-          preSegments: [fallback.path],
-          postSegments: [],
-          replayInitialTimeSec: 0,
-          replayUseChain: false,
-          replayMediaStopAtSec: Math.min(segLenSec, winSec),
-          replayChainPart2StopAtSec: null
-        });
+          cover: hm.cover
+        },
+        { requireFresh: true }
+      );
+      if (fallbackOk) {
+        this.appendHealthLog('highlight_abort_fallback_rolling', { reason });
         this._highlightAfterStopMeta = null;
         return;
       }
-      this.appendHealthLog('highlight_abort_no_fresh_rolling', { reason, consumed });
+      this.appendHealthLog('highlight_abort_no_fresh_rolling', { reason });
     }
     if (reason === 'segment_persist_fail' || reason === 'segment_persist_unstable') {
       this.segmentPersistFailStreak = (this.segmentPersistFailStreak || 0) + 1;
@@ -2698,6 +2682,46 @@ Page({
   },
 
   /**
+   * 选择用于高光回溯的锚点段：若传入段开始时间晚于点击时刻，优先回退到前一段，
+   * 严禁把点击后的“未来段”当作高光起点。
+   *
+   * @param {{ path: string, segNo: number, recordStartMs?: number }} freshEntry
+   * @param {{ path: string, segNo: number, recordStartMs?: number } | null} prevEntry
+   * @param {number} clickWallMs
+   * @returns {{
+   *   anchorEntry: { path: string, segNo: number, recordStartMs?: number },
+   *   anchorPrevEntry: ({ path: string, segNo: number, recordStartMs?: number } | null)
+   * } | null}
+   */
+  resolveHighlightAnchorEntries: function(freshEntry, prevEntry, clickWallMs) {
+    if (!freshEntry || !freshEntry.path) return null;
+    const clickMs = typeof clickWallMs === 'number' ? clickWallMs : 0;
+    const freshStart = typeof freshEntry.recordStartMs === 'number' ? freshEntry.recordStartMs : 0;
+    if (clickMs > 0 && freshStart > 0 && freshStart - clickMs > 120) {
+      if (prevEntry && prevEntry.path) {
+        this.appendHealthLog('highlight_anchor_shift_prev_segment', {
+          clickWallMs: clickMs,
+          freshSeg: freshEntry.segNo,
+          prevSeg: prevEntry.segNo
+        });
+        return {
+          anchorEntry: prevEntry,
+          anchorPrevEntry: this.pickPrevRollingEntry(prevEntry.segNo)
+        };
+      }
+      this.appendHealthLog('highlight_anchor_future_segment_without_prev', {
+        clickWallMs: clickMs,
+        freshSeg: freshEntry.segNo
+      });
+      return null;
+    }
+    return {
+      anchorEntry: freshEntry,
+      anchorPrevEntry: prevEntry || null
+    };
+  },
+
+  /**
    * 根据点击时刻与段元数据，计算高光复制列表与首段起播秒数（逻辑 8s 窗口）。
    * 若需双段且间隙过大（{@link isRollingSegmentGapTooLargeForChain}），则仅在当前段内顺延续取 8s，避免播进陈旧上一段。
    *
@@ -2731,7 +2755,22 @@ Page({
       });
     }
     if (wantDual && !gapTooLarge) {
-      const needFromPrev = windowSec - offsetSec;
+      let needFromPrev = windowSec - offsetSec;
+      /**
+       * 相邻段存在小间隙时（stop→start 的硬约束），多回溯上一段少量时长，
+       * 让用户最终看到的「有效画面」更接近目标窗口，减轻断层体感。
+       */
+      const ps = prevEntry && typeof prevEntry.recordStartMs === 'number' ? prevEntry.recordStartMs : 0;
+      const fs = typeof freshEntry.recordStartMs === 'number' ? freshEntry.recordStartMs : 0;
+      if (ps > 0 && fs > 0) {
+        const segMs = this.segmentDurationMs || 16000;
+        const gapMs = fs - (ps + segMs);
+        const maxCompMs = 800;
+        if (gapMs > 0 && gapMs < maxCompMs) {
+          needFromPrev += gapMs / 1000;
+        }
+      }
+      needFromPrev = Math.max(0, Math.min(segLenSec, needFromPrev));
       const prevInitial = Math.max(0, segLenSec - needFromPrev);
       /**
        * 双段：第一段播到文件自然结束；第二段从 0 起仅播到 offsetSec（点击时刻在本段内位置），避免整段 16s 播完。
@@ -5936,7 +5975,17 @@ Page({
             segNo,
             recordStartMs: typeof recordStartWallMs === 'number' ? recordStartWallMs : 0
           };
-          const plan = this.buildHighlightPlaybackPlan(entryMeta, clickWallMs, prevEntry);
+          const resolvedAnchor = this.resolveHighlightAnchorEntries(entryMeta, prevEntry, clickWallMs);
+          if (!resolvedAnchor || !resolvedAnchor.anchorEntry || !resolvedAnchor.anchorEntry.path) {
+            this.abortHighlightAfterStopIfNeeded(recordSessionId, 'highlight_anchor_unresolvable');
+            resolve();
+            return;
+          }
+          const plan = this.buildHighlightPlaybackPlan(
+            resolvedAnchor.anchorEntry,
+            clickWallMs,
+            resolvedAnchor.anchorPrevEntry
+          );
           this.finalizeHighlight({
             id: hm.id,
             createdAt: hm.createdAt,
@@ -5945,7 +5994,7 @@ Page({
             matchId: hm.matchId,
             cover: hm.cover,
             finalizing: false,
-            sourceSegNo: segNo,
+            sourceSegNo: resolvedAnchor.anchorEntry.segNo,
             preSegments: plan.preSegments,
             postSegments: [],
             replayInitialTimeSec: plan.replayInitialTimeSec,
@@ -6034,7 +6083,22 @@ Page({
               recordStartMs: typeof recordStartWallMs === 'number' ? recordStartWallMs : 0
             };
             const prevWait = this.pickPrevRollingEntry(segNo);
-            const planWait = this.buildHighlightPlaybackPlan(entryMeta, waitPending.createdAt, prevWait);
+            const resolvedWaitAnchor = this.resolveHighlightAnchorEntries(
+              entryMeta,
+              prevWait,
+              waitPending.createdAt
+            );
+            if (!resolvedWaitAnchor || !resolvedWaitAnchor.anchorEntry || !resolvedWaitAnchor.anchorEntry.path) {
+              this.endHighlightSaving();
+              this.appendHealthLog('highlight_wait_next_anchor_unresolvable', { segNo });
+              resolve();
+              return;
+            }
+            const planWait = this.buildHighlightPlaybackPlan(
+              resolvedWaitAnchor.anchorEntry,
+              waitPending.createdAt,
+              resolvedWaitAnchor.anchorPrevEntry
+            );
             this.finalizeHighlight({
               id: waitPending.id,
               createdAt: waitPending.createdAt,
@@ -6043,7 +6107,7 @@ Page({
               matchId: waitPending.matchId,
               cover: waitPending.cover,
               finalizing: false,
-              sourceSegNo: segNo,
+              sourceSegNo: resolvedWaitAnchor.anchorEntry.segNo,
               preSegments: planWait.preSegments,
               postSegments: [],
               replayInitialTimeSec: planWait.replayInitialTimeSec,
@@ -7535,9 +7599,107 @@ Page({
   },
 
   /**
+   * 取滚动缓冲内 segNo 最大的可用条目（允许已被消费，仅作兜底）。
+   * @returns {{ path: string, segNo: number, recordStartMs?: number } | null}
+   */
+  pickLatestRollingEntry: function() {
+    let best = null;
+    const buf = this.segmentBuffer || [];
+    for (let i = 0; i < buf.length; i += 1) {
+      const it = buf[i];
+      if (!it || !it.path || typeof it.segNo !== 'number') continue;
+      if (!best || it.segNo > best.segNo) best = it;
+    }
+    return best;
+  },
+
+  /**
+   * 从 rolling 缓冲中选择用于点击回溯的候选段（优先点击时刻所在段，其次最近过去段）。
+   *
+   * @param {number} clickWallMs
+   * @param {boolean} [requireFresh] 仅允许 segNo > consumed（避免重复）时为 true
+   * @returns {{ path: string, segNo: number, recordStartMs?: number } | null}
+   */
+  pickRollingEntryForClick: function(clickWallMs, requireFresh) {
+    const clickMs = Number(clickWallMs || 0);
+    const durMs = Math.max(2000, Number(this.segmentDurationMs || 8000));
+    const consumed = this.lastHighlightConsumedSegNo || 0;
+    const mustFresh = requireFresh === true;
+    let hit = null;
+    let past = null;
+    const buf = this.segmentBuffer || [];
+    for (let i = 0; i < buf.length; i += 1) {
+      const it = buf[i];
+      if (!it || !it.path || typeof it.segNo !== 'number') continue;
+      if (mustFresh && it.segNo <= consumed) continue;
+      const rs = typeof it.recordStartMs === 'number' ? it.recordStartMs : 0;
+      if (clickMs > 0 && rs > 0) {
+        const segEnd = rs + durMs;
+        if (rs <= clickMs && clickMs <= segEnd) {
+          if (!hit || it.segNo > hit.segNo) hit = it;
+          continue;
+        }
+        if (rs <= clickMs) {
+          if (!past || it.segNo > past.segNo) past = it;
+          continue;
+        }
+      }
+      if (!past || it.segNo > past.segNo) past = it;
+    }
+    return hit || past || null;
+  },
+
+  /**
+   * 优先基于「已落盘 rolling 缓冲」立即构建高光，避免依赖未来分段事件。
+   * 仅用于「当前不在录制」或「主路径失败后的兜底」。
+   *
+   * @param {{
+   *   id: string,
+   *   now: number,
+   *   startSegNo: number,
+   *   createdAt: number,
+   *   matchName: string,
+   *   matchId: string,
+   *   cover: string
+   * }} meta
+   * @param {{ requireFresh?: boolean }} [opts]
+   * @returns {boolean} true 表示已完成 finalize
+   */
+  tryFinalizeHighlightFromRollingBuffer: function(meta, opts) {
+    if (!meta || typeof meta !== 'object') return false;
+    const picked = this.pickRollingEntryForClick(meta.now, !!(opts && opts.requireFresh));
+    if (!picked || !picked.path) return false;
+    const entryForPlan = {
+      path: picked.path,
+      segNo: picked.segNo,
+      recordStartMs: typeof picked.recordStartMs === 'number' ? picked.recordStartMs : 0
+    };
+    const prevForPlan = this.pickPrevRollingEntry(picked.segNo);
+    const plan = this.buildHighlightPlaybackPlan(entryForPlan, meta.now, prevForPlan);
+    this.startHighlightSaveProgressAnim(meta.now, meta.now + 360);
+    this.finalizeHighlight({
+      id: meta.id,
+      createdAt: meta.createdAt,
+      startSegNo: meta.startSegNo,
+      matchName: meta.matchName,
+      matchId: meta.matchId,
+      cover: meta.cover,
+      finalizing: false,
+      sourceSegNo: picked.segNo,
+      preSegments: plan.preSegments,
+      postSegments: [],
+      replayInitialTimeSec: plan.replayInitialTimeSec,
+      replayUseChain: plan.replayUseChain,
+      replayMediaStopAtSec: plan.replayMediaStopAtSec,
+      replayChainPart2StopAtSec: plan.replayChainPart2StopAtSec
+    });
+    return true;
+  },
+
+  /**
    * 保存高光：由右下角状态钮在管线为「录制中」（界面显示 REC）时单击触发。
-   * 录制中时不主动 stopRecord，仅登记元数据，待「自然分段」完成后再 finalize，避免额外 encoder 切换。
-   * 非录制中则使用缓冲内最近已完成 rolling 段；逻辑回放窗口见 {@link highlightPlaybackWindowMs}。
+   * 优先直接使用已落盘 rolling 缓冲即时生成；仅在缓冲暂不可用时，才回退到「等待下一自然分段」。
+   * 全程不主动 stopRecord，避免额外 encoder 切换。
    * VK 模式：改为 Canvas MediaRecorder，见 {@link _requestVkCanvasHighlightCapture}。
    * 不额外拍照封面，避免与录制并行增加相机压力与闪屏。
    */
@@ -7594,9 +7756,6 @@ Page({
     const matchName = this.data.matchConfig.matchName || '未命名比赛';
     const id = `${now}`;
     const startSegNo = this.segmentCounter;
-    const consumed = this.lastHighlightConsumedSegNo || 0;
-    const freshEntry = this.pickBestRollingEntryAfterConsumed(consumed);
-
     if (vkHighlight) {
       this._requestVkCanvasHighlightCapture({
         id: id,
@@ -7610,10 +7769,27 @@ Page({
       return;
     }
 
-    if (this.data.isRecording) {
+    const immediateMeta = {
+      id,
+      now,
+      createdAt: now,
+      startSegNo,
+      matchName,
+      matchId: currentMatchId,
+      cover: this.data.defaultCover
+    };
+
+    const waitNaturalSegmentFallback = () => {
+      if (!this.data.isRecording) {
+        if (!this.tryFinalizeHighlightFromRollingBuffer(immediateMeta, { requireFresh: true })) {
+          this.endHighlightSaving();
+          this.appendHealthLog('highlight_skip_not_recording_no_fresh', {});
+        }
+        return;
+      }
       const sessionId = this.rollingSessionId;
       const recStartMs = this._currentRollingSegmentRecordStartMs || 0;
-      const elapsedMs = recStartMs > 0 ? (now - recStartMs) : 0;
+      const elapsedMs = recStartMs > 0 ? (Date.now() - recStartMs) : 0;
       const remainMs = Math.max(0, this.segmentDurationMs - elapsedMs);
       this._highlightSaveAwaitingResume = true;
       this._highlightPipelineDoneFinalize = false;
@@ -7634,13 +7810,11 @@ Page({
       try {
         const si = wx.getSystemInfoSync();
         if (si && si.platform === 'android') {
-          /** 慢落盘 + 等自然分段：22s 级易误杀，与 highlight_hard_timeout 对齐量级 */
           resumeGuardMs = Math.max(
             resumeGuardMs,
             Math.floor(this.segmentDurationMs * 2.35) + 48000
           );
         } else if (si && si.platform === 'ios') {
-          /** iOS 多阶段 save + 高光重试：默认 22s 易触发 highlight_resume_guard_timeout */
           resumeGuardMs = Math.max(
             resumeGuardMs,
             Math.floor(this.segmentDurationMs * 2.05) + 42000
@@ -7658,36 +7832,27 @@ Page({
         expectedSegNo: this.segmentCounter + 1,
         remainMs: Math.round(remainMs)
       });
-      const anchor = recStartMs > 0 ? recStartMs : now;
+      const anchor = recStartMs > 0 ? recStartMs : Date.now();
       this.startHighlightSaveProgressAnim(now, anchor + this.segmentDurationMs);
+    };
+
+    if (this.data.isRecording) {
+      const recStartMs = this._currentRollingSegmentRecordStartMs || 0;
+      const elapsedMs = recStartMs > 0 ? (now - recStartMs) : 0;
+      if (elapsedMs > 0 && this.segmentDurationMs - elapsedMs <= 220) {
+        setTimeout(() => {
+          if (!this.data.isSavingHighlight || this._highlightSaveAwaitingResume) return;
+          waitNaturalSegmentFallback();
+        }, 180);
+        return;
+      }
+      waitNaturalSegmentFallback();
       return;
     }
-
-    if (freshEntry && freshEntry.path) {
-      this.startHighlightSaveProgressAnim(now, now + 420);
-      const entryForPlan = {
-        path: freshEntry.path,
-        segNo: freshEntry.segNo,
-        recordStartMs: typeof freshEntry.recordStartMs === 'number' ? freshEntry.recordStartMs : 0
-      };
-      const prevForPlan = this.pickPrevRollingEntry(freshEntry.segNo);
-      const planFresh = this.buildHighlightPlaybackPlan(entryForPlan, now, prevForPlan);
-      this.finalizeHighlight({
-        id,
-        createdAt: now,
-        startSegNo,
-        matchName,
-        matchId: currentMatchId,
-        cover: this.data.defaultCover,
-        finalizing: false,
-        sourceSegNo: freshEntry.segNo,
-        preSegments: planFresh.preSegments,
-        postSegments: [],
-        replayInitialTimeSec: planFresh.replayInitialTimeSec,
-        replayUseChain: planFresh.replayUseChain,
-        replayMediaStopAtSec: planFresh.replayMediaStopAtSec,
-        replayChainPart2StopAtSec: planFresh.replayChainPart2StopAtSec
-      });
+    if (this.tryFinalizeHighlightFromRollingBuffer(immediateMeta, { requireFresh: true })) {
+      return;
+    }
+    if (this.tryFinalizeHighlightFromRollingBuffer(immediateMeta, { requireFresh: false })) {
       return;
     }
     this.endHighlightSaving();
