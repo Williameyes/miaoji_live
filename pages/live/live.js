@@ -7294,11 +7294,20 @@ Page({
     this._vkCanvasRecorder = recorder;
     var recordMs = Math.max(5000, this.highlightPlaybackWindowMs || 8000);
     var durationSec = Math.max(5, Math.ceil(recordMs / 1000) + 2);
+    var longEdge = Math.max(Number(canvasNode.width) || 0, Number(canvasNode.height) || 0);
+    var videoBitsPerSecond = 2200;
+    if (longEdge >= 1600) {
+      videoBitsPerSecond = 4200;
+    } else if (longEdge >= 1200) {
+      videoBitsPerSecond = 3200;
+    } else if (longEdge >= 900) {
+      videoBitsPerSecond = 2600;
+    }
     recorder
       .start(canvasNode, {
         durationSec: durationSec,
         fps: 24,
-        videoBitsPerSecond: 1800
+        videoBitsPerSecond: videoBitsPerSecond
       })
       .then(function() {
         if (self._vkCanvasRecorder !== recorder) {

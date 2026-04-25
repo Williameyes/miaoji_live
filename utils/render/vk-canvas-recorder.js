@@ -119,7 +119,7 @@ function createVkCanvasRecorder() {
   var active = false;
   var frameSeq = 0;
   /** @type {{ lowFpsStreak: number, skipEveryOther: boolean, videoBitsPerSecond: number }} */
-  var adapt = { lowFpsStreak: 0, skipEveryOther: false, videoBitsPerSecond: 900 };
+  var adapt = { lowFpsStreak: 0, skipEveryOther: false, videoBitsPerSecond: 2200 };
 
   /**
    * @returns {boolean}
@@ -133,7 +133,7 @@ function createVkCanvasRecorder() {
    * @param {Object} opts
    * @param {number} [opts.durationSec] 最大时长（秒），5–7200
    * @param {number} [opts.fps] 默认 24
-   * @param {number} [opts.videoBitsPerSecond] 默认 900（略低于默认以省性能）
+   * @param {number} [opts.videoBitsPerSecond] 默认 2200（兼顾高光可读性与编码稳定性）
    * @returns {Promise<void>}
    */
   function start(canvasNode, opts) {
@@ -149,8 +149,8 @@ function createVkCanvasRecorder() {
     duration = Math.max(5, Math.min(7200, duration));
     var fps = opts.fps != null ? Number(opts.fps) : 24;
     fps = Math.max(12, Math.min(60, fps));
-    var bps = opts.videoBitsPerSecond != null ? Number(opts.videoBitsPerSecond) : 900;
-    bps = Math.max(600, Math.min(3000, bps));
+    var bps = opts.videoBitsPerSecond != null ? Number(opts.videoBitsPerSecond) : 2200;
+    bps = Math.max(1200, Math.min(5200, bps));
     adapt.videoBitsPerSecond = bps;
     adapt.lowFpsStreak = 0;
     adapt.skipEveryOther = false;
