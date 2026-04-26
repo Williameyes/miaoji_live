@@ -181,13 +181,13 @@ module.exports = {
   VERTEX: VERTEX,
   VERTEX_VK_YUV: VERTEX_VK_YUV,
   FRAGMENT_VK_YUV: FRAGMENT_VK_YUV,
-  LITE: { fragment: FRAGMENT_LITE, uniforms: { uAmount: 0.75 } },
-  STANDARD: { fragment: FRAGMENT_STANDARD, uniforms: { uAmount: 1.0, uContrast: 0.05, uSaturation: 1.10 } },
-  STRONG: { fragment: FRAGMENT_STANDARD, uniforms: { uAmount: 1.25, uContrast: 0.10, uSaturation: 1.20 } },
+  LITE: { fragment: FRAGMENT_LITE, uniforms: { uAmount: 0.35 } },
+  STANDARD: { fragment: FRAGMENT_STANDARD, uniforms: { uAmount: 0.50, uContrast: 0.05, uSaturation: 1.10 } },
+  STRONG: { fragment: FRAGMENT_STANDARD, uniforms: { uAmount: 0.60, uContrast: 0.10, uSaturation: 1.20 } },
   VK: {
     fragment: FRAGMENT_VK,
     uniforms: {
-      uAmount: 1.50,
+      uAmount: 0.70,
       uContrast: 0.12,
       uGamma: 0.85,
       uSaturation: 1.25,

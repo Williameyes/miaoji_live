@@ -607,12 +607,24 @@ function createWebglSharpenRenderer() {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, fboRgbTex);
       gl.uniform1i(uniformLocs.uTex, 0);
-      gl.uniform2f(uniformLocs.uTexel, 1 / w, 1 / h);
-      if (uniformLocs.uAmount && typeof currentUniforms.uAmount === 'number') {
-        gl.uniform1f(uniformLocs.uAmount, currentUniforms.uAmount);
+      if (uniformLocs.uTexel) {
+        gl.uniform2f(uniformLocs.uTexel, 1 / w, 1 / h);
+      }
+      var activeZoomVk = vkZoomVal;
+      var activeAmountVk = currentUniforms.uAmount;
+      var activeMotionVk = motionUniform;
+      if (activeZoomVk > 1.5) {
+        if (activeAmountVk) activeAmountVk *= 0.6;
+        activeMotionVk *= 0.5;
+      }
+      if (activeZoomVk > 1.8) {
+        activeMotionVk *= 0.66;
+      }
+      if (uniformLocs.uAmount && typeof activeAmountVk === 'number') {
+        gl.uniform1f(uniformLocs.uAmount, activeAmountVk);
       }
       if (uniformLocs.uMotion) {
-        gl.uniform1f(uniformLocs.uMotion, motionUniform);
+        gl.uniform1f(uniformLocs.uMotion, activeMotionVk);
       }
       if (uniformLocs.uContrast && typeof currentUniforms.uContrast === 'number') {
         gl.uniform1f(uniformLocs.uContrast, currentUniforms.uContrast);
@@ -689,11 +701,21 @@ function createWebglSharpenRenderer() {
       if (uniformLocs.uInvTexel) {
         gl.uniform2f(uniformLocs.uInvTexel, 1 / w, 1 / h);
       }
-      if (uniformLocs.uAmount && typeof currentUniforms.uAmount === 'number') {
-        gl.uniform1f(uniformLocs.uAmount, currentUniforms.uAmount);
+      var activeZoom = nativeZoomCompVal;
+      var activeAmount = currentUniforms.uAmount;
+      var activeMotion = motionUniform;
+      if (activeZoom > 1.5) {
+        if (activeAmount) activeAmount *= 0.6;
+        activeMotion *= 0.5;
+      }
+      if (activeZoom > 1.8) {
+        activeMotion *= 0.66;
+      }
+      if (uniformLocs.uAmount && typeof activeAmount === 'number') {
+        gl.uniform1f(uniformLocs.uAmount, activeAmount);
       }
       if (uniformLocs.uMotion) {
-        gl.uniform1f(uniformLocs.uMotion, motionUniform);
+        gl.uniform1f(uniformLocs.uMotion, activeMotion);
       }
       if (uniformLocs.uContrast && typeof currentUniforms.uContrast === 'number') {
         gl.uniform1f(uniformLocs.uContrast, currentUniforms.uContrast);
