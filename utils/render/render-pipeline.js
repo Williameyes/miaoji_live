@@ -253,11 +253,17 @@ function createRenderPipeline() {
       preserveDrawingBuffer: sourceKind === 'vk'
     }).then(function() {
       renderer.resizeCanvas(opts.cssW, opts.cssH);
+      var isDrawingLock = false;
       /**
        * @param {*} frame
        * @returns {void|Promise<void>}
        */
       function onFrame(frame) {
+        if (isDrawingLock) {
+          return;
+        }
+        isDrawingLock = true;
+
         applyMotionUniformForFrame(frame);
         function doDraw() {
           var ms = frame && frame.vkFrame
@@ -266,14 +272,23 @@ function createRenderPipeline() {
           monitor.tick(ms);
           framesRendered++;
           lastFrameAt = _now();
+          isDrawingLock = false;
         }
         if (_sourceKind === 'vk' && typeof _vkBeforeDraw === 'function') {
           try {
             var ret = _vkBeforeDraw();
             if (ret && typeof ret.then === 'function') {
-              return ret.then(doDraw).catch(function() { doDraw(); });
+              return ret.then(doDraw).catch(function(err) {
+                if (err === 'SKIP_RENDER_FOR_THERMAL') {
+                  isDrawingLock = false;
+                } else {
+                  doDraw();
+                }
+              });
             }
-          } catch (eHook) {}
+          } catch (eHook) {
+            isDrawingLock = false;
+          }
         }
         doDraw();
       }

@@ -176,7 +176,7 @@ function createVkCanvasRecorder() {
     if (!active || !recorder) return Promise.resolve();
     frameSeq += 1;
     if (adapt.skipEveryOther && frameSeq % 2 === 0) {
-      return Promise.resolve();
+      return Promise.reject('SKIP_RENDER_FOR_THERMAL');
     }
     return _requestFrameRecorder(recorder).catch(function() {});
   }

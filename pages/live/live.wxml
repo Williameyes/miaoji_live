@@ -550,13 +550,9 @@
           catchtap="onEnhanceModePick" data-mode="off"
         >关闭</view>
         <view
-          class="enhance-mode-btn {{enhanceMode === 'standard' ? 'enhance-mode-btn--active' : ''}}"
-          catchtap="onEnhanceModePick" data-mode="standard"
-        >标准</view>
-        <view
-          class="enhance-mode-btn {{enhanceMode === 'strong' ? 'enhance-mode-btn--active' : ''}}"
+          class="enhance-mode-btn {{(enhanceMode === 'lite' || enhanceMode === 'standard' || enhanceMode === 'strong') ? 'enhance-mode-btn--active' : ''}}"
           catchtap="onEnhanceModePick" data-mode="strong"
-        >高性能</view>
+        >智能</view>
         <view
           wx:if="{{enhanceVkSupported}}"
           class="enhance-mode-btn enhance-mode-btn--vk {{enhanceMode === 'vk' ? 'enhance-mode-btn--active' : ''}}"

@@ -495,7 +495,16 @@ function createWebglSharpenRenderer() {
    */
   function ensureFboRgb(w, h) {
     if (!gl) return;
-    if (fboRgb && fboRgbTex && fboRgbW === w && fboRgbH === h) return;
+
+    var maxFboSize = 1080;
+    var scale = 1;
+    if (w > maxFboSize || h > maxFboSize) {
+       scale = maxFboSize / Math.max(w, h);
+    }
+    var safeW = Math.floor(w * scale);
+    var safeH = Math.floor(h * scale);
+
+    if (fboRgb && fboRgbTex && fboRgbW === safeW && fboRgbH === safeH) return;
     if (fboRgbTex) {
       try { gl.deleteTexture(fboRgbTex); } catch (e) {}
       fboRgbTex = null;
@@ -511,13 +520,13 @@ function createWebglSharpenRenderer() {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, safeW, safeH, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     gl.bindFramebuffer(gl.FRAMEBUFFER, fboRgb);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, fboRgbTex, 0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.bindTexture(gl.TEXTURE_2D, null);
-    fboRgbW = w;
-    fboRgbH = h;
+    fboRgbW = safeW;
+    fboRgbH = safeH;
   }
 
   /**
@@ -572,7 +581,9 @@ function createWebglSharpenRenderer() {
         dtArr = dt;
       }
       gl.bindFramebuffer(gl.FRAMEBUFFER, fboRgb);
-      gl.viewport(0, 0, w, h);
+      gl.viewport(0, 0, fboRgbW, fboRgbH);
+      gl.clearColor(0.0, 0.0, 0.0, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
       gl.useProgram(yuvProgram);
       gl.uniformMatrix3fv(yuvLocs.uDisplayTransform, false, dtArr);
       gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
@@ -590,6 +601,8 @@ function createWebglSharpenRenderer() {
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, 0, w, h);
+      gl.clearColor(0.0, 0.0, 0.0, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
       gl.useProgram(program);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, fboRgbTex);
@@ -759,8 +772,8 @@ function createWebglSharpenRenderer() {
         if (program) { gl.deleteProgram(program); program = null; }
         if (texture) { gl.deleteTexture(texture); texture = null; }
         if (vbo) { gl.deleteBuffer(vbo); vbo = null; }
-        var lose = gl.getExtension('WEBGL_lose_context');
-        if (lose && lose.loseContext) lose.loseContext();
+        
+        
       }
     } catch (e) {}
     gl = null;

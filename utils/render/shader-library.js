@@ -29,36 +29,16 @@ var VERTEX = [
   '}'
 ].join('\n');
 
-/** 轻量 USM：十字 4 邻域 + 中心。 */
-var FRAGMENT_LITE = [
-  'precision mediump float;',
-  'varying vec2 vUv;',
-  'uniform sampler2D uTex;',
-  'uniform vec2 uInvTexel;',
-  'uniform float uAmount;',
-  'uniform float uMotion;',
-  'void main() {',
-  '  if (vUv.x < -0.0001 || vUv.x > 1.0001 || vUv.y < -0.0001 || vUv.y > 1.0001) {',
-  '    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);',
-  '    return;',
-  '  }',
-  '  vec2 px = uInvTexel;',
-  '  vec3 c = texture2D(uTex, vUv).rgb;',
-  '  vec3 l = texture2D(uTex, vUv + vec2(-px.x, 0.0)).rgb;',
-  '  vec3 r = texture2D(uTex, vUv + vec2( px.x, 0.0)).rgb;',
-  '  vec3 uu = texture2D(uTex, vUv + vec2(0.0, -px.y)).rgb;',
-  '  vec3 dd = texture2D(uTex, vUv + vec2(0.0,  px.y)).rgb;',
-  '  vec3 blur = (l + r + uu + dd) * 0.25;',
-  '  float luma = dot(c, vec3(0.299, 0.587, 0.114));',
-  '  float amt = uAmount * smoothstep(0.15, 0.65, luma) * mix(0.6, 1.4, smoothstep(0.05, 0.2, uMotion));',
-  '  vec3 outRgb = c + (c - blur) * amt;',
-  '  gl_FragColor = vec4(clamp(outRgb, 0.0, 1.0), 1.0);',
-  '}'
+var PRECISION = [
+  '#ifdef GL_FRAGMENT_PRECISION_HIGH',
+  '  precision highp float;',
+  '#else',
+  '  precision mediump float;',
+  '#endif'
 ].join('\n');
 
-/** 标准 USM：3x3 高斯差分。 */
-var FRAGMENT_STANDARD = [
-  'precision mediump float;',
+var FRAGMENT_LITE = [
+  PRECISION,
   'varying vec2 vUv;',
   'uniform sampler2D uTex;',
   'uniform vec2 uInvTexel;',
@@ -89,20 +69,45 @@ var FRAGMENT_STANDARD = [
   '}'
 ].join('\n');
 
-/**
- * VK 独立管线专用：USM（3x3 高斯差分 + 边缘补强） + Gamma 校正 + HSV 饱和度补益。
- *
- * 相对 STRONG 的增量：
- *  - Gamma：提亮中间调（uGamma < 1.0 更亮，> 1.0 更暗）；村 BA 场地偏灰环境强相关收益。
- *  - Saturation：在亮度不变的前提下拉高色彩饱和度（uSaturation > 1.0），让红蓝队服在抖音二压后仍鲜明。
- *  - 全部放在锐化之后（先"补清晰"再"补色彩"）；避免放大噪点。
- *  - uVkZoom：仅 ≥1 的中心裁切放大（与页面约定一致）；采样 UV clamp 到 [0,1] 减轻边缘 USM 与纹理 repeat 伪影。
- *  - 所有 uniform 都有 0 相当于 no-op 的默认值，便于手动调参时连续滑动不闪断。
- *
- * 注意：此档位只在 VKSession v2 独立管线下使用；标准/高性能档（onCameraFrame overlay 路径）不走这里。
- */
+var FRAGMENT_STANDARD = [
+  PRECISION,
+  'varying vec2 vUv;',
+  'uniform sampler2D uTex;',
+  'uniform vec2 uInvTexel;',
+  'uniform float uAmount;',
+  'uniform float uMotion;',
+  'uniform float uContrast;',
+  'uniform float uSaturation;',
+  'void main() {',
+  '  if (vUv.x < -0.0001 || vUv.x > 1.0001 || vUv.y < -0.0001 || vUv.y > 1.0001) {',
+  '    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);',
+  '    return;',
+  '  }',
+  '  vec2 px = uInvTexel * 1.5;',
+  '  vec3 c  = texture2D(uTex, vUv).rgb;',
+  '  vec3 n  = texture2D(uTex, vUv + vec2(0.0, -px.y)).rgb;',
+  '  vec3 s  = texture2D(uTex, vUv + vec2(0.0,  px.y)).rgb;',
+  '  vec3 e  = texture2D(uTex, vUv + vec2( px.x, 0.0)).rgb;',
+  '  vec3 w  = texture2D(uTex, vUv + vec2(-px.x, 0.0)).rgb;',
+  '  vec3 ne = texture2D(uTex, vUv + vec2( px.x,-px.y)).rgb;',
+  '  vec3 nw = texture2D(uTex, vUv + vec2(-px.x,-px.y)).rgb;',
+  '  vec3 se = texture2D(uTex, vUv + vec2( px.x, px.y)).rgb;',
+  '  vec3 sw = texture2D(uTex, vUv + vec2(-px.x, px.y)).rgb;',
+  '  vec3 blur = c * 0.25 + (n + s + e + w) * 0.125 + (ne + nw + se + sw) * 0.0625;',
+  '  vec3 edge = c - blur;',
+  '  float lumaW = dot(c, vec3(0.299, 0.587, 0.114));',
+  '  float amt = uAmount * smoothstep(0.15, 0.65, lumaW) * mix(0.6, 1.4, smoothstep(0.05, 0.2, uMotion));',
+  '  vec3 col = c + edge * amt;',
+  '  col = pow(abs(col), vec3(0.85));',
+  '  col = mix(col, col * col * (3.0 - 2.0 * col), uContrast);',
+  '  float luma709 = dot(col, vec3(0.2126, 0.7152, 0.0722));',
+  '  col = mix(vec3(luma709), col, uSaturation);',
+  '  gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);',
+  '}'
+].join('\n');
+
 var FRAGMENT_VK = [
-  'precision mediump float;',
+  PRECISION,
   'varying vec2 vUv;',
   'uniform sampler2D uTex;',
   'uniform vec2 uTexel;',
@@ -115,82 +120,33 @@ var FRAGMENT_VK = [
   'void main() {',
   '  float zDiv = max(uVkZoom, 1.0);',
   '  vec2 zUv = 0.5 + (vUv - 0.5) / zDiv;',
-  '  vec2 o = uTexel;',
-  '  vec3 c  = texture2D(uTex, clamp(zUv, vec2(0.0), vec2(1.0))).rgb;',
-  '  vec3 n  = texture2D(uTex, clamp(zUv + vec2(0.0, -o.y), vec2(0.0), vec2(1.0))).rgb;',
-  '  vec3 s  = texture2D(uTex, clamp(zUv + vec2(0.0,  o.y), vec2(0.0), vec2(1.0))).rgb;',
-  '  vec3 e  = texture2D(uTex, clamp(zUv + vec2( o.x, 0.0), vec2(0.0), vec2(1.0))).rgb;',
-  '  vec3 w  = texture2D(uTex, clamp(zUv + vec2(-o.x, 0.0), vec2(0.0), vec2(1.0))).rgb;',
-  '  vec3 ne = texture2D(uTex, clamp(zUv + vec2( o.x,-o.y), vec2(0.0), vec2(1.0))).rgb;',
-  '  vec3 nw = texture2D(uTex, clamp(zUv + vec2(-o.x,-o.y), vec2(0.0), vec2(1.0))).rgb;',
-  '  vec3 se = texture2D(uTex, clamp(zUv + vec2( o.x, o.y), vec2(0.0), vec2(1.0))).rgb;',
-  '  vec3 sw = texture2D(uTex, clamp(zUv + vec2(-o.x, o.y), vec2(0.0), vec2(1.0))).rgb;',
-  '  vec3 blur = (ne + nw + se + sw) * 0.0625',
-  '            + (n + s + e + w) * 0.125',
-  '            + c * 0.25;',
+  '  vec2 px = uTexel * 1.5;',
+  '  vec2 uv = clamp(zUv, vec2(0.0), vec2(1.0));',
+  '  vec3 c  = texture2D(uTex, uv).rgb;',
+  '  vec3 n  = texture2D(uTex, clamp(uv + vec2(0.0, -px.y), vec2(0.0), vec2(1.0))).rgb;',
+  '  vec3 s  = texture2D(uTex, clamp(uv + vec2(0.0,  px.y), vec2(0.0), vec2(1.0))).rgb;',
+  '  vec3 e  = texture2D(uTex, clamp(uv + vec2( px.x, 0.0), vec2(0.0), vec2(1.0))).rgb;',
+  '  vec3 w  = texture2D(uTex, clamp(uv + vec2(-px.x, 0.0), vec2(0.0), vec2(1.0))).rgb;',
+  '  vec3 ne = texture2D(uTex, clamp(uv + vec2( px.x,-px.y), vec2(0.0), vec2(1.0))).rgb;',
+  '  vec3 nw = texture2D(uTex, clamp(uv + vec2(-px.x,-px.y), vec2(0.0), vec2(1.0))).rgb;',
+  '  vec3 se = texture2D(uTex, clamp(uv + vec2( px.x, px.y), vec2(0.0), vec2(1.0))).rgb;',
+  '  vec3 sw = texture2D(uTex, clamp(uv + vec2(-px.x, px.y), vec2(0.0), vec2(1.0))).rgb;',
+  '  vec3 blur = c * 0.25 + (n + s + e + w) * 0.125 + (ne + nw + se + sw) * 0.0625;',
   '  vec3 edge = c - blur;',
   '  float lumaW = dot(c, vec3(0.299, 0.587, 0.114));',
-  '  float amt = uAmount * smoothstep(0.15, 0.65, lumaW) * mix(0.6, 1.4, smoothstep(0.05, 0.2, uMotion));',
-  '  vec3 col = c + edge * amt;',
-  '  float em = max(max(abs(edge.r), abs(edge.g)), abs(edge.b));',
-  '  col += edge * step(0.08, em) * 0.35;',
+  '  float baseAmt = uAmount * smoothstep(0.15, 0.65, lumaW) * mix(0.6, 1.4, smoothstep(0.05, 0.2, uMotion));',
+  '  vec3 col = c + edge * baseAmt;',
+  '  vec3 minCol = min(min(min(n, s), min(e, w)), c);',
+  '  vec3 maxCol = max(max(max(n, s), max(e, w)), c);',
+  '  col = clamp(col, minCol, maxCol);',
+  '  col = pow(abs(col), vec3(uGamma));',
   '  col = mix(col, col * col * (3.0 - 2.0 * col), uContrast);',
-  '  col = clamp(col, 0.0, 1.0);',
-  // Gamma（分通道）：pow(col, 1/uGamma)；uGamma=1 时无变化
-  '  col = pow(col, vec3(1.0 / max(uGamma, 0.01)));',
-  // 饱和度：沿灰度轴拉伸；luma 采用 Rec.709 权重
-  '  float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));',
-  '  col = mix(vec3(luma), col, uSaturation);',
+  '  float luma709 = dot(col, vec3(0.2126, 0.7152, 0.0722));',
+  '  col = mix(vec3(luma709), col, uSaturation);',
   '  gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);',
   '}'
 ].join('\n');
 
-/** 强化：USM + 边缘补强 + S 型对比度。边缘补强仅在 edge 能量 >= 0.08 时触发。 */
-var FRAGMENT_STRONG = [
-  'precision mediump float;',
-  'varying vec2 vUv;',
-  'uniform sampler2D uTex;',
-  'uniform vec2 uInvTexel;',
-  'uniform float uAmount;',
-  'uniform float uMotion;',
-  'uniform float uContrast;',
-  'void main() {',
-  '  if (vUv.x < -0.0001 || vUv.x > 1.0001 || vUv.y < -0.0001 || vUv.y > 1.0001) {',
-  '    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);',
-  '    return;',
-  '  }',
-  '  vec2 px = uInvTexel;',
-  '  vec3 c  = texture2D(uTex, vUv).rgb;',
-  '  vec3 n  = texture2D(uTex, vUv + vec2(0.0, -px.y)).rgb;',
-  '  vec3 s  = texture2D(uTex, vUv + vec2(0.0,  px.y)).rgb;',
-  '  vec3 e  = texture2D(uTex, vUv + vec2( px.x, 0.0)).rgb;',
-  '  vec3 w  = texture2D(uTex, vUv + vec2(-px.x, 0.0)).rgb;',
-  '  vec3 ne = texture2D(uTex, vUv + vec2( px.x,-px.y)).rgb;',
-  '  vec3 nw = texture2D(uTex, vUv + vec2(-px.x,-px.y)).rgb;',
-  '  vec3 se = texture2D(uTex, vUv + vec2( px.x, px.y)).rgb;',
-  '  vec3 sw = texture2D(uTex, vUv + vec2(-px.x, px.y)).rgb;',
-  '  vec3 blur = (ne + nw + se + sw) * 0.0625',
-  '            + (n + s + e + w) * 0.125',
-  '            + c * 0.25;',
-  '  vec3 edge = c - blur;',
-  '  float lumaW = dot(c, vec3(0.299, 0.587, 0.114));',
-  '  float amt = uAmount * smoothstep(0.15, 0.65, lumaW) * mix(0.6, 1.4, smoothstep(0.05, 0.2, uMotion));',
-  '  vec3 col = c + edge * amt;',
-  '  float em = max(max(abs(edge.r), abs(edge.g)), abs(edge.b));',
-  '  col += edge * step(0.08, em) * 0.3;',
-  '  col = mix(col, col * col * (3.0 - 2.0 * col), uContrast);',
-  '  gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);',
-  '}'
-].join('\n');
-
-/**
- * 档位配置：fragment 源码 + 默认 uniform。
- * 上游可在 setShaderLevel 时覆盖 uniforms 以做运行时调参。
- */
-/**
- * VKSession 相机背景专用顶点：应用 getDisplayTransform()，与微信 VisionKit 文档一致。
- * @type {string}
- */
 var VERTEX_VK_YUV = [
   'attribute vec2 aPos;',
   'attribute vec2 aUv;',
@@ -203,51 +159,38 @@ var VERTEX_VK_YUV = [
   '}'
 ].join('\n');
 
-/**
- * NV12/Y 平面 + UV 半平面采样转 RGB，供 VK getCameraTexture(gl,\'yuv\') 首 pass 写入 FBO。
- * @type {string}
- */
 var FRAGMENT_VK_YUV = [
-  'precision mediump float;',
+  PRECISION,
   'varying vec2 vUv;',
   'uniform sampler2D uYTex;',
   'uniform sampler2D uUvTex;',
   'void main() {',
-  '  vec4 y_color = texture2D(uYTex, vUv);',
+  '  float Y = texture2D(uYTex, vUv).r;',
   '  vec4 uv_color = texture2D(uUvTex, vUv);',
-  '  float Y = y_color.r;',
-  '  float U = uv_color.r - 0.5;',
-  '  float V = uv_color.a - 0.5;',
-  '  float R = Y + 1.402 * V;',
-  '  float G = Y - 0.344 * U - 0.714 * V;',
-  '  float B = Y + 1.772 * U;',
-  '  gl_FragColor = vec4(R, G, B, 1.0);',
+  '  vec2 UV = vec2(uv_color.r, uv_color.a) - 0.5;',
+  '  vec3 rgb = mat3(',
+  '    1.0, 1.0, 1.0,',
+  '    0.0, -0.18732, 1.8556,',
+  '    1.57481, -0.46812, 0.0',
+  '  ) * vec3(Y, UV.x, UV.y);',
+  '  gl_FragColor = vec4(clamp(rgb, 0.0, 1.0), 1.0);',
   '}'
 ].join('\n');
 
 module.exports = {
   VERTEX: VERTEX,
-  /** @type {string} */
   VERTEX_VK_YUV: VERTEX_VK_YUV,
-  /** @type {string} */
   FRAGMENT_VK_YUV: FRAGMENT_VK_YUV,
-  LITE: { fragment: FRAGMENT_LITE, uniforms: { uAmount: 0.45 } },
-  STANDARD: { fragment: FRAGMENT_STANDARD, uniforms: { uAmount: 0.75 } },
-  STRONG: { fragment: FRAGMENT_STRONG, uniforms: { uAmount: 1.10, uContrast: 0.08 } },
-  /**
-   * VK 档参数经验值（村 BA 实拍场景）：
-   *  - uAmount=1.25：比 STRONG 更凶；VK 零拷贝路径省下的预算全押在锐化上
-   *  - uContrast=0.10：S 型轻微拉开明暗
-   *  - uGamma=0.92：微提亮（灰场环境）
-   *  - uSaturation=1.18：补色，让红蓝球衣在抖音二压后仍识别度高
-   */
+  LITE: { fragment: FRAGMENT_LITE, uniforms: { uAmount: 0.75 } },
+  STANDARD: { fragment: FRAGMENT_STANDARD, uniforms: { uAmount: 1.0, uContrast: 0.05, uSaturation: 1.10 } },
+  STRONG: { fragment: FRAGMENT_STANDARD, uniforms: { uAmount: 1.25, uContrast: 0.10, uSaturation: 1.20 } },
   VK: {
     fragment: FRAGMENT_VK,
     uniforms: {
-      uAmount: 1.25,
-      uContrast: 0.10,
-      uGamma: 0.92,
-      uSaturation: 1.18,
+      uAmount: 1.50,
+      uContrast: 0.12,
+      uGamma: 0.85,
+      uSaturation: 1.25,
       uVkZoom: 1.0
     }
   }
