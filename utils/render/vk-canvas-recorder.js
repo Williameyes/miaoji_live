@@ -99,7 +99,7 @@ function _stopRecorder(recorder) {
       reject(eStop);
       return;
     }
-    setTimeout(function() { finish({}); }, 400);
+    setTimeout(function() { finish({}); }, 15000);
   });
 }
 
@@ -118,6 +118,8 @@ function createVkCanvasRecorder() {
   var recorder = null;
   var active = false;
   var frameSeq = 0;
+  var pendingDestroys = []; // 存储尚未底层销毁的原生 recorder 引用，以便在组件销毁时立刻释放
+
   /** @type {{ lowFpsStreak: number, skipEveryOther: boolean, videoBitsPerSecond: number }} */
   var adapt = { lowFpsStreak: 0, skipEveryOther: false, videoBitsPerSecond: 2200 };
 
@@ -214,7 +216,17 @@ function createVkCanvasRecorder() {
     return _stopRecorder(r)
       .then(function(res) {
         try {
-          if (r.destroy) r.destroy();
+          var timer = setTimeout(function() {
+            try {
+              if (r.destroy) r.destroy();
+            } catch (ed) {}
+            var idx = -1;
+            for (var i = 0; i < pendingDestroys.length; i++) {
+              if (pendingDestroys[i].timer === timer) { idx = i; break; }
+            }
+            if (idx >= 0) pendingDestroys.splice(idx, 1);
+          }, 4500);
+          pendingDestroys.push({ timer: timer, r: r });
         } catch (e) {}
         return res || {};
       })
@@ -239,6 +251,16 @@ function createVkCanvasRecorder() {
         if (recorder.destroy) recorder.destroy();
       } catch (e2) {}
       recorder = null;
+    }
+    if (pendingDestroys && pendingDestroys.length > 0) {
+      for (var i = 0; i < pendingDestroys.length; i++) {
+        var item = pendingDestroys[i];
+        clearTimeout(item.timer);
+        try {
+          if (item.r && item.r.destroy) item.r.destroy();
+        } catch (ed) {}
+      }
+      pendingDestroys = [];
     }
   }
 

@@ -31,6 +31,46 @@ const {
 const PLACEHOLDER_NICK = '微信用户';
 
 /**
+ * 自动同步实验功能白名单 OpenID。
+ * 仅允许此列表内的用户进入 pages/sync-lab/index。
+ */
+const SYNC_LAB_WHITELIST = [
+  'owImn7cUbBnTEk2Mx9IyZDnbVR1I',
+  'owImn7YI-B-Zm8PCXCEW7BDiu--E',
+  'owImn7ctZbR2ZwLLAjoUbbfV5Yjc',
+  'owImn7d3tOlRRlyhLMggkDNYZBr4'
+];
+
+/**
+ * 检查当前已登录用户的 OpenID 是否在实验功能白名单内。
+ * OpenID 从 globalData.userInfo 或 Storage 缓存中读取，无需网络请求。
+ * @returns {boolean}
+ */
+function checkSyncLabWhitelist() {
+  let openid = '';
+  const gi = app.globalData && app.globalData.userInfo;
+  if (gi && typeof gi === 'object') {
+    const o = /** @type {Record<string, unknown>} */ (gi);
+    if (typeof o.openid === 'string') {
+      openid = o.openid.trim();
+    }
+  }
+  if (!openid) {
+    try {
+      const { STORAGE_USER_INFO_KEY: KEY } = require('../../utils/request.js');
+      const cached = wx.getStorageSync(KEY);
+      if (cached && typeof cached === 'object') {
+        const c = /** @type {Record<string, unknown>} */ (cached);
+        if (typeof c.openid === 'string') {
+          openid = c.openid.trim();
+        }
+      }
+    } catch (e) {}
+  }
+  return openid.length > 0 && SYNC_LAB_WHITELIST.indexOf(openid) !== -1;
+}
+
+/**
  * 判断是否为微信侧常见默认头像（小尺寸 132 等），避免登录时把明文 URL 传给服务端覆盖用户已上传的 COS 头像。
  * @param {string} url
  * @returns {boolean}
@@ -198,6 +238,8 @@ Page({
     statusBarHeight: 0,
     userInfo: /** @type {MineUserInfo | null} */ (null),
     loggedIn: false,
+    /** 当前用户是否在实验功能白名单内（仅白名单用户可见 sync-lab 入口） */
+    isInWhitelist: false,
     /** 昵称是否为占位，需引导完善资料 */
     needCompleteProfile: false,
     avatarUrl: '',
@@ -399,6 +441,7 @@ Page({
     this.setData({
       userInfo: /** @type {MineUserInfo} */ (info),
       loggedIn: hasToken,
+      isInWhitelist: hasToken && checkSyncLabWhitelist(),
       needCompleteProfile,
       displayNick: n.nickName || PLACEHOLDER_NICK,
       avatarUrl: av,
@@ -463,6 +506,7 @@ Page({
     this.setData({
       userInfo,
       loggedIn,
+      isInWhitelist: loggedIn && checkSyncLabWhitelist(),
       needCompleteProfile,
       displayNick,
       avatarUrl,
@@ -620,6 +664,23 @@ Page({
    */
   onHelpTap: function () {
     wx.navigateTo({ url: '/pages/help/help' });
+  },
+
+  /**
+   * 实验功能「自动同步」入口：仅白名单用户可进入。
+   * 非白名单用户收到模糊提示，不暴露功能细节。
+   * @returns {void}
+   */
+  onSyncLabTap: function () {
+    if (!this.data.loggedIn) {
+      wx.showToast({ title: '请先登录', icon: 'none' });
+      return;
+    }
+    if (!checkSyncLabWhitelist()) {
+      wx.showToast({ title: '暂无使用权限', icon: 'none' });
+      return;
+    }
+    wx.navigateTo({ url: '/pages/sync-lab/index/index' });
   },
 
   onAboutTap: function () {

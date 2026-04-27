@@ -3,7 +3,10 @@
     "pages/index/index",
     "pages/live/live",
     "pages/mine/mine",
-    "pages/help/help"
+    "pages/help/help",
+    "pages/sync-lab/index/index",
+    "pages/sync-lab/collector/collector",
+    "pages/sync-lab/broadcaster/broadcaster"
   ],
   "window": {
     "backgroundTextStyle": "light",
@@ -36,5 +39,10 @@
       }
     ]
   },
-  "sitemapLocation": "sitemap.json"
+  "sitemapLocation": "sitemap.json",
+  "permission": {
+    "scope.camera": {
+      "desc": "用于扫描篮球记分牌，实现自动 OCR 识别比分"
+    }
+  }
 }

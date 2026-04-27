@@ -224,6 +224,19 @@
   color: #1e293b;
 }
 
+.list-label-badge {
+  display: inline-block;
+  margin-left: 12rpx;
+  padding: 2rpx 12rpx;
+  font-size: 18rpx;
+  font-weight: 600;
+  color: #92400e;
+  background: #fef3c7;
+  border-radius: 999rpx;
+  vertical-align: middle;
+  line-height: 1.6;
+}
+
 .list-arrow {
   font-size: 40rpx;
   color: #cbd5e1;

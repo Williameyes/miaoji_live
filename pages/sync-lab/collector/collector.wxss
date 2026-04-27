@@ -1,0 +1,199 @@
+/* 采集端横屏全屏样式 — Phase 3 v2 */
+page { background: #000; }
+
+.col-root {
+  width: 100%;
+  height: 100%;
+  position: fixed;
+  top: 0; left: 0;
+  overflow: hidden;
+  background: #000;
+}
+
+/* ── 未授权锁定占位 ── */
+.col-locked {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #0a0a0a;
+}
+.col-locked-icon { font-size: 80rpx; }
+.col-locked-text {
+  font-size: 28rpx;
+  color: rgba(255,255,255,0.45);
+  margin-top: 20rpx;
+}
+
+/* ── 全屏相机 ── */
+.col-camera-full {
+  width: 100%;
+  height: 100%;
+  position: fixed;
+  top: 0; left: 0;
+}
+
+/* ── ROI 选区层 ── */
+.col-roi-layer {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  /* overflow visible 让右下角缩放柄可以突出边框 */
+  overflow: visible;
+}
+
+/* ROI 选区框 */
+.col-roi-box {
+  border: 3rpx solid rgba(251,191,36,0.9);
+  background: rgba(251,191,36,0.05);
+  box-sizing: border-box;
+  /* overflow visible 保证缩放柄不被裁剪 */
+  overflow: visible;
+}
+.col-roi-box--sel {
+  border-color: #60a5fa;
+  background: rgba(96,165,250,0.10);
+}
+
+.col-roi-tag {
+  font-size: 18rpx;
+  color: #fff;
+  background: rgba(0,0,0,0.60);
+  padding: 2rpx 8rpx;
+  display: inline-block;
+}
+.col-roi-raw {
+  font-size: 20rpx;
+  color: #fbbf24;
+  background: rgba(0,0,0,0.70);
+  padding: 2rpx 6rpx;
+  margin-top: 4rpx;
+  word-break: break-all;
+}
+
+/* ── 右下角缩放柄 ── */
+.col-roi-handle-se {
+  position: absolute;
+  bottom: -14rpx;
+  right:  -14rpx;
+  width:  36rpx;
+  height: 36rpx;
+  border-radius: 50%;
+  background: #60a5fa;
+  border: 4rpx solid #fff;
+  /* 扩大热区，手指更容易命中 */
+  box-shadow: 0 0 0 14rpx rgba(96,165,250,0.18);
+}
+
+/* ── 顶部状态条 ── */
+.col-top-bar {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 56rpx;
+  background: rgba(0,0,0,0.50);
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 0 24rpx;
+  gap: 12rpx;
+}
+.col-top-dot {
+  width: 14rpx; height: 14rpx;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.col-top-dot--idle        { background: #94a3b8; }
+.col-top-dot--advertising { background: #f59e0b; }
+.col-top-dot--connected   { background: #22c55e; }
+.col-top-state { font-size: 22rpx; color: rgba(255,255,255,0.85); flex: 1; }
+.col-top-code  {
+  font-size: 22rpx; color: #fbbf24; font-weight: 700; letter-spacing: 3rpx;
+  background: rgba(0,0,0,0.35); padding: 2rpx 14rpx; border-radius: 999rpx;
+}
+/* OCR 采样率徽标 */
+.col-top-hz {
+  font-size: 18rpx;
+  color: #86efac;
+  background: rgba(34,197,94,0.18);
+  padding: 2rpx 12rpx;
+  border-radius: 999rpx;
+  letter-spacing: 1rpx;
+}
+
+/* ── 底部控制条 ── */
+.col-bottom-bar {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  background: rgba(0,0,0,0.62);
+  padding: 10rpx 20rpx;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 20rpx;
+}
+
+/* 比分 */
+.col-score-strip {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  flex-shrink: 0;
+}
+.col-score-home { font-size: 52rpx; font-weight: 900; color: #60a5fa; }
+.col-score-sep  { font-size: 36rpx; color: #fff; padding: 0 10rpx; }
+.col-score-away { font-size: 52rpx; font-weight: 900; color: #f87171; }
+.col-score-meta { font-size: 22rpx; color: rgba(255,255,255,0.75); padding-left: 16rpx; }
+
+/* 节次 */
+.col-period-strip {
+  display: flex;
+  flex-direction: row;
+  gap: 8rpx;
+  flex-shrink: 0;
+}
+.col-p-btn {
+  font-size: 22rpx;
+  color: rgba(255,255,255,0.70);
+  background: rgba(255,255,255,0.12);
+  padding: 6rpx 14rpx;
+  border-radius: 999rpx;
+}
+.col-p-btn--on { background: #3b82f6; color: #fff; }
+
+/* 操作按钮 */
+.col-action-strip {
+  display: flex;
+  flex-direction: row;
+  gap: 10rpx;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.col-act-btn {
+  font-size: 24rpx;
+  padding: 8rpx 20rpx;
+  border-radius: 999rpx;
+  color: #fff;
+}
+.col-act-btn--blue   { background: rgba(59,130,246,0.80); }
+.col-act-btn--green  { background: rgba(34,197,94,0.80); }
+.col-act-btn--yellow { background: rgba(245,158,11,0.80); }
+.col-act-btn--red    { background: rgba(239,68,68,0.75); }
+.col-act-btn--ghost  { background: rgba(255,255,255,0.15); }
+
+/* ── 调试面板 ── */
+.col-debug-panel {
+  position: absolute;
+  top: 60rpx; right: 10rpx;
+  max-width: 300rpx;
+  background: rgba(0,0,0,0.72);
+  border-radius: 10rpx;
+  padding: 10rpx 14rpx;
+}
+.col-debug-text {
+  font-size: 18rpx;
+  color: #a3e635;
+  word-break: break-all;
+  line-height: 1.5;
+}

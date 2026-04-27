@@ -1,0 +1,94 @@
+<!-- 采集端横屏模式：相机全屏，所有控件用 cover-view 叠加 -->
+<!-- 登录 + 白名单双重门控：未授权用户页面内容完全不渲染 -->
+<view class="col-root">
+
+  <!-- ── 未授权占位 ── -->
+  <view class="col-locked" wx:if="{{!isLogin || !isInWhitelist}}">
+    <view class="col-locked-icon">🔒</view>
+    <view class="col-locked-text">需要登录或权限</view>
+  </view>
+
+  <!-- ── 主界面（已授权）── -->
+  <camera
+    wx:if="{{isLogin && isInWhitelist}}"
+    class="col-camera-full"
+    device-position="back"
+    flash="off"
+    mode="normal"
+    resolution="high"
+    binderror="onCameraError"
+  >
+    <!-- ① ROI 选区框（可拖动 + 右下角可缩放）-->
+    <cover-view class="col-roi-layer">
+      <cover-view
+        wx:for="{{rois}}"
+        wx:key="label"
+        class="col-roi-box{{selectedRoiIdx === index ? ' col-roi-box--sel' : ''}}"
+        style="position:absolute;{{item.pctStyle}}"
+        data-idx="{{index}}"
+        bindtouchstart="onRoiBodyTouchStart"
+        bindtouchmove="onRoiBodyTouchMove"
+        bindtouchend="onRoiTouchEnd"
+      >
+        <!-- 标签 -->
+        <cover-view class="col-roi-tag">{{item.label}}</cover-view>
+        <!-- 调试：识别原始文本 -->
+        <cover-view class="col-roi-raw" wx:if="{{debugMode && item.rawText}}">{{item.rawText}}</cover-view>
+        <!-- 右下角缩放柄（catch 阻止冒泡，防止触发父框拖动）-->
+        <cover-view
+          class="col-roi-handle-se"
+          data-idx="{{index}}"
+          catchtouchstart="onRoiResizeTouchStart"
+          catchtouchmove="onRoiResizeTouchMove"
+          catchtouchend="onRoiTouchEnd"
+        ></cover-view>
+      </cover-view>
+    </cover-view>
+
+    <!-- ② 顶部状态条 -->
+    <cover-view class="col-top-bar">
+      <cover-view class="col-top-dot col-top-dot--{{bleState}}"></cover-view>
+      <cover-view class="col-top-state">{{bleStateText}}</cover-view>
+      <cover-view class="col-top-code" wx:if="{{matchCode}}">码 {{matchCode}}</cover-view>
+      <!-- OCR 频率提示 -->
+      <cover-view class="col-top-hz" wx:if="{{ocrEnabled}}">OCR 2Hz</cover-view>
+    </cover-view>
+
+    <!-- ③ 底部控制条 -->
+    <cover-view class="col-bottom-bar">
+      <!-- 比分显示 -->
+      <cover-view class="col-score-strip">
+        <cover-view class="col-score-home">{{homeScore}}</cover-view>
+        <cover-view class="col-score-sep">:</cover-view>
+        <cover-view class="col-score-away">{{awayScore}}</cover-view>
+        <cover-view class="col-score-meta">Q{{period}} · {{minutes}}:{{seconds < 10 ? '0' : ''}}{{seconds}} · {{shotClock}}s</cover-view>
+      </cover-view>
+
+      <!-- 节次选择 -->
+      <cover-view class="col-period-strip">
+        <cover-view class="col-p-btn{{period===1?' col-p-btn--on':''}}" bindtap="onSetPeriod" data-p="1">Q1</cover-view>
+        <cover-view class="col-p-btn{{period===2?' col-p-btn--on':''}}" bindtap="onSetPeriod" data-p="2">Q2</cover-view>
+        <cover-view class="col-p-btn{{period===3?' col-p-btn--on':''}}" bindtap="onSetPeriod" data-p="3">Q3</cover-view>
+        <cover-view class="col-p-btn{{period===4?' col-p-btn--on':''}}" bindtap="onSetPeriod" data-p="4">Q4</cover-view>
+        <cover-view class="col-p-btn{{period===5?' col-p-btn--on':''}}" bindtap="onSetPeriod" data-p="5">OT</cover-view>
+      </cover-view>
+
+      <!-- 操作按钮组 -->
+      <cover-view class="col-action-strip">
+        <cover-view wx:if="{{bleState === 'idle'}}" class="col-act-btn col-act-btn--blue" bindtap="onStartTap">开启采集</cover-view>
+        <block wx:else>
+          <cover-view class="col-act-btn{{ocrEnabled?' col-act-btn--green':' col-act-btn--blue'}}" bindtap="onToggleOcr">{{ocrEnabled?'关OCR':'开OCR'}}</cover-view>
+          <cover-view class="col-act-btn{{debugMode?' col-act-btn--yellow':' col-act-btn--ghost'}}" bindtap="onToggleDebug">调试</cover-view>
+          <cover-view class="col-act-btn col-act-btn--red" bindtap="onStopTap">停止</cover-view>
+        </block>
+      </cover-view>
+    </cover-view>
+
+    <!-- ④ 调试面板 -->
+    <cover-view class="col-debug-panel" wx:if="{{debugMode && debugText}}">
+      <cover-view class="col-debug-text">{{debugText}}</cover-view>
+    </cover-view>
+
+  </camera>
+
+</view>

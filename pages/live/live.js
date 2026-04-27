@@ -2150,7 +2150,7 @@ Page({
     var self = this;
     wx.showModal({
       title: '超频模式',
-      content: '超频模式仅支持放大，无法像原生相机那样切换超广角。切换期间可能短暂黑屏。确认进入？',
+      content: '性能要求极高，建议iphone15以上或安卓旗舰机型使用，否则可能出现卡顿拖影等问题。确认进入？',
       confirmText: '进入超频',
       cancelText: '取消',
       confirmColor: '#E64340',
@@ -7192,20 +7192,62 @@ Page({
     const dir = this.getHighlightDir();
     const copyOne = (srcPath, idx) => new Promise((resolve) => {
       const filePath = `${dir}/${task.id}_${idx}.mp4`;
-      if (fs.copyFile) {
-        fs.copyFile({
-          srcPath,
-          destPath: filePath,
-          success: () => resolve(filePath),
-          fail: () => resolve('')
+
+      const doMove = () => {
+        const tryFallback = () => {
+          if (fs.copyFile) {
+            fs.copyFile({
+              srcPath,
+              destPath: filePath,
+              success: () => resolve(filePath),
+              fail: () => resolve('')
+            });
+            return;
+          }
+          fs.saveFile({
+            tempFilePath: srcPath,
+            filePath,
+            success: (r) => resolve((r && r.savedFilePath) ? r.savedFilePath : filePath),
+            fail: () => resolve('')
+          });
+        };
+
+        if (fs.rename) {
+          fs.rename({
+            oldPath: srcPath,
+            newPath: filePath,
+            success: () => resolve(filePath),
+            fail: tryFallback
+          });
+        } else {
+          tryFallback();
+        }
+      };
+
+      const checkSrc = () => {
+        fs.getFileInfo({
+          filePath: srcPath,
+          success: (resSrc) => {
+            if (resSrc && resSrc.size > 1024) {
+              doMove();
+            } else {
+              resolve(''); // Size too small, trigger retry
+            }
+          },
+          fail: () => resolve('') // Not found, trigger retry
         });
-        return;
-      }
-      fs.saveFile({
-        tempFilePath: srcPath,
-        filePath,
-        success: (r) => resolve((r && r.savedFilePath) ? r.savedFilePath : filePath),
-        fail: () => resolve('')
+      };
+
+      fs.getFileInfo({
+        filePath: filePath,
+        success: (resDest) => {
+          if (resDest && resDest.size > 1024) {
+            resolve(filePath); // Already moved successfully in a previous attempt
+          } else {
+            checkSrc();
+          }
+        },
+        fail: checkSrc
       });
     });
     return this.ensureHighlightDir()
@@ -7228,7 +7270,7 @@ Page({
          */
         const applyClipUpdate = (coverDest) => {
           if (idx < 0) return;
-          if (savedPaths.length > 0) {
+          if (savedPaths.length === segments.length) {
             const replaySegment = savedPaths[savedPaths.length - 1] || savedPaths[0] || '';
             list[idx].segments = savedPaths;
             list[idx].replaySegment = replaySegment;
@@ -7244,7 +7286,7 @@ Page({
             this.appendHealthLog('highlight_materialize_clips_write_fail', { id: task.id });
           }
         };
-        if (savedPaths.length > 0 && coverTempPath && fs.copyFile) {
+        if (savedPaths.length === segments.length && coverTempPath && fs.copyFile) {
           const coverDest = `${dir}/${task.id}_cover.jpg`;
           fs.copyFile({
             srcPath: coverTempPath,
@@ -7255,7 +7297,7 @@ Page({
         } else {
           applyClipUpdate('');
         }
-        if (!savedPaths.length) {
+        if (savedPaths.length !== segments.length) {
           const retryCount = Number(task.retryCount || 0);
           if (retryCount < 3) {
             const next = { ...task, retryCount: retryCount + 1 };
