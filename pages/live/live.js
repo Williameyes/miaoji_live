@@ -5364,6 +5364,46 @@ Page({
     });
   },
 
+  buildVkTailHighlightPlan: function(ctx) {
+    var now = Date.now();
+    var recordStartWall = ctx._vkTimeshiftStartAt || now;
+    var ENCODER_DELAY_MS = 200;
+    var SAFE_TAIL_MS = 300;   // 防止尾部未封装
+    var TARGET_DURATION = 8;  // 秒
+
+    // 当前可用视频时长（秒）
+    var safeDuration = (now - recordStartWall - ENCODER_DELAY_MS) / 1000;
+    if (!isFinite(safeDuration) || safeDuration <= 0) {
+      safeDuration = 0;
+    }
+    
+    // 再扣尾部 buffer
+    safeDuration = Math.max(0, safeDuration - SAFE_TAIL_MS / 1000);
+    
+    // 增加点击延迟补偿
+    var CLICK_DELAY_COMPENSATE = 0.3; // 秒
+    var expectedEnd = safeDuration - CLICK_DELAY_COMPENSATE;
+    if (expectedEnd < 0) expectedEnd = safeDuration;
+
+    // 起点
+    var startTime = expectedEnd - TARGET_DURATION;
+    if (startTime < 0) startTime = 0;
+    
+    // 实际裁剪长度
+    var duration = expectedEnd - startTime;
+    
+    // 最小保护（防止导出失败）
+    if (duration <= 0) {
+      duration = Math.min(2, safeDuration);
+      startTime = Math.max(0, safeDuration - duration);
+    }
+    
+    return {
+      startTimeSec: startTime,
+      durationSec: duration
+    };
+  },
+
   startRollingRecording: function() {
     if (!this.data.cameraContext) return;
     /** 已在录时勿重复拉起，避免双 startRecord；假阳性 isRecording 由 onShow 的 stopRollingRecording 收口 */
@@ -7131,10 +7171,10 @@ Page({
       status: 'indexed',
       scoreA,
       scoreB,
-      nameA,
       nameB,
       colorA,
-      colorB
+      colorB,
+      isVkTimeshift: !!pending.isVkTimeshift
     };
   },
 
@@ -7194,33 +7234,66 @@ Page({
       const filePath = `${dir}/${task.id}_${idx}.mp4`;
 
       const doMove = () => {
-        const tryFallback = () => {
-          if (fs.copyFile) {
-            fs.copyFile({
-              srcPath,
-              destPath: filePath,
-              success: () => resolve(filePath),
-              fail: () => resolve('')
+        const movePhysical = (fromPath) => {
+          const cleanupOriginal = () => {
+            if (fromPath !== srcPath) {
+              try { fs.unlink({ filePath: srcPath }); } catch (e) {}
+            }
+          };
+          const handleFail = () => {
+            if (fromPath !== srcPath) {
+              try { fs.unlink({ filePath: fromPath }); } catch (e) {}
+            }
+            resolve('');
+          };
+
+          const tryFallback = () => {
+            if (fs.copyFile) {
+              fs.copyFile({
+                srcPath: fromPath,
+                destPath: filePath,
+                success: () => {
+                  if (fromPath !== srcPath) {
+                    try { fs.unlink({ filePath: fromPath }); } catch (e) {}
+                  }
+                  cleanupOriginal();
+                  resolve(filePath);
+                },
+                fail: handleFail
+              });
+              return;
+            }
+            fs.saveFile({
+              tempFilePath: fromPath,
+              filePath,
+              success: (r) => {
+                cleanupOriginal();
+                resolve((r && r.savedFilePath) ? r.savedFilePath : filePath);
+              },
+              fail: handleFail
             });
-            return;
+          };
+
+          if (fs.rename) {
+            fs.rename({
+              oldPath: fromPath,
+              newPath: filePath,
+              success: () => {
+                cleanupOriginal();
+                resolve(filePath);
+              },
+              fail: tryFallback
+            });
+          } else {
+            tryFallback();
           }
-          fs.saveFile({
-            tempFilePath: srcPath,
-            filePath,
-            success: (r) => resolve((r && r.savedFilePath) ? r.savedFilePath : filePath),
-            fail: () => resolve('')
-          });
         };
 
-        if (fs.rename) {
-          fs.rename({
-            oldPath: srcPath,
-            newPath: filePath,
-            success: () => resolve(filePath),
-            fail: tryFallback
-          });
+        if (task.isVkTimeshift) {
+          // 不再尝试 MediaContainer 裁切，直接保存原文件以保障极度稳定性
+          movePhysical(srcPath);
         } else {
-          tryFallback();
+          movePhysical(srcPath);
         }
       };
 
@@ -7518,7 +7591,15 @@ Page({
             return;
           }
           var syntheticSegNo = 900000 + (Date.now() % 100000);
-          var plan = self.buildVkCanvasHighlightPlan(path, elapsedMs / 1000);
+          
+          var plan = self.buildVkTailHighlightPlan(self);
+
+          if (!isFinite(plan.startTimeSec) || !isFinite(plan.durationSec)) {
+            console.warn('[VK] invalid highlight plan, fallback');
+            plan.startTimeSec = 0;
+            plan.durationSec = 5;
+          }
+
           self.finalizeHighlight({
             id: meta.id,
             createdAt: meta.createdAt,
@@ -7528,13 +7609,15 @@ Page({
             cover: meta.cover || self.data.defaultCover,
             finalizing: false,
             sourceSegNo: syntheticSegNo,
-            preSegments: plan.preSegments,
+            preSegments: [path],
             postSegments: [],
-            replayInitialTimeSec: plan.replayInitialTimeSec,
-            replayUseChain: plan.replayUseChain,
-            replayMediaStopAtSec: plan.replayMediaStopAtSec,
-            replayChainPart2StopAtSec: plan.replayChainPart2StopAtSec
+            replayInitialTimeSec: plan.startTimeSec,
+            replayUseChain: false,
+            replayMediaStopAtSec: plan.startTimeSec + plan.durationSec,
+            replayChainPart2StopAtSec: null,
+            isVkTimeshift: true
           });
+          
           if (keepTimeshiftAfterFinalize && self.data.enhanceMode === 'vk' && self._livePageVisible) {
             self._ensureVkTimeshiftRecorder({ keepSavingState: true });
           }
@@ -7961,6 +8044,7 @@ Page({
       return;
     }
     this.pruneHighlightStorageForMatch(matchId);
+    this._enforceHighlightStorageLimit();
     const list = this.getHighlightList();
     list.unshift(item);
     wx.setStorageSync('highlight_list', list);
@@ -8627,6 +8711,10 @@ Page({
     const list = this.getHighlightList(currentMatchId);
     const item = list.find((x) => x && String(x.id) === String(id));
     if (!item) return;
+    if (item.savedToAlbum) {
+      wx.showToast({ title: '已为您节省空间并转存至手机相册，请前往相册观看', icon: 'none', duration: 3000 });
+      return;
+    }
     this.closeAllDrawers();
     this.startReplay(item);
   },
@@ -8699,6 +8787,76 @@ Page({
 
     wx.showToast({ title: '已删除', icon: 'success' });
     this.refreshDrawerHighlights();
+  },
+
+  /**
+   * 自动将高光保存至相册并删除微信本地缓存（仅针对 VK 模式）
+   * @param {object} item 高光对象
+   */
+  _saveHighlightToAlbumAndClean: function(item, silent) {
+    if (!item || !item.isVkTimeshift || item.savedToAlbum) return;
+    const src = (item.preSegments && item.preSegments[0]) || item.replaySegment;
+    if (!src) return;
+    wx.saveVideoToPhotosAlbum({
+      filePath: src,
+      success: () => {
+        const fs = wx.getFileSystemManager();
+        try { fs.unlinkSync(src); } catch (e) {}
+        
+        const clipsMap = clipsStorage.readClipsMapSafe();
+        if (clipsMap && clipsMap[item.matchId]) {
+          const bucket = clipsMap[item.matchId];
+          const target = bucket.find(c => String(c.id) === String(item.id));
+          if (target) {
+            target.savedToAlbum = true;
+            target.preSegments = [];
+            clipsStorage.writeClipsMapSafe(clipsMap);
+          }
+        }
+        if (Array.isArray(this.data.highlights)) {
+          const updatedHighlights = this.data.highlights.map(h => {
+            if (String(h.id) === String(item.id)) {
+              return { ...h, savedToAlbum: true, preSegments: [] };
+            }
+            return h;
+          });
+          this.setData({ highlights: updatedHighlights });
+        }
+        this.refreshDrawerHighlights();
+        if (!silent) {
+          // 看多次后自动触发的不弹 toast，避免打扰
+        }
+      },
+      fail: (err) => {
+        // 如果用户拒绝授权等，暂不做处理，留待下次播放后再试
+      }
+    });
+  },
+
+  /**
+   * 存储超限保护：扫描当前所有已落盘且未转存的 VK 高光，若大于等于 8 个，自动将最老的一个转存相册并清理微信缓存
+   */
+  _enforceHighlightStorageLimit: function() {
+    const clipsMap = clipsStorage.readClipsMapSafe();
+    if (!clipsMap) return;
+    let pendingClips = [];
+    for (let mId in clipsMap) {
+      if (Array.isArray(clipsMap[mId])) {
+        clipsMap[mId].forEach(clip => {
+          if (clip.isVkTimeshift && !clip.savedToAlbum) {
+            pendingClips.push(clip);
+          }
+        });
+      }
+    }
+    if (pendingClips.length >= 8) {
+      // 找出时间戳最早的（数字越小越早）
+      pendingClips.sort((a, b) => a.id - b.id);
+      const oldest = pendingClips[0];
+      if (oldest) {
+        this._saveHighlightToAlbumAndClean(oldest, true);
+      }
+    }
   },
 
   /**
@@ -8894,6 +9052,26 @@ Page({
    */
   startReplayContinue: function(item) {
     if (!item || typeof item !== 'object') return;
+    this._replayActiveItem = item;
+    
+    // 递增观看次数并入库
+    item.viewCount = (item.viewCount || 0) + 1;
+    const clipsMap = clipsStorage.readClipsMapSafe();
+    if (clipsMap && clipsMap[item.matchId]) {
+      const bucket = clipsMap[item.matchId];
+      const target = bucket.find(c => String(c.id) === String(item.id));
+      if (target) {
+        target.viewCount = item.viewCount;
+        clipsStorage.writeClipsMapSafe(clipsMap);
+      }
+    }
+    if (Array.isArray(this.data.highlights)) {
+      const updatedHighlights = this.data.highlights.map(h => {
+        if (String(h.id) === String(item.id)) return { ...h, viewCount: item.viewCount };
+        return h;
+      });
+      this.setData({ highlights: updatedHighlights });
+    }
     const useChain = !!(item.replayUseChain && item.segments && item.segments.length >= 2);
     const paths = useChain ? item.segments.slice() : [];
     const target =
@@ -8928,7 +9106,21 @@ Page({
     /** 缩短全黑 REPLAY 叠层，首帧略早露出（与 replayIntroDurationMs 可再对齐 WXSS） */
     const introMs = 520;
     const peakMs = 140;
-    const initialSec = typeof item.replayInitialTimeSec === 'number' ? item.replayInitialTimeSec : 0;
+    let initialSec = typeof item.replayInitialTimeSec === 'number' ? item.replayInitialTimeSec : 0;
+    
+    // VK 模式特殊处理：废弃底层的 initial-time 属性（会因无关键帧导致黑屏报错）
+    // 改为从 0 开始播，由业务层在 loadedmetadata/bindplay 中强行 seek 过去，并辅以 UI 遮罩
+    // Fix: 不再依赖 initialSec > 0 判断；VK 高光始终需要跳到末尾 8s，
+    // 即使 startTimeSec=0（短片段），loadedmetadata 拿到 duration 后会用 duration-8 计算，
+    // 得到 0 也是正确退化行为（从头播就是高光起点）。
+    this._vkDelayedSeekTarget = null;
+    this._vkSeekDone = false;
+    let showFastForwardMask = false;
+    if (item.isVkTimeshift) {
+      this._vkDelayedSeekTarget = 'pending';
+      showFastForwardMask = true;
+      initialSec = 0;
+    }
 
     /** 第一段路径与第二段路径（链式时预加载，单段为空） */
     const firstPath = useChain ? paths[0] : target;
@@ -8961,6 +9153,7 @@ Page({
       showReplayMask: true,
       replayMaskText: 'REPLAY',
       replayMaskKind: 'replay',
+      replayFastForwarding: showFastForwardMask, // 追加快进遮罩状态
       replayQueue: [],
       replayIndex: 0,
       replaySrc: '',
@@ -9022,6 +9215,12 @@ Page({
    * @param {boolean} stopPlayer 是否立即停止 video（点击中断时为 true）
    */
   finishReplayToLive: function(stopPlayer) {
+    if (this._replayActiveItem) {
+      if ((this._replayActiveItem.viewCount || 0) >= 2) {
+        this._saveHighlightToAlbumAndClean(this._replayActiveItem, true);
+      }
+      this._replayActiveItem = null;
+    }
     this._replayStopAtMediaSec = null;
     this._replayChainPart2StopAt = null;
     this._replayPendingActiveSlot = null;
@@ -9049,6 +9248,12 @@ Page({
       clearTimeout(this._replayPrimeTimerB);
       this._replayPrimeTimerB = null;
     }
+    if (this._vkFastForwardMaskTimer) {
+      clearTimeout(this._vkFastForwardMaskTimer);
+      this._vkFastForwardMaskTimer = null;
+    }
+    this._vkDelayedSeekTarget = 0;
+    this.setData({ replayFastForwarding: false });
     this._replayPrimedSlot0 = false;
     this._replayPrimedSlot1 = false;
     this._cancelReplayZoomAnim();
@@ -9208,6 +9413,24 @@ Page({
   _onReplaySlotTimeUpdate: function(slotIdx, e) {
     if (this._replayPendingActiveSlot !== slotIdx) return;
     const t = e && e.detail && typeof e.detail.currentTime === 'number' ? e.detail.currentTime : 0;
+    
+    // 如果物理长度太短或算算无需跳转，在此立刻解开遮罩
+    if (this._vkDelayedSeekTarget === 0 && this.data.replayFastForwarding) {
+      this._vkDelayedSeekTarget = null;
+      if (this._vkFastForwardMaskTimer) clearTimeout(this._vkFastForwardMaskTimer);
+      this.setData({ replayFastForwarding: false });
+    }
+
+    // 监听快进进度，一旦越过目标线，立即解除遮罩
+    if (this.data.replayFastForwarding && typeof this._vkDelayedSeekTarget === 'number' && this._vkDelayedSeekTarget > 0) {
+      // 允许 0.5 秒误差，到达目标附近即认为 seek 成功，解开遮罩
+      if (t >= this._vkDelayedSeekTarget - 0.5) {
+        if (this._vkFastForwardMaskTimer) clearTimeout(this._vkFastForwardMaskTimer);
+        this.setData({ replayFastForwarding: false });
+        this._vkDelayedSeekTarget = null;
+      }
+    }
+
     if (t < 0.05) return;
     this._replayPendingActiveSlot = null;
     if (this._replayPendingFallbackTimer) {
@@ -9325,17 +9548,44 @@ Page({
   },
 
   /**
-   * slot-a bindplay 回调：设置倍速。
+   * VK 快进 seek 兜底：在 bindplay 触发时补发一次 seek。
+   * loadedmetadata 阶段在 iOS 上 seek 可能被忽略（视频尚未进入 playing/paused 状态），
+   * 此处在播放真正启动后再 seek 一次确保命中。
+   * 遵循工程规则：seek 仅做 1~2 次，绝不循环。
+   * @param {number} slotIdx 触发 bindplay 的 slot
    */
-  onReplayVideoAPlay: function() {
-    this._applyPlaybackRateToSlot(0);
+  _maybeVkSeekOnPlay: function(slotIdx) {
+    if (this._vkSeekDone) return;
+    if (
+      typeof this._vkDelayedSeekTarget === 'number' &&
+      this._vkDelayedSeekTarget > 0 &&
+      this.data.replayFastForwarding
+    ) {
+      this._vkSeekDone = true;
+      const id = slotIdx === 0 ? 'replayVideoA' : 'replayVideoB';
+      try {
+        const ctx = wx.createVideoContext(id, this);
+        if (ctx && ctx.seek) {
+          ctx.seek(this._vkDelayedSeekTarget);
+        }
+      } catch (e) {}
+    }
   },
 
   /**
-   * slot-b bindplay 回调：设置倍速。
+   * slot-a bindplay 回调：设置倍速 + VK seek 兜底。
+   */
+  onReplayVideoAPlay: function() {
+    this._applyPlaybackRateToSlot(0);
+    this._maybeVkSeekOnPlay(0);
+  },
+
+  /**
+   * slot-b bindplay 回调：设置倍速 + VK seek 兜底。
    */
   onReplayVideoBPlay: function() {
     this._applyPlaybackRateToSlot(1);
+    this._maybeVkSeekOnPlay(1);
   },
 
   /**
@@ -9343,16 +9593,52 @@ Page({
    */
   onReplayVideoPlay: function() {
     this._applyPlaybackRateToSlot(this.data.replayActiveSlot);
+    this._maybeVkSeekOnPlay(this.data.replayActiveSlot);
   },
 
   /**
-   * 仅对活跃 slot 的 loadedmetadata 处理旋转检测。
+   * 对 loadedmetadata 处理：VK seek + 旋转检测。
+   * Fix: VK seek 分支移到 slot guard 之前——seek 不应受 replayActiveSlot 的状态限制，
+   * 因为 slot 赋值（setData）与 video 事件触发存在异步竞态，可能导致 guard 误杀 seek。
    * @param {WechatMiniprogram.CustomEvent} e
    * @param {number} slotIdx 触发事件的 slot（0=A, 1=B）
    */
   _handleReplayLoadedMeta: function(e, slotIdx) {
-    if (slotIdx !== this.data.replayActiveSlot) return;
     const detail = (e && e.detail) || {};
+
+    // VK seek：不受 slot guard 限制，仅检查 _vkDelayedSeekTarget 状态。
+    // loadedmetadata 阶段拿到 duration 后立即计算目标，发出第一次 seek。
+    // 第二次 seek 在 bindplay 回调中由 _maybeVkSeekOnPlay 兜底（iOS seek 延迟生效）。
+    if (this._vkDelayedSeekTarget === 'pending' && detail.duration) {
+      const dur = Number(detail.duration);
+      if (dur > 0) {
+        const target = Math.max(0, dur - 8);
+        this._vkDelayedSeekTarget = target;
+        this._vkSeekDone = false; // 让 bindplay 还能再 seek 一次
+        try {
+          const id = slotIdx === 0 ? 'replayVideoA' : 'replayVideoB';
+          const ctx = wx.createVideoContext(id, this);
+          if (ctx && ctx.seek) {
+            ctx.seek(target);
+            // 2.5 秒后强行解除遮罩防卡死（防止 seek 成功但 timeupdate 未到）
+            if (this._vkFastForwardMaskTimer) clearTimeout(this._vkFastForwardMaskTimer);
+            this._vkFastForwardMaskTimer = setTimeout(() => {
+              this._vkFastForwardMaskTimer = null;
+              this.setData({ replayFastForwarding: false });
+            }, 2500);
+          }
+        } catch (seekErr) {}
+      } else {
+        // duration 为 0（极短录制），退化为从头播，直接解除遮罩
+        this._vkDelayedSeekTarget = 0;
+        this._vkSeekDone = true;
+        if (this._vkFastForwardMaskTimer) clearTimeout(this._vkFastForwardMaskTimer);
+        this.setData({ replayFastForwarding: false });
+      }
+    }
+
+    // 旋转检测与倍速：仍需 slot guard，避免非活跃 slot 的尺寸信息覆盖活跃 slot
+    if (slotIdx !== this.data.replayActiveSlot) return;
     const width = Number(detail.width || 0);
     const height = Number(detail.height || 0);
     const needRotate = width > 0 && height > 0 && height > width;

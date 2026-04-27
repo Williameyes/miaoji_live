@@ -118,6 +118,7 @@ function createVkCanvasRecorder() {
   var recorder = null;
   var active = false;
   var frameSeq = 0;
+  
   var pendingDestroys = []; // 存储尚未底层销毁的原生 recorder 引用，以便在组件销毁时立刻释放
 
   /** @type {{ lowFpsStreak: number, skipEveryOther: boolean, videoBitsPerSecond: number }} */
@@ -172,14 +173,18 @@ function createVkCanvasRecorder() {
 
   /**
    * 渲染前调用：与官方示例「先 requestFrame 再 draw」对齐。
+   * 如果返回 false（以 Promise.reject或不渲染的方式），说明跳帧
    * @returns {Promise<void>}
    */
   function beforeDraw() {
     if (!active || !recorder) return Promise.resolve();
-    frameSeq += 1;
-    if (false) {
-      return Promise.reject('SKIP_RENDER_FOR_THERMAL');
+    if (adapt.skipEveryOther) {
+      if (frameSeq % 2 === 1) {
+        frameSeq++;
+        return Promise.reject('SKIP_RENDER_FOR_THERMAL');
+      }
     }
+    frameSeq++;
     return _requestFrameRecorder(recorder).catch(function() {});
   }
 
@@ -198,7 +203,7 @@ function createVkCanvasRecorder() {
       adapt.lowFpsStreak = 0;
     }
     if (adapt.lowFpsStreak >= 2 && !adapt.skipEveryOther) {
-      
+      adapt.skipEveryOther = true;
       try {
         console.warn('[vk-canvas-recorder] FPS<' + 24 + ', enable skip-every-other requestFrame');
       } catch (e) {}

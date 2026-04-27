@@ -294,6 +294,10 @@
   <view class="replay-mask replay-mask--{{replayMaskKind}}" wx:if="{{showReplayMask}}">
     <view class="replay-mask-text">{{replayMaskText}}</view>
   </view>
+  
+  <view class="replay-mask" wx:if="{{replayFastForwarding}}" style="z-index: 1000; background: #000; display: flex; align-items: center; justify-content: center;">
+    <view class="replay-mask-text" style="font-size: 24px; animation: pulse 1s infinite alternate;">定位高光点...</view>
+  </view>
 
   <view class="replay-overlay" wx:if="{{isReplaying}}">
     <!-- 与直播 live-stage 同尺寸的 16:9 内接区域，仅承载视频与手势；控件在 replay-chrome 全屏层 -->
@@ -624,8 +628,10 @@
             ></image>
             <!-- 左上：序号角标（弱化） -->
             <text class="clip-index-badge">#{{item.clipIndex}}</text>
+            <!-- 右下：已存相册角标 -->
+            <view wx:if="{{item.savedToAlbum}}" style="position:absolute; bottom:40px; right:5px; background:rgba(0,0,0,0.7); color:#4ade80; font-size:10px; padding:2px 4px; border-radius:4px; z-index:10; border:1px solid #4ade80;">已存相册</view>
             <!-- 右上：播放示意 -->
-            <view class="clip-play-btn">▶</view>
+            <view class="clip-play-btn" wx:if="{{!item.savedToAlbum}}">▶</view>
             <!-- 正中：比分（无队名） -->
             <view class="clip-score-center">
               <text class="clip-score-digit" style="color: {{item.colorA}};">{{item.scoreA}}</text>
