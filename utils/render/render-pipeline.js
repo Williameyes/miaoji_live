@@ -256,20 +256,42 @@ function createRenderPipeline() {
       var isDrawingLock = false;
       var skipNextFrame = false;
       var overloadCount = 0;
+      var expectedNextTick = 0;
+      var lastFrameStartT = 0;
       /**
        * @param {*} frame
        * @returns {void|Promise<void>}
        */
       function onFrame(frame) {
+        var now = _now();
+        
+        // 1. 绝对时间轴同步 (Proactive Clock Sync)
+        if (expectedNextTick === 0) expectedNextTick = now;
+        // 允许 5ms 的 OS 调度误差，过早到达的帧会被主动丢弃以稳住 30fps 绝对节奏
+        if (now < expectedNextTick - 5) {
+          return;
+        }
+        
         if (skipNextFrame) {
           skipNextFrame = false;
+          // 时间对齐器：跳过该旧帧的同时推进时钟，强行拉平时间轴
+          expectedNextTick += 33.3;
           return;
         }
         if (isDrawingLock) {
           return;
         }
         isDrawingLock = true;
-        var startT = _now();
+        var startT = now;
+        var cycleDelta = lastFrameStartT > 0 ? (startT - lastFrameStartT) : 0;
+        lastFrameStartT = startT;
+        
+        // 推进下一帧的期望时间
+        expectedNextTick += 33.3;
+        // 维持严密的节奏锁：如果落后太多，通过倍数补齐来追赶，而不是抛弃原有的绝对时间轴基准，防止节奏断裂
+        while (expectedNextTick <= now) {
+          expectedNextTick += 33.3;
+        }
 
         applyMotionUniformForFrame(frame);
         function doDraw() {
@@ -282,7 +304,9 @@ function createRenderPipeline() {
           isDrawingLock = false;
           
           var totalCost = _now() - startT;
-          if (totalCost > 38) {
+          // 2. 双重背压检测：区分“系统线程调度抖动”与“真实的渲染/编码积压”
+          // 如果 cycleDelta 大但 totalCost 小，说明只是 JS 被抢占，并没有造成管线背压
+          if (totalCost > 38 || (cycleDelta > 45 && totalCost > 15)) {
             overloadCount++;
           } else {
             overloadCount = 0;
