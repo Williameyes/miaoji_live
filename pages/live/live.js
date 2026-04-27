@@ -480,7 +480,7 @@ Page({
      * 抽屉打开时工具条展示的实时 FPS 文案（如 "28 fps"）；未启用时显示 "— fps"。
      */
     enhanceFpsText: '— fps',
-    
+    isVkTimeshift: false
   },
 
   /**
@@ -491,7 +491,7 @@ Page({
    * 解析当前高光应写入的场次 ID（Storage / globalData / 当前 matchConfig.id）。
    * @returns {string} 空字符串表示无法安全落库，调用方应中止保存并提示用户。
    */
-  resolveMatchIdForHighlightStorage: function() {
+  resolveMatchIdForHighlightStorage: function () {
     let id = clipsStorage.normalizeMatchIdKey(wx.getStorageSync('currentMatchId'));
     if (!id) id = clipsStorage.normalizeMatchIdKey(app.globalData && app.globalData.currentMatchId);
     if (!id) {
@@ -501,7 +501,7 @@ Page({
     return id || '';
   },
 
-  syncMatchConfigFromPageSources: function() {
+  syncMatchConfigFromPageSources: function () {
     const currentMatchId =
       wx.getStorageSync('currentMatchId') || app.globalData.currentMatchId || '';
     let sourceConfig = app.globalData.matchConfig || wx.getStorageSync('matchConfig');
@@ -530,7 +530,7 @@ Page({
    * @param {unknown} expireRaw
    * @returns {string}
    */
-  formatExpireForDisplay: function(expireRaw) {
+  formatExpireForDisplay: function (expireRaw) {
     const ms = parseExpireAtToMs(expireRaw);
     if (Number.isNaN(ms)) {
       return typeof expireRaw === 'string' || typeof expireRaw === 'number' ? String(expireRaw) : '';
@@ -547,7 +547,7 @@ Page({
    * @param {unknown} body
    * @returns {{ allow: boolean, title: string, sub: string, minor: string, showRetry: boolean }}
    */
-  buildVipGateStateFromCheckStatus: function(body) {
+  buildVipGateStateFromCheckStatus: function (body) {
     const deny = (title, sub, minor, showRetry) => ({
       allow: false,
       title,
@@ -590,7 +590,7 @@ Page({
    * @param {function(): void} [onAllowed] 仅在 isVip 为 true 时调用
    * @returns {void}
    */
-  refreshLiveEntitlementAndResume: function(onAllowed) {
+  refreshLiveEntitlementAndResume: function (onAllowed) {
     if (this._entitlementChecking) {
       if (typeof onAllowed === 'function') {
         this._entitlementOnAllowedQueue.push(onAllowed);
@@ -663,7 +663,7 @@ Page({
             if (typeof onAllowed === 'function') onAllowed();
             const queued = this._entitlementOnAllowedQueue.splice(0, this._entitlementOnAllowedQueue.length);
             queued.forEach((fn) => {
-              try { fn(); } catch (e) {}
+              try { fn(); } catch (e) { }
             });
           });
           this._entitlementChecking = false;
@@ -691,7 +691,7 @@ Page({
               }
               const queued = this._entitlementOnAllowedQueue.splice(0, this._entitlementOnAllowedQueue.length);
               queued.forEach((fn) => {
-                try { fn(); } catch (e) {}
+                try { fn(); } catch (e) { }
               });
             }
           );
@@ -704,11 +704,11 @@ Page({
           if (typeof onAllowed === 'function') {
             try {
               onAllowed();
-            } catch (eCb) {}
+            } catch (eCb) { }
           }
           const queued = this._entitlementOnAllowedQueue.splice(0, this._entitlementOnAllowedQueue.length);
           queued.forEach((fn) => {
-            try { fn(); } catch (e) {}
+            try { fn(); } catch (e) { }
           });
           this._entitlementChecking = false;
           return;
@@ -736,7 +736,7 @@ Page({
    * 权益门「重试」：重新请求 check-status。
    * @returns {void}
    */
-  onVipGateRetryTap: function() {
+  onVipGateRetryTap: function () {
     this.refreshLiveEntitlementAndResume(() => {
       this._liveCoreOnShowAfterEntitlement();
     });
@@ -746,7 +746,7 @@ Page({
    * 权益门：跳转「我的」登录。
    * @returns {void}
    */
-  onVipGateSwitchMine: function() {
+  onVipGateSwitchMine: function () {
     wx.switchTab({ url: '/pages/mine/mine' });
   },
 
@@ -754,26 +754,26 @@ Page({
    * 拦截权益层下意外滚动穿透。
    * @returns {void}
    */
-  onVipGateCatchMove: function() {},
+  onVipGateCatchMove: function () { },
 
   /**
    * 恢复遮罩层吞掉触摸移动，避免穿透到记分手势。
    * @returns {void}
    */
-  noopCatchMove: function() {},
+  noopCatchMove: function () { },
 
   /**
    * 阻止卡片内点击冒泡到根（预留）。
    * @returns {void}
    */
-  stopVipGateInnerBubble: function() {},
+  stopVipGateInnerBubble: function () { },
 
   /**
    * 标记为“仅允许长按重启”的故障态，禁止状态灯单击动作。
    * @param {string} reason
    * @returns {void}
    */
-  markNeedManualRelaunch: function(reason) {
+  markNeedManualRelaunch: function (reason) {
     if (this._needManualRelaunch) return;
     this._needManualRelaunch = true;
     this._manualRelaunchReason = String(reason || 'unknown');
@@ -789,7 +789,7 @@ Page({
    * @param {Record<string, unknown>} item
    * @returns {number}
    */
-  resolveHighlightCreatedAt: function(item) {
+  resolveHighlightCreatedAt: function (item) {
     if (!item || typeof item !== 'object') return 0;
     const rawCreatedAt = item.createdAt;
     if (typeof rawCreatedAt === 'number' && Number.isFinite(rawCreatedAt) && rawCreatedAt > 0) {
@@ -807,7 +807,7 @@ Page({
    * @param {string} [errMsg]
    * @returns {void}
    */
-  activateFileQuotaCircuitBreaker: function(reason, errMsg) {
+  activateFileQuotaCircuitBreaker: function (reason, errMsg) {
     const now = Date.now();
     const holdMs = 45 * 1000;
     const until = this._fileQuotaCircuitUntil || 0;
@@ -836,14 +836,14 @@ Page({
         icon: 'none',
         duration: 2400
       });
-    } catch (eToast) {}
+    } catch (eToast) { }
   },
 
   /**
    * onShow 中在权益通过后执行的相机与滚动分段恢复逻辑。
    * @returns {void}
    */
-  _liveCoreOnShowAfterEntitlement: function() {
+  _liveCoreOnShowAfterEntitlement: function () {
     /**
      * kickoff 级 severe：`{@link _liveSevereKickoffPruneDone}` 避免同一会话内重复做 rolling 急救；
      * `{@link _liveStorageEntryModalShown}` 仅控制 Modal，勿在每次 onShow 清零 Modal 门闩（否则反复打断）。
@@ -877,10 +877,10 @@ Page({
         const hasRecord = !!res.authSetting['scope.record'];
         const albumScope = res.authSetting['scope.writePhotosAlbum'];
         if (!hasRecord) {
-          wx.authorize({ scope: 'scope.record', fail: () => {} });
+          wx.authorize({ scope: 'scope.record', fail: () => { } });
         }
         if (albumScope !== true && albumScope === undefined) {
-          wx.authorize({ scope: 'scope.writePhotosAlbum', fail: () => {} });
+          wx.authorize({ scope: 'scope.writePhotosAlbum', fail: () => { } });
         }
       }
     });
@@ -1087,7 +1087,7 @@ Page({
   /** 连续出现“temp 终态丢失”计数，超过阈值触发硬恢复。 */
   _rollingTempTerminalFailStreak: 0,
 
-  onLoad: function() {
+  onLoad: function () {
     /** 相机 bindinitdone 完成前禁止 startRecord，否则部分机型预览一直黑屏 */
     this._cameraInitDone = false;
     // 机型白名单：由 app.js 冷启动评估；live 页只读镜像一份到 data，驱动调试工具条可见性。
@@ -1208,28 +1208,28 @@ Page({
     this.initHealthLogs();
 
     this.syncMatchConfigFromPageSources();
-    
+
     // 1. 隐藏小程序左上角的返回/主页按钮（沉浸式第一步）
     if (wx.hideHomeButton) {
       wx.hideHomeButton();
     }
-    
+
     // 2. 动态设置窗口背景色为纯黑
     wx.setBackgroundColor({
       backgroundColor: '#000000',
       backgroundColorTop: '#000000',
       backgroundColorBottom: '#000000',
     });
-    
+
     // 3. 强制状态栏/导航栏为黑色
     wx.setNavigationBarColor({
       frontColor: '#ffffff',
       backgroundColor: '#000000',
       animation: { duration: 0 }
     });
-    
+
     // 保持屏幕常亮
-    wx.setKeepScreenOn({ 
+    wx.setKeepScreenOn({
       keepScreenOn: true,
       fail: () => {
         setTimeout(() => wx.setKeepScreenOn({ keepScreenOn: true }), 1000);
@@ -1250,20 +1250,20 @@ Page({
       // 低版本基础库忽略
     }
 
-    this._windowResizeListener = function() {
+    this._windowResizeListener = function () {
       try {
         this._updateLiveStageLayout();
         this.updateTeamGroupWidth(true);
-      } catch (eRz) {}
+      } catch (eRz) { }
     }.bind(this);
     if (wx.onWindowResize) {
       try {
         wx.onWindowResize(this._windowResizeListener);
-      } catch (eWz) {}
+      } catch (eWz) { }
     }
     try {
       this._updateLiveStageLayout();
-    } catch (eL0) {}
+    } catch (eL0) { }
 
     // 直播核心拉起统一放在 onShow，避免 onLoad + onShow 并发触发 camera 重建。
   },
@@ -1273,7 +1273,7 @@ Page({
    * 设备信息只采集一次存入 header，避免每条 log 都重复写相同字段浪费体积。
    * @returns {void}
    */
-  initHealthLogs: function() {
+  initHealthLogs: function () {
     try {
       const raw = wx.getStorageSync(this._healthLogStorageKey);
       this._healthLogs = Array.isArray(raw) ? raw.slice(-120) : [];
@@ -1304,7 +1304,7 @@ Page({
    * @param {Record<string, unknown>} [detail] 事件详情
    * @returns {void}
    */
-  appendHealthLog: function(eventName, detail) {
+  appendHealthLog: function (eventName, detail) {
     const item = {
       t: Date.now(),
       e: String(eventName || '?'),
@@ -1340,13 +1340,13 @@ Page({
    * 节流写入健康日志到 storage，避免频繁 IO 干扰直播。
    * @returns {void}
    */
-  scheduleHealthLogFlush: function() {
+  scheduleHealthLogFlush: function () {
     if (this._healthLogFlushTimer) return;
     this._healthLogFlushTimer = setTimeout(() => {
       this._healthLogFlushTimer = null;
       try {
         wx.setStorageSync(this._healthLogStorageKey, this._healthLogs.slice(-240));
-      } catch (e) {}
+      } catch (e) { }
     }, 1800);
   },
 
@@ -1355,7 +1355,7 @@ Page({
    * @param {Record<string, unknown>} [extra] 与现场事件相关的附加字段
    * @returns {Record<string, unknown>}
    */
-  getLiveRollingDiagSnapshot: function(extra) {
+  getLiveRollingDiagSnapshot: function (extra) {
     let matchId = '';
     try {
       matchId = String(wx.getStorageSync('currentMatchId') || app.globalData.currentMatchId || '');
@@ -1395,7 +1395,7 @@ Page({
    * @param {string} reason 触发原因（事件名或汇总标签）
    * @returns {void}
    */
-  scheduleRemoteHealthLogUpload: function(reason) {
+  scheduleRemoteHealthLogUpload: function (reason) {
     if (this._remoteHealthLogTimer) {
       this._remoteHealthLogPendingReason = reason || this._remoteHealthLogPendingReason;
       return;
@@ -1412,7 +1412,7 @@ Page({
    * 构造诊断接口要求的自定义 Header，与 Body `device` 一并供服务端合并入 device_json。
    * @returns {Record<string, string>}
    */
-  buildDiagnosticLogHeaders: function() {
+  buildDiagnosticLogHeaders: function () {
     const dev = this._healthLogDevice || {};
     const model = typeof dev.model === 'string' ? dev.model : '';
     const system = typeof dev.system === 'string' ? dev.system : '';
@@ -1440,7 +1440,7 @@ Page({
    * @param {string} reason
    * @returns {void}
    */
-  flushRemoteHealthLogsNow: function(reason) {
+  flushRemoteHealthLogsNow: function (reason) {
     const logs = (this._healthLogs || []).slice(-80);
     if (logs.length === 0) return;
     const device =
@@ -1458,15 +1458,15 @@ Page({
       header.Authorization = `Bearer ${token}`;
     }
     post(API_PATH_CLIENT_DIAGNOSTIC_LOG, payload, { skipAuth: true, header })
-      .then(() => {})
-      .catch(() => {});
+      .then(() => { })
+      .catch(() => { });
   },
 
   /**
    * 手动导出健康日志到剪贴板，便于现场复现后快速回传排查。
    * @returns {void}
    */
-  onExportHealthLogs: function() {
+  onExportHealthLogs: function () {
     const logs = (this._healthLogs || []).slice(-100);
     const payload = {
       at: Date.now(),
@@ -1493,7 +1493,7 @@ Page({
    * 保存高光的事务开始：快速反馈 + UI 锁，防止重复点击引发 I/O 冲突。
    * @returns {void}
    */
-  beginHighlightSaving: function() {
+  beginHighlightSaving: function () {
     if (this._highlightRequestLock) return;
     this._highlightRequestLock = true;
     if (this.data.isSavingHighlight) return;
@@ -1512,7 +1512,7 @@ Page({
           Math.floor(this.segmentDurationMs * 2.25) + 38000
         );
       }
-    } catch (eHt) {}
+    } catch (eHt) { }
     this._highlightSaveHardTimeoutTimer = setTimeout(() => {
       if (!this.data.isSavingHighlight) return;
       this.appendHealthLog('highlight_hard_timeout_unlock', {});
@@ -1526,7 +1526,7 @@ Page({
    * 保存高光的事务结束：关闭 loading + 释放锁。
    * @returns {void}
    */
-  endHighlightSaving: function() {
+  endHighlightSaving: function () {
     this._highlightRequestLock = false;
     if (this.data.isSavingHighlight) {
       this.setData({ isSavingHighlight: false });
@@ -1553,7 +1553,7 @@ Page({
    * 停止高光保存进度环（状态灯上的低透明度 conic）。
    * @returns {void}
    */
-  stopHighlightSaveProgressAnim: function() {
+  stopHighlightSaveProgressAnim: function () {
     if (this._highlightSaveProgressTimer) {
       clearInterval(this._highlightSaveProgressTimer);
       this._highlightSaveProgressTimer = null;
@@ -1570,7 +1570,7 @@ Page({
    * @param {number} endWallMs 进度终点墙钟（自然分段场景为当前段理论结束）
    * @returns {void}
    */
-  startHighlightSaveProgressAnim: function(startWallMs, endWallMs) {
+  startHighlightSaveProgressAnim: function (startWallMs, endWallMs) {
     this.stopHighlightSaveProgressAnim();
     const start = typeof startWallMs === 'number' ? startWallMs : Date.now();
     const end = typeof endWallMs === 'number' ? endWallMs : start + 600;
@@ -1605,7 +1605,7 @@ Page({
    * 重置「截断保存」双闸门状态（出错、会话失效、页面离开时调用）。
    * @returns {void}
    */
-  clearHighlightSavePipelineState: function() {
+  clearHighlightSavePipelineState: function () {
     this._highlightSaveAwaitingResume = false;
     this._highlightPipelineDoneFinalize = false;
     this._highlightPipelineDoneResume = false;
@@ -1629,7 +1629,7 @@ Page({
    * finalize 与下一段录制均完成时释放 {@link data.isSavingHighlight}。
    * @returns {void}
    */
-  maybeReleaseHighlightSaveLock: function() {
+  maybeReleaseHighlightSaveLock: function () {
     if (!this._highlightSaveAwaitingResume) return;
     if (this._highlightPipelineDoneFinalize && this._highlightPipelineDoneResume) {
       this.clearHighlightSavePipelineState();
@@ -1641,7 +1641,7 @@ Page({
    * finalize 已完成但下一段 startRecord 迟迟未成功时，解锁保存锁并触发延迟回放，避免界面永久卡住。
    * @returns {void}
    */
-  scheduleHighlightResumeUnlockFallback: function() {
+  scheduleHighlightResumeUnlockFallback: function () {
     if (this._highlightResumeUnlockFallbackTimer) {
       clearTimeout(this._highlightResumeUnlockFallbackTimer);
       this._highlightResumeUnlockFallbackTimer = null;
@@ -1674,7 +1674,7 @@ Page({
    * @param {string} reason 诊断用原因码
    * @returns {void}
    */
-  abortHighlightAfterStopIfNeeded: function(sessionId, reason) {
+  abortHighlightAfterStopIfNeeded: function (sessionId, reason) {
     const hm = this._highlightAfterStopMeta;
     if (!hm || hm.recordSessionId !== sessionId) return;
     this.appendHealthLog('highlight_after_stop_abort', { reason });
@@ -1732,7 +1732,7 @@ Page({
   },
 
   // 相机初始化完成回调
-  onCameraInit: function(e) {
+  onCameraInit: function (e) {
     if (this._cameraShowInitWatchTimer) {
       clearTimeout(this._cameraShowInitWatchTimer);
       this._cameraShowInitWatchTimer = null;
@@ -1766,7 +1766,7 @@ Page({
         if (this.data.cameraContext && this.data.cameraContext.setZoom) {
           try {
             this.data.cameraContext.setZoom({ zoom: previewZ });
-          } catch (ez) {}
+          } catch (ez) { }
         }
         this.maybeSchedulePostZoomSilentFocus();
         this.detectCameraCapabilities({
@@ -1778,12 +1778,12 @@ Page({
         var pzInit = previewZ;
         var capMz = minZoomRaw;
         var capMax = maxZoom;
-        setTimeout(function() {
-          selfInit.setData({ zoom: pzInit }, function() {
+        setTimeout(function () {
+          selfInit.setData({ zoom: pzInit }, function () {
             if (selfInit.data.cameraContext && selfInit.data.cameraContext.setZoom) {
               try {
                 selfInit.data.cameraContext.setZoom({ zoom: pzInit });
-              } catch (ez2) {}
+              } catch (ez2) { }
             }
             selfInit.maybeSchedulePostZoomSilentFocus();
             selfInit.detectCameraCapabilities({
@@ -1867,7 +1867,7 @@ Page({
    * 幂等：存在旧管线先销毁再重建（硬恢复后调用同样安全）。
    * @returns {void}
    */
-  _maybeBootEnhanceRender: function() {
+  _maybeBootEnhanceRender: function () {
     var enabled = !!(app.globalData && app.globalData.enableEnhanceRender);
     if (!enabled) return;
     var initial = this._pendingEnhanceModeAfterBoot
@@ -1885,7 +1885,7 @@ Page({
     }
     if (!this.data.cameraContext) return;
     if (this._renderPipeline) {
-      try { this._renderPipeline.destroy(); } catch (eDestroy) {}
+      try { this._renderPipeline.destroy(); } catch (eDestroy) { }
       this._renderPipeline = null;
     }
     var cssW = 375;
@@ -1894,14 +1894,14 @@ Page({
       var si = wx.getSystemInfoSync();
       cssW = si.windowWidth || cssW;
       cssH = si.windowHeight || cssH;
-    } catch (eInfo) {}
+    } catch (eInfo) { }
     var stageBox = computeLiveStage16x9SizePx(cssW, cssH);
     try {
       this._updateLiveStageLayout();
-    } catch (eL2) {}
+    } catch (eL2) { }
     var self = this;
     // 先挂 canvas 节点（wx:if），下一 tick 再 init，确保节点已进入渲染树。
-    this.setData({ enhanceCanvasVisible: true }, function() {
+    this.setData({ enhanceCanvasVisible: true }, function () {
       var pipeline = renderPipelineMod.createRenderPipeline();
       self._renderPipeline = pipeline;
       pipeline.init({
@@ -1912,7 +1912,7 @@ Page({
         cssH: stageBox.h,
         // VK 分支保留接口但本轮不启用：保守优先，避免与 startRecord 冲突
         preferVk: false
-      }).then(function() {
+      }).then(function () {
         if (self._renderPipeline !== pipeline) return;
         var initial = self._pendingEnhanceModeAfterBoot
           || self._pendingEnhanceModeAfterVk
@@ -1936,7 +1936,7 @@ Page({
         if (typeof self._applyPendingEnhanceModeAfterRecover === 'function') {
           self._applyPendingEnhanceModeAfterRecover();
         }
-      }).catch(function(err) {
+      }).catch(function (err) {
         self._pendingEnhanceModeAfterRecover = null;
         self.appendHealthLog('enhance_render_boot_fail', {
           errMsg: (err && err.message) || String(err),
@@ -1945,7 +1945,7 @@ Page({
         });
         self.setData({ enhanceCanvasVisible: false, enhanceMode: 'off' });
         if (self._renderPipeline === pipeline) {
-          try { pipeline.destroy(); } catch (eD) {}
+          try { pipeline.destroy(); } catch (eD) { }
           self._renderPipeline = null;
         }
       });
@@ -1958,10 +1958,10 @@ Page({
    * onCameraFrame listener / VKSession / GL 资源悬挂。
    * @returns {void}
    */
-  _teardownEnhanceRender: function() {
+  _teardownEnhanceRender: function () {
     this._cleanupVkCanvasHighlightRecording('teardown_enhance');
     if (this._renderPipeline) {
-      try { this._renderPipeline.destroy(); } catch (e) {}
+      try { this._renderPipeline.destroy(); } catch (e) { }
       this._renderPipeline = null;
     }
     if (this.data.enhanceCanvasVisible || this.data.enhanceMode !== 'off') {
@@ -1974,7 +1974,7 @@ Page({
    * 边距为页底黑。
    * @returns {void}
    */
-  _updateLiveStageLayout: function() {
+  _updateLiveStageLayout: function () {
     var sysW = 375;
     var sysH = 667;
     var sL = 0;
@@ -1989,7 +1989,7 @@ Page({
         sB = Math.max(0, sysH - (si.safeArea.top + (si.safeArea.height || 0)));
         sR = Math.max(0, sysW - (si.safeArea.left + (si.safeArea.width || 0)));
       }
-    } catch (e) {}
+    } catch (e) { }
     var box = computeLiveStage16x9SizePx(sysW, sysH);
     var style = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);' +
       'width:' + box.w + 'px;height:' + box.h + 'px;';
@@ -2012,7 +2012,7 @@ Page({
     if (this._renderPipeline && typeof this._renderPipeline.resizeToCssPixels === 'function') {
       try {
         this._renderPipeline.resizeToCssPixels(box.w, box.h);
-      } catch (e1) {}
+      } catch (e1) { }
     }
   },
 
@@ -2029,7 +2029,7 @@ Page({
    *
    * @returns {void}
    */
-  _bootVkPipeline: function() {
+  _bootVkPipeline: function () {
     if (!this.data.enhanceVkSupported) return;
     var self = this;
     var cssW = 375;
@@ -2038,17 +2038,17 @@ Page({
       var si = wx.getSystemInfoSync();
       cssW = si.windowWidth || cssW;
       cssH = si.windowHeight || cssH;
-    } catch (eInfo) {}
+    } catch (eInfo) { }
     var stageBoxVk = computeLiveStage16x9SizePx(cssW, cssH);
     try {
       this._updateLiveStageLayout();
-    } catch (eL3) {}
+    } catch (eL3) { }
     // 清理旧管线
     if (this._renderPipeline) {
-      try { this._renderPipeline.destroy(); } catch (eD) {}
+      try { this._renderPipeline.destroy(); } catch (eD) { }
       this._renderPipeline = null;
     }
-    this.setData({ enhanceCanvasVisible: true }, function() {
+    this.setData({ enhanceCanvasVisible: true }, function () {
       var pipeline = renderPipelineMod.createRenderPipeline();
       self._renderPipeline = pipeline;
       pipeline.init({
@@ -2058,7 +2058,7 @@ Page({
         cssW: stageBoxVk.w,
         cssH: stageBoxVk.h,
         sourceKind: 'vk',
-        onVkDegrade: function(info) {
+        onVkDegrade: function (info) {
           self._cleanupVkCanvasHighlightRecording('vk_degrade');
           // VK 家族自动降级：orchestrator 切回 standard；向用户 toast 说明
           self.appendHealthLog('vk_auto_degrade', info);
@@ -2072,18 +2072,18 @@ Page({
             // FPS / stalled 触发的软降级
             title = '超频画面不稳，已回到标准模式';
           }
-          try { console.warn('[live][vk] auto-degrade', info); } catch (_) {}
+          try { console.warn('[live][vk] auto-degrade', info); } catch (_) { }
           wx.showToast({
             title: title,
             icon: 'none',
             duration: 3000
           });
           self._orchestrateSwitchFromVk('standard');
-          setTimeout(function() {
-            try { self.updatePipelineHealth(); } catch (eH) {}
+          setTimeout(function () {
+            try { self.updatePipelineHealth(); } catch (eH) { }
           }, 500);
         }
-      }).then(function() {
+      }).then(function () {
         if (self._renderPipeline !== pipeline) return;
         pipeline.setMode('vk', { reason: 'user', force: true });
         pipeline.start();
@@ -2091,7 +2091,7 @@ Page({
           if (typeof pipeline.setVkZoom === 'function') {
             pipeline.setVkZoom(1);
           }
-        } catch (eZ0) {}
+        } catch (eZ0) { }
         self.setData({
           enhanceVkTransitioning: false,
           zoom: 1,
@@ -2103,7 +2103,7 @@ Page({
           device: (app.globalData && app.globalData.enhanceDeviceTag) || '',
           reason: (app.globalData && app.globalData.vkModeReason) || ''
         });
-      }).catch(function(err) {
+      }).catch(function (err) {
         var msg = (err && (err.message || err.errMsg)) || String(err);
         var code = (err && err.errCode) ? String(err.errCode) : '';
         self.appendHealthLog('vk_boot_fail', {
@@ -2111,8 +2111,8 @@ Page({
           errCode: code,
           device: (app.globalData && app.globalData.enhanceDeviceTag) || ''
         });
-        try { console.error('[live][vk] boot failed', err); } catch (_) {}
-        try { pipeline.destroy(); } catch (eD) {}
+        try { console.error('[live][vk] boot failed', err); } catch (_) { }
+        try { pipeline.destroy(); } catch (eD) { }
         if (self._renderPipeline === pipeline) self._renderPipeline = null;
         // 失败 → 自动切回 standard（重建 camera + 重启 rolling）
         self._orchestrateSwitchFromVk('standard');
@@ -2143,7 +2143,7 @@ Page({
    *
    * @returns {void}
    */
-  _orchestrateSwitchToVk: function() {
+  _orchestrateSwitchToVk: function () {
     if (!this.data.enhanceVkSupported) return;
     if (this.data.enhanceMode === 'vk') return;
     if (this.data.enhanceVkTransitioning) return;
@@ -2154,13 +2154,13 @@ Page({
       confirmText: '进入超频',
       cancelText: '取消',
       confirmColor: '#E64340',
-      success: function(res) {
+      success: function (res) {
         if (!res || !res.confirm) return;
         self._enhanceModeSwitchGuardUntil = Date.now() + ENHANCE_SWITCH_GUARD_MS;
         self.setData({ enhanceVkTransitioning: true });
         self.appendHealthLog('vk_switch_in_begin', {});
         // 先停 rolling；stopRollingRecording 是幂等的，完成后回调内继续。
-        self.stopRollingRecording(function() {
+        self.stopRollingRecording(function () {
           // 销毁原生增强管线
           self._teardownEnhanceRender();
           // 卸 camera（利用 rebuildCameraComponent 的锁语义，但我们不重新 mount）
@@ -2168,14 +2168,14 @@ Page({
             cameraMounted: false,
             cameraContext: null,
             isRecording: false
-          }, function() {
+          }, function () {
             // 留足时间让原生 camera 句柄释放，避免 VKSession.start 与硬件争用黑屏。
             var bootDelay = VK_BOOT_DELAY_MS_ANDROID;
             try {
               var siVk = wx.getSystemInfoSync();
               if (siVk && siVk.platform === 'ios') bootDelay = VK_BOOT_DELAY_MS_IOS;
-            } catch (eVkD) {}
-            setTimeout(function() {
+            } catch (eVkD) { }
+            setTimeout(function () {
               if (!self._livePageVisible) {
                 // 中途切后台 → 直接取消
                 self.setData({ enhanceVkTransitioning: false });
@@ -2205,7 +2205,7 @@ Page({
    *
    * @param {'off'|'standard'|'strong'} targetMode
    */
-  _orchestrateSwitchFromVk: function(targetMode) {
+  _orchestrateSwitchFromVk: function (targetMode) {
     if (this.data.enhanceMode !== 'vk' && !this.data.enhanceVkTransitioning) {
       // 已不在 VK 模式且没在切换中：仅做普通 setMode
       if (typeof this.setEnhanceMode === 'function') this.setEnhanceMode(targetMode);
@@ -2221,14 +2221,14 @@ Page({
     self._pendingEnhanceModeAfterVk = targetMode;
     // 重建 camera 组件（rebuildCameraComponent 里会调 _teardownEnhanceRender + mount=false）
     // 然后我们在其回调里 setData({cameraMounted:true}) 触发新组件渲染与 bindinitdone
-    self.rebuildCameraComponent(function() {
+    self.rebuildCameraComponent(function () {
       var mountExtra = 0;
       try {
         var siMount = wx.getSystemInfoSync();
         if (siMount && siMount.platform === 'ios') mountExtra = VK_POST_TEARDOWN_MOUNT_EXTRA_MS_IOS;
-      } catch (eM) {}
-      setTimeout(function() {
-        self.setData({ cameraMounted: true, cameraContext: wx.createCameraContext(self) }, function() {
+      } catch (eM) { }
+      setTimeout(function () {
+        self.setData({ cameraMounted: true, cameraContext: wx.createCameraContext(self) }, function () {
           // camera 的 onCameraInit 会触发 tryStartRollingWhenCameraReady 与 _maybeBootEnhanceRender
           // 这里只负责把转场标志撤掉；真正的 setMode 在 _maybeBootEnhanceRender 完成后被 _applyPendingEnhanceModeAfterVk 消费
           self.setData({ enhanceVkTransitioning: false });
@@ -2242,7 +2242,7 @@ Page({
    * 若目标是 'off'，直接销毁刚启动的增强管线并隐藏 canvas。
    * @returns {void}
    */
-  _applyPendingEnhanceModeAfterVk: function() {
+  _applyPendingEnhanceModeAfterVk: function () {
     var target = this._pendingEnhanceModeAfterVk;
     if (!target) return;
     this._pendingEnhanceModeAfterVk = null;
@@ -2251,7 +2251,7 @@ Page({
       return;
     }
     if (this._renderPipeline && typeof this._renderPipeline.setMode === 'function') {
-      try { this._renderPipeline.setMode(target, { reason: 'user', force: true }); } catch (e) {}
+      try { this._renderPipeline.setMode(target, { reason: 'user', force: true }); } catch (e) { }
     }
   },
 
@@ -2259,7 +2259,7 @@ Page({
    * 零帧自愈重建管线成功后，将档位设回用户所选（非 VK）。
    * @returns {void}
    */
-  _applyPendingEnhanceModeAfterRecover: function() {
+  _applyPendingEnhanceModeAfterRecover: function () {
     var target = this._pendingEnhanceModeAfterRecover;
     if (!target) return;
     this._pendingEnhanceModeAfterRecover = null;
@@ -2268,7 +2268,7 @@ Page({
       return;
     }
     if (this._renderPipeline && typeof this._renderPipeline.setMode === 'function') {
-      try { this._renderPipeline.setMode(target, { reason: 'user', force: true }); } catch (e) {}
+      try { this._renderPipeline.setMode(target, { reason: 'user', force: true }); } catch (e) { }
     }
   },
 
@@ -2278,7 +2278,7 @@ Page({
    * @param {string} msg
    * @returns {string}
    */
-  _vkErrorToHuman: function(msg) {
+  _vkErrorToHuman: function (msg) {
     if (!msg) return '超频模式启动失败，已回到标准模式';
     if (msg.indexOf('[vk:create]') !== -1) {
       return '超频初始化失败，本机暂不支持，已回到标准';
@@ -2305,11 +2305,11 @@ Page({
    * @param {'off'|'lite'|'standard'|'strong'} mode
    * @returns {void}
    */
-  setEnhanceMode: function(mode) {
+  setEnhanceMode: function (mode) {
     if (this._cameraRebuildLock) {
       try {
         wx.showToast({ title: '相机重建中，请稍候', icon: 'none', duration: 1200 });
-      } catch (eT) {}
+      } catch (eT) { }
       return;
     }
     /**
@@ -2329,7 +2329,7 @@ Page({
     }
     this._renderPipeline.setMode(mode, { reason: 'user', force: true });
     if (mode !== 'off' && this._renderPipeline && typeof this._renderPipeline.start === 'function') {
-      try { this._renderPipeline.start(); } catch (eS) {}
+      try { this._renderPipeline.start(); } catch (eS) { }
     }
     this.resetViewModeToNormal();
     this.syncNativeEnhanceZoomCompensation(1);
@@ -2341,7 +2341,7 @@ Page({
    * @param {Object|null} pipeRef createRenderPipeline() 返回的同一引用
    * @returns {void}
    */
-  _deferTeardownEnhanceForPipeline: function(pipeRef) {
+  _deferTeardownEnhanceForPipeline: function (pipeRef) {
     if (!this._livePageVisible) return;
     if (!pipeRef || this._renderPipeline !== pipeRef) return;
     this._teardownEnhanceRender();
@@ -2352,7 +2352,7 @@ Page({
    * @param {WechatMiniprogram.CustomEvent} e
    * @returns {void}
    */
-  onCameraStop: function(e) {
+  onCameraStop: function (e) {
     const detail = (e && e.detail) || {};
     const reason = detail && detail.reason ? String(detail.reason) : '';
     this.appendHealthLog('camera_stop', { reason });
@@ -2364,7 +2364,7 @@ Page({
    * @param {WechatMiniprogram.CustomEvent} e
    * @returns {void}
    */
-  onCameraError: function(e) {
+  onCameraError: function (e) {
     const detail = (e && e.detail) || {};
     const errMsg = detail && detail.errMsg ? String(detail.errMsg) : '';
     this.appendHealthLog('camera_error', { errMsg });
@@ -2425,7 +2425,7 @@ Page({
    * @param {string} reason
    * @returns {void}
    */
-  triggerCameraFaultRecovery: function(reason) {
+  triggerCameraFaultRecovery: function (reason) {
     if (!this.data.liveStreamAllowed) return;
     if (!this._livePageVisible) {
       this.appendHealthLog('camera_fault_recovery_skip_page_hidden', {
@@ -2462,7 +2462,7 @@ Page({
    * @param {function(): void} [onRebuilt]
    * @returns {void}
    */
-  rebuildCameraComponent: function(onRebuilt) {
+  rebuildCameraComponent: function (onRebuilt) {
     if (this._cameraRebuildLock) {
       if (typeof onRebuilt === 'function') {
         this._cameraRebuildQueue.push(onRebuilt);
@@ -2508,7 +2508,7 @@ Page({
    * 非上述平台返回 0。
    * @returns {number}
    */
-  getAdaptiveRecordCooldownExtraMs: function() {
+  getAdaptiveRecordCooldownExtraMs: function () {
     try {
       const si = wx.getSystemInfoSync();
       if (!si) return 0;
@@ -2532,7 +2532,7 @@ Page({
    * Android 返回 0。
    * @returns {number}
    */
-  getIosParallelRollingStopExtraMs: function() {
+  getIosParallelRollingStopExtraMs: function () {
     try {
       const si = wx.getSystemInfoSync();
       if (!si || si.platform !== 'ios') return 0;
@@ -2548,7 +2548,7 @@ Page({
    * 小米等 Android：第二次及以后若不再 stopRecord、仅靠短重试会永久与 Native 录制态脱节。
    * @returns {number}
    */
-  getIsRecordingConflictExtraStartDelayMs: function() {
+  getIsRecordingConflictExtraStartDelayMs: function () {
     const streak = typeof this.startRecordFailStreak === 'number' ? this.startRecordFailStreak : 0;
     if (streak < 2) return 0;
     try {
@@ -2573,7 +2573,7 @@ Page({
    * @param {function(): void} fn
    * @returns {void}
    */
-  scheduleAfterStopRecord: function(fn) {
+  scheduleAfterStopRecord: function (fn) {
     const base = this.recordCooldownAfterStopMs || 500;
     const ms =
       base + this.getAdaptiveRecordCooldownExtraMs() + this.getIosParallelRollingStopExtraMs();
@@ -2599,7 +2599,7 @@ Page({
    * 清理 startOneSegment 延迟重试 timer，避免形成并发重试链。
    * @returns {void}
    */
-  clearSegmentStartRetryTimer: function() {
+  clearSegmentStartRetryTimer: function () {
     if (this._segmentStartRetryTimer) {
       clearTimeout(this._segmentStartRetryTimer);
       this._segmentStartRetryTimer = null;
@@ -2613,7 +2613,7 @@ Page({
    * @param {number} delayMs
    * @returns {void}
    */
-  scheduleStartOneSegmentRetry: function(sessionId, retryCount, delayMs) {
+  scheduleStartOneSegmentRetry: function (sessionId, retryCount, delayMs) {
     this.clearSegmentStartRetryTimer();
     this._segmentStartRetryTimer = setTimeout(() => {
       this._segmentStartRetryTimer = null;
@@ -2626,7 +2626,7 @@ Page({
    * @param {number} segNo 当前段序号
    * @returns {{ path: string, segNo: number, recordStartMs?: number } | null}
    */
-  pickPrevRollingEntry: function(segNo) {
+  pickPrevRollingEntry: function (segNo) {
     const want = (typeof segNo === 'number' ? segNo : 0) - 1;
     if (want < 1) return null;
     const buf = this.segmentBuffer || [];
@@ -2648,7 +2648,7 @@ Page({
    * @param {{ recordStartMs?: number }} freshEntry 当前段
    * @returns {boolean} 为 true 时应丢弃双段、仅用当前段
    */
-  isRollingSegmentGapTooLargeForChain: function(prevEntry, freshEntry) {
+  isRollingSegmentGapTooLargeForChain: function (prevEntry, freshEntry) {
     const dur = this.segmentDurationMs || 16000;
     const ps = prevEntry && typeof prevEntry.recordStartMs === 'number' ? prevEntry.recordStartMs : 0;
     const fs = freshEntry && typeof freshEntry.recordStartMs === 'number' ? freshEntry.recordStartMs : 0;
@@ -2694,7 +2694,7 @@ Page({
    *   anchorPrevEntry: ({ path: string, segNo: number, recordStartMs?: number } | null)
    * } | null}
    */
-  resolveHighlightAnchorEntries: function(freshEntry, prevEntry, clickWallMs) {
+  resolveHighlightAnchorEntries: function (freshEntry, prevEntry, clickWallMs) {
     if (!freshEntry || !freshEntry.path) return null;
     const clickMs = typeof clickWallMs === 'number' ? clickWallMs : 0;
     const freshStart = typeof freshEntry.recordStartMs === 'number' ? freshEntry.recordStartMs : 0;
@@ -2737,7 +2737,7 @@ Page({
    *   replayChainPart2StopAtSec: number | null
    * }}
    */
-  buildHighlightPlaybackPlan: function(freshEntry, clickWallMs, prevEntry) {
+  buildHighlightPlaybackPlan: function (freshEntry, clickWallMs, prevEntry) {
     const segLenSec = this.segmentDurationMs / 1000;
     const windowSec = (this.highlightPlaybackWindowMs || 8000) / 1000;
     const rs =
@@ -2803,7 +2803,7 @@ Page({
    * 会遗留「假 true」，此处若拦截则永远无法 startRollingRecording，高光永远无片段。
    * @returns {void}
    */
-  tryStartRollingWhenCameraReady: function() {
+  tryStartRollingWhenCameraReady: function () {
     const now = Date.now();
     if (this._fileQuotaCircuitUntil && now < this._fileQuotaCircuitUntil) {
       this.appendHealthLog('rolling_start_blocked_by_file_quota_circuit', {
@@ -2816,7 +2816,7 @@ Page({
     this.startRollingRecording();
   },
 
-  updateZoom: function(zoomVal) {
+  updateZoom: function (zoomVal) {
     /** 超频（VK）模式使用渲染管线数字变焦；原生家族使用 camera.setZoom。 */
     var isVkMode = this.data.enhanceMode === 'vk';
     var minZ = 1;
@@ -2838,13 +2838,13 @@ Page({
     /**
      * @returns {void}
      */
-    var applyCtxZoomAndEnhance = function() {
+    var applyCtxZoomAndEnhance = function () {
       if (selfZ.data.cameraContext && selfZ.data.cameraContext.setZoom) {
         try {
           selfZ.data.cameraContext.setZoom({
             zoom: actualZoom
           });
-        } catch (eCtx) {}
+        } catch (eCtx) { }
       }
       selfZ.syncNativeEnhanceZoomCompensation(actualZoom);
       selfZ.maybeSchedulePostZoomSilentFocus();
@@ -2855,7 +2855,7 @@ Page({
       if (this._renderPipeline && typeof this._renderPipeline.setVkZoom === 'function') {
         try {
           this._renderPipeline.setVkZoom(actualZoom);
-        } catch (eZ) {}
+        } catch (eZ) { }
       }
       return;
     }
@@ -2873,16 +2873,16 @@ Page({
    * @param {number} zoomVal
    * @returns {void}
    */
-  syncNativeEnhanceZoomCompensation: function(zoomVal) {
+  syncNativeEnhanceZoomCompensation: function (zoomVal) {
     if (!this._renderPipeline || typeof this._renderPipeline.setNativeZoomCompensation !== 'function') return;
     var mode = this.data.enhanceMode;
     var caps = this._cameraCaps || {};
     if (mode !== 'standard' && mode !== 'strong') {
-      try { this._renderPipeline.setNativeZoomCompensation(1); } catch (e0) {}
+      try { this._renderPipeline.setNativeZoomCompensation(1); } catch (e0) { }
       return;
     }
     if (!caps.hasUltraWide) {
-      try { this._renderPipeline.setNativeZoomCompensation(1); } catch (e1) {}
+      try { this._renderPipeline.setNativeZoomCompensation(1); } catch (e1) { }
       return;
     }
     var base = 1;
@@ -2893,7 +2893,7 @@ Page({
     if (!isFinite(z) || z <= 0) z = this.data.zoom || 1;
     var comp = z / Math.max(0.2, base);
     if (!isFinite(comp) || comp < 1) comp = 1;
-    try { this._renderPipeline.setNativeZoomCompensation(comp); } catch (e2) {}
+    try { this._renderPipeline.setNativeZoomCompensation(comp); } catch (e2) { }
   },
 
   /**
@@ -2903,7 +2903,7 @@ Page({
    * @param {{ minZoom?: number, maxZoom?: number }} [hint]
    * @returns {void}
    */
-  detectCameraCapabilities: function(hint) {
+  detectCameraCapabilities: function (hint) {
     var maxZ = (hint && hint.maxZoom) || this.data.maxZoom || 10;
     var minRaw = hint && typeof hint.minZoom === 'number' && isFinite(hint.minZoom) ? hint.minZoom : null;
     if (minRaw === null && hint && hint.minZoom != null && hint.minZoom !== '') {
@@ -2953,7 +2953,7 @@ Page({
    * @param {number|null} [minRawHint] bindinitdone.minZoom，可能为 null
    * @returns {void}
    */
-  _probeAndroidUltraWideZoom: function(maxZ, minRawHint) {
+  _probeAndroidUltraWideZoom: function (maxZ, minRawHint) {
     var self = this;
     var ctx = this.data.cameraContext;
     if (!ctx || typeof ctx.setZoom !== 'function') {
@@ -2966,12 +2966,12 @@ Page({
      * 探测结束后回到默认预览倍率（须先写 data.zoom，再 setZoom，与 &lt;camera zoom&gt; 绑定一致）。
      * @returns {void}
      */
-    var restore = function() {
+    var restore = function () {
       if (!self.data.cameraContext || typeof self.data.cameraContext.setZoom !== 'function') return;
-      self.setData({ zoom: restoreZ }, function() {
+      self.setData({ zoom: restoreZ }, function () {
         try {
           self.data.cameraContext.setZoom({ zoom: restoreZ });
-        } catch (er) {}
+        } catch (er) { }
       });
     };
     var rawList = [0.6, 0.5, 0.55, 0.65, 2 / 3, 0.625];
@@ -2997,7 +2997,7 @@ Page({
      * 当前候选失败则试下一档。
      * @returns {void}
      */
-    var onCandidateFail = function() {
+    var onCandidateFail = function () {
       ci++;
       if (ci >= candidates.length) {
         if (typeof minRawHint === 'number' && minRawHint > 0 && minRawHint < 0.999) {
@@ -3021,14 +3021,14 @@ Page({
      * @param {number} z
      * @returns {void}
      */
-    var tryCandidate = function(z) {
+    var tryCandidate = function (z) {
       var settled = false;
       try {
-        self.setData({ zoom: z }, function() {
+        self.setData({ zoom: z }, function () {
           try {
             ctx.setZoom({
               zoom: z,
-              success: function() {
+              success: function () {
                 if (settled) return;
                 settled = true;
                 self._cameraCaps = {
@@ -3040,13 +3040,13 @@ Page({
                 self.rebuildCameraViewModeStops();
                 restore();
               },
-              fail: function() {
+              fail: function () {
                 if (settled) return;
                 settled = true;
                 onCandidateFail();
               },
-              complete: function() {
-                setTimeout(function() {
+              complete: function () {
+                setTimeout(function () {
                   if (settled) return;
                   settled = true;
                   onCandidateFail();
@@ -3071,7 +3071,7 @@ Page({
    * 进入页面 / 复位机位时使用的默认预览 zoom（iOS max≥2 时为 2，接近系统「1×」主摄）。
    * @returns {number}
    */
-  getDeviceDefaultPreviewZoom: function() {
+  getDeviceDefaultPreviewZoom: function () {
     return getDefaultPreviewZoomForMax(this.data.maxZoom || 10);
   },
 
@@ -3079,7 +3079,7 @@ Page({
    * 根据当前能力生成机位按钮：支持超广则显示「广角」，其余使用数字倍数。
    * @returns {void}
    */
-  rebuildCameraViewModeStops: function() {
+  rebuildCameraViewModeStops: function () {
     var caps = this._cameraCaps || {};
     var maxZ = this.data.maxZoom || caps.maxZoom || 10;
     var isIos = isLiveHostIos();
@@ -3122,7 +3122,7 @@ Page({
    * @param {{ skipCamera?: boolean }} [opts] skipCamera：仅更新 data，不调 setZoom（如相机即将卸载）。
    * @returns {void}
    */
-  resetViewModeToNormal: function(opts) {
+  resetViewModeToNormal: function (opts) {
     var skip = opts && opts.skipCamera;
     var defZ = this.getDeviceDefaultPreviewZoom();
     var selfR = this;
@@ -3142,7 +3142,7 @@ Page({
       if (this.data.cameraContext && this.data.cameraContext.setZoom) {
         try {
           this.data.cameraContext.setZoom({ zoom: defZ });
-        } catch (eZ) {}
+        } catch (eZ) { }
       }
     } else {
       this.setData(
@@ -3150,11 +3150,11 @@ Page({
           cameraViewMode: CameraViewMode.NORMAL,
           zoom: defZ
         },
-        function() {
+        function () {
           if (selfR.data.cameraContext && selfR.data.cameraContext.setZoom) {
             try {
               selfR.data.cameraContext.setZoom({ zoom: defZ });
-            } catch (eZ2) {}
+            } catch (eZ2) { }
           }
         }
       );
@@ -3167,11 +3167,11 @@ Page({
    * @param {'wide'|'normal'|'close'} mode
    * @returns {void}
    */
-  applyViewMode: function(mode) {
+  applyViewMode: function (mode) {
     if (this.data.enhanceMode === 'vk') {
       try {
         wx.showToast({ title: '超频模式已隐藏机位按钮，可双指缩放', icon: 'none', duration: 2000 });
-      } catch (eT) {}
+      } catch (eT) { }
       return;
     }
     if (this.data.drawerMode !== 0) return;
@@ -3188,7 +3188,7 @@ Page({
       if (mode === CameraViewMode.WIDE) {
         try {
           wx.showToast({ title: '当前设备不支持广角', icon: 'none', duration: 2000 });
-        } catch (eNoW) {}
+        } catch (eNoW) { }
       }
       return;
     }
@@ -3214,7 +3214,7 @@ Page({
     if (this._renderPipeline && typeof this._renderPipeline.pauseAutoDegradeOnce === 'function') {
       try {
         this._renderPipeline.pauseAutoDegradeOnce();
-      } catch (eP) {}
+      } catch (eP) { }
     }
   },
 
@@ -3222,7 +3222,7 @@ Page({
    * 首次进入超频（VK）成功后提示无机位切换（本地存储去重）。
    * @returns {void}
    */
-  _maybeToastVkViewModeOnce: function() {
+  _maybeToastVkViewModeOnce: function () {
     try {
       if (wx.getStorageSync(STORAGE_VK_VIEW_MODE_HINT)) return;
       wx.setStorageSync(STORAGE_VK_VIEW_MODE_HINT, '1');
@@ -3231,7 +3231,7 @@ Page({
         icon: 'none',
         duration: 2800
       });
-    } catch (e) {}
+    } catch (e) { }
   },
 
   // 辅助变量
@@ -3244,7 +3244,7 @@ Page({
   pinchStartZoom: 1,
 
   // 双指缩放逻辑
-  onTouchStart: function(e) {
+  onTouchStart: function (e) {
     if (e.touches && e.touches.length >= 2) {
       this._everHadMultiTouch = true;
       this._aeTwoFinger = {
@@ -3270,7 +3270,7 @@ Page({
     }
   },
 
-  onTouchMove: function(e) {
+  onTouchMove: function (e) {
     // EV 调节已收敛到右侧小太阳滑条，画面单指移动不再抢占 EV，避免与 tap 对焦冲突
     if (e.touches && e.touches.length === 1 && this._tapStart) {
       const t = e.touches[0];
@@ -3304,13 +3304,13 @@ Page({
     }
     const currentDistance = this.getDistance(e.touches[0], e.touches[1]);
     if (currentDistance <= 0) return;
-    
+
     const ratio = currentDistance / this.pinchStartDistance;
     const newZoomVal = this.pinchStartZoom * ratio;
     this.updateZoom(newZoomVal);
   },
 
-  onTouchEnd: function(e) {
+  onTouchEnd: function (e) {
     this.onScoreTouchEnd(); // 防止干扰记分长按
     if (e.touches && e.touches.length === 0) {
       if (this._aeTwoFinger) {
@@ -3359,13 +3359,13 @@ Page({
    * 左下角与 REC 对称的「相机」快捷：展开/收拢变焦+对焦行。
    * @returns {void}
    */
-  onCameraSettingsFabTap: function() {
+  onCameraSettingsFabTap: function () {
     if (this.data.drawerMode !== 0) return;
     if (this.data.enhanceMode === 'vk') return;
     if (!this.data.cameraMounted || !this.data.liveStreamAllowed || this.data.isReplaying) return;
     try {
       this._updateLiveStageLayout();
-    } catch (eU) {}
+    } catch (eU) { }
     this.setData({ cameraSettingsOpen: !this.data.cameraSettingsOpen });
   },
 
@@ -3374,7 +3374,7 @@ Page({
    * @param {WechatMiniprogram.TouchEvent} e
    * @returns {void}
    */
-  onCameraViewModeTap: function(e) {
+  onCameraViewModeTap: function (e) {
     if (this.data.drawerMode !== 0) return;
     var mode = e.currentTarget && e.currentTarget.dataset
       ? e.currentTarget.dataset.mode
@@ -3388,14 +3388,14 @@ Page({
    * 「调焦/变焦」侧栏内「对焦」项：呼出对焦点与曝光条。
    * @returns {void}
    */
-  onCameraFocusControlTap: function() {
+  onCameraFocusControlTap: function () {
     if (this.data.drawerMode !== 0) return;
     if (!this.data.cameraMounted || !this.data.cameraContext || !this._cameraInitDone) return;
     this.setData({ cameraSettingsOpen: false });
     this.wakeLiveAeControls();
   },
 
-  getDistance: function(p1, p2) {
+  getDistance: function (p1, p2) {
     const x = p2.pageX - p1.pageX;
     const y = p2.pageY - p1.pageY;
     return Math.sqrt(x * x + y * y);
@@ -3408,14 +3408,14 @@ Page({
    * @param {number} pageY
    * @returns {{ nx: number, ny: number }}
    */
-  pageXYToCameraNorm: function(pageX, pageY) {
+  pageXYToCameraNorm: function (pageX, pageY) {
     let w = 375;
     let h = 667;
     try {
       const si = wx.getSystemInfoSync();
       w = si.windowWidth || w;
       h = si.windowHeight || h;
-    } catch (e) {}
+    } catch (e) { }
     const r = computeLiveStage16x9RectPx(w, h);
     const nx0 = (pageX - r.left) / Math.max(1, r.w);
     const ny0 = (pageY - r.top) / Math.max(1, r.h);
@@ -3431,14 +3431,14 @@ Page({
    * @param {number} ny 0–1
    * @returns {void}
    */
-  invokeSetTargetFocus: function(nx, ny) {
+  invokeSetTargetFocus: function (nx, ny) {
     const ctx = this.data.cameraContext;
     if (!ctx) return;
     if (typeof ctx.setTargetFocus === 'function') {
       try {
         ctx.setTargetFocus({ x: nx, y: ny });
         return;
-      } catch (e) {}
+      } catch (e) { }
     }
   },
 
@@ -3450,7 +3450,7 @@ Page({
    * 此时完全不展示曝光滑条，避免“界面能动但实际不生效”的伪交互。
    * @returns {boolean}
    */
-  detectExposureHardwareSupport: function() {
+  detectExposureHardwareSupport: function () {
     const ctx = this.data.cameraContext;
     const supported = !!(
       ctx
@@ -3473,7 +3473,7 @@ Page({
    * @param {number} norm 0=偏暗, 0.5=中心, 1=偏亮
    * @returns {void}
    */
-  applyExposureFromNorm: function(norm) {
+  applyExposureFromNorm: function (norm) {
     if (!this.data.aeExposureHardwareSupported) return;
     const n = Math.max(0, Math.min(1, norm));
     this._exposureNormPending = n;
@@ -3485,11 +3485,11 @@ Page({
     }
     const ev = this._exposureValueEV;
     if (typeof ctx.setExposureCompensation === 'function') {
-      try { ctx.setExposureCompensation({ value: ev }); } catch (e) {}
+      try { ctx.setExposureCompensation({ value: ev }); } catch (e) { }
     } else if (typeof ctx.setEV === 'function') {
-      try { ctx.setEV({ ev: ev }); } catch (e) {}
+      try { ctx.setEV({ ev: ev }); } catch (e) { }
     } else if (typeof ctx.setExposureOffset === 'function') {
-      try { ctx.setExposureOffset({ offset: ev }); } catch (e) {}
+      try { ctx.setExposureOffset({ offset: ev }); } catch (e) { }
     }
     if (this.data.isRecording) {
       this._flushExposureNormToData(false);
@@ -3503,7 +3503,7 @@ Page({
    * @param {boolean} force 是否跳过节流立即 setData
    * @returns {void}
    */
-  _flushExposureNormToData: function(force) {
+  _flushExposureNormToData: function (force) {
     const n = typeof this._exposureNormPending === 'number' ? this._exposureNormPending : 0.5;
     const now = Date.now();
     if (!force && this.data.isRecording) {
@@ -3525,7 +3525,7 @@ Page({
    * 通过 {@link updateZoom} 内防抖触发，避免捏合过程高频调用。
    * @returns {void}
    */
-  silentRefocusGeometricCenter: function() {
+  silentRefocusGeometricCenter: function () {
     this.invokeSetTargetFocus(0.5, 0.5);
   },
 
@@ -3533,7 +3533,7 @@ Page({
    * 变焦量变化时重置静默对焦定时器；与缩放手势「争用」：仅响应 zoom 的实质变化，而非手指 xy。
    * @returns {void}
    */
-  maybeSchedulePostZoomSilentFocus: function() {
+  maybeSchedulePostZoomSilentFocus: function () {
     if (this._postZoomFocusTimer) {
       clearTimeout(this._postZoomFocusTimer);
       this._postZoomFocusTimer = null;
@@ -3556,7 +3556,7 @@ Page({
    * @param {number} pageY
    * @returns {void}
    */
-  applyPreGameFocusAtPage: function(pageX, pageY) {
+  applyPreGameFocusAtPage: function (pageX, pageY) {
     const { nx, ny } = this.pageXYToCameraNorm(pageX, pageY);
     this.invokeSetTargetFocus(nx, ny);
     let rpxFactor = 750 / 375;
@@ -3589,7 +3589,7 @@ Page({
     }
     try {
       wx.vibrateShort({ type: 'light' });
-    } catch (eV) {}
+    } catch (eV) { }
     /** 直播长按呼出后继续保持 live 上下文，避免 3s 自动隐藏失效；开赛前首次 tap 切到 pre。 */
     const nextCtx = (this.data.aeContext === 'live') ? 'live' : 'pre';
     const patch = {
@@ -3630,7 +3630,7 @@ Page({
    * 不强制复位既有 EV，避免打断用户之前的曝光选择。
    * @returns {void}
    */
-  wakeLiveAeControls: function() {
+  wakeLiveAeControls: function () {
     this.clearAeLiveHideTimer();
     this._lastFocusNorm = { nx: 0.5, ny: 0.5 };
     this.invokeSetTargetFocus(0.5, 0.5);
@@ -3665,13 +3665,13 @@ Page({
    * 双击对焦框：在 {@link AE_BRACKET_DOUBLE_TAP_MS} 内连点两次方框则锁定；用 bindtap 且不使用 touchmove，避免与单击/连击判定冲突。
    * @returns {void}
    */
-  onAeFocusBracketTap: function() {
+  onAeFocusBracketTap: function () {
     if (!this.data.aeControlsVisible) return;
     if (this.data.aeContext !== 'pre' && this.data.aeContext !== 'live') return;
     if (this.data.aeFocusUserLocked) {
       try {
         wx.showToast({ title: '对焦已锁定', icon: 'none', duration: 1000 });
-      } catch (e) {}
+      } catch (e) { }
       return;
     }
     const now = Date.now();
@@ -3686,10 +3686,10 @@ Page({
       this.setData({ aeFocusUserLocked: true, aeShowDoubleTapHint: false });
       try {
         wx.vibrateShort({ type: 'medium' });
-      } catch (e) {}
+      } catch (e) { }
       try {
         wx.showToast({ title: '对焦已锁定', icon: 'success', duration: 1400 });
-      } catch (eT) {}
+      } catch (eT) { }
     } else {
       this._aeBracketLastTapAt = now;
     }
@@ -3699,7 +3699,7 @@ Page({
    * 无操作 3s 后隐藏 live 态控件（开赛前 pre 不自动关，由起录时收起）。
    * @returns {void}
    */
-  scheduleAeLiveHide: function() {
+  scheduleAeLiveHide: function () {
     this.clearAeLiveHideTimer();
     this._aeLiveHideTimer = setTimeout(() => {
       this._aeLiveHideTimer = null;
@@ -3712,7 +3712,7 @@ Page({
   /**
    * @returns {void}
    */
-  clearAeLiveHideTimer: function() {
+  clearAeLiveHideTimer: function () {
     if (this._aeLiveHideTimer) {
       clearTimeout(this._aeLiveHideTimer);
       this._aeLiveHideTimer = null;
@@ -3724,7 +3724,7 @@ Page({
    * @param {WechatMiniprogram.TouchEvent} e
    * @returns {void}
    */
-  onAeSunTouchStart: function(e) {
+  onAeSunTouchStart: function (e) {
     if (!this.data.aeExposureHardwareSupported) return;
     if (!this.data.aeControlsVisible) return;
     if (this.data.aeContext !== 'pre' && this.data.aeContext !== 'live') return;
@@ -3740,7 +3740,7 @@ Page({
    * @param {WechatMiniprogram.TouchEvent} e
    * @returns {void}
    */
-  onAeSunTouchMove: function(e) {
+  onAeSunTouchMove: function (e) {
     if (!this.data.aeExposureHardwareSupported) return;
     if (!this.data.aeControlsVisible) return;
     if (this.data.aeContext !== 'pre' && this.data.aeContext !== 'live') return;
@@ -3764,7 +3764,7 @@ Page({
   /**
    * @returns {void}
    */
-  onAeSunTouchEnd: function() {
+  onAeSunTouchEnd: function () {
     this._aePreSunStartY = null;
     this._aePreSunStartNorm = 0.5;
     if (this.data.aeContext === 'live' && this.data.aeControlsVisible) {
@@ -3773,7 +3773,7 @@ Page({
     }
   },
 
-  hexToRgba: function(hex, opacity) {
+  hexToRgba: function (hex, opacity) {
     const color = (hex || '#000000').replace('#', '');
     const fullHex = color.length === 3
       ? color.split('').map((c) => c + c).join('')
@@ -3784,7 +3784,7 @@ Page({
     return `rgba(${r}, ${g}, ${b}, ${opacity})`;
   },
 
-  getContrastColor: function(hexcolor) {
+  getContrastColor: function (hexcolor) {
     if (!hexcolor) return '#000000';
     let color = hexcolor.replace('#', '');
     if (color.length === 3) {
@@ -3798,7 +3798,7 @@ Page({
     return yiq >= 128 ? '#000000' : '#FFFFFF';
   },
 
-  normalizeMatchConfig: function(config) {
+  normalizeMatchConfig: function (config) {
     const base = config || this.data.matchConfig;
     const normalizedConfig = JSON.parse(JSON.stringify(base || {}));
     if (!normalizedConfig.matchNameColor) normalizedConfig.matchNameColor = '#E64340';
@@ -3825,7 +3825,7 @@ Page({
     return normalizedConfig;
   },
 
-  onShow: function() {
+  onShow: function () {
     this._livePageVisible = true;
     try {
       wx.showShareMenu({
@@ -3841,7 +3841,7 @@ Page({
       const cid =
         wx.getStorageSync('currentMatchId') || (app.globalData && app.globalData.currentMatchId) || '';
       clipsStorage.mergeDefaultClipBucketIfTargetEmpty(String(cid || '').trim());
-    } catch (eMerge) {}
+    } catch (eMerge) { }
     this.appendHealthLog('page_show', {});
 
     wx.setKeepScreenOn({
@@ -3856,7 +3856,7 @@ Page({
     }
     try {
       this._updateLiveStageLayout();
-    } catch (eLs) {}
+    } catch (eLs) { }
     try {
       const snap = storageEst.readFileStorageEstimateSnapshot();
       if (
@@ -3870,7 +3870,7 @@ Page({
           storageEst.getClipStorageHealthHint(snap.clipBytes, snap.userDataBytes)
         );
       }
-    } catch (eSnap) {}
+    } catch (eSnap) { }
 
     if (this._entitlementEverAllowedInSession) {
       this._liveCoreOnShowAfterEntitlement();
@@ -3890,7 +3890,7 @@ Page({
    *
    * @returns {void}
    */
-  maybeToastFileStoragePressureFromGlobal: function() {
+  maybeToastFileStoragePressureFromGlobal: function () {
     try {
       if (this._liveStorageEntryModalShown) return;
 
@@ -3900,7 +3900,7 @@ Page({
        */
       const asSevereEstimate = (raw) => {
         if (!raw || typeof raw !== 'object') return null;
-        const hl = String(/** @type {{ healthLevel?: string }} */ (raw).healthLevel || '')
+        const hl = String(/** @type {{ healthLevel?: string }} */(raw).healthLevel || '')
           .trim()
           .toLowerCase();
         if (hl !== 'severe') return null;
@@ -3952,7 +3952,7 @@ Page({
         { clipMb: cm, totalMb: tm, level: 'severe', hintText },
         'kickoff'
       );
-    } catch (eToast) {}
+    } catch (eToast) { }
   },
 
   /**
@@ -3961,7 +3961,7 @@ Page({
    * @param {boolean} [force] 为 true 时跳过短时间防抖（开播首次探测）
    * @returns {Promise<void>}
    */
-  probeLiveSandboxStorage: function(trigger, force) {
+  probeLiveSandboxStorage: function (trigger, force) {
     const t = typeof trigger === 'string' ? trigger : '';
     const now = Date.now();
     if (!force && this._lastLiveStorageProbeAt && now - this._lastLiveStorageProbeAt < 25000) {
@@ -3998,7 +3998,7 @@ Page({
             };
             storageEst.writeFileStorageEstimateSnapshot(app.globalData.fileStorageEstimate);
           }
-        } catch (eG) {}
+        } catch (eG) { }
         this.maybeNotifyLiveStoragePressure(hint, t);
         this._lastLiveStorageProbeLevel = hint.level;
         if (hint.level === 'severe' && t === 'kickoff' && !this._liveSevereKickoffPruneDone) {
@@ -4008,7 +4008,7 @@ Page({
         if (hint.level === 'severe' && t === 'periodic' && this.rollingActive) {
           try {
             this.appendHealthLog('live_periodic_severe_lock_only', { noAutoClipPrune: true });
-          } catch (eL) {}
+          } catch (eL) { }
         }
       })
       .catch((eProbe) => {
@@ -4017,7 +4017,7 @@ Page({
             trigger: t,
             err: (eProbe && eProbe.message) || String(eProbe || '')
           });
-        } catch (eLog) {}
+        } catch (eLog) { }
       });
   },
 
@@ -4027,7 +4027,7 @@ Page({
    * @param {{ level?: string, clipMb?: number, totalMb?: number, hintText?: string }} hint
    * @returns {void}
    */
-  _syncCacheStorageLampData: function(hint) {
+  _syncCacheStorageLampData: function (hint) {
     if (!hint || typeof hint !== 'object') return;
     const raw = String(hint.level || 'ok')
       .trim()
@@ -4066,7 +4066,7 @@ Page({
    * severe 解除后：自动尝试恢复 rolling，并在短窗口内抑制 idle-ERR 误判。
    * @returns {void}
    */
-  _onStorageSevereLockReleased: function() {
+  _onStorageSevereLockReleased: function () {
     const now = Date.now();
     const graceMs = Math.max(8000, Math.floor((this.segmentDurationMs || 16000) * 1.2));
     this._storageSevereRecoveryUntil = now + graceMs;
@@ -4086,7 +4086,7 @@ Page({
         rollingActive: !!this.rollingActive,
         cameraReady: !!this._cameraInitDone
       });
-    } catch (eLog) {}
+    } catch (eLog) { }
     if (!this.rollingActive || !this._cameraInitDone || !this.data.cameraContext || this.data.isRecording) {
       this.updatePipelineHealth();
       return;
@@ -4106,22 +4106,22 @@ Page({
    * @param {string} message
    * @returns {void}
    */
-  _showLightHint: function(message) {
+  _showLightHint: function (message) {
     const t = String(message || '')
       .trim();
     if (!t) return;
     if (this._lightHintFadeTimer) {
       try {
         clearTimeout(this._lightHintFadeTimer);
-      } catch (e) {}
+      } catch (e) { }
       this._lightHintFadeTimer = null;
     }
     /** 与 wx.showToast 常见停留时长（约 2s）一致，避免旧版 260ms 一闪即消 */
     this.setData({ lightHintText: t, lightHintOpacity: 0.72 });
     const self = this;
-    this._lightHintFadeTimer = setTimeout(function() {
+    this._lightHintFadeTimer = setTimeout(function () {
       self.setData({ lightHintOpacity: 0 });
-      self._lightHintFadeTimer = setTimeout(function() {
+      self._lightHintFadeTimer = setTimeout(function () {
         self.setData({ lightHintText: '' });
         self._lightHintFadeTimer = null;
       }, 220);
@@ -4133,7 +4133,7 @@ Page({
    * 在 storageSevereLock 下 minKeep 按 0 计：否则会出现「条数=应急保留量 → 可删 0 条」却仍为 severe 的死锁。
    * @returns {{ matchId: string, item: Record<string, unknown> }|null}
    */
-  _getOneOldestPrunableClipForCacheLamp: function() {
+  _getOneOldestPrunableClipForCacheLamp: function () {
     const clipsMap = clipsStorage.readClipsMapSafe();
     if (!clipsMap) return null;
     const entries = [];
@@ -4149,7 +4149,7 @@ Page({
         const ex = it.replaySegment && typeof it.replaySegment === 'string' ? [it.replaySegment] : [];
         const hasPaths = [...new Set([...segs, ...ex])].length > 0;
         if (!hasPaths) return;
-        const createdAt = this.resolveHighlightCreatedAt(/** @type {Record<string, unknown>} */ (it));
+        const createdAt = this.resolveHighlightCreatedAt(/** @type {Record<string, unknown>} */(it));
         entries.push({ matchId, id, createdAt });
       });
     });
@@ -4175,8 +4175,8 @@ Page({
    * @param {(err: string|null) => void} onDone
    * @returns {void}
    */
-  _exportOneClipToAlbumForCacheLamp: function(matchId, item, onDone) {
-    const done = typeof onDone === 'function' ? onDone : function() {};
+  _exportOneClipToAlbumForCacheLamp: function (matchId, item, onDone) {
+    const done = typeof onDone === 'function' ? onDone : function () { };
     const fs = wx.getFileSystemManager();
     const clipsMap = clipsStorage.readClipsMapSafe();
     if (!clipsMap) {
@@ -4206,17 +4206,17 @@ Page({
         if (clipsStorage.writeClipsMapSafe(clipsMap)) {
           try {
             if (typeof this.refreshDrawerHighlights === 'function') this.refreshDrawerHighlights();
-          } catch (eR) {}
+          } catch (eR) { }
           try {
             if (typeof this.loadMatchList === 'function') this.loadMatchList();
-          } catch (eM) {}
+          } catch (eM) { }
           try {
             this.appendHealthLog('cache_lamp_export_one', {
               matchId: String(matchId),
               id: String(item.id),
               saveFailCount: failStreak
             });
-          } catch (eL) {}
+          } catch (eL) { }
           done(failStreak > 0 ? 'partial' : null);
         } else {
           done('write');
@@ -4231,7 +4231,7 @@ Page({
         success: () => {
           try {
             fs.unlinkSync(p);
-          } catch (eUn) {}
+          } catch (eUn) { }
           runPaths(nextPi, failCount);
         },
         fail: () => {
@@ -4256,7 +4256,7 @@ Page({
                   content: '导出后可释放本机空间',
                   showCancel: false
                 });
-              } catch (e) {}
+              } catch (e) { }
               done('auth');
             }
           });
@@ -4270,7 +4270,7 @@ Page({
    * 严重水位下点按：立即按序导出最旧可删的若干条到相册并 unlink 本地（不排队）；单次最多 3 条，降低与相机 I/O 冲突。
    * @returns {void}
    */
-  onCacheStorageLampTap: function() {
+  onCacheStorageLampTap: function () {
     if (!this.data.storageSevereLock) return;
     if (this._cacheLampBatchRunning) {
       this._showLightHint('处理中');
@@ -4286,7 +4286,7 @@ Page({
     let doneCount = 0;
     try {
       this.appendHealthLog('cache_lamp_tap_batch', { max: batchMax });
-    } catch (eL) {}
+    } catch (eL) { }
     const finishBatch = (hintKey) => {
       self._cacheLampBatchRunning = false;
       if (doneCount === 0) {
@@ -4296,7 +4296,7 @@ Page({
       }
       try {
         self.probeLiveSandboxStorage(hintKey || 'after_cache_lamp_batch', true);
-      } catch (e) {}
+      } catch (e) { }
     };
     const runNext = (left) => {
       if (left <= 0) {
@@ -4308,7 +4308,7 @@ Page({
         finishBatch('after_cache_lamp_batch');
         return;
       }
-      self._exportOneClipToAlbumForCacheLamp(t.matchId, t.item, function(err) {
+      self._exportOneClipToAlbumForCacheLamp(t.matchId, t.item, function (err) {
         if (err === 'auth') {
           self._cacheLampBatchRunning = false;
           self._showLightHint('需相册权限');
@@ -4343,7 +4343,7 @@ Page({
    * @param {string} [trigger] kickoff | periodic 等，由 probeLiveSandboxStorage 传入
    * @returns {void}
    */
-  maybeNotifyLiveStoragePressure: function(hint, trigger) {
+  maybeNotifyLiveStoragePressure: function (hint, trigger) {
     if (!hint || hint.level === 'ok') {
       return;
     }
@@ -4371,7 +4371,7 @@ Page({
           self.appendHealthLog('live_storage_severe_modal_show', {
             trigger: trigger || ''
           });
-        } catch (eLog) {}
+        } catch (eLog) { }
         self.setData({
           showStoragePressureModal: true,
           storagePressureModalText: text
@@ -4385,7 +4385,7 @@ Page({
    * 长直播期间周期性探测（全量 walk 较重，默认 8 分钟）。
    * @returns {void}
    */
-  startLiveSandboxStorageWatch: function() {
+  startLiveSandboxStorageWatch: function () {
     this.stopLiveSandboxStorageWatch();
     this._liveFileStorageTimer = setInterval(() => {
       if (!this.rollingActive) {
@@ -4398,7 +4398,7 @@ Page({
   /**
    * @returns {void}
    */
-  stopLiveSandboxStorageWatch: function() {
+  stopLiveSandboxStorageWatch: function () {
     if (this._liveFileStorageTimer) {
       clearInterval(this._liveFileStorageTimer);
       this._liveFileStorageTimer = null;
@@ -4409,7 +4409,7 @@ Page({
    * 分享给好友：路径携带当前用户 openid，供新用户登录时上报邀请关系。
    * @returns {WechatMiniprogram.Page.ICustomShareContent}
    */
-  onShareAppMessage: function() {
+  onShareAppMessage: function () {
     let raw = app.globalData.userInfo;
     if (!raw || typeof raw !== 'object') {
       try {
@@ -4438,10 +4438,10 @@ Page({
     };
   },
 
-  onReady: function() {
+  onReady: function () {
     try {
       this._updateLiveStageLayout();
-    } catch (eL1) {}
+    } catch (eL1) { }
     if (wx.nextTick) {
       wx.nextTick(() => this.updateTeamGroupWidth(true));
     } else {
@@ -4455,7 +4455,7 @@ Page({
    * @param {string} name 原始队名
    * @returns {number}
    */
-  getDisplayTeamNameCharCount: function(name) {
+  getDisplayTeamNameCharCount: function (name) {
     const s = String(name || '');
     return Math.min(Array.from(s).length, 12);
   },
@@ -4465,7 +4465,7 @@ Page({
    *
    * @returns {number} 宽度（px）
    */
-  computeTeamGroupWidthPx: function() {
+  computeTeamGroupWidthPx: function () {
     const DISPLAY_CHAR_SLOTS = 12;
     const getShortEdge = () => {
       try {
@@ -4475,7 +4475,7 @@ Page({
           const wh = w.windowHeight || ww;
           return Math.min(ww, wh);
         }
-      } catch (e) {}
+      } catch (e) { }
       const sys = wx.getSystemInfoSync();
       const ww = sys.windowWidth || 375;
       const wh = sys.windowHeight || ww;
@@ -4511,7 +4511,7 @@ Page({
    * @param {boolean} [force] 为 true 时跳过「数值接近则跳过」优化，避免 onShow 只改 matchConfig 时宽度未刷新
    * @returns {void}
    */
-  updateTeamGroupWidth: function(force) {
+  updateTeamGroupWidth: function (force) {
     const wSide = this.computeTeamGroupWidthPx();
     if (
       !force &&
@@ -4523,11 +4523,11 @@ Page({
     this.setData({ teamGroupWidthPxA: wSide, teamGroupWidthPxB: wSide });
   },
 
-  onUnload: function() {
+  onUnload: function () {
     if (this._windowResizeListener && wx.offWindowResize) {
       try {
         wx.offWindowResize(this._windowResizeListener);
-      } catch (eRz) {}
+      } catch (eRz) { }
       this._windowResizeListener = null;
     }
     this._replayDeferredItem = null;
@@ -4633,7 +4633,7 @@ Page({
     this.stopRollingRecording();
   },
 
-  onHide: function() {
+  onHide: function () {
     if (this._cameraShowInitWatchTimer) {
       clearTimeout(this._cameraShowInitWatchTimer);
       this._cameraShowInitWatchTimer = null;
@@ -4652,7 +4652,7 @@ Page({
     if (this._lightHintFadeTimer) {
       try {
         clearTimeout(this._lightHintFadeTimer);
-      } catch (e) {}
+      } catch (e) { }
       this._lightHintFadeTimer = null;
     }
     this.setData({ lightHintText: '', lightHintOpacity: 0 });
@@ -4720,7 +4720,7 @@ Page({
    * 清除恢复按钮成功闪烁状态（页面隐藏/卸载时调用）。
    * @returns {void}
    */
-  clearRecoveryFabAck: function() {
+  clearRecoveryFabAck: function () {
     if (this._opsAckTimer) {
       clearTimeout(this._opsAckTimer);
       this._opsAckTimer = null;
@@ -4734,7 +4734,7 @@ Page({
    * 触发恢复成功的隐式反馈：一次短震 + 恢复按钮外环轻微闪烁，不显示文字提示。
    * @returns {void}
    */
-  emitRecoverySuccessFeedback: function() {
+  emitRecoverySuccessFeedback: function () {
     this.vibrate('light');
     if (this._opsAckTimer) {
       clearTimeout(this._opsAckTimer);
@@ -4752,7 +4752,7 @@ Page({
    * 分段之间 stop→冷却→start 的短瞬间 isRecording 为 false，文案会呈 PAUSE，与墙钟「接缝」基本同量级。
    * @returns {void}
    */
-  updatePipelineHealth: function() {
+  updatePipelineHealth: function () {
     let health = 'ok';
     let text = 'PAUSE';
     let actionable = false;
@@ -4827,7 +4827,7 @@ Page({
    * 启动健康状态监控定时器。
    * @returns {void}
    */
-  startHealthMonitor: function() {
+  startHealthMonitor: function () {
     this.stopHealthMonitor();
     this.updatePipelineHealth();
     this._healthTimer = setInterval(() => this.updatePipelineHealth(), 1200);
@@ -4838,7 +4838,7 @@ Page({
    * 停止健康状态监控定时器。
    * @returns {void}
    */
-  stopHealthMonitor: function() {
+  stopHealthMonitor: function () {
     if (!this._healthTimer) return;
     clearInterval(this._healthTimer);
     this._healthTimer = null;
@@ -4849,7 +4849,7 @@ Page({
    * 启动恢复进度圆环动画（在 isRecovering 期间爬升至约 88%，就绪后由 stopRecoveryProgressAnim(true) 拉满）。
    * @returns {void}
    */
-  startRecoveryProgressAnim: function() {
+  startRecoveryProgressAnim: function () {
     if (this._recoverProgTimer) {
       clearInterval(this._recoverProgTimer);
       this._recoverProgTimer = null;
@@ -4882,7 +4882,7 @@ Page({
    * @param {boolean} complete 是否视为恢复成功
    * @returns {void}
    */
-  stopRecoveryProgressAnim: function(complete) {
+  stopRecoveryProgressAnim: function (complete) {
     if (this._recoverProgTimer) {
       clearInterval(this._recoverProgTimer);
       this._recoverProgTimer = null;
@@ -4909,7 +4909,7 @@ Page({
    * @param {string} reason
    * @returns {void}
    */
-  finalizeRecoveryAsFailed: function(reason) {
+  finalizeRecoveryAsFailed: function (reason) {
     if (this._recoverUiFailsafeTimer) {
       clearTimeout(this._recoverUiFailsafeTimer);
       this._recoverUiFailsafeTimer = null;
@@ -4941,7 +4941,7 @@ Page({
    * @param {string} trigger 触发来源（manual/auto）
    * @returns {void}
    */
-  hardRecoverLivePipeline: function(trigger) {
+  hardRecoverLivePipeline: function (trigger) {
     if (this._recoveryLock) return;
     const source = trigger || 'manual';
     const now = Date.now();
@@ -5003,7 +5003,7 @@ Page({
       // 超时后二次强制重建一次，避免 iOS 在 stop 后偶发不再触发 initdone。
       this.rebuildCameraComponent(() => {
         this.setData({ cameraMounted: true }, () => {
-            const bindCameraContext = () => {
+          const bindCameraContext = () => {
             const nextCameraContext = wx.createCameraContext(this);
             this.setData({ cameraContext: nextCameraContext, isRecording: false });
           };
@@ -5087,7 +5087,7 @@ Page({
    * 右下角状态钮：REC 时保存高光；ERR 时单击触发页内硬恢复（不跳页、不挡预览）。
    * @returns {void}
    */
-  onRecoveryFabTap: function() {
+  onRecoveryFabTap: function () {
     if (this.data.isRecovering) return;
     if (this.data.storageSevereLock) {
       this._showLightHint('请先清理空间');
@@ -5119,7 +5119,7 @@ Page({
    * 系统 longpress：ERR 态下触发页内硬恢复。
    * @returns {void}
    */
-  onRecoveryFabLongPress: function() {
+  onRecoveryFabLongPress: function () {
     if (this.data.isRecovering) return;
     this._recoveryFabLongPressConsumed = true;
     const isErr =
@@ -5136,7 +5136,7 @@ Page({
    * 状态灯按下：ERR 态长按约 1.8s 触发页内硬恢复（与单击互为补充）。
    * @returns {void}
    */
-  onRecoveryFabTouchStart: function() {
+  onRecoveryFabTouchStart: function () {
     const isErr =
       this.data.pipelineHealth === 'warn'
       || this._needManualRelaunch
@@ -5160,7 +5160,7 @@ Page({
    * 状态灯抬起/取消：清理长按重启计时器。
    * @returns {void}
    */
-  onRecoveryFabTouchEnd: function() {
+  onRecoveryFabTouchEnd: function () {
     if (this._relaunchPressTimer) {
       clearTimeout(this._relaunchPressTimer);
       this._relaunchPressTimer = null;
@@ -5168,7 +5168,7 @@ Page({
   },
 
   // 节次切换
-  onPeriodTap: function() {
+  onPeriodTap: function () {
     let { period } = this.data.matchConfig;
     period = (period + 1) % this.data.periods.length;
     this.setData({ 'matchConfig.period': period });
@@ -5176,7 +5176,7 @@ Page({
   },
 
   // 核心记分逻辑
-  onScoreTap: function(e) {
+  onScoreTap: function (e) {
     const { team, type } = e.currentTarget.dataset;
     if (this.suppressScoreTap) {
       this.suppressScoreTap = false;
@@ -5191,7 +5191,7 @@ Page({
     this.persistConfig();
   },
 
-  applyScoreChange: function(team, type) {
+  applyScoreChange: function (team, type) {
     let score = this.data.matchConfig[team].score;
     if (type === 'plus') {
       score += 1;
@@ -5201,14 +5201,14 @@ Page({
     this.setData({ [`matchConfig.${team}.score`]: score });
   },
 
-  onBackTap: function() {
+  onBackTap: function () {
     this.closeAllDrawers();
     this.stopRollingRecording();
     wx.navigateBack();
   },
 
   // 长按连续记分
-  onScoreLongPress: function(e) {
+  onScoreLongPress: function (e) {
     const { team, type } = e.currentTarget.dataset;
     this.vibrate('heavy');
     this.suppressScoreTap = true;
@@ -5224,7 +5224,7 @@ Page({
   },
 
   // 停止长按
-  onScoreTouchEnd: function() {
+  onScoreTouchEnd: function () {
     if (this.data.longPressTimer) {
       clearInterval(this.data.longPressTimer);
       this.setData({ longPressTimer: null });
@@ -5236,7 +5236,7 @@ Page({
   },
 
   // 震动反馈
-  vibrate: function(type) {
+  vibrate: function (type) {
     // 兼容性与稳定性修复：
     // 1. iOS 优先使用 type 参数以获得细腻的触觉反馈。
     // 2. Android 部分机型在传入 type 时可能失效或无响应，故直接调用无参版以确保触发。
@@ -5257,7 +5257,7 @@ Page({
    * 高光保存成功时的触觉反馈。异步落盘完成后 iOS 常不再算「用户手势」，故需配合长按瞬间的震动；
    * Android 优先长震，失败则短震组合。
    */
-  vibrateHighlightSaved: function() {
+  vibrateHighlightSaved: function () {
     const fallback = () => {
       this.vibrate('heavy');
       setTimeout(() => this.vibrate('heavy'), 160);
@@ -5275,7 +5275,7 @@ Page({
     }
   },
 
-  getHighlightDir: function() {
+  getHighlightDir: function () {
     return `${wx.env.USER_DATA_PATH}/highlights`;
   },
 
@@ -5284,11 +5284,11 @@ Page({
    * 注意：这里存的是最近若干段“已落盘”的视频片段，避免 temp 文件被系统回收。
    * @returns {string}
    */
-  getRollingDir: function() {
+  getRollingDir: function () {
     return `${this.getHighlightDir()}/_rolling`;
   },
 
-  ensureHighlightDir: function() {
+  ensureHighlightDir: function () {
     const fs = wx.getFileSystemManager();
     const dirPath = this.getHighlightDir();
     return new Promise((resolve) => {
@@ -5311,7 +5311,7 @@ Page({
    * 确保滚动录制缓存目录存在。
    * @returns {Promise<void>}
    */
-  ensureRollingDir: function() {
+  ensureRollingDir: function () {
     const fs = wx.getFileSystemManager();
     const dirPath = this.getRollingDir();
     return new Promise((resolve) => {
@@ -5335,7 +5335,7 @@ Page({
    * 说明：仅删除 `_rolling` 目录下的临时分段，不影响已保存高光。
    * @returns {Promise<void>}
    */
-  clearStaleRollingFiles: function() {
+  clearStaleRollingFiles: function () {
     const fs = wx.getFileSystemManager();
     const rollingDir = this.getRollingDir();
     return new Promise((resolve) => {
@@ -5364,22 +5364,22 @@ Page({
     });
   },
 
-  buildVkTailHighlightPlan: function(ctx) {
+  buildVkTailHighlightPlan: function (ctx) {
     var now = Date.now();
     var recordStartWall = ctx._vkTimeshiftStartAt || now;
     var ENCODER_DELAY_MS = 200;
     var SAFE_TAIL_MS = 300;   // 防止尾部未封装
-    var TARGET_DURATION = 8;  // 秒
+    var TARGET_DURATION = 10; // 调为 10 秒以确保快进后有足够的精彩画面
 
     // 当前可用视频时长（秒）
     var safeDuration = (now - recordStartWall - ENCODER_DELAY_MS) / 1000;
     if (!isFinite(safeDuration) || safeDuration <= 0) {
       safeDuration = 0;
     }
-    
+
     // 再扣尾部 buffer
     safeDuration = Math.max(0, safeDuration - SAFE_TAIL_MS / 1000);
-    
+
     // 增加点击延迟补偿
     var CLICK_DELAY_COMPENSATE = 0.3; // 秒
     var expectedEnd = safeDuration - CLICK_DELAY_COMPENSATE;
@@ -5388,23 +5388,23 @@ Page({
     // 起点
     var startTime = expectedEnd - TARGET_DURATION;
     if (startTime < 0) startTime = 0;
-    
+
     // 实际裁剪长度
     var duration = expectedEnd - startTime;
-    
+
     // 最小保护（防止导出失败）
     if (duration <= 0) {
       duration = Math.min(2, safeDuration);
       startTime = Math.max(0, safeDuration - duration);
     }
-    
+
     return {
       startTimeSec: startTime,
       durationSec: duration
     };
   },
 
-  startRollingRecording: function() {
+  startRollingRecording: function () {
     if (!this.data.cameraContext) return;
     /** 已在录时勿重复拉起，避免双 startRecord；假阳性 isRecording 由 onShow 的 stopRollingRecording 收口 */
     if (this.data.isRecording) return;
@@ -5451,13 +5451,13 @@ Page({
     });
   },
 
-  startOneSegment: function(sessionId, retryCount = 0) {
+  startOneSegment: function (sessionId, retryCount = 0) {
     if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
     if (!this.data.cameraContext) return;
     if (this.data.storageSevereLock) {
       try {
         this.appendHealthLog('segment_start_skipped_storage_severe', { retryCount });
-      } catch (eL) {}
+      } catch (eL) { }
       return;
     }
     if (this._needManualRelaunch) return;
@@ -5658,7 +5658,7 @@ Page({
     });
   },
 
-  stopOneSegment: function(sessionId) {
+  stopOneSegment: function (sessionId) {
     if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
     if (!this.data.cameraContext || !this.data.isRecording) return;
     this.data.cameraContext.stopRecord({
@@ -5688,7 +5688,7 @@ Page({
             if (this.data.storageSevereLock) {
               try {
                 this.appendHealthLog('next_segment_suppressed_storage_severe', {});
-              } catch (eN) {}
+              } catch (eN) { }
               return;
             }
             this.scheduleAfterStopRecord(() => this.startOneSegment(sessionId));
@@ -5712,10 +5712,10 @@ Page({
                   segNo: this.segmentCounter
                 });
               }
-            } catch (eSerialLog) {}
+            } catch (eSerialLog) { }
             persistPromise.then(kickNextSegment, kickNextSegment);
           } else {
-            persistPromise.catch(() => {});
+            persistPromise.catch(() => { });
             kickNextSegment();
           }
           return;
@@ -5724,7 +5724,7 @@ Page({
         if (this.data.storageSevereLock) {
           try {
             this.appendHealthLog('next_segment_suppressed_storage_severe', { reason: 'empty_temp' });
-          } catch (eE) {}
+          } catch (eE) { }
           return;
         }
         this.scheduleAfterStopRecord(() => this.startOneSegment(sessionId));
@@ -5742,7 +5742,7 @@ Page({
         if (this.data.storageSevereLock) {
           try {
             this.appendHealthLog('next_segment_suppressed_storage_severe', { reason: 'stop_fail' });
-          } catch (eF) {}
+          } catch (eF) { }
           return;
         }
         this.scheduleAfterStopRecord(() => this.startOneSegment(sessionId));
@@ -5755,7 +5755,7 @@ Page({
    * @param {function(): void} [onStopped] 在录制状态已释放后调用（无录制时下一 tick 调用）
    * @returns {void}
    */
-  stopRollingRecording: function(onStopped) {
+  stopRollingRecording: function (onStopped) {
     this.clearSegmentStartRetryTimer();
     this._startOneSegmentInFlight = false;
     this._segmentStartRecoveringFromIsRecording = false;
@@ -5799,7 +5799,7 @@ Page({
         stopFinished = true;
         try {
           this.appendHealthLog('stop_record_kickoff_timeout', {});
-        } catch (eLog) {}
+        } catch (eLog) { }
         finish();
       }, stopSafetyMs);
       const finishFromStop = () => {
@@ -5830,7 +5830,7 @@ Page({
    * @param {number} [recordStartWallMs] 本段 startRecord 成功时的墙钟时间（用于高光逻辑起播偏移）
    * @returns {Promise<void>}
    */
-  onSegmentRecorded: function(tempPath, segNo, recordSessionId, recordStartWallMs) {
+  onSegmentRecorded: function (tempPath, segNo, recordSessionId, recordStartWallMs) {
     // 关键修复：把每个 segment 立刻保存到本地 rolling 目录，避免 tempVideoPath 后续失效。
     this._rollingPersistInFlight = (this._rollingPersistInFlight || 0) + 1;
     this.rollingFsBusy = true;
@@ -5875,7 +5875,7 @@ Page({
       /** 部分 Android 上同名目标残留 0 字节或句柄未释放，导致此后所有 copy 失败 */
       try {
         fs.unlinkSync(rollingPath);
-      } catch (eUnlink) {}
+      } catch (eUnlink) { }
       /**
        * 将临时文件读入内存再写入 rolling（部分机型 copyFile/saveFile 失败时仍可用）。
        * iOS 上不使用此路径（见 attemptRollingPersist phase 4/5）。
@@ -6078,7 +6078,7 @@ Page({
             /** 用户目录热层 + 多段 MP4 易触顶小程序「文件存储」上限（非 KV storage） */
             maxBuf = Math.min(maxBuf, 5);
           }
-        } catch (eMb) {}
+        } catch (eMb) { }
         if (this.segmentBuffer.length > maxBuf) {
           const excess = this.segmentBuffer.length - maxBuf;
           const removed = [];
@@ -6099,7 +6099,7 @@ Page({
             if (!underRolling && !it.evictUnlink) return;
             try {
               fs.unlinkSync(it.path);
-            } catch (e) {}
+            } catch (e) { }
           });
         }
 
@@ -6193,7 +6193,7 @@ Page({
             icon: 'none',
             duration: 2200
           });
-        } catch (eToast) {}
+        } catch (eToast) { }
         this.freeRollingFileStorageAggressive('persist_io_fail');
         setTimeout(() => {
           if (!sessionOk()) {
@@ -6386,7 +6386,7 @@ Page({
           }
           try {
             fs.unlinkSync(altRollingPath);
-          } catch (eAlt) {}
+          } catch (eAlt) { }
           fs.copyFile({
             srcPath: tempPath,
             destPath: altRollingPath,
@@ -6573,7 +6573,7 @@ Page({
    * @param {number} [busyRetries] 内部参数：等待 rollingFsBusy 解除的重试次数
    * @returns {void}
    */
-  recoverRollingPipelineForHighlight: function(onDone, busyRetries) {
+  recoverRollingPipelineForHighlight: function (onDone, busyRetries) {
     const maxBusyWait = 40;
     const n = typeof busyRetries === 'number' ? busyRetries : 0;
     if (this.rollingFsBusy && n < maxBusyWait) {
@@ -6610,7 +6610,7 @@ Page({
    * @param {number} segNo 触发时片段号
    * @returns {void}
    */
-  maybeHardRecoverForTempMissingStorm: function(streak, segNo) {
+  maybeHardRecoverForTempMissingStorm: function (streak, segNo) {
     const n = Number(streak || 0);
     if (n < 2) return;
     this.appendHealthLog('temp_missing_storm_observed', { streak: n, segNo });
@@ -6624,7 +6624,7 @@ Page({
    * @param {number} consumed 已保存为高光的最大 segNo
    * @returns {{ path: string, segNo: number } | null}
    */
-  pickBestRollingEntryAfterConsumed: function(consumed) {
+  pickBestRollingEntryAfterConsumed: function (consumed) {
     const minExclusive = typeof consumed === 'number' ? consumed : 0;
     let best = null;
     const buf = this.segmentBuffer || [];
@@ -6642,7 +6642,7 @@ Page({
    * @param {string[]} paths
    * @returns {void}
    */
-  retainRollingSegmentsByPaths: function(paths) {
+  retainRollingSegmentsByPaths: function (paths) {
     if (!Array.isArray(paths) || paths.length === 0) return;
     const buf = this.segmentBuffer || [];
     paths.forEach((p) => {
@@ -6665,7 +6665,7 @@ Page({
    * @param {string[]} paths
    * @returns {void}
    */
-  releaseRollingSegmentsByPaths: function(paths) {
+  releaseRollingSegmentsByPaths: function (paths) {
     if (!Array.isArray(paths) || paths.length === 0) return;
     const buf = this.segmentBuffer || [];
     paths.forEach((p) => {
@@ -6683,7 +6683,7 @@ Page({
    * 是否允许执行高光实体固化（degraded/recovering/故障态时暂停重 IO）。
    * @returns {boolean}
    */
-  canMaterializeHighlightNow: function() {
+  canMaterializeHighlightNow: function () {
     if (this.data.isRecovering || this._needManualRelaunch) return false;
     if (this.data.pipelineHealth === 'warn') return false;
     return true;
@@ -6694,7 +6694,7 @@ Page({
    * @param {string} matchId
    * @returns {void}
    */
-  pruneHighlightStorageForMatch: function(matchId) {
+  pruneHighlightStorageForMatch: function (matchId) {
     const key = clipsStorage.normalizeMatchIdKey(matchId);
     if (!key) return;
     const fs = wx.getFileSystemManager();
@@ -6707,8 +6707,8 @@ Page({
       .slice()
       .sort(
         (a, b) =>
-          this.resolveHighlightCreatedAt(/** @type {Record<string, unknown>} */ (b))
-          - this.resolveHighlightCreatedAt(/** @type {Record<string, unknown>} */ (a))
+          this.resolveHighlightCreatedAt(/** @type {Record<string, unknown>} */(b))
+          - this.resolveHighlightCreatedAt(/** @type {Record<string, unknown>} */(a))
       );
     const removed = sorted.slice(maxCount);
     clipsMap[key] = sorted.slice(0, maxCount);
@@ -6717,7 +6717,7 @@ Page({
       const segs = it && Array.isArray(it.segments) ? it.segments : [];
       segs.forEach((p) => {
         if (!p) return;
-        try { fs.unlinkSync(p); } catch (e) {}
+        try { fs.unlinkSync(p); } catch (e) { }
       });
     });
   },
@@ -6726,7 +6726,7 @@ Page({
    * 统计高光索引总条数（跨场次）。
    * @returns {number}
    */
-  getTotalHighlightClipCount: function() {
+  getTotalHighlightClipCount: function () {
     const clipsMap = clipsStorage.readClipsMapSafe();
     if (!clipsMap) return 0;
     let total = 0;
@@ -6744,7 +6744,7 @@ Page({
    * @param {string} [reason] 触发来源（诊断日志用）
    * @returns {number} 实际删除条数
    */
-  pruneOldestHighlightClipsFromStorage: function(maxRemove, reason, opts) {
+  pruneOldestHighlightClipsFromStorage: function (maxRemove, reason, opts) {
     const cap = typeof maxRemove === 'number' && maxRemove > 0 ? Math.min(maxRemove, 30) : 1;
     const why = typeof reason === 'string' ? reason : '';
     const options = opts && typeof opts === 'object' ? opts : {};
@@ -6760,7 +6760,7 @@ Page({
         if (!it || typeof it !== 'object') return;
         const id = it.id != null ? String(it.id) : '';
         if (!id) return;
-        const createdAt = this.resolveHighlightCreatedAt(/** @type {Record<string, unknown>} */ (it));
+        const createdAt = this.resolveHighlightCreatedAt(/** @type {Record<string, unknown>} */(it));
         entries.push({ matchId, id, createdAt });
       });
     });
@@ -6800,7 +6800,7 @@ Page({
       toUnlink.forEach((p) => {
         try {
           fs.unlinkSync(p);
-        } catch (eUn) {}
+        } catch (eUn) { }
       });
       list.splice(idx, 1);
       removed += 1;
@@ -6818,7 +6818,7 @@ Page({
         if (typeof this.refreshDrawerHighlights === 'function') {
           this.refreshDrawerHighlights();
         }
-      } catch (eR) {}
+      } catch (eR) { }
     }
     return removed;
   },
@@ -6829,7 +6829,7 @@ Page({
    * @param {string} [reason] 诊断日志
    * @returns {number} 删除条数
    */
-  pruneHighlightClipsWithInvalidFiles: function(reason) {
+  pruneHighlightClipsWithInvalidFiles: function (reason) {
     const why = typeof reason === 'string' ? reason : '';
     const fs = wx.getFileSystemManager();
     const clipsMap = clipsStorage.readClipsMapSafe();
@@ -6887,7 +6887,7 @@ Page({
         toUnlink.forEach((p) => {
           try {
             fs.unlinkSync(p);
-          } catch (eUn) {}
+          } catch (eUn) { }
         });
         list.splice(i, 1);
         removed += 1;
@@ -6900,7 +6900,7 @@ Page({
         if (typeof this.refreshDrawerHighlights === 'function') {
           this.refreshDrawerHighlights();
         }
-      } catch (eR) {}
+      } catch (eR) { }
     }
     return removed;
   },
@@ -6909,7 +6909,7 @@ Page({
    * 评估 Storage 水位并执行分级治理。
    * @returns {number}
    */
-  evaluateStorageWatermark: function() {
+  evaluateStorageWatermark: function () {
     let ratio = 0;
     try {
       const info = wx.getStorageInfoSync();
@@ -6918,7 +6918,7 @@ Page({
       if (Number.isFinite(current) && Number.isFinite(limit) && limit > 0) {
         ratio = current / limit;
       }
-    } catch (e) {}
+    } catch (e) { }
     let level = 0;
     if (ratio >= 0.95) level = 95;
     else if (ratio >= 0.85) level = 85;
@@ -6938,7 +6938,7 @@ Page({
         if (siPr && siPr.platform === 'ios') {
           this.pruneIosSegmentBufferUserLocals(4);
         }
-      } catch (ePr) {}
+      } catch (ePr) { }
     }
     return level;
   },
@@ -6948,7 +6948,7 @@ Page({
    * @param {number} maxKeep 最多保留几条 user-local 热层片段
    * @returns {void}
    */
-  pruneIosSegmentBufferUserLocals: function(maxKeep) {
+  pruneIosSegmentBufferUserLocals: function (maxKeep) {
     const cap = typeof maxKeep === 'number' && maxKeep > 0 ? maxKeep : 4;
     try {
       const si = wx.getSystemInfoSync();
@@ -6978,7 +6978,7 @@ Page({
       dropSet.add(it.path);
       try {
         fs.unlinkSync(it.path);
-      } catch (eUn) {}
+      } catch (eUn) { }
     }
     if (dropSet.size === 0) return;
     this.segmentBuffer = buf.filter((bItem) => bItem && !dropSet.has(bItem.path));
@@ -6990,7 +6990,7 @@ Page({
    * @param {string} errMsg 接口 fail 回调中的 errMsg
    * @returns {boolean}
    */
-  isMiniProgramFileQuotaExceeded: function(errMsg) {
+  isMiniProgramFileQuotaExceeded: function (errMsg) {
     if (!errMsg || typeof errMsg !== 'string') return false;
     const s = errMsg.toLowerCase();
     return (
@@ -7005,7 +7005,7 @@ Page({
    * @param {number} maxEntries 目标最大条数（含 ref>0）
    * @returns {void}
    */
-  trimRollingSegmentBufferForQuota: function(maxEntries) {
+  trimRollingSegmentBufferForQuota: function (maxEntries) {
     const cap = typeof maxEntries === 'number' && maxEntries >= 4 ? maxEntries : 6;
     const fs = wx.getFileSystemManager();
     let buf = this.segmentBuffer || [];
@@ -7017,7 +7017,7 @@ Page({
       if (!victim || !victim.path) continue;
       try {
         fs.unlinkSync(victim.path);
-      } catch (eUn) {}
+      } catch (eUn) { }
       buf = buf.filter((bItem) => bItem !== victim);
     }
     this.segmentBuffer = buf;
@@ -7028,7 +7028,7 @@ Page({
    * @param {string} [reason] 诊断用
    * @returns {void}
    */
-  freeRollingFileStorageAggressive: function(reason) {
+  freeRollingFileStorageAggressive: function (reason) {
     const now = Date.now();
     const r = typeof reason === 'string' ? reason : '';
     const gapMs =
@@ -7070,13 +7070,13 @@ Page({
           try {
             fs.unlinkSync(full);
             n += 1;
-          } catch (eUn) {}
+          } catch (eUn) { }
         });
         if (n > 0) {
           this.appendHealthLog('rolling_orphan_file_unlinked', { n });
         }
       }
-    } catch (eR) {}
+    } catch (eR) { }
     let clipPrune = 0;
     if (r === 'persist_io_fail' || r === 'phase7_user_save_exhausted') {
       clipPrune = 4;
@@ -7142,7 +7142,7 @@ Page({
    * @param {string[]} segments
    * @returns {Record<string, unknown>}
    */
-  buildIndexedHighlightItem: function(pending, segments) {
+  buildIndexedHighlightItem: function (pending, segments) {
     const replaySegment = segments[segments.length - 1] || segments[0] || '';
     const mc = this.data.matchConfig;
     const scoreA = mc && mc.teamA ? Number(mc.teamA.score || 0) : 0;
@@ -7183,7 +7183,7 @@ Page({
    * @param {Record<string, unknown>} task
    * @returns {void}
    */
-  enqueueHighlightMaterializeTask: function(task) {
+  enqueueHighlightMaterializeTask: function (task) {
     this.highlightMaterializeQueue.push(task);
     this.processHighlightMaterializeQueue();
   },
@@ -7192,7 +7192,7 @@ Page({
    * 后台串行执行高光固化队列（带降级暂停与退避）。
    * @returns {void}
    */
-  processHighlightMaterializeQueue: function() {
+  processHighlightMaterializeQueue: function () {
     if (this.highlightMaterializeRunning) return;
     if (!this.highlightMaterializeQueue.length) return;
     const watermark = this.evaluateStorageWatermark();
@@ -7222,7 +7222,7 @@ Page({
    * @param {Record<string, unknown>} task
    * @returns {Promise<void>}
    */
-  materializeHighlightTask: function(task) {
+  materializeHighlightTask: function (task) {
     const segments = Array.isArray(task.segments) ? task.segments.filter(Boolean) : [];
     if (!segments.length || !task.id) {
       return Promise.resolve();
@@ -7237,12 +7237,12 @@ Page({
         const movePhysical = (fromPath) => {
           const cleanupOriginal = () => {
             if (fromPath !== srcPath) {
-              try { fs.unlink({ filePath: srcPath }); } catch (e) {}
+              try { fs.unlink({ filePath: srcPath }); } catch (e) { }
             }
           };
           const handleFail = () => {
             if (fromPath !== srcPath) {
-              try { fs.unlink({ filePath: fromPath }); } catch (e) {}
+              try { fs.unlink({ filePath: fromPath }); } catch (e) { }
             }
             resolve('');
           };
@@ -7254,7 +7254,7 @@ Page({
                 destPath: filePath,
                 success: () => {
                   if (fromPath !== srcPath) {
-                    try { fs.unlink({ filePath: fromPath }); } catch (e) {}
+                    try { fs.unlink({ filePath: fromPath }); } catch (e) { }
                   }
                   cleanupOriginal();
                   resolve(filePath);
@@ -7407,7 +7407,7 @@ Page({
    * @param {string} [reason]
    * @returns {void}
    */
-  _cleanupVkCanvasHighlightRecording: function(reason) {
+  _cleanupVkCanvasHighlightRecording: function (reason) {
     if (this._vkHighlightFpsTimer) {
       clearInterval(this._vkHighlightFpsTimer);
       this._vkHighlightFpsTimer = null;
@@ -7423,7 +7423,7 @@ Page({
     if (this._renderPipeline && typeof this._renderPipeline.setVkRecordingHook === 'function') {
       try {
         this._renderPipeline.setVkRecordingHook(null);
-      } catch (eH) {}
+      } catch (eH) { }
     }
     var rec = this._vkCanvasRecorder;
     this._vkCanvasRecorder = null;
@@ -7431,12 +7431,12 @@ Page({
     if (rec && typeof rec.destroy === 'function') {
       try {
         rec.destroy();
-      } catch (eD) {}
+      } catch (eD) { }
     }
     if (reason) {
       try {
         this.appendHealthLog('vk_canvas_highlight_cleanup', { reason: reason });
-      } catch (eL) {}
+      } catch (eL) { }
     }
   },
 
@@ -7445,7 +7445,7 @@ Page({
    * @param {{ keepSavingState?: boolean }} [opts]
    * @returns {void}
    */
-  _ensureVkTimeshiftRecorder: function(opts) {
+  _ensureVkTimeshiftRecorder: function (opts) {
     var keepSavingState = !!(opts && opts.keepSavingState);
     var self = this;
     if (this._vkCanvasRecorder) return;
@@ -7484,28 +7484,28 @@ Page({
         fps: 24,
         videoBitsPerSecond: videoBitsPerSecond
       })
-      .then(function() {
+      .then(function () {
         if (self._vkCanvasRecorder !== recorder) {
-          try { recorder.destroy(); } catch (e0) {}
+          try { recorder.destroy(); } catch (e0) { }
           return;
         }
-        pipeline.setVkRecordingHook(function() {
+        pipeline.setVkRecordingHook(function () {
           return recorder.beforeDraw();
         });
-        self._vkHighlightFpsTimer = setInterval(function() {
+        self._vkHighlightFpsTimer = setInterval(function () {
           var snap = pipeline.snapshot();
           if (snap && recorder) {
             recorder.noteRenderFps(snap.avgFps);
           }
         }, 1000);
-        self._vkTimeshiftRotateTimer = setTimeout(function() {
+        self._vkTimeshiftRotateTimer = setTimeout(function () {
           self._vkTimeshiftRotateTimer = null;
           if (!self._livePageVisible || self.data.enhanceMode !== 'vk') return;
           self._cleanupVkCanvasHighlightRecording('vk_timeshift_rotate');
           self._ensureVkTimeshiftRecorder({ keepSavingState: true });
         }, rotateAfterMs);
       })
-      .catch(function() {
+      .catch(function () {
         self._cleanupVkCanvasHighlightRecording('vk_timeshift_start_fail');
         if (!keepSavingState) self.endHighlightSaving();
       });
@@ -7516,7 +7516,7 @@ Page({
    * @param {{id:string,now:number,createdAt:number,startSegNo:number,matchName:string,matchId:string,cover:string}} meta
    * @returns {void}
    */
-  _requestVkCanvasHighlightCapture: function(meta) {
+  _requestVkCanvasHighlightCapture: function (meta) {
     if (!this._vkCanvasRecorder) {
       this._ensureVkTimeshiftRecorder({ keepSavingState: true });
       setTimeout(() => {
@@ -7543,7 +7543,7 @@ Page({
    * @param {{clickWallMs?:number,keepTimeshiftAfterFinalize?:boolean}} [opts]
    * @returns {void}
    */
-  _finalizeVkCanvasHighlightMeta: function(meta, recorder, opts) {
+  _finalizeVkCanvasHighlightMeta: function (meta, recorder, opts) {
     var self = this;
     var clickWallMs = opts && typeof opts.clickWallMs === 'number' ? opts.clickWallMs : Date.now();
     var keepTimeshiftAfterFinalize = !!(opts && opts.keepTimeshiftAfterFinalize);
@@ -7559,7 +7559,7 @@ Page({
     if (this._renderPipeline && typeof this._renderPipeline.setVkRecordingHook === 'function') {
       try {
         this._renderPipeline.setVkRecordingHook(null);
-      } catch (eH) {}
+      } catch (eH) { }
     }
     this._vkCanvasRecorder = null;
     this._vkTimeshiftStartAt = 0;
@@ -7576,22 +7576,22 @@ Page({
      * @returns {void}
      */
     var vkStopOnce = false;
-    var runStopAndFinalize = function() {
+    var runStopAndFinalize = function () {
       if (vkStopOnce) return;
       vkStopOnce = true;
       r.stop()
-        .then(function(res) {
+        .then(function (res) {
           var path = res && res.tempFilePath ? String(res.tempFilePath) : '';
           try {
             if (r.destroy) r.destroy();
-          } catch (e2) {}
+          } catch (e2) { }
           if (!path) {
             wx.showToast({ title: '高光导出失败', icon: 'none' });
             self.endHighlightSaving();
             return;
           }
           var syntheticSegNo = 900000 + (Date.now() % 100000);
-          
+
           var plan = self.buildVkTailHighlightPlan(self);
 
           if (!isFinite(plan.startTimeSec) || !isFinite(plan.durationSec)) {
@@ -7617,15 +7617,15 @@ Page({
             replayChainPart2StopAtSec: null,
             isVkTimeshift: true
           });
-          
+
           if (keepTimeshiftAfterFinalize && self.data.enhanceMode === 'vk' && self._livePageVisible) {
             self._ensureVkTimeshiftRecorder({ keepSavingState: true });
           }
         })
-        .catch(function(err) {
+        .catch(function (err) {
           try {
             if (r.destroy) r.destroy();
-          } catch (e3) {}
+          } catch (e3) { }
           wx.showToast({ title: '高光导出失败', icon: 'none' });
           self.appendHealthLog('vk_canvas_highlight_stop_fail', {
             err: (err && err.message) || String(err)
@@ -7648,27 +7648,30 @@ Page({
         dhF = Math.max(90, Math.round(dhF * sF));
       }
       try {
-        wx.canvasToTempFilePath(
-          {
-            canvas: nodeFin,
-            destWidth: dwF,
-            destHeight: dhF,
-            fileType: 'jpg',
-            quality: 0.88,
-            success: function(res) {
-              if (res && res.tempFilePath) {
-                meta.cover = res.tempFilePath;
+        // 延迟 32ms (约 1 帧) 确保 WebGL 缓冲内容已刷新，减少黑图概率
+        setTimeout(function () {
+          wx.canvasToTempFilePath(
+            {
+              canvas: nodeFin,
+              destWidth: dwF,
+              destHeight: dhF,
+              fileType: 'jpg',
+              quality: 0.88,
+              success: function (res) {
+                if (res && res.tempFilePath) {
+                  meta.cover = res.tempFilePath;
+                }
+              },
+              fail: function () {
+                runStopAndFinalize();
+              },
+              complete: function () {
+                runStopAndFinalize();
               }
             },
-            fail: function() {
-              runStopAndFinalize();
-            },
-            complete: function() {
-              runStopAndFinalize();
-            }
-          },
-          self
-        );
+            self
+          );
+        }, 32);
       } catch (eTf) {
         runStopAndFinalize();
       }
@@ -7689,7 +7692,7 @@ Page({
    *   replayChainPart2StopAtSec: null
    * }}
    */
-  buildVkCanvasHighlightPlan: function(tempPath, elapsedSec) {
+  buildVkCanvasHighlightPlan: function (tempPath, elapsedSec) {
     var elapsed = typeof elapsedSec === 'number' && isFinite(elapsedSec)
       ? Math.max(0, elapsedSec)
       : 0;
@@ -7709,7 +7712,7 @@ Page({
    * 取滚动缓冲内 segNo 最大的可用条目（允许已被消费，仅作兜底）。
    * @returns {{ path: string, segNo: number, recordStartMs?: number } | null}
    */
-  pickLatestRollingEntry: function() {
+  pickLatestRollingEntry: function () {
     let best = null;
     const buf = this.segmentBuffer || [];
     for (let i = 0; i < buf.length; i += 1) {
@@ -7727,7 +7730,7 @@ Page({
    * @param {boolean} [requireFresh] 仅允许 segNo > consumed（避免重复）时为 true
    * @returns {{ path: string, segNo: number, recordStartMs?: number } | null}
    */
-  pickRollingEntryForClick: function(clickWallMs, requireFresh) {
+  pickRollingEntryForClick: function (clickWallMs, requireFresh) {
     const clickMs = Number(clickWallMs || 0);
     const durMs = Math.max(2000, Number(this.segmentDurationMs || 8000));
     const consumed = this.lastHighlightConsumedSegNo || 0;
@@ -7772,7 +7775,7 @@ Page({
    * @param {{ requireFresh?: boolean }} [opts]
    * @returns {boolean} true 表示已完成 finalize
    */
-  tryFinalizeHighlightFromRollingBuffer: function(meta, opts) {
+  tryFinalizeHighlightFromRollingBuffer: function (meta, opts) {
     if (!meta || typeof meta !== 'object') return false;
     const picked = this.pickRollingEntryForClick(meta.now, !!(opts && opts.requireFresh));
     if (!picked || !picked.path) return false;
@@ -7810,7 +7813,7 @@ Page({
    * VK 模式：改为 Canvas MediaRecorder，见 {@link _requestVkCanvasHighlightCapture}。
    * 不额外拍照封面，避免与录制并行增加相机压力与闪屏。
    */
-  requestHighlightCapture: function() {
+  requestHighlightCapture: function () {
     if (this._highlightRequestLock || this.data.isSavingHighlight) {
       return;
     }
@@ -7818,7 +7821,7 @@ Page({
       this._showLightHint('请先清理空间');
       try {
         this.appendHealthLog('highlight_skip_storage_severe', {});
-      } catch (e) {}
+      } catch (e) { }
       return;
     }
     const vkHighlight = this.data.enhanceMode === 'vk';
@@ -7927,7 +7930,7 @@ Page({
             Math.floor(this.segmentDurationMs * 2.05) + 42000
           );
         }
-      } catch (eRg) {}
+      } catch (eRg) { }
       this._highlightResumeGuardTimer = setTimeout(() => {
         if (!this._highlightSaveAwaitingResume) return;
         this.appendHealthLog('highlight_resume_guard_timeout', {});
@@ -7966,7 +7969,7 @@ Page({
     this.appendHealthLog('highlight_skip_not_recording_no_fresh', {});
   },
 
-  finalizeHighlight: function(pending) {
+  finalizeHighlight: function (pending) {
     if (!pending || pending.finalizing) return;
     pending.finalizing = true;
     if (pending.timeout) {
@@ -8083,13 +8086,13 @@ Page({
     }
   },
 
-  formatTime: function(ts) {
+  formatTime: function (ts) {
     const d = new Date(ts);
     const pad = (n) => `${n}`.padStart(2, '0');
     return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   },
 
-  getHighlightList: function(matchId) {
+  getHighlightList: function (matchId) {
     if (matchId) {
       const clipsMap = clipsStorage.readClipsMapSafe();
       if (!clipsMap) return [];
@@ -8100,7 +8103,7 @@ Page({
     return Array.isArray(raw) ? raw : [];
   },
 
-  onBackgroundLongPress: function() {
+  onBackgroundLongPress: function () {
     if (this.isMultiTouch) return;
     this.openDrawerMode1();
   },
@@ -8112,13 +8115,13 @@ Page({
    *  - 切档后记录健康日志，便于真机对比时回溯。
    * @param {WechatMiniprogram.TouchEvent} e data-mode: off|standard|strong
    */
-  onEnhanceModePick: function(e) {
+  onEnhanceModePick: function (e) {
     if (!this.data.enhanceWhitelisted) return;
     if (this.data.enhanceVkTransitioning) return;
     if (Date.now() < (this._enhanceModeSwitchGuardUntil || 0)) {
       try {
         wx.showToast({ title: '相机切换中，请稍候', icon: 'none', duration: 1200 });
-      } catch (eG) {}
+      } catch (eG) { }
       return;
     }
     var mode = e && e.currentTarget && e.currentTarget.dataset
@@ -8138,7 +8141,7 @@ Page({
       if (this.data.enhanceMode === 'vk') return;
       this.appendHealthLog('enhance_mode_manual_pick', { mode: 'vk', orchestrator: 'in' });
       this._orchestrateSwitchToVk();
-      try { wx.vibrateShort({ type: 'light' }); } catch (eV1) {}
+      try { wx.vibrateShort({ type: 'light' }); } catch (eV1) { }
       return;
     }
     if (this.data.enhanceMode === 'vk') {
@@ -8158,7 +8161,7 @@ Page({
           clearTimeout(this._enhanceZeroFrameRecoverTimer);
           this._enhanceZeroFrameRecoverTimer = null;
         }
-        this._enhanceZeroFrameRecoverTimer = setTimeout(function() {
+        this._enhanceZeroFrameRecoverTimer = setTimeout(function () {
           self._enhanceZeroFrameRecoverTimer = null;
           if (self.data.enhanceMode === 'vk') return;
           if (self.data.enhanceMode !== picked) return;
@@ -8171,12 +8174,12 @@ Page({
           self._pendingEnhanceModeAfterRecover = picked;
           self._teardownEnhanceRender();
           if (wx.nextTick) {
-            wx.nextTick(function() {
+            wx.nextTick(function () {
               if (!self.data.cameraContext) return;
               self._maybeBootEnhanceRender();
             });
           } else {
-            setTimeout(function() {
+            setTimeout(function () {
               if (!self.data.cameraContext) return;
               self._maybeBootEnhanceRender();
             }, 0);
@@ -8184,22 +8187,22 @@ Page({
         }, 2400);
       }
     }
-    try { wx.vibrateShort({ type: 'light' }); } catch (eV) {}
+    try { wx.vibrateShort({ type: 'light' }); } catch (eV) { }
   },
 
   /** 工具条自身吞事件，避免点胶囊内部时触发遮罩 closeAllDrawers。 */
-  stopEnhanceToolbarBubble: function() {},
+  stopEnhanceToolbarBubble: function () { },
 
   /**
    * 启动 1s 轮询把 render-pipeline 的 FPS 拉到 data.enhanceFpsText；
    * 仅在抽屉打开期间运行，避免长驻开销。未启用增强渲染时显示 "— fps"。
    * @returns {void}
    */
-  startEnhanceFpsPolling: function() {
+  startEnhanceFpsPolling: function () {
     if (!this.data.enhanceWhitelisted) return;
     if (this._enhanceFpsPollTimer) return;
     var self = this;
-    var poll = function() {
+    var poll = function () {
       if (!self._livePageVisible || self.data.drawerMode !== 1) {
         self.stopEnhanceFpsPolling();
         return;
@@ -8223,7 +8226,7 @@ Page({
             text = diag.framesRendered + '帧 · 采样中';
           }
         }
-      } catch (eSnap) {}
+      } catch (eSnap) { }
       if (text !== self.data.enhanceFpsText) {
         self.setData({ enhanceFpsText: text });
       }
@@ -8233,7 +8236,7 @@ Page({
   },
 
   /** @returns {void} */
-  stopEnhanceFpsPolling: function() {
+  stopEnhanceFpsPolling: function () {
     if (this._enhanceFpsPollTimer) {
       clearInterval(this._enhanceFpsPollTimer);
       this._enhanceFpsPollTimer = null;
@@ -8244,7 +8247,7 @@ Page({
    * 快速上手第一步结束，进入抖音直播画幅（16:9）说明。
    * @returns {void}
    */
-  onGuideToDyFrame: function() {
+  onGuideToDyFrame: function () {
     this.setData({ guideSubStep: 1 });
   },
 
@@ -8252,7 +8255,7 @@ Page({
    * 关闭引导并写入已读；两步均视为完成。
    * @returns {void}
    */
-  dismissGuide: function() {
+  dismissGuide: function () {
     this.setData({ showGuide: false, guideSubStep: 0 });
     wx.setStorageSync('hasReadGuide', true);
   },
@@ -8260,7 +8263,7 @@ Page({
   /**
    * 打开抽屉（mode 1）：左侧比赛列表 + 右侧高光缩略图
    */
-  openDrawerMode1: function() {
+  openDrawerMode1: function () {
     this.refreshDrawerHighlights();
     this.loadMatchList();
     this.setData({ drawerMode: 1, cameraSettingsOpen: false });
@@ -8271,7 +8274,7 @@ Page({
   /**
    * 关闭所有抽屉，回到 mode 0
    */
-  closeAllDrawers: function() {
+  closeAllDrawers: function () {
     if (this.data.drawerMode !== 0) {
       this.setData({ drawerMode: 0 });
     }
@@ -8279,14 +8282,14 @@ Page({
   },
 
   /** 向后兼容：内部调用 closeDrawer 的地方统一走 closeAllDrawers */
-  closeDrawer: function() {
+  closeDrawer: function () {
     this.closeAllDrawers();
   },
 
-  stopDrawerBubbling: function() { return; },
-  stopLeftDrawerBubbling: function() { return; },
+  stopDrawerBubbling: function () { return; },
+  stopLeftDrawerBubbling: function () { return; },
 
-  onDrawerBackdropMove: function(e) {
+  onDrawerBackdropMove: function (e) {
     const touch = (e.touches && e.touches[0]) ? e.touches[0] : null;
     if (!touch) return;
     const sys = wx.getSystemInfoSync();
@@ -8299,7 +8302,7 @@ Page({
   /**
    * 从 MIAOXIE_MATCHES 加载完整比赛列表，标记当前场次
    */
-  loadMatchList: function() {
+  loadMatchList: function () {
     const currentMatchId =
       wx.getStorageSync('currentMatchId') || app.globalData.currentMatchId || '';
     const raw = wx.getStorageSync('MIAOXIE_MATCHES');
@@ -8312,7 +8315,7 @@ Page({
    * 点击比赛卡片：关闭抽屉，弹出颜色设置浮层
    * @param {WechatMiniprogram.TouchEvent} e data-id
    */
-  openColorModal: function(e) {
+  openColorModal: function (e) {
     const { id } = e.currentTarget.dataset;
     const match = this.data.matchList.find((m) => m.id === id);
     if (!match) return;
@@ -8342,13 +8345,13 @@ Page({
           colorModalDownloadCleared: empty
         });
       });
-    } catch (eEst) {}
+    } catch (eEst) { }
   },
 
   /**
    * 关闭颜色设置浮层
    */
-  closeColorModal: function() {
+  closeColorModal: function () {
     this.setData({
       showColorModal: false,
       colorModalMatch: null,
@@ -8361,7 +8364,7 @@ Page({
    * 将全部高光本地视频保存到系统相册并 unlink，索引保留为「已导出」（小程序内无法直连相册路径回放）。
    * @returns {void}
    */
-  onDownloadHighlightsToAlbumAndClearCache: function() {
+  onDownloadHighlightsToAlbumAndClearCache: function () {
     const fs = wx.getFileSystemManager();
     const clipsMap = clipsStorage.readClipsMapSafe();
     if (!clipsMap) {
@@ -8396,7 +8399,7 @@ Page({
           try {
             hint = getClipStorageHealthHint(b, userB);
             this._syncCacheStorageLampData(hint);
-          } catch (eHint) {}
+          } catch (eHint) { }
           this.setData({
             colorModalCacheRowHint:
               empty
@@ -8405,7 +8408,7 @@ Page({
             colorModalDownloadCleared: empty || !!(hint && hint.level !== 'severe')
           });
         });
-      } catch (eZ) {}
+      } catch (eZ) { }
       wx.showToast({ title: '无待导出本地文件', icon: 'none' });
       return;
     }
@@ -8443,7 +8446,7 @@ Page({
                     at: Date.now()
                   };
                   storageEst.writeFileStorageEstimateSnapshot(app.globalData.fileStorageEstimate);
-                } catch (eG) {}
+                } catch (eG) { }
                 if (this.data.showColorModal) {
                   const emptied = mb < 0.05;
                   this.setData({
@@ -8453,7 +8456,7 @@ Page({
                 }
               }
             );
-          } catch (eUpd) {}
+          } catch (eUpd) { }
         });
         return;
       }
@@ -8481,7 +8484,7 @@ Page({
           success: () => {
             try {
               fs.unlinkSync(p);
-            } catch (eUn) {}
+            } catch (eUn) { }
             step();
           },
           fail: () => {
@@ -8514,13 +8517,13 @@ Page({
   },
 
   /** 阻止颜色浮层内部点击冒泡到遮罩关闭 */
-  stopColorModalBubbling: function() { return; },
+  stopColorModalBubbling: function () { return; },
 
   /**
    * 严重存储自定义浮层：用户点「知道了」关闭。
    * @returns {void}
    */
-  onStoragePressureModalDismiss: function() {
+  onStoragePressureModalDismiss: function () {
     this.setData({ showStoragePressureModal: false });
   },
 
@@ -8528,7 +8531,7 @@ Page({
    * 严重存储自定义浮层：跳转与 `wx.showModal` 确认一致，执行下载并清空。
    * @returns {void}
    */
-  onStoragePressureModalConfirm: function() {
+  onStoragePressureModalConfirm: function () {
     this.setData({ showStoragePressureModal: false });
     this.onDownloadHighlightsToAlbumAndClearCache();
   },
@@ -8537,7 +8540,7 @@ Page({
    * 浮层中选中队伍名，切换共用色盘指向
    * @param {WechatMiniprogram.TouchEvent} e data-team
    */
-  onSelectModalTeam: function(e) {
+  onSelectModalTeam: function (e) {
     const { team } = e.currentTarget.dataset;
     if (team === 'teamA' || team === 'teamB') {
       this.setData({ colorModalTeam: team });
@@ -8547,10 +8550,10 @@ Page({
   /**
    * 从颜色浮层切换场次：更新 currentMatchId 并关闭浮层
    */
-  onSwitchMatchFromModal: function() {
+  onSwitchMatchFromModal: function () {
     const modal = this.data.colorModalMatch;
     if (!modal || !modal.id) return;
-    
+
     // 如果已经是当前场次，点击应关闭浮层
     if (modal.isCurrent) {
       this.closeColorModal();
@@ -8589,7 +8592,7 @@ Page({
    * 修改某场比赛的队服颜色球（点击色球直接生效）
    * @param {WechatMiniprogram.TouchEvent} e data-match-id / data-team / data-color
    */
-  onChangeTeamColor: function(e) {
+  onChangeTeamColor: function (e) {
     const { color } = e.currentTarget.dataset;
     const modal = this.data.colorModalMatch;
     if (!modal) return;
@@ -8635,7 +8638,7 @@ Page({
    * 切换到指定场次，加载数据并关闭抽屉
    * @param {WechatMiniprogram.TouchEvent} e data-id
    */
-  onSwitchMatch: function(e) {
+  onSwitchMatch: function (e) {
     const { id } = e.currentTarget.dataset;
     if (!id) return;
     const raw = wx.getStorageSync('MIAOXIE_MATCHES');
@@ -8661,7 +8664,7 @@ Page({
     wx.showToast({ title: '已切换', icon: 'success', duration: 800 });
   },
 
-  refreshDrawerHighlights: function() {
+  refreshDrawerHighlights: function () {
     const currentMatchId = wx.getStorageSync('currentMatchId') || app.globalData.currentMatchId || '';
     const fullList = (this.getHighlightList(currentMatchId) || []).filter(
       (it) => it && !it.exportedToAlbum
@@ -8693,7 +8696,7 @@ Page({
     this.setData({ drawerHighlights, highlightCount: total });
   },
 
-  onDrawerImageError: function(e) {
+  onDrawerImageError: function (e) {
     const { id } = e.currentTarget.dataset;
     const dc = this.data.defaultCover;
     const updated = (this.data.drawerHighlights || []).map((it) => {
@@ -8705,7 +8708,7 @@ Page({
     this.setData({ drawerHighlights: updated });
   },
 
-  onDrawerSelect: function(e) {
+  onDrawerSelect: function (e) {
     const { id } = e.currentTarget.dataset;
     const currentMatchId = wx.getStorageSync('currentMatchId') || app.globalData.currentMatchId || '';
     const list = this.getHighlightList(currentMatchId);
@@ -8723,7 +8726,7 @@ Page({
    * 长按删除高光
    * @param {WechatMiniprogram.TouchEvent} e
    */
-  onDeleteHighlight: function(e) {
+  onDeleteHighlight: function (e) {
     const { id } = e.currentTarget.dataset;
     wx.showModal({
       title: '删除高光',
@@ -8738,9 +8741,9 @@ Page({
   },
 
   /** 真正执行删除逻辑（双端一致） */
-  doDeleteHighlight: function(id) {
+  doDeleteHighlight: function (id) {
     const fs = wx.getFileSystemManager();
-    
+
     // 1. 处理 MIAOXIE_CLIPS
     const clipsMap = clipsStorage.readClipsMapSafe();
     if (!clipsMap) {
@@ -8764,7 +8767,7 @@ Page({
         toUnlink.forEach((p) => {
           try {
             fs.unlinkSync(p);
-          } catch (e) {}
+          } catch (e) { }
         });
         bucket.splice(idx, 1);
         foundInClips = true;
@@ -8780,7 +8783,7 @@ Page({
     const legacyIdx = legacyList.findIndex(x => x.id === id);
     if (legacyIdx >= 0) {
       const item = legacyList[legacyIdx];
-      (item.segments || []).forEach(p => { try { fs.unlinkSync(p); } catch (e) {} });
+      (item.segments || []).forEach(p => { try { fs.unlinkSync(p); } catch (e) { } });
       legacyList.splice(legacyIdx, 1);
       wx.setStorageSync('highlight_list', legacyList);
     }
@@ -8793,7 +8796,7 @@ Page({
    * 自动将高光保存至相册并删除微信本地缓存（仅针对 VK 模式）
    * @param {object} item 高光对象
    */
-  _saveHighlightToAlbumAndClean: function(item, silent) {
+  _saveHighlightToAlbumAndClean: function (item, silent) {
     if (!item || !item.isVkTimeshift || item.savedToAlbum) return;
     const src = (item.preSegments && item.preSegments[0]) || item.replaySegment;
     if (!src) return;
@@ -8801,8 +8804,8 @@ Page({
       filePath: src,
       success: () => {
         const fs = wx.getFileSystemManager();
-        try { fs.unlinkSync(src); } catch (e) {}
-        
+        try { fs.unlinkSync(src); } catch (e) { }
+
         const clipsMap = clipsStorage.readClipsMapSafe();
         if (clipsMap && clipsMap[item.matchId]) {
           const bucket = clipsMap[item.matchId];
@@ -8836,7 +8839,7 @@ Page({
   /**
    * 存储超限保护：扫描当前所有已落盘且未转存的 VK 高光，若大于等于 8 个，自动将最老的一个转存相册并清理微信缓存
    */
-  _enforceHighlightStorageLimit: function() {
+  _enforceHighlightStorageLimit: function () {
     const clipsMap = clipsStorage.readClipsMapSafe();
     if (!clipsMap) return;
     let pendingClips = [];
@@ -8865,7 +8868,7 @@ Page({
    * @param {function(): void} [onPaused] 录制已停止、可安全起播时回调
    * @returns {void}
    */
-  pauseRollingForReplay: function(onPaused) {
+  pauseRollingForReplay: function (onPaused) {
     const done = () => {
       if (typeof onPaused === 'function') {
         if (wx.nextTick) wx.nextTick(onPaused);
@@ -8916,7 +8919,7 @@ Page({
    * 退出回放后恢复滚动录制；仅在相机可用且非恢复流程中重启。
    * @returns {void}
    */
-  resumeRollingAfterReplay: function() {
+  resumeRollingAfterReplay: function () {
     if (!this._rollingPausedForReplay) return;
     this._rollingPausedForReplay = false;
     if (!this.data.liveStreamAllowed || this.data.isRecovering || this._recoveryLock) return;
@@ -8929,7 +8932,7 @@ Page({
       this.rollingActive = true;
       try {
         this.updatePipelineHealth();
-      } catch (eH) {}
+      } catch (eH) { }
       return;
     }
     if (!this.data.cameraMounted || !this.data.cameraContext || !this._cameraInitDone) {
@@ -8990,7 +8993,7 @@ Page({
    * - 切换时只改 replayActiveSlot，两个 video 组件始终在 DOM 中，不触发重新加载。
    * @param {object} item 高光条目
    */
-  startReplay: function(item) {
+  startReplay: function (item) {
     if (this.data.isSavingHighlight) {
       this._replayDeferredItem = item;
       this.appendHealthLog('replay_deferred_until_highlight_done', {
@@ -9050,10 +9053,10 @@ Page({
    * @param {object} item 高光条目
    * @returns {void}
    */
-  startReplayContinue: function(item) {
+  startReplayContinue: function (item) {
     if (!item || typeof item !== 'object') return;
     this._replayActiveItem = item;
-    
+
     // 递增观看次数并入库
     item.viewCount = (item.viewCount || 0) + 1;
     const clipsMap = clipsStorage.readClipsMapSafe();
@@ -9107,7 +9110,7 @@ Page({
     const introMs = 520;
     const peakMs = 140;
     let initialSec = typeof item.replayInitialTimeSec === 'number' ? item.replayInitialTimeSec : 0;
-    
+
     // VK 模式特殊处理：废弃底层的 initial-time 属性（会因无关键帧导致黑屏报错）
     // 改为从 0 开始播，由业务层在 loadedmetadata/bindplay 中强行 seek 过去，并辅以 UI 遮罩
     // Fix: 不再依赖 initialSec > 0 判断；VK 高光始终需要跳到末尾 8s，
@@ -9116,9 +9119,15 @@ Page({
     this._vkDelayedSeekTarget = null;
     this._vkSeekDone = false;
     let showFastForwardMask = false;
-    if (item.isVkTimeshift) {
+    const isVk = !!item.isVkTimeshift;
+    this._isVkTimeshift = isVk; // 使用私有变量规避 setData 异步延迟风险
+    this._vkSeekConfirmed = false; // 重置系统级校验锁
+    this._vkSeekTarget = 0;
+    this._replayStopAtMediaSec = 0;
+
+    if (isVk) {
       this._vkDelayedSeekTarget = 'pending';
-      showFastForwardMask = true;
+      showFastForwardMask = false; // 直接显示快进过程，去掉遮罩
       initialSec = 0;
     }
 
@@ -9128,13 +9137,22 @@ Page({
 
     const segLenSec = this.segmentDurationMs / 1000;
     const winSec = (this.highlightPlaybackWindowMs || 8000) / 1000;
+
     if (typeof item.replayMediaStopAtSec === 'number') {
-      this._replayStopAtMediaSec = Math.min(segLenSec, item.replayMediaStopAtSec);
+      // VK 模式跳过 8s 截断限制，允许播放到实际终点
+      this._replayStopAtMediaSec = isVk
+        ? item.replayMediaStopAtSec
+        : Math.min(segLenSec, item.replayMediaStopAtSec);
     } else {
-      this._replayStopAtMediaSec = Math.min(segLenSec, initialSec + winSec);
+      // VK 模式初始化时不写死 stopAt，等待 loadedmetadata 拿到真实时长后再定
+      this._replayStopAtMediaSec = isVk
+        ? 0
+        : Math.min(segLenSec, initialSec + winSec);
     }
     if (typeof item.replayChainPart2StopAtSec === 'number') {
-      this._replayChainPart2StopAt = Math.min(segLenSec, item.replayChainPart2StopAtSec);
+      this._replayChainPart2StopAt = isVk
+        ? item.replayChainPart2StopAtSec
+        : Math.min(segLenSec, item.replayChainPart2StopAtSec);
     } else {
       this._replayChainPart2StopAt = null;
     }
@@ -9154,6 +9172,7 @@ Page({
       replayMaskText: 'REPLAY',
       replayMaskKind: 'replay',
       replayFastForwarding: showFastForwardMask, // 追加快进遮罩状态
+      isVkTimeshift: isVk, // 记录当前是否为 VK 模式，用于后续逻辑隔离
       replayQueue: [],
       replayIndex: 0,
       replaySrc: '',
@@ -9191,7 +9210,7 @@ Page({
           try {
             const ctx = wx.createVideoContext('replayVideoA', this);
             if (ctx && ctx.play) ctx.play();
-          } catch (e) {}
+          } catch (e) { }
         });
       });
     }, peakMs);
@@ -9206,7 +9225,7 @@ Page({
    * 获取当前活跃 slot 对应的 VideoContext id。
    * @returns {string} 'replayVideoA' | 'replayVideoB'
    */
-  _activeReplayVideoId: function() {
+  _activeReplayVideoId: function () {
     return this.data.replayActiveSlot === 1 ? 'replayVideoB' : 'replayVideoA';
   },
 
@@ -9214,7 +9233,7 @@ Page({
    * 结束回放并播放回到直播的转场（正常播完或用户点击中断）。
    * @param {boolean} stopPlayer 是否立即停止 video（点击中断时为 true）
    */
-  finishReplayToLive: function(stopPlayer) {
+  finishReplayToLive: function (stopPlayer) {
     if (this._replayActiveItem) {
       if ((this._replayActiveItem.viewCount || 0) >= 2) {
         this._saveHighlightToAlbumAndClean(this._replayActiveItem, true);
@@ -9271,7 +9290,7 @@ Page({
           const ctx = wx.createVideoContext(vid, this);
           if (ctx && ctx.stop) ctx.stop();
         });
-      } catch (e) {}
+      } catch (e) { }
     }
     const outroMs = this.data.replayOutroDurationMs || 720;
     this.setData({
@@ -9308,9 +9327,10 @@ Page({
    * 仅在活跃 slot 的 bindended 中调用（通过 data-slot 区分）。
    * @param {number} slotIdx 触发事件的 slot（0=A, 1=B）
    */
-  onReplaySlotEnded: function(slotIdx) {
+  onReplaySlotEnded: function (slotIdx) {
     if (slotIdx !== this.data.replayActiveSlot) return;
-    if (!this.data.replayHighlightChain) {
+    // 双保险：VK 模式下视频自然结束（ended）也必须触发回到直播，弥补 timeupdate 可能的不及时
+    if (this._isVkTimeshift || !this.data.replayHighlightChain) {
       this.finishReplayToLive(false);
       return;
     }
@@ -9352,7 +9372,7 @@ Page({
           if (ctx && ctx.seek) ctx.seek(0);
           if (ctx && ctx.play) ctx.play();
           if (ctx && ctx.playbackRate) ctx.playbackRate(rate);
-        } catch (e) {}
+        } catch (e) { }
       });
       this._replayPendingFallbackTimer = setTimeout(() => {
         if (this._replayPendingActiveSlot !== nextSlot) return;
@@ -9363,7 +9383,7 @@ Page({
           const oldId = slotIdx === 0 ? 'replayVideoA' : 'replayVideoB';
           const oldCtx = wx.createVideoContext(oldId, this);
           if (oldCtx && oldCtx.pause) oldCtx.pause();
-        } catch (e2) {}
+        } catch (e2) { }
       }, 420);
     });
   },
@@ -9373,7 +9393,7 @@ Page({
    * @param {number} slotIdx 0=A, 1=B
    * @returns {void}
    */
-  _maybePrimeHiddenChainSlot: function(slotIdx) {
+  _maybePrimeHiddenChainSlot: function (slotIdx) {
     if (!this.data.isReplaying || !this.data.replayHighlightChain) return;
     const active = this.data.replayActiveSlot;
     const src = slotIdx === 0 ? this.data.replaySlotASrc : this.data.replaySlotBSrc;
@@ -9398,9 +9418,9 @@ Page({
             const c2 = wx.createVideoContext(id, this);
             if (c2 && c2.pause) c2.pause();
             if (c2 && c2.seek) c2.seek(0);
-          } catch (e2) {}
+          } catch (e2) { }
         }, 120);
-      } catch (e) {}
+      } catch (e) { }
     });
   },
 
@@ -9410,10 +9430,10 @@ Page({
    * @param {WechatMiniprogram.CustomEvent} e
    * @returns {void}
    */
-  _onReplaySlotTimeUpdate: function(slotIdx, e) {
+  _onReplaySlotTimeUpdate: function (slotIdx, e) {
     if (this._replayPendingActiveSlot !== slotIdx) return;
     const t = e && e.detail && typeof e.detail.currentTime === 'number' ? e.detail.currentTime : 0;
-    
+
     // 如果物理长度太短或算算无需跳转，在此立刻解开遮罩
     if (this._vkDelayedSeekTarget === 0 && this.data.replayFastForwarding) {
       this._vkDelayedSeekTarget = null;
@@ -9422,12 +9442,14 @@ Page({
     }
 
     // 监听快进进度，一旦越过目标线，立即解除遮罩
-    if (this.data.replayFastForwarding && typeof this._vkDelayedSeekTarget === 'number' && this._vkDelayedSeekTarget > 0) {
-      // 允许 0.5 秒误差，到达目标附近即认为 seek 成功，解开遮罩
-      if (t >= this._vkDelayedSeekTarget - 0.5) {
+    if (this.data.replayFastForwarding && typeof this._vkDelayedSeekTarget === 'number' && this._vkDelayedSeekTarget >= 0) {
+      // 只要到达目标起跳点附近，立即释放 UI，无需等待固定时长
+      if (t >= this._vkDelayedSeekTarget - 0.2) {
         if (this._vkFastForwardMaskTimer) clearTimeout(this._vkFastForwardMaskTimer);
+        if (this._vkSeekFallbackTimer) clearTimeout(this._vkSeekFallbackTimer);
         this.setData({ replayFastForwarding: false });
         this._vkDelayedSeekTarget = null;
+        this._vkSeekConfirmed = true;
       }
     }
 
@@ -9443,12 +9465,12 @@ Page({
         const oldId = oldSlot === 0 ? 'replayVideoA' : 'replayVideoB';
         const oldCtx = wx.createVideoContext(oldId, this);
         if (oldCtx && oldCtx.pause) oldCtx.pause();
-      } catch (err) {}
+      } catch (err) { }
       try {
         const ctx = wx.createVideoContext(slotIdx === 0 ? 'replayVideoA' : 'replayVideoB', this);
         const rate = this.data.replayPlaybackRate || 0.75;
         if (ctx && ctx.playbackRate) ctx.playbackRate(rate);
-      } catch (err2) {}
+      } catch (err2) { }
     });
   },
 
@@ -9456,7 +9478,7 @@ Page({
    * slot-a timeupdate：用于链式切换后待置顶确认。
    * @param {WechatMiniprogram.CustomEvent} e
    */
-  onReplayVideoATimeUpdate: function(e) {
+  onReplayVideoATimeUpdate: function (e) {
     this._onReplaySlotTimeUpdate(0, e);
     this._enforceReplayHighlightWindow(0, e);
   },
@@ -9465,7 +9487,7 @@ Page({
    * slot-b timeupdate：用于链式切换后待置顶确认。
    * @param {WechatMiniprogram.CustomEvent} e
    */
-  onReplayVideoBTimeUpdate: function(e) {
+  onReplayVideoBTimeUpdate: function (e) {
     this._onReplaySlotTimeUpdate(1, e);
     this._enforceReplayHighlightWindow(1, e);
   },
@@ -9478,7 +9500,7 @@ Page({
    * @param {WechatMiniprogram.CustomEvent} e
    * @returns {void}
    */
-  _enforceReplayHighlightWindow: function(slotIdx, e) {
+  _enforceReplayHighlightWindow: function (slotIdx, e) {
     if (!this.data.isReplaying) return;
     if (this.data.replayActiveSlot !== slotIdx) return;
     if (this._replayPendingActiveSlot !== null && this._replayPendingActiveSlot !== undefined) {
@@ -9495,6 +9517,23 @@ Page({
       return;
     }
     if (!chain) {
+      // VK 模式防护：使用私有变量判断，绕过异步 data 延迟
+      if (this._isVkTimeshift) {
+        // ✅ 系统级保险：判定是否越过起跳线（允许 0.3s 误差）
+        if (!this._vkSeekConfirmed) {
+          if (t >= this._vkSeekTarget - 0.3) {
+            this._vkSeekConfirmed = true;
+          } else {
+            return; // ❗未越过目标点前，禁止进入结束逻辑
+          }
+        }
+        // ✅ 提前 250ms 结束（iOS 适配极限优化），给解码与 UI 切换预留更充裕 buffer，确保完全无缝
+        if (typeof this._replayStopAtMediaSec === 'number' && this._replayStopAtMediaSec > 0 && t >= this._replayStopAtMediaSec - 0.25) {
+          this.finishReplayToLive(false);
+        }
+        return;
+      }
+
       const lim = this._replayStopAtMediaSec;
       if (typeof lim === 'number' && lim > 0.04 && t >= lim - 0.12) {
         this.finishReplayToLive(false);
@@ -9505,28 +9544,28 @@ Page({
   /**
    * slot-a 的 bindended 回调。
    */
-  onReplayVideoAEnded: function() {
+  onReplayVideoAEnded: function () {
     this.onReplaySlotEnded(0);
   },
 
   /**
    * slot-b 的 bindended 回调。
    */
-  onReplayVideoBEnded: function() {
+  onReplayVideoBEnded: function () {
     this.onReplaySlotEnded(1);
   },
 
   /**
    * 兼容旧 WXML bindended="onReplayEnded"（单 video 模式下仍可调用）。
    */
-  onReplayEnded: function() {
+  onReplayEnded: function () {
     this.onReplaySlotEnded(this.data.replayActiveSlot);
   },
 
   /**
    * 回放中点击屏幕：中断播放并进入直播转场。
    */
-  onReplayInterruptTap: function() {
+  onReplayInterruptTap: function () {
     if (!this.data.isReplaying) return;
     this.finishReplayToLive(true);
   },
@@ -9535,7 +9574,7 @@ Page({
    * 仅对活跃 slot 生效：设置回放倍速。
    * @param {number} slotIdx 触发事件的 slot（0=A, 1=B）
    */
-  _applyPlaybackRateToSlot: function(slotIdx) {
+  _applyPlaybackRateToSlot: function (slotIdx) {
     const active = this.data.replayActiveSlot;
     const pending = this._replayPendingActiveSlot;
     if (slotIdx !== active && slotIdx !== pending) return;
@@ -9544,7 +9583,7 @@ Page({
       const id = slotIdx === 0 ? 'replayVideoA' : 'replayVideoB';
       const ctx = wx.createVideoContext(id, this);
       if (ctx && ctx.playbackRate) ctx.playbackRate(rate);
-    } catch (e) {}
+    } catch (e) { }
   },
 
   /**
@@ -9554,7 +9593,7 @@ Page({
    * 遵循工程规则：seek 仅做 1~2 次，绝不循环。
    * @param {number} slotIdx 触发 bindplay 的 slot
    */
-  _maybeVkSeekOnPlay: function(slotIdx) {
+  _maybeVkSeekOnPlay: function (slotIdx) {
     if (this._vkSeekDone) return;
     if (
       typeof this._vkDelayedSeekTarget === 'number' &&
@@ -9568,14 +9607,14 @@ Page({
         if (ctx && ctx.seek) {
           ctx.seek(this._vkDelayedSeekTarget);
         }
-      } catch (e) {}
+      } catch (e) { }
     }
   },
 
   /**
    * slot-a bindplay 回调：设置倍速 + VK seek 兜底。
    */
-  onReplayVideoAPlay: function() {
+  onReplayVideoAPlay: function () {
     this._applyPlaybackRateToSlot(0);
     this._maybeVkSeekOnPlay(0);
   },
@@ -9583,7 +9622,7 @@ Page({
   /**
    * slot-b bindplay 回调：设置倍速 + VK seek 兜底。
    */
-  onReplayVideoBPlay: function() {
+  onReplayVideoBPlay: function () {
     this._applyPlaybackRateToSlot(1);
     this._maybeVkSeekOnPlay(1);
   },
@@ -9591,7 +9630,7 @@ Page({
   /**
    * 兼容旧 WXML bindplay="onReplayVideoPlay"。
    */
-  onReplayVideoPlay: function() {
+  onReplayVideoPlay: function () {
     this._applyPlaybackRateToSlot(this.data.replayActiveSlot);
     this._maybeVkSeekOnPlay(this.data.replayActiveSlot);
   },
@@ -9603,7 +9642,7 @@ Page({
    * @param {WechatMiniprogram.CustomEvent} e
    * @param {number} slotIdx 触发事件的 slot（0=A, 1=B）
    */
-  _handleReplayLoadedMeta: function(e, slotIdx) {
+  _handleReplayLoadedMeta: function (e, slotIdx) {
     const detail = (e && e.detail) || {};
 
     // VK seek：不受 slot guard 限制，仅检查 _vkDelayedSeekTarget 状态。
@@ -9611,23 +9650,43 @@ Page({
     // 第二次 seek 在 bindplay 回调中由 _maybeVkSeekOnPlay 兜底（iOS seek 延迟生效）。
     if (this._vkDelayedSeekTarget === 'pending' && detail.duration) {
       const dur = Number(detail.duration);
-      if (dur > 0) {
-        const target = Math.max(0, dur - 8);
+      // 工程防护：校验 duration 有效性，防止 0/NaN 导致秒切或计算错误
+      if (dur > 0.5 && isFinite(dur)) {
+        // 跳转到倒数 10 秒处
+        const target = Math.max(0, dur - 10);
+        this._vkSeekTarget = target;
+        this._vkSeekConfirmed = false;
         this._vkDelayedSeekTarget = target;
         this._vkSeekDone = false; // 让 bindplay 还能再 seek 一次
+
+        // 核心修正：同步更新停止点为视频实际终点，确保 seek 后能完整播放到尾部
+        this._replayStopAtMediaSec = dur;
+        this.setData({
+          replaySlotAInitialTime: target
+        });
         try {
           const id = slotIdx === 0 ? 'replayVideoA' : 'replayVideoB';
           const ctx = wx.createVideoContext(id, this);
           if (ctx && ctx.seek) {
             ctx.seek(target);
-            // 2.5 秒后强行解除遮罩防卡死（防止 seek 成功但 timeupdate 未到）
+            // ✅ 系统级超时兜底：防止某些极低性能机型不触发 bindseeked/timeupdate 导致死锁
+            if (this._vkSeekFallbackTimer) clearTimeout(this._vkSeekFallbackTimer);
+            this._vkSeekFallbackTimer = setTimeout(() => {
+              this._vkSeekFallbackTimer = null;
+              if (this._isVkTimeshift && !this._vkSeekConfirmed) {
+                this._vkSeekConfirmed = true;
+                this.setData({ replayFastForwarding: false });
+              }
+            }, 600);
+
+            // 2.5 秒后强行解除遮罩防卡死（极端安全网）
             if (this._vkFastForwardMaskTimer) clearTimeout(this._vkFastForwardMaskTimer);
             this._vkFastForwardMaskTimer = setTimeout(() => {
               this._vkFastForwardMaskTimer = null;
               this.setData({ replayFastForwarding: false });
             }, 2500);
           }
-        } catch (seekErr) {}
+        } catch (seekErr) { }
       } else {
         // duration 为 0（极短录制），退化为从头播，直接解除遮罩
         this._vkDelayedSeekTarget = 0;
@@ -9647,11 +9706,29 @@ Page({
     this._applyPlaybackRateToSlot(slotIdx);
   },
 
+  onReplayVideoASeeked: function () {
+    this._onReplaySlotSeeked(0);
+  },
+  onReplayVideoBSeeked: function () {
+    this._onReplaySlotSeeked(1);
+  },
+  _onReplaySlotSeeked: function (slotIdx) {
+    if (slotIdx !== this.data.replayActiveSlot) return;
+    if (this._isVkTimeshift && this.data.replayFastForwarding) {
+      // ✅ 物理级命中信号：一旦 seek 完成，立即打断“定位中”动画，开始播放
+      if (this._vkFastForwardMaskTimer) clearTimeout(this._vkFastForwardMaskTimer);
+      if (this._vkSeekFallbackTimer) clearTimeout(this._vkSeekFallbackTimer);
+      this._vkSeekConfirmed = true;
+      this.setData({ replayFastForwarding: false });
+      this._vkDelayedSeekTarget = null;
+    }
+  },
+
   /**
    * slot-a bindloadedmetadata 回调。
    * @param {WechatMiniprogram.CustomEvent} e
    */
-  onReplayVideoALoadedMeta: function(e) {
+  onReplayVideoALoadedMeta: function (e) {
     this._maybePrimeHiddenChainSlot(0);
     this._handleReplayLoadedMeta(e, 0);
   },
@@ -9660,7 +9737,7 @@ Page({
    * slot-b bindloadedmetadata 回调。
    * @param {WechatMiniprogram.CustomEvent} e
    */
-  onReplayVideoBLoadedMeta: function(e) {
+  onReplayVideoBLoadedMeta: function (e) {
     this._maybePrimeHiddenChainSlot(1);
     this._handleReplayLoadedMeta(e, 1);
   },
@@ -9669,7 +9746,7 @@ Page({
    * 兼容旧 WXML bindloadedmetadata="onReplayVideoLoadedMeta"。
    * @param {WechatMiniprogram.CustomEvent} e
    */
-  onReplayVideoLoadedMeta: function(e) {
+  onReplayVideoLoadedMeta: function (e) {
     this._handleReplayLoadedMeta(e, this.data.replayActiveSlot);
   },
 
@@ -9678,7 +9755,7 @@ Page({
    * 仅对小米系设备做反向旋转修正，避免影响 iPhone 与其他安卓机型。
    * @returns {number} 90 或 -90
    */
-  getReplayRotateDegForDevice: function() {
+  getReplayRotateDegForDevice: function () {
     try {
       const sys = wx.getSystemInfoSync();
       const brand = String((sys && sys.brand) || '').toLowerCase();
@@ -9700,7 +9777,7 @@ Page({
    * 恢复 1.0x 时自动解除静音。
    * @param {WechatMiniprogram.TouchEvent} e data-rate: 0.5 | 0.75 | 1.0
    */
-  onReplaySpeedChange: function(e) {
+  onReplaySpeedChange: function (e) {
     const rate = parseFloat(e.currentTarget.dataset.rate);
     if (!rate || isNaN(rate)) return;
     const muted = rate < 1.0;
@@ -9712,7 +9789,7 @@ Page({
    * 专用退出键：中断回放并进入直播转场。
    * @returns {void}
    */
-  onReplayClose: function() {
+  onReplayClose: function () {
     if (!this.data.isReplaying) return;
     this.finishReplayToLive(true);
   },
@@ -9721,7 +9798,7 @@ Page({
    * 一键重置 movable-view 的缩放与位置至初始状态（scale=1，x=0，y=0）。
    * @returns {void}
    */
-  onReplayResetView: function() {
+  onReplayResetView: function () {
     this._cancelReplayZoomAnim();
     this._clearReplayPinchSnapTimer();
     this._replayDoubleTapLast = null;
@@ -9739,7 +9816,7 @@ Page({
    * @param {WechatMiniprogram.CustomEvent} e detail.x / detail.y / detail.source
    * @returns {void}
    */
-  onReplayViewChange: function(e) {
+  onReplayViewChange: function (e) {
     if (this._replayZoomAnimating) return;
     const d = (e && e.detail) || {};
     if (typeof d.x !== 'number' || typeof d.y !== 'number') return;
@@ -9759,7 +9836,7 @@ Page({
    * @param {WechatMiniprogram.CustomEvent} e detail.scale / detail.x / detail.y
    * @returns {void}
    */
-  onReplayViewScale: function(e) {
+  onReplayViewScale: function (e) {
     if (this._replayZoomAnimating) return;
     const d = (e && e.detail) || {};
     const scaleNew = typeof d.scale === 'number' && !isNaN(d.scale) ? d.scale : 1;
@@ -9830,7 +9907,7 @@ Page({
    * @param {WechatMiniprogram.TouchEvent} e
    * @returns {void}
    */
-  onReplayPinchCaptureStart: function(e) {
+  onReplayPinchCaptureStart: function (e) {
     if (!this.data.isReplaying || this._replayZoomAnimating) return;
     const touches = (e && e.touches) || [];
     if (touches.length < 2) return;
@@ -9850,7 +9927,7 @@ Page({
    * @param {WechatMiniprogram.TouchEvent} e
    * @returns {void}
    */
-  onReplayPinchCaptureMove: function(e) {
+  onReplayPinchCaptureMove: function (e) {
     if (!this.data.isReplaying || this._replayZoomAnimating) return;
     const touches = (e && e.touches) || [];
     if (touches.length >= 2) {
@@ -9863,7 +9940,7 @@ Page({
    * @param {WechatMiniprogram.TouchEvent} e
    * @returns {void}
    */
-  onReplayMovableTouchEnd: function(e) {
+  onReplayMovableTouchEnd: function (e) {
     if (!this.data.isReplaying) return;
     const touches = (e && e.touches) || [];
     this._replayMultiTouchActive = touches.length >= 2;
@@ -9887,7 +9964,7 @@ Page({
    * @param {WechatMiniprogram.TouchEvent} e
    * @returns {void}
    */
-  onReplayMovableTouchCancel: function(e) {
+  onReplayMovableTouchCancel: function (e) {
     this._replayPinchSnapSession = false;
     this._clearReplayPinchSnapTimer();
     this.onReplayMovableTouchEnd(e);
@@ -9897,11 +9974,11 @@ Page({
    * 取消正在进行的双击缩放动画帧。
    * @returns {void}
    */
-  _cancelReplayZoomAnim: function() {
+  _cancelReplayZoomAnim: function () {
     if (this._replayZoomRafId != null) {
       try {
         wx.cancelAnimationFrame(this._replayZoomRafId);
-      } catch (err) {}
+      } catch (err) { }
       this._replayZoomRafId = null;
     }
     this._replayZoomAnimating = false;
@@ -9911,7 +9988,7 @@ Page({
    * 清除捏合松手后延迟执行的 setTimeout，避免退出回放后仍改 scale。
    * @returns {void}
    */
-  _clearReplayPinchSnapTimer: function() {
+  _clearReplayPinchSnapTimer: function () {
     if (this._replayPinchSnapTimer != null) {
       clearTimeout(this._replayPinchSnapTimer);
       this._replayPinchSnapTimer = null;
@@ -9922,7 +9999,7 @@ Page({
    * 将回放层变换缓存重置为 1x 且左上角对齐。
    * @returns {void}
    */
-  _resetReplayTransformCache: function() {
+  _resetReplayTransformCache: function () {
     this._replayTransformCache = { x: 0, y: 0, scale: 1 };
   },
 
@@ -9931,7 +10008,7 @@ Page({
    * @param {{ x?: number, y?: number, scale?: number }} patch
    * @returns {{ x: number, y: number, scale: number }}
    */
-  _touchReplayMergeCache: function(patch) {
+  _touchReplayMergeCache: function (patch) {
     const base = this._replayTransformCache || {
       x: this.data.replayViewX || 0,
       y: this.data.replayViewY || 0,
@@ -9950,7 +10027,7 @@ Page({
    * @param {Array<WechatMiniprogram.Touch>} touches touches.length >= 2
    * @returns {void}
    */
-  _replayUpdatePinchFocal: function(touches) {
+  _replayUpdatePinchFocal: function (touches) {
     if (!touches || touches.length < 2) return;
     const a = touches[0];
     const b = touches[1];
@@ -9965,7 +10042,7 @@ Page({
    * 读取回放 movable-area 与 live-stage 一致的 16:9 内接框（px）及在窗口内偏移，供平移钳位与捏合焦点换算。
    * @returns {{ w: number, h: number, left: number, top: number }}
    */
-  _getReplayViewportPx: function() {
+  _getReplayViewportPx: function () {
     var winW = 375;
     var winH = 667;
     try {
@@ -9978,7 +10055,7 @@ Page({
         winW = s.windowWidth || winW;
         winH = s.windowHeight || winH;
       }
-    } catch (err) {}
+    } catch (err) { }
     var r = computeLiveStage16x9RectPx(winW, winH);
     return { w: r.w, h: r.h, left: r.left, top: r.top };
   },
@@ -9988,7 +10065,7 @@ Page({
    * @param {number} t
    * @returns {number}
    */
-  _easeOutCubic: function(t) {
+  _easeOutCubic: function (t) {
     const u = 1 - t;
     return 1 - u * u * u;
   },
@@ -9998,7 +10075,7 @@ Page({
    * @param {number} s 当前 scale
    * @returns {number}
    */
-  _nextReplayDiscreteScale: function(s) {
+  _nextReplayDiscreteScale: function (s) {
     for (let i = 0; i < REPLAY_ZOOM_LEVELS.length; i += 1) {
       if (s < REPLAY_ZOOM_LEVELS[i] - REPLAY_ZOOM_LEVEL_EPS) {
         return REPLAY_ZOOM_LEVELS[i];
@@ -10012,7 +10089,7 @@ Page({
    * @param {number} s
    * @returns {number}
    */
-  _replayNearestDiscreteLevel: function(s) {
+  _replayNearestDiscreteLevel: function (s) {
     let best = REPLAY_ZOOM_LEVELS[0];
     let bestD = Infinity;
     for (let i = 0; i < REPLAY_ZOOM_LEVELS.length; i += 1) {
@@ -10031,7 +10108,7 @@ Page({
    * @param {number} s
    * @returns {number}
    */
-  _replayDiscreteLevelIndex: function(s) {
+  _replayDiscreteLevelIndex: function (s) {
     let bestI = 0;
     let bestD = Infinity;
     for (let i = 0; i < REPLAY_ZOOM_LEVELS.length; i += 1) {
@@ -10051,7 +10128,7 @@ Page({
    * @param {number} endScale 松手时（末帧）scale
    * @returns {number}
    */
-  _replayPickPinchSnapScale: function(baseline, endScale) {
+  _replayPickPinchSnapScale: function (baseline, endScale) {
     const b = typeof baseline === 'number' && !isNaN(baseline) ? baseline : 1;
     const e = typeof endScale === 'number' && !isNaN(endScale) ? endScale : 1;
     const i0 = this._replayDiscreteLevelIndex(b);
@@ -10071,7 +10148,7 @@ Page({
    * 捏合手势完全结束后：吸附档位并将双指中心点对应的内容移到屏幕中心（带缓动）。
    * @returns {void}
    */
-  _finishReplayPinchSnap: function() {
+  _finishReplayPinchSnap: function () {
     if (!this.data.isReplaying || this._replayZoomAnimating) return;
     const base = this._replayTransformCache || {
       x: this.data.replayViewX || 0,
@@ -10130,7 +10207,7 @@ Page({
    * @param {number} h
    * @returns {{ x: number, y: number }}
    */
-  _clampReplayPan: function(x, y, scale, w, h) {
+  _clampReplayPan: function (x, y, scale, w, h) {
     const s = !scale || scale <= 0 || !Number.isFinite(scale) ? 1 : scale;
     const ww = Math.max(0, w);
     const hh = Math.max(0, h);
@@ -10159,7 +10236,7 @@ Page({
    * @param {number} fy
    * @returns {void}
    */
-  _replayApplyDoubleTapZoom: function(fx, fy) {
+  _replayApplyDoubleTapZoom: function (fx, fy) {
     const t = this._replayTransformCache || {
       x: this.data.replayViewX || 0,
       y: this.data.replayViewY || 0,
@@ -10188,7 +10265,7 @@ Page({
    * @param {number} h
    * @returns {void}
    */
-  _runReplayZoomAnim: function(s0, x0, y0, s1, fx, fy, w, h) {
+  _runReplayZoomAnim: function (s0, x0, y0, s1, fx, fy, w, h) {
     this._cancelReplayZoomAnim();
     this._replayZoomAnimating = true;
     const tStart = Date.now();
@@ -10242,7 +10319,7 @@ Page({
    * @param {number} durationMs
    * @returns {void}
    */
-  _runReplayPanZoomAnim: function(x0, y0, s0, x1, y1, s1, w, h, durationMs) {
+  _runReplayPanZoomAnim: function (x0, y0, s0, x1, y1, s1, w, h, durationMs) {
     this._cancelReplayZoomAnim();
     this._replayZoomAnimating = true;
     const dur =
@@ -10279,12 +10356,12 @@ Page({
     this._replayZoomRafId = wx.requestAnimationFrame(tick);
   },
 
-  flashPeriod: function() {
+  flashPeriod: function () {
     this.setData({ periodFlash: true });
     setTimeout(() => this.setData({ periodFlash: false }), 160);
   },
 
-  persistConfig: function() {
+  persistConfig: function () {
     const normalizedConfig = this.normalizeMatchConfig(this.data.matchConfig);
     this.setData({ matchConfig: normalizedConfig });
     wx.setStorageSync('matchConfig', normalizedConfig);

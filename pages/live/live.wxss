@@ -2386,3 +2386,47 @@ page {
   color: #e64340;
   font-weight: 600;
 }
+
+/* 高级加载动效：正在定位高光时刻 */
+.replay-premium-loader {
+  position: relative;
+  width: 100rpx;
+  height: 100rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.replay-loader-ring {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: 4rpx solid rgba(255, 255, 255, 0.1);
+  border-top-color: #ffffff;
+  animation: replayLoaderSpin 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+}
+
+.replay-loader-dot {
+  width: 12rpx;
+  height: 12rpx;
+  background-color: #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 0 15rpx rgba(255, 255, 255, 0.8);
+  animation: replayDotPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes replayLoaderSpin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes replayDotPulse {
+  0%, 100% { transform: scale(0.8); opacity: 0.5; }
+  50% { transform: scale(1.2); opacity: 1; }
+}
+
+@keyframes replayTextPulse {
+  from { opacity: 0.4; transform: scale(0.98); }
+  to { opacity: 0.9; transform: scale(1); }
+}

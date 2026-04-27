@@ -295,8 +295,12 @@
     <view class="replay-mask-text">{{replayMaskText}}</view>
   </view>
   
-  <view class="replay-mask" wx:if="{{replayFastForwarding}}" style="z-index: 1000; background: #000; display: flex; align-items: center; justify-content: center;">
-    <view class="replay-mask-text" style="font-size: 24px; animation: pulse 1s infinite alternate;">定位高光点...</view>
+  <view class="replay-mask" wx:if="{{replayFastForwarding}}" style="z-index: 1000; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+    <view class="replay-premium-loader">
+      <view class="replay-loader-ring"></view>
+      <view class="replay-loader-dot"></view>
+    </view>
+    <view class="replay-mask-text" style="font-size: 32rpx; margin-top: 40rpx; letter-spacing: 4rpx; font-weight: 500; opacity: 0.8; animation: replayTextPulse 1.5s infinite alternate;">正在定位高光时刻</view>
   </view>
 
   <view class="replay-overlay" wx:if="{{isReplaying}}">
@@ -346,7 +350,8 @@
             bindplay="onReplayVideoAPlay"
             bindtimeupdate="onReplayVideoATimeUpdate"
             bindloadedmetadata="onReplayVideoALoadedMeta"
-            bindended="onReplayVideoAEnded">
+            bindended="onReplayVideoAEnded"
+            bindseeked="onReplayVideoASeeked">
           </video>
         </view>
 
@@ -369,7 +374,8 @@
             bindplay="onReplayVideoBPlay"
             bindtimeupdate="onReplayVideoBTimeUpdate"
             bindloadedmetadata="onReplayVideoBLoadedMeta"
-            bindended="onReplayVideoBEnded">
+            bindended="onReplayVideoBEnded"
+            bindseeked="onReplayVideoBSeeked">
           </video>
         </view>
       </movable-view>
