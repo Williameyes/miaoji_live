@@ -82,6 +82,11 @@ function createWebglSharpenRenderer() {
   var fboRgbH = 0;
   /** 列主序 3x3 单位矩阵，getDisplayTransform 缺失时兜底。 */
   var MAT3_IDENTITY = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+  /** 热降频渐变控制（Lerp） */
+  var currentThermalScale = 1.0;
+  var targetThermalScale = 1.0;
+  var currentMotionScale = 1.0;
+  var targetMotionScale = 1.0;
 
   /**
    * 编译单个 shader。失败抛错由上层捕获并走降级。
@@ -610,9 +615,13 @@ function createWebglSharpenRenderer() {
       if (uniformLocs.uTexel) {
         gl.uniform2f(uniformLocs.uTexel, 1 / w, 1 / h);
       }
+      currentThermalScale += (targetThermalScale - currentThermalScale) * 0.05;
+      currentMotionScale += (targetMotionScale - currentMotionScale) * 0.1;
+
       var activeZoomVk = vkZoomVal;
       var activeAmountVk = currentUniforms.uAmount;
-      var activeMotionVk = motionUniform;
+      if (activeAmountVk) activeAmountVk *= currentThermalScale;
+      var activeMotionVk = motionUniform * currentMotionScale;
       if (activeZoomVk > 1.5) {
         if (activeAmountVk) activeAmountVk *= 0.6;
         activeMotionVk *= 0.5;
@@ -701,9 +710,13 @@ function createWebglSharpenRenderer() {
       if (uniformLocs.uInvTexel) {
         gl.uniform2f(uniformLocs.uInvTexel, 1 / w, 1 / h);
       }
+      currentThermalScale += (targetThermalScale - currentThermalScale) * 0.05;
+      currentMotionScale += (targetMotionScale - currentMotionScale) * 0.1;
+
       var activeZoom = nativeZoomCompVal;
       var activeAmount = currentUniforms.uAmount;
-      var activeMotion = motionUniform;
+      if (activeAmount) activeAmount *= currentThermalScale;
+      var activeMotion = motionUniform * currentMotionScale;
       if (activeZoom > 1.5) {
         if (activeAmount) activeAmount *= 0.6;
         activeMotion *= 0.5;
@@ -831,6 +844,18 @@ function createWebglSharpenRenderer() {
     setMotionLevel: setMotionLevel,
     setShaderLevel: setShaderLevel,
     getShaderLevel: getShaderLevel,
+    setThermalLevel: function(l) { 
+      if (l >= 2) {
+        targetThermalScale = 0.6;
+        targetMotionScale = 0.0;
+      } else if (l >= 1) {
+        targetThermalScale = 0.7;
+        targetMotionScale = 1.0;
+      } else {
+        targetThermalScale = 1.0;
+        targetMotionScale = 1.0;
+      }
+    },
     destroy: destroy
   };
 }

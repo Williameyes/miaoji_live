@@ -175,7 +175,7 @@ function createVkCanvasRecorder() {
   function beforeDraw() {
     if (!active || !recorder) return Promise.resolve();
     frameSeq += 1;
-    if (adapt.skipEveryOther && frameSeq % 2 === 0) {
+    if (false) {
       return Promise.reject('SKIP_RENDER_FOR_THERMAL');
     }
     return _requestFrameRecorder(recorder).catch(function() {});
@@ -196,7 +196,7 @@ function createVkCanvasRecorder() {
       adapt.lowFpsStreak = 0;
     }
     if (adapt.lowFpsStreak >= 2 && !adapt.skipEveryOther) {
-      adapt.skipEveryOther = true;
+      
       try {
         console.warn('[vk-canvas-recorder] FPS<' + 24 + ', enable skip-every-other requestFrame');
       } catch (e) {}

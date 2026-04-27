@@ -254,15 +254,22 @@ function createRenderPipeline() {
     }).then(function() {
       renderer.resizeCanvas(opts.cssW, opts.cssH);
       var isDrawingLock = false;
+      var skipNextFrame = false;
+      var overloadCount = 0;
       /**
        * @param {*} frame
        * @returns {void|Promise<void>}
        */
       function onFrame(frame) {
+        if (skipNextFrame) {
+          skipNextFrame = false;
+          return;
+        }
         if (isDrawingLock) {
           return;
         }
         isDrawingLock = true;
+        var startT = _now();
 
         applyMotionUniformForFrame(frame);
         function doDraw() {
@@ -273,6 +280,17 @@ function createRenderPipeline() {
           framesRendered++;
           lastFrameAt = _now();
           isDrawingLock = false;
+          
+          var totalCost = _now() - startT;
+          if (totalCost > 38) {
+            overloadCount++;
+          } else {
+            overloadCount = 0;
+          }
+          if (overloadCount >= 2) {
+            skipNextFrame = true;
+            overloadCount = 0;
+          }
         }
         if (_sourceKind === 'vk' && typeof _vkBeforeDraw === 'function') {
           try {
@@ -458,6 +476,17 @@ function createRenderPipeline() {
     if (mode === 'vk') {
       var snapVk = monitor.snapshot();
       var stalled = monitor.isStalled(2);
+      
+      if (snapVk && snapVk.samples >= 3 && renderer && typeof renderer.setThermalLevel === 'function') {
+        if (snapVk.avgFps < 25) {
+          renderer.setThermalLevel(2); // 重度发热：大幅砍细节并关闭运动增强
+        } else if (snapVk.avgFps < 28) {
+          renderer.setThermalLevel(1); // 轻度发热：轻微减弱锐化
+        } else {
+          renderer.setThermalLevel(0); // 满血恢复
+        }
+      }
+
       var lowFps = snapVk && snapVk.samples >= 3 && snapVk.avgFps < VK_DEGRADE_FPS_THRESHOLD;
       if (lowFps) {
         _vkLowFpsStreakSec++;
