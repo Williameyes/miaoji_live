@@ -96,7 +96,29 @@
   flex-direction: column;
   align-items: center;
   flex: 1;
-  padding-top: 24rpx;
+  padding-top: 12rpx;
+}
+.bc-connection-pill {
+  align-self: flex-start;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12rpx;
+  background: #e2e8f0;
+  border-radius: 999rpx;
+  padding: 10rpx 18rpx;
+  margin-bottom: 16rpx;
+}
+.bc-connection-pill__label {
+  font-size: 20rpx;
+  color: #64748b;
+}
+.bc-connection-pill__value {
+  font-size: 28rpx;
+  line-height: 1;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: 6rpx;
 }
 .bc-score-board {
   display: flex;
@@ -105,9 +127,9 @@
   background: #ffffff;
   border-radius: 32rpx;
   width: 100%;
-  padding: 48rpx 32rpx;
+  padding: 36rpx 28rpx;
   box-shadow: 0 4rpx 20rpx rgba(0,0,0,0.05);
-  margin-bottom: 24rpx;
+  margin-bottom: 16rpx;
   box-sizing: border-box;
 }
 .bc-team-col {
@@ -119,17 +141,17 @@
 }
 .bc-team-label { font-size: 26rpx; color: #94a3b8; }
 .bc-score-big {
-  font-size: 128rpx;
+  font-size: 112rpx;
   font-weight: 800;
   color: #0f172a;
   line-height: 1;
 }
 .bc-colon {
-  font-size: 80rpx;
+  font-size: 72rpx;
   font-weight: 800;
   color: #cbd5e1;
   padding: 0 8rpx;
-  padding-bottom: 20rpx;
+  padding-bottom: 16rpx;
 }
 
 /* 元数据条 */
@@ -140,9 +162,9 @@
   background: #ffffff;
   border-radius: 20rpx;
   width: 100%;
-  padding: 24rpx 0;
+  padding: 18rpx 0;
   box-shadow: 0 4rpx 16rpx rgba(0,0,0,0.04);
-  margin-bottom: 32rpx;
+  margin-bottom: 20rpx;
 }
 .bc-meta-item {
   flex: 1;
@@ -151,26 +173,76 @@
   align-items: center;
   gap: 6rpx;
 }
-.bc-meta-val { font-size: 36rpx; font-weight: 700; color: #1e293b; }
-.bc-meta-key { font-size: 20rpx; color: #94a3b8; }
+.bc-meta-val { font-size: 32rpx; font-weight: 700; color: #1e293b; }
+.bc-meta-key { font-size: 18rpx; color: #94a3b8; }
 .bc-meta-sep { font-size: 28rpx; color: #e2e8f0; }
 
 /* 异常帧提示 */
 .bc-anomaly {
-  font-size: 24rpx;
+  align-self: flex-start;
+  font-size: 22rpx;
   color: #f59e0b;
-  margin-bottom: 16rpx;
+  margin-bottom: 12rpx;
+}
+
+.bc-debug-card {
+  width: 100%;
+  background: #ffffff;
+  border-radius: 20rpx;
+  padding: 16rpx 20rpx;
+  box-shadow: 0 4rpx 16rpx rgba(0,0,0,0.04);
+  box-sizing: border-box;
+  margin-bottom: 18rpx;
+}
+.bc-debug-grid {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 12rpx;
+  margin-bottom: 10rpx;
+}
+.bc-debug-item {
+  flex: 1;
+  min-width: 0;
+  background: #f8fafc;
+  border-radius: 14rpx;
+  padding: 12rpx 14rpx;
+}
+.bc-debug-row {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+.bc-debug-row + .bc-debug-row {
+  margin-top: 10rpx;
+}
+.bc-debug-key {
+  font-size: 20rpx;
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+.bc-debug-val {
+  font-size: 20rpx;
+  color: #334155;
+  text-align: right;
+  word-break: break-all;
+}
+.bc-debug-val--strong {
+  font-size: 26rpx;
+  font-weight: 700;
 }
 
 /* 断开按钮 */
 .bc-disconnect-btn {
   margin-top: auto;
   width: 100%;
-  height: 88rpx;
-  line-height: 88rpx;
+  height: 80rpx;
+  line-height: 80rpx;
   text-align: center;
   border-radius: 999rpx;
-  font-size: 28rpx;
+  font-size: 26rpx;
   font-weight: 600;
   background: #f1f5f9;
   color: #ef4444;

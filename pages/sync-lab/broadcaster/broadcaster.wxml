@@ -30,6 +30,11 @@
   <!-- 已连接：比分大字显示 -->
   <view class="bc-score-root" wx:elif="{{bleState === 'connected'}}">
 
+    <view class="bc-connection-pill" wx:if="{{matchCodeInput}}">
+      <text class="bc-connection-pill__label">匹配码</text>
+      <text class="bc-connection-pill__value">{{matchCodeInput}}</text>
+    </view>
+
     <view class="bc-score-board">
       <!-- 主队 -->
       <view class="bc-team-col">
@@ -64,6 +69,23 @@
 
     <!-- 异常提示 -->
     <view class="bc-anomaly" wx:if="{{anomalyHint}}">{{anomalyHint}}</view>
+
+    <view class="bc-debug-card" wx:if="{{debugMode}}">
+      <view class="bc-debug-grid">
+        <view class="bc-debug-item">
+          <text class="bc-debug-key">收包</text>
+          <text class="bc-debug-val bc-debug-val--strong">{{rxPacketCount}}</text>
+        </view>
+        <view class="bc-debug-item">
+          <text class="bc-debug-key">最近接收</text>
+          <text class="bc-debug-val">{{lastRxAtText || '--:--:--'}}</text>
+        </view>
+      </view>
+      <view class="bc-debug-row">
+        <text class="bc-debug-key">最近帧</text>
+        <text class="bc-debug-val">{{lastFrameText || '等待数据'}}</text>
+      </view>
+    </view>
 
     <view class="bc-disconnect-btn" bindtap="onDisconnectTap">断开连接</view>
   </view>

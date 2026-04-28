@@ -10,85 +10,86 @@
 
   <!-- ── 主界面（已授权）── -->
   <camera
-    wx:if="{{isLogin && isInWhitelist}}"
+    wx:if="{{isLogin && isInWhitelist && cameraMounted}}"
     class="col-camera-full"
     device-position="back"
     flash="off"
     mode="normal"
-    resolution="high"
+    resolution="medium"
+    frame-size="medium"
     binderror="onCameraError"
-  >
+    bindinitdone="onCameraInit"
+  ></camera>
+
+  <view wx:if="{{isLogin && isInWhitelist}}" class="col-overlay-root">
     <!-- ① ROI 选区框（可拖动 + 右下角可缩放）-->
-    <cover-view class="col-roi-layer">
-      <cover-view
+    <view class="col-roi-layer">
+      <view
         wx:for="{{rois}}"
         wx:key="label"
         class="col-roi-box{{selectedRoiIdx === index ? ' col-roi-box--sel' : ''}}"
         style="position:absolute;{{item.pctStyle}}"
         data-idx="{{index}}"
-        bindtouchstart="onRoiBodyTouchStart"
-        bindtouchmove="onRoiBodyTouchMove"
-        bindtouchend="onRoiTouchEnd"
+        catchtouchstart="onRoiBodyTouchStart"
+        catchtouchmove="onRoiBodyTouchMove"
+        catchtouchend="onRoiTouchEnd"
+        catchtouchcancel="onRoiTouchEnd"
       >
-        <!-- 标签 -->
-        <cover-view class="col-roi-tag">{{item.label}}</cover-view>
-        <!-- 调试：识别原始文本 -->
-        <cover-view class="col-roi-raw" wx:if="{{debugMode && item.rawText}}">{{item.rawText}}</cover-view>
-        <!-- 右下角缩放柄（catch 阻止冒泡，防止触发父框拖动）-->
-        <cover-view
+        <view class="col-roi-tag">{{item.label}}</view>
+        <view class="col-roi-raw" wx:if="{{debugMode && item.rawText}}">{{item.rawText}}</view>
+        <view
           class="col-roi-handle-se"
           data-idx="{{index}}"
           catchtouchstart="onRoiResizeTouchStart"
           catchtouchmove="onRoiResizeTouchMove"
           catchtouchend="onRoiTouchEnd"
-        ></cover-view>
-      </cover-view>
-    </cover-view>
+          catchtouchcancel="onRoiTouchEnd"
+        ></view>
+      </view>
+    </view>
 
     <!-- ② 顶部状态条 -->
-    <cover-view class="col-top-bar">
-      <cover-view class="col-top-dot col-top-dot--{{bleState}}"></cover-view>
-      <cover-view class="col-top-state">{{bleStateText}}</cover-view>
-      <cover-view class="col-top-code" wx:if="{{matchCode}}">码 {{matchCode}}</cover-view>
-      <!-- OCR 频率提示 -->
-      <cover-view class="col-top-hz" wx:if="{{ocrEnabled}}">OCR 2Hz</cover-view>
-    </cover-view>
+    <view class="col-top-bar">
+      <view class="col-top-dot col-top-dot--{{bleState}}"></view>
+      <view class="col-top-state">{{bleStateText}}</view>
+      <view class="col-top-code" wx:if="{{matchCode}}">码 {{matchCode}}</view>
+      <view class="col-top-code col-top-code--muted" wx:else>码待生成</view>
+      <view class="col-top-hz" wx:if="{{ocrTransitioning}}">OCR 启动中</view>
+      <view class="col-top-hz" wx:elif="{{ocrEnabled}}">OCR 2Hz</view>
+    </view>
 
     <!-- ③ 底部控制条 -->
-    <cover-view class="col-bottom-bar">
-      <!-- 比分显示 -->
-      <cover-view class="col-score-strip">
-        <cover-view class="col-score-home">{{homeScore}}</cover-view>
-        <cover-view class="col-score-sep">:</cover-view>
-        <cover-view class="col-score-away">{{awayScore}}</cover-view>
-        <cover-view class="col-score-meta">Q{{period}} · {{minutes}}:{{seconds < 10 ? '0' : ''}}{{seconds}} · {{shotClock}}s</cover-view>
-      </cover-view>
+    <view class="col-bottom-bar">
+      <view class="col-score-strip">
+        <view class="col-score-home">{{homeScore}}</view>
+        <view class="col-score-sep">:</view>
+        <view class="col-score-away">{{awayScore}}</view>
+        <view class="col-score-meta">Q{{period}} · {{minutes}}:{{seconds < 10 ? '0' : ''}}{{seconds}} · {{shotClock}}s</view>
+      </view>
 
-      <!-- 节次选择 -->
-      <cover-view class="col-period-strip">
-        <cover-view class="col-p-btn{{period===1?' col-p-btn--on':''}}" bindtap="onSetPeriod" data-p="1">Q1</cover-view>
-        <cover-view class="col-p-btn{{period===2?' col-p-btn--on':''}}" bindtap="onSetPeriod" data-p="2">Q2</cover-view>
-        <cover-view class="col-p-btn{{period===3?' col-p-btn--on':''}}" bindtap="onSetPeriod" data-p="3">Q3</cover-view>
-        <cover-view class="col-p-btn{{period===4?' col-p-btn--on':''}}" bindtap="onSetPeriod" data-p="4">Q4</cover-view>
-        <cover-view class="col-p-btn{{period===5?' col-p-btn--on':''}}" bindtap="onSetPeriod" data-p="5">OT</cover-view>
-      </cover-view>
+      <view class="col-period-strip">
+        <view class="col-p-btn{{period===1?' col-p-btn--on':''}}" bindtap="onSetPeriod" data-p="1">Q1</view>
+        <view class="col-p-btn{{period===2?' col-p-btn--on':''}}" bindtap="onSetPeriod" data-p="2">Q2</view>
+        <view class="col-p-btn{{period===3?' col-p-btn--on':''}}" bindtap="onSetPeriod" data-p="3">Q3</view>
+        <view class="col-p-btn{{period===4?' col-p-btn--on':''}}" bindtap="onSetPeriod" data-p="4">Q4</view>
+        <view class="col-p-btn{{period===5?' col-p-btn--on':''}}" bindtap="onSetPeriod" data-p="5">OT</view>
+      </view>
 
-      <!-- 操作按钮组 -->
-      <cover-view class="col-action-strip">
-        <cover-view wx:if="{{bleState === 'idle'}}" class="col-act-btn col-act-btn--blue" bindtap="onStartTap">开启采集</cover-view>
-        <block wx:else>
-          <cover-view class="col-act-btn{{ocrEnabled?' col-act-btn--green':' col-act-btn--blue'}}" bindtap="onToggleOcr">{{ocrEnabled?'关OCR':'开OCR'}}</cover-view>
-          <cover-view class="col-act-btn{{debugMode?' col-act-btn--yellow':' col-act-btn--ghost'}}" bindtap="onToggleDebug">调试</cover-view>
-          <cover-view class="col-act-btn col-act-btn--red" bindtap="onStopTap">停止</cover-view>
-        </block>
-      </cover-view>
-    </cover-view>
+      <view class="col-action-strip">
+        <view class="col-act-btn{{ocrEnabled?' col-act-btn--green':' col-act-btn--blue'}}" bindtap="onToggleOcr">{{ocrTransitioning?'OCR切换中':(ocrEnabled?'关OCR':'开OCR')}}</view>
+        <view class="col-act-btn{{debugMode?' col-act-btn--yellow':' col-act-btn--ghost'}}" bindtap="onToggleDebug">调试</view>
+        <view wx:if="{{bleState === 'idle'}}" class="col-act-btn col-act-btn--blue" bindtap="onStartTap">开启采集</view>
+        <view wx:else class="col-act-btn col-act-btn--red" bindtap="onStopTap">停止</view>
+      </view>
+    </view>
 
-    <!-- ④ 调试面板 -->
-    <cover-view class="col-debug-panel" wx:if="{{debugMode && debugText}}">
-      <cover-view class="col-debug-text">{{debugText}}</cover-view>
-    </cover-view>
+    <view class="col-ocr-hint" wx:if="{{ocrEnabled || ocrTransitioning}}">
+      OCR 调试中
+    </view>
 
-  </camera>
+    <view class="col-debug-panel" wx:if="{{debugMode && debugText}}">
+      <view class="col-debug-text">{{debugText}}</view>
+    </view>
+  </view>
 
 </view>

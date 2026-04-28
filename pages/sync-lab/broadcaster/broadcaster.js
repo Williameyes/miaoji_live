@@ -12,9 +12,12 @@ var SCAN_TIMEOUT_MS = 20000;
 
 var _reconnectTimer = null;
 var _scanTimeoutTimer = null;
+var _pollReadTimer = null;
 var _targetDeviceId = '';
 var _targetServiceId = '';
+var _targetCharId = '';
 var _prevFrame = null; // 上一帧，用于连续帧一致性校验
+var _rxPacketCount = 0;
 
 Page({
   data: {
@@ -31,7 +34,11 @@ Page({
     seconds: 0,
     shotClock: 24,
     /** 收到异常帧时提示 */
-    anomalyHint: ''
+    anomalyHint: '',
+    rxPacketCount: 0,
+    lastFrameText: '',
+    lastRxAtText: '',
+    debugMode: true
   },
 
   onLoad: function () {
@@ -60,19 +67,26 @@ Page({
       return;
     }
     if (this.data.bleState !== 'idle') return;
-    this._startScan(BLE.DEVICE_NAME_PREFIX + code);
+    var self = this;
+    this._cleanup(function () {
+      self._startScan(BLE.DEVICE_NAME_PREFIX + code);
+    });
   },
 
   _startScan: function (targetName) {
     var self = this;
     _targetDeviceId = '';
     _targetServiceId = '';
+    _targetCharId = '';
     _prevFrame = null;
+    _rxPacketCount = 0;
+    this.setData({ rxPacketCount: 0, lastFrameText: '', lastRxAtText: '', anomalyHint: '' });
 
     wx.openBluetoothAdapter({
       mode: 'central',
       success: function () {
         self.setData({ bleState: 'scanning', bleStateText: '扫描中…' });
+        try { wx.offBluetoothDeviceFound(); } catch (e) { }
 
         // 扫描超时
         _scanTimeoutTimer = setTimeout(function () {
@@ -137,6 +151,7 @@ Page({
 
   _bindDisconnectListener: function () {
     var self = this;
+    try { wx.offBLEConnectionStateChange(); } catch (e) { }
     wx.onBLEConnectionStateChange(function (res) {
       if (res.deviceId === _targetDeviceId && !res.connected) {
         console.log('[Broadcaster] disconnected, will reconnect');
@@ -154,6 +169,9 @@ Page({
       deviceId: _targetDeviceId,
       success: function (res) {
         var services = res.services || [];
+        console.log('[Broadcaster] services discovered count=%s list=%o', services.length, services.map(function (item) {
+          return item.uuid;
+        }));
         for (var i = 0; i < services.length; i++) {
           if (services[i].uuid.toLowerCase() === BLE.SERVICE_UUID.toLowerCase()) {
             _targetServiceId = services[i].uuid;
@@ -178,9 +196,16 @@ Page({
       serviceId: _targetServiceId,
       success: function (res) {
         var chars = res.characteristics || [];
+        console.log('[Broadcaster] characteristics discovered count=%s list=%o', chars.length, chars.map(function (item) {
+          return {
+            uuid: item.uuid,
+            properties: item.properties
+          };
+        }));
         for (var i = 0; i < chars.length; i++) {
           var c = chars[i];
           if (c.uuid.toLowerCase() === BLE.CHAR_SCORE_UUID.toLowerCase()) {
+            _targetCharId = c.uuid;
             self._subscribeNotify(c.uuid);
             return;
           }
@@ -201,27 +226,52 @@ Page({
       characteristicId: charId,
       state: true,
       success: function () {
-        console.log('[Broadcaster] notify subscribed');
+        console.log('[Broadcaster] notify subscribed service=%s char=%s', _targetServiceId, charId);
+        self._stopReadPolling();
         self._listenValues();
+        self._readCurrentValue(charId);
       },
       fail: function (err) {
         console.error('[Broadcaster] notifyBLECharacteristicValueChange fail', err);
+        console.warn('[Broadcaster] fallback to read polling');
+        self._listenValues();
+        self._startReadPolling(charId);
       }
     });
   },
 
   _listenValues: function () {
     var self = this;
+    try { wx.offBLECharacteristicValueChange(); } catch (e) { }
     wx.onBLECharacteristicValueChange(function (res) {
       if (res.deviceId !== _targetDeviceId) return;
-      var decoded = BLE.decodePacket(res.value);
-      if (!decoded) {
-        console.warn('[Broadcaster] XOR checksum fail, frame dropped');
+      console.log('[Broadcaster] characteristic changed device=%s service=%s char=%s len=%s hex=%s', res.deviceId, res.serviceId, res.characteristicId, res.value && res.value.byteLength, toHex(res.value));
+      if (!res.value || res.value.byteLength !== BLE.PACKET_LENGTH) {
+        console.log('[Broadcaster] ignore empty/non-packet change');
         return;
       }
+      var decoded = BLE.decodePacket(res.value);
+      if (!decoded) {
+        console.warn('[Broadcaster] CRC decode fail, frame dropped');
+        return;
+      }
+      _rxPacketCount += 1;
+      var nextFrameText = [
+        decoded.homeScore + ':' + decoded.awayScore,
+        'Q' + decoded.period,
+        zeroPad2(decoded.minutes) + ':' + zeroPad2(decoded.seconds),
+        '24=' + decoded.shotClock
+      ].join(' · ');
+      var nextRxAtText = formatClockTime(new Date());
+      console.log('[Broadcaster] rx seq=%s frame=%s', _rxPacketCount, nextFrameText);
       // 纠错：与上一帧比较逻辑合理性
       if (_prevFrame && !BLE.isLogicallyValid(_prevFrame, decoded)) {
-        self.setData({ anomalyHint: '⚠️ 异常帧，已跳过' });
+        self.setData({
+          anomalyHint: '⚠️ 异常帧，已跳过',
+          rxPacketCount: _rxPacketCount,
+          lastFrameText: nextFrameText,
+          lastRxAtText: nextRxAtText
+        });
         wx.vibrateShort({ type: 'light' });
         setTimeout(function () { self.setData({ anomalyHint: '' }); }, 2000);
         console.warn('[Broadcaster] logically invalid frame, skipped', decoded);
@@ -235,9 +285,43 @@ Page({
         minutes:   decoded.minutes,
         seconds:   decoded.seconds,
         shotClock: decoded.shotClock,
-        anomalyHint: ''
+        anomalyHint: '',
+        rxPacketCount: _rxPacketCount,
+        lastFrameText: nextFrameText,
+        lastRxAtText: nextRxAtText
       });
     });
+  },
+
+  _readCurrentValue: function (charId) {
+    wx.readBLECharacteristicValue({
+      deviceId: _targetDeviceId,
+      serviceId: _targetServiceId,
+      characteristicId: charId,
+      success: function (res) {
+        console.log('[Broadcaster] readBLECharacteristicValue ok', res);
+      },
+      fail: function (err) {
+        console.warn('[Broadcaster] readBLECharacteristicValue fail', err);
+      }
+    });
+  },
+
+  _startReadPolling: function (charId) {
+    var self = this;
+    self._stopReadPolling();
+    self._readCurrentValue(charId);
+    _pollReadTimer = setInterval(function () {
+      if (self.data.bleState !== 'connected' || !_targetDeviceId || !_targetServiceId) return;
+      self._readCurrentValue(charId);
+    }, 250);
+  },
+
+  _stopReadPolling: function () {
+    if (_pollReadTimer) {
+      clearInterval(_pollReadTimer);
+      _pollReadTimer = null;
+    }
   },
 
   // ─── 断线重连 ─────────────────────────────────────────
@@ -245,6 +329,9 @@ Page({
   _scheduleReconnect: function () {
     var self = this;
     clearTimeout(_reconnectTimer);
+    if (_targetDeviceId) {
+      try { wx.closeBLEConnection({ deviceId: _targetDeviceId }); } catch (e) { }
+    }
     this.setData({ bleState: 'reconnecting', bleStateText: '断线，' + (RECONNECT_INTERVAL_MS / 1000) + 's 后重连…' });
     _reconnectTimer = setTimeout(function () {
       if (self.data.bleState === 'reconnecting' && _targetDeviceId) {
@@ -261,20 +348,61 @@ Page({
     this.setData({ bleState: 'idle', bleStateText: '未连接', connectedName: '', matchCodeInput: '' });
   },
 
-  _cleanup: function () {
+  _cleanup: function (done) {
+    var doneCalled = false;
+    var finalize = function () {
+      if (doneCalled) return;
+      doneCalled = true;
+      if (typeof done === 'function') done();
+    };
+
     clearTimeout(_reconnectTimer);
     clearTimeout(_scanTimeoutTimer);
     _reconnectTimer = null;
     _scanTimeoutTimer = null;
+    this._stopReadPolling();
+    try { wx.offBluetoothDeviceFound(); } catch (e) { }
     try { wx.offBLEConnectionStateChange(); } catch (e) {}
     try { wx.offBLECharacteristicValueChange(); } catch (e) {}
     if (_targetDeviceId) {
       try { wx.closeBLEConnection({ deviceId: _targetDeviceId }); } catch (e) {}
     }
     try { wx.stopBluetoothDevicesDiscovery(); } catch (e) {}
-    try { wx.closeBluetoothAdapter(); } catch (e) {}
     _targetDeviceId = '';
     _targetServiceId = '';
+    _targetCharId = '';
     _prevFrame = null;
+    _rxPacketCount = 0;
+    try {
+      wx.closeBluetoothAdapter({
+        complete: function () { finalize(); }
+      });
+    } catch (e) {
+      finalize();
+    }
   }
 });
+
+function zeroPad2(n) {
+  return n < 10 ? '0' + n : String(n);
+}
+
+function formatClockTime(d) {
+  if (!d) return '';
+  return [
+    zeroPad2(d.getHours()),
+    zeroPad2(d.getMinutes()),
+    zeroPad2(d.getSeconds())
+  ].join(':');
+}
+
+function toHex(buf) {
+  if (!buf || !buf.byteLength) return '';
+  var view = new Uint8Array(buf);
+  var out = [];
+  for (var i = 0; i < view.length; i++) {
+    var hex = view[i].toString(16);
+    out.push(hex.length < 2 ? '0' + hex : hex);
+  }
+  return out.join(' ');
+}

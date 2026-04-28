@@ -149,45 +149,15 @@ function decodePacket(buf) {
 // ─── 纠错逻辑 ────────────────────────────────────────────────────────────────
 
 /**
- * 判断新帧相对于上一帧是否"逻辑合理"，过滤 OCR 偶发错误。
- *
- * 规则（任意一条不满足则拒绝）：
- *   1. 比分只能增长，且单帧涨幅不超过 MAX_SCORE_JUMP（默认 3 分，3分球）
- *   2. 24秒钟：若新值突增且不为 24 或 14（重置值），视为异常
- *   3. 节次只能不变或 +1，不允许倒退
+ * 联调阶段不过滤业务跳变，解码成功就直接接受。
+ * 这样记分牌回表、断电重设比分、24 秒手动回拨都不会被本地规则挡住。
  *
  * @param {{ homeScore:number, awayScore:number, period:number, shotClock:number }} prev
  * @param {{ homeScore:number, awayScore:number, period:number, shotClock:number }} next
- * @returns {boolean} true = 合理，可以应用
+ * @returns {boolean}
  */
 function isLogicallyValid(prev, next) {
-  var MAX_SCORE_JUMP = 3;
-  var SHOT_CLOCK_RESET_VALUES = [24, 14];
-
-  // 比分不能倒退（超过 0 的下降视为 OCR 误识别）
-  if (next.homeScore < prev.homeScore || next.awayScore < prev.awayScore) {
-    return false;
-  }
-  // 比分单次涨幅不超过 3
-  if (next.homeScore - prev.homeScore > MAX_SCORE_JUMP) {
-    return false;
-  }
-  if (next.awayScore - prev.awayScore > MAX_SCORE_JUMP) {
-    return false;
-  }
-  // 24秒：若新值 > 旧值且不是合法重置值，拒绝
-  if (next.shotClock > prev.shotClock) {
-    var isLegalReset = SHOT_CLOCK_RESET_VALUES.indexOf(next.shotClock) !== -1;
-    if (!isLegalReset) {
-      return false;
-    }
-  }
-  // 节次只能前进
-  if (next.period < prev.period) {
-    return false;
-  }
-
-  return true;
+  return !!next;
 }
 
 /**
