@@ -2301,6 +2301,92 @@ page {
   pointer-events: none;
 }
 
+.vk-debug-panel {
+  position: fixed;
+  top: 86rpx;
+  right: 18rpx;
+  z-index: 235;
+  width: 300rpx;
+  padding: 16rpx 18rpx 18rpx;
+  border-radius: 20rpx;
+  background: rgba(12, 15, 22, 0.84);
+  border: 1rpx solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 10rpx 36rpx rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(10px);
+  pointer-events: auto;
+}
+
+.vk-debug-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12rpx;
+}
+
+.vk-debug-panel__title {
+  font-size: 20rpx;
+  font-weight: 600;
+  color: #ffffff;
+  letter-spacing: 0.8rpx;
+}
+
+.vk-debug-panel__badge {
+  padding: 4rpx 10rpx;
+  border-radius: 999rpx;
+  font-size: 14rpx;
+  color: rgba(255, 255, 255, 0.82);
+  background: rgba(54, 207, 201, 0.18);
+}
+
+.vk-debug-panel__badge--freeze {
+  color: #fff3f0;
+  background: rgba(255, 122, 69, 0.28);
+}
+
+.vk-debug-panel__row {
+  margin-top: 10rpx;
+}
+
+.vk-debug-panel__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6rpx;
+}
+
+.vk-debug-panel__label {
+  font-size: 16rpx;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.vk-debug-panel__value {
+  font-size: 16rpx;
+  color: rgba(255, 255, 255, 0.64);
+  font-variant-numeric: tabular-nums;
+}
+
+.vk-debug-panel__switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 14rpx;
+  padding-top: 10rpx;
+  border-top: 1rpx solid rgba(255, 255, 255, 0.08);
+}
+
+.vk-debug-panel__switch-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2rpx;
+  max-width: 190rpx;
+}
+
+.vk-debug-panel__hint {
+  font-size: 13rpx;
+  color: rgba(255, 255, 255, 0.42);
+  line-height: 1.35;
+}
+
 /* ========== 严重存储：对齐系统 wx.showModal（与 VK 确认框同系；宽度用 px 封顶，横屏不致 80vw 铺满） ========== */
 .storage-pressure-overlay {
   position: fixed;

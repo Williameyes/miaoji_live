@@ -87,6 +87,31 @@ function createWebglSharpenRenderer() {
   var targetThermalScale = 1.0;
   var currentMotionScale = 1.0;
   var targetMotionScale = 1.0;
+  /** 新增：VK 环境感知画质策略（sceneAdaptiveProfile），仅调已有 shader 参数。 */
+  var sceneAdaptiveProfile = {
+    enabled: true,
+    sampleSize: 4,
+    sampleInterval: 6,
+    frameTick: 0,
+    avgLuminance: 0.5,
+    highlightRatio: 0.0,
+    profileName: 'normalScene',
+    currentAmount: 0.70,
+    targetAmount: 0.70,
+    currentContrast: 0.12,
+    targetContrast: 0.12,
+    currentGamma: 0.85,
+    targetGamma: 0.85,
+    currentSaturation: 1.25,
+    targetSaturation: 1.25
+  };
+  var vkSceneSampleRgba = new Uint8Array(sceneAdaptiveProfile.sampleSize * sceneAdaptiveProfile.sampleSize * 4);
+  // [VK Adaptive Curve]
+  var vkAdaptiveCurveState = {
+    amount: null,
+    tone: 1.0,
+    motion: 1.0
+  };
 
   /**
    * 编译单个 shader。失败抛错由上层捕获并走降级。
@@ -328,6 +353,32 @@ function createWebglSharpenRenderer() {
     nativeZoomCompVal = n;
   }
 
+  // [VK Adaptive Curve]
+  function setVkAdaptiveCurveState(state) {
+    state = state || {};
+    if (state.amount == null) {
+      vkAdaptiveCurveState.amount = null;
+    } else {
+      var amount = Number(state.amount);
+      vkAdaptiveCurveState.amount = isFinite(amount) ? amount : null;
+    }
+    var tone = Number(state.tone);
+    if (!isFinite(tone)) tone = 1.0;
+    var motion = Number(state.motion);
+    if (!isFinite(motion)) motion = 1.0;
+    vkAdaptiveCurveState.tone = tone;
+    vkAdaptiveCurveState.motion = motion;
+  }
+
+  // [VK Adaptive Curve]
+  function getVkSceneStats() {
+    return {
+      avgLuminance: sceneAdaptiveProfile.avgLuminance,
+      highlightRatio: sceneAdaptiveProfile.highlightRatio,
+      profileName: sceneAdaptiveProfile.profileName
+    };
+  }
+
   /**
    * 第二遍采样 FBO（与画布同尺寸）时使用恒等 UV，避免二次 cover。
    * @returns {void}
@@ -405,6 +456,7 @@ function createWebglSharpenRenderer() {
             var cfg = shaderLib[currentLevel.toUpperCase()];
             program = buildProgram(cfg.fragment);
             currentUniforms = cfg.uniforms;
+            resetSceneAdaptiveProfile();
             bindProgramLocations();
             allocTexture();
             uploadQuad();
@@ -561,6 +613,105 @@ function createWebglSharpenRenderer() {
     yuvLocs.uUvTex = gl.getUniformLocation(yuvProgram, 'uUvTex');
   }
 
+  /** 新增：切档时同步重置场景自适应参数，避免旧档位残留。 */
+  function resetSceneAdaptiveProfile() {
+    var baseAmount = currentUniforms && typeof currentUniforms.uAmount === 'number' ? currentUniforms.uAmount : 0.7;
+    var baseContrast = currentUniforms && typeof currentUniforms.uContrast === 'number' ? currentUniforms.uContrast : 0.12;
+    var baseGamma = currentUniforms && typeof currentUniforms.uGamma === 'number' ? currentUniforms.uGamma : 0.85;
+    var baseSaturation = currentUniforms && typeof currentUniforms.uSaturation === 'number' ? currentUniforms.uSaturation : 1.25;
+    sceneAdaptiveProfile.frameTick = 0;
+    sceneAdaptiveProfile.avgLuminance = 0.5;
+    sceneAdaptiveProfile.highlightRatio = 0.0;
+    sceneAdaptiveProfile.profileName = 'normalScene';
+    sceneAdaptiveProfile.currentAmount = baseAmount;
+    sceneAdaptiveProfile.targetAmount = baseAmount;
+    sceneAdaptiveProfile.currentContrast = baseContrast;
+    sceneAdaptiveProfile.targetContrast = baseContrast;
+    sceneAdaptiveProfile.currentGamma = baseGamma;
+    sceneAdaptiveProfile.targetGamma = baseGamma;
+    sceneAdaptiveProfile.currentSaturation = baseSaturation;
+    sceneAdaptiveProfile.targetSaturation = baseSaturation;
+  }
+
+  /** 新增：从已存在的 VK FBO 读取极小采样块，统计 BT.709 平均亮度与高光占比。 */
+  function sampleVkSceneStats() {
+    if (!gl || !fboRgb || !sceneAdaptiveProfile.enabled) return;
+    sceneAdaptiveProfile.frameTick += 1;
+    if ((sceneAdaptiveProfile.frameTick % sceneAdaptiveProfile.sampleInterval) !== 0) return;
+    var size = sceneAdaptiveProfile.sampleSize;
+    var readW = fboRgbW < size ? fboRgbW : size;
+    var readH = fboRgbH < size ? fboRgbH : size;
+    if (readW <= 0 || readH <= 0) return;
+    var ox = ((fboRgbW - readW) * 0.5) | 0;
+    var oy = ((fboRgbH - readH) * 0.5) | 0;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fboRgb);
+    gl.readPixels(ox, oy, readW, readH, gl.RGBA, gl.UNSIGNED_BYTE, vkSceneSampleRgba);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    var total = readW * readH;
+    var sumLuma = 0.0;
+    var hiCount = 0;
+    for (var i = 0; i < total; i++) {
+      var base = i * 4;
+      var r = vkSceneSampleRgba[base] / 255;
+      var g = vkSceneSampleRgba[base + 1] / 255;
+      var b = vkSceneSampleRgba[base + 2] / 255;
+      var luma709 = r * 0.2126 + g * 0.7152 + b * 0.0722;
+      sumLuma += luma709;
+      if (luma709 > 0.7) hiCount += 1;
+    }
+    if (total > 0) {
+      sceneAdaptiveProfile.avgLuminance += ((sumLuma / total) - sceneAdaptiveProfile.avgLuminance) * 0.25;
+      sceneAdaptiveProfile.highlightRatio += ((hiCount / total) - sceneAdaptiveProfile.highlightRatio) * 0.25;
+    }
+  }
+
+  /** 新增：VK 专属环境感知画质策略，平滑更新锐化/对比/影调相关参数。 */
+  function updateVkSceneAdaptiveProfile() {
+    if (!sceneAdaptiveProfile.enabled) return;
+    var baseAmount = currentUniforms && typeof currentUniforms.uAmount === 'number' ? currentUniforms.uAmount : 0.7;
+    var baseContrast = currentUniforms && typeof currentUniforms.uContrast === 'number' ? currentUniforms.uContrast : 0.12;
+    var baseGamma = currentUniforms && typeof currentUniforms.uGamma === 'number' ? currentUniforms.uGamma : 0.85;
+    var baseSaturation = currentUniforms && typeof currentUniforms.uSaturation === 'number' ? currentUniforms.uSaturation : 1.25;
+    var avgLuma = sceneAdaptiveProfile.avgLuminance;
+    var hiRatio = sceneAdaptiveProfile.highlightRatio;
+    var isLowLight = avgLuma < 0.45;
+    var isHighlight = hiRatio > 0.18;
+    var targetAmount = baseAmount;
+    var targetContrast = baseContrast;
+    var targetGamma = baseGamma;
+    var targetSaturation = baseSaturation;
+
+    sceneAdaptiveProfile.profileName = 'normalScene';
+    if (isLowLight) {
+      sceneAdaptiveProfile.profileName = 'lowLightScene';
+      targetAmount = 0.52 + 0.05;
+      if (targetAmount > 0.6) targetAmount = 0.6;
+      targetContrast = baseContrast * 1.20;
+      targetGamma = baseGamma * 0.96;
+      targetSaturation = baseSaturation * 1.03;
+    }
+    if (isHighlight) {
+      sceneAdaptiveProfile.profileName = 'highlightScene';
+      targetAmount *= 0.85;
+      if (targetContrast > baseContrast * 1.08) {
+        targetContrast = baseContrast * 1.08;
+      }
+      if (targetGamma < baseGamma) {
+        targetGamma += (baseGamma - targetGamma) * 0.35;
+      }
+    }
+
+    if (targetAmount < 0.35) targetAmount = 0.35;
+    sceneAdaptiveProfile.targetAmount = targetAmount;
+    sceneAdaptiveProfile.targetContrast = targetContrast;
+    sceneAdaptiveProfile.targetGamma = targetGamma;
+    sceneAdaptiveProfile.targetSaturation = targetSaturation;
+    sceneAdaptiveProfile.currentAmount += (sceneAdaptiveProfile.targetAmount - sceneAdaptiveProfile.currentAmount) * 0.05;
+    sceneAdaptiveProfile.currentContrast += (sceneAdaptiveProfile.targetContrast - sceneAdaptiveProfile.currentContrast) * 0.05;
+    sceneAdaptiveProfile.currentGamma += (sceneAdaptiveProfile.targetGamma - sceneAdaptiveProfile.currentGamma) * 0.05;
+    sceneAdaptiveProfile.currentSaturation += (sceneAdaptiveProfile.targetSaturation - sceneAdaptiveProfile.currentSaturation) * 0.05;
+  }
+
   /**
    * 绘制一帧 VKSession：getCameraTexture(yuv) → FBO RGBA → 现有 VK 锐化 shader 上屏。
    * @param {Object} vkFrame  session.getVKFrame 返回值
@@ -604,6 +755,8 @@ function createWebglSharpenRenderer() {
       gl.enableVertexAttribArray(yuvLocs.aUv);
       gl.vertexAttribPointer(yuvLocs.aUv, 2, gl.FLOAT, false, 16, 8);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      sampleVkSceneStats();
+      updateVkSceneAdaptiveProfile();
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, 0, w, h);
       gl.clearColor(0.0, 0.0, 0.0, 1.0);
@@ -619,9 +772,18 @@ function createWebglSharpenRenderer() {
       currentMotionScale += (targetMotionScale - currentMotionScale) * 0.1;
 
       var activeZoomVk = vkZoomVal;
-      var activeAmountVk = currentUniforms.uAmount;
+      var activeAmountVk = sceneAdaptiveProfile.currentAmount;
+      // [VK Adaptive Curve]
+      if (vkAdaptiveCurveState.amount != null) {
+        activeAmountVk = vkAdaptiveCurveState.amount;
+      }
       if (activeAmountVk) activeAmountVk *= currentThermalScale;
-      var activeMotionVk = motionUniform * currentMotionScale;
+      var activeMotionVk = motionUniform * currentMotionScale * vkAdaptiveCurveState.motion;
+      // [VK Adaptive Curve]
+      var toneFactorVk = vkAdaptiveCurveState.tone;
+      var activeContrastVk = sceneAdaptiveProfile.currentContrast * (0.75 + toneFactorVk * 0.5);
+      var activeGammaVk = 1.0 - (1.0 - sceneAdaptiveProfile.currentGamma) * (0.75 + toneFactorVk * 0.35);
+      var activeSaturationVk = sceneAdaptiveProfile.currentSaturation * (0.9 + toneFactorVk * 0.12);
       if (activeZoomVk > 1.5) {
         if (activeAmountVk) activeAmountVk *= 0.6;
         activeMotionVk *= 0.5;
@@ -635,14 +797,14 @@ function createWebglSharpenRenderer() {
       if (uniformLocs.uMotion) {
         gl.uniform1f(uniformLocs.uMotion, activeMotionVk);
       }
-      if (uniformLocs.uContrast && typeof currentUniforms.uContrast === 'number') {
-        gl.uniform1f(uniformLocs.uContrast, currentUniforms.uContrast);
+      if (uniformLocs.uContrast && typeof sceneAdaptiveProfile.currentContrast === 'number') {
+        gl.uniform1f(uniformLocs.uContrast, activeContrastVk);
       }
-      if (uniformLocs.uGamma && typeof currentUniforms.uGamma === 'number') {
-        gl.uniform1f(uniformLocs.uGamma, currentUniforms.uGamma);
+      if (uniformLocs.uGamma && typeof sceneAdaptiveProfile.currentGamma === 'number') {
+        gl.uniform1f(uniformLocs.uGamma, activeGammaVk);
       }
-      if (uniformLocs.uSaturation && typeof currentUniforms.uSaturation === 'number') {
-        gl.uniform1f(uniformLocs.uSaturation, currentUniforms.uSaturation);
+      if (uniformLocs.uSaturation && typeof sceneAdaptiveProfile.currentSaturation === 'number') {
+        gl.uniform1f(uniformLocs.uSaturation, activeSaturationVk);
       }
       if (uniformLocs.uVkZoom) {
         gl.uniform1f(uniformLocs.uVkZoom, vkZoomVal);
@@ -781,6 +943,7 @@ function createWebglSharpenRenderer() {
     if (old) gl.deleteProgram(old);
     bindProgramLocations();
     currentUniforms = cfg.uniforms;
+    resetSceneAdaptiveProfile();
     currentLevel = level;
   }
 
@@ -829,6 +992,7 @@ function createWebglSharpenRenderer() {
     vkZoomVal = 1;
     nativeZoomCompVal = 1;
     motionUniform = 0;
+    resetSceneAdaptiveProfile();
   }
 
   return {
@@ -839,6 +1003,8 @@ function createWebglSharpenRenderer() {
     getGl: getGl,
     getBackingSize: getBackingSize,
     getCanvasNode: getCanvasNode,
+    setVkAdaptiveCurveState: setVkAdaptiveCurveState,
+    getVkSceneStats: getVkSceneStats,
     setVkZoom: setVkZoom,
     setNativeZoomCompensation: setNativeZoomCompensation,
     setMotionLevel: setMotionLevel,

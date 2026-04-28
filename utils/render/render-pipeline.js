@@ -34,6 +34,40 @@ var MOTION_LUMA_PATCH = 8;
 var VK_MOTION_BENCH_MS = 100;
 /** motion EMA 系数：new 权重 0.2，与历史 0.8 融合。 */
 var MOTION_SMOOTH_ALPHA = 0.2;
+// [VK Adaptive Curve]
+var debugConfig = {
+  enable: false,
+  overrideAmount: null,
+  overrideTone: null,
+  overrideMotion: null,
+  freezeAuto: false
+};
+
+// [VK Adaptive Curve]
+function clamp01(v) {
+  if (v < 0) return 0;
+  if (v > 1) return 1;
+  return v;
+}
+
+// [VK Adaptive Curve]
+function clampRange(v, min, max) {
+  if (v < min) return min;
+  if (v > max) return max;
+  return v;
+}
+
+// [VK Adaptive Curve]
+function lerpScalar(a, b, t) {
+  return a + (b - a) * t;
+}
+
+// [VK Adaptive Curve]
+function smoothstep01(edge0, edge1, x) {
+  if (edge0 === edge1) return x < edge0 ? 0 : 1;
+  var t = clamp01((x - edge0) / (edge1 - edge0));
+  return t * t * (3 - 2 * t);
+}
 
 /**
  * 对 RGBA 相机帧取中心块平均亮度 [0,1]（同 shader 中 luma 权重），供轻量 motion 估计。
@@ -146,6 +180,18 @@ function createRenderPipeline() {
    * @type {number|null}
    */
   var _vkLastFrameWallTime = null;
+  // [VK Adaptive Curve]
+  var _vkAdaptiveCurveState = {
+    avgLuminance: 0.5,
+    loadIndex: 0.0,
+    nightFactor: 0.0,
+    currentAmount: 0.65,
+    currentTone: 0.75,
+    currentMotion: 1.0,
+    targetAmount: 0.65,
+    targetTone: 0.75,
+    targetMotion: 1.0
+  };
 
   function _now() { return Date.now(); }
 
@@ -157,6 +203,79 @@ function createRenderPipeline() {
     _motionPrevLuma = null;
     _motionSmoothed = null;
     _vkLastFrameWallTime = null;
+  }
+
+  // [VK Adaptive Curve]
+  function _resetVkAdaptiveCurveState() {
+    _vkAdaptiveCurveState.avgLuminance = 0.5;
+    _vkAdaptiveCurveState.loadIndex = 0.0;
+    _vkAdaptiveCurveState.nightFactor = 0.0;
+    _vkAdaptiveCurveState.currentAmount = 0.65;
+    _vkAdaptiveCurveState.currentTone = 0.75;
+    _vkAdaptiveCurveState.currentMotion = 1.0;
+    _vkAdaptiveCurveState.targetAmount = 0.65;
+    _vkAdaptiveCurveState.targetTone = 0.75;
+    _vkAdaptiveCurveState.targetMotion = 1.0;
+    try {
+      if (renderer && typeof renderer.setVkAdaptiveCurveState === 'function') {
+        renderer.setVkAdaptiveCurveState({
+          amount: _vkAdaptiveCurveState.currentAmount,
+          tone: _vkAdaptiveCurveState.currentTone,
+          motion: _vkAdaptiveCurveState.currentMotion
+        });
+      }
+    } catch (e) {}
+  }
+
+  // [VK Adaptive Curve]
+  function _updateVkAdaptiveCurve(totalCost, cycleDelta) {
+    if (mode !== 'vk' || !renderer || typeof renderer.setVkAdaptiveCurveState !== 'function') return;
+    var snap = monitor ? monitor.snapshot() : null;
+    var fps = snap && snap.avgFps ? snap.avgFps : 30;
+    var stats = typeof renderer.getVkSceneStats === 'function' ? renderer.getVkSceneStats() : null;
+    var avgLuminance = stats && typeof stats.avgLuminance === 'number' ? stats.avgLuminance : _vkAdaptiveCurveState.avgLuminance;
+    _vkAdaptiveCurveState.avgLuminance = avgLuminance;
+    if (!debugConfig.freezeAuto) {
+      var fpsPenalty = clamp01((30 - fps) / 30) * 0.3;
+      var cyclePenalty = clamp01((cycleDelta - 40) / 20) * 0.2;
+      var loadIndex = clamp01((totalCost / 33.3) * 0.6 + fpsPenalty + cyclePenalty);
+      var nightFactor = 1.0 - smoothstep01(0.2, 0.5, avgLuminance);
+      var targetAmount = 0.65 - loadIndex * 0.25;
+      targetAmount *= (1.0 - nightFactor * 0.3);
+      targetAmount = clampRange(targetAmount, 0.35, 0.7);
+      var toneStrength = 0.6 + (1 - loadIndex) * 0.25;
+      toneStrength += nightFactor * 0.2;
+      toneStrength = clampRange(toneStrength, 0.5, 1.05);
+      var motionStrength = 1.0 - loadIndex * 0.8;
+      motionStrength = clampRange(motionStrength, 0.2, 1.0);
+      _vkAdaptiveCurveState.loadIndex = loadIndex;
+      _vkAdaptiveCurveState.nightFactor = nightFactor;
+      _vkAdaptiveCurveState.targetAmount = targetAmount;
+      _vkAdaptiveCurveState.targetTone = toneStrength;
+      _vkAdaptiveCurveState.targetMotion = motionStrength;
+    }
+    if (debugConfig.enable) {
+      if (debugConfig.overrideAmount != null) {
+        _vkAdaptiveCurveState.targetAmount = clampRange(Number(debugConfig.overrideAmount) || 0, 0.35, 0.7);
+      }
+      if (debugConfig.overrideTone != null) {
+        _vkAdaptiveCurveState.targetTone = clampRange(Number(debugConfig.overrideTone) || 0, 0.5, 1.2);
+      }
+      if (debugConfig.overrideMotion != null) {
+        _vkAdaptiveCurveState.targetMotion = clampRange(Number(debugConfig.overrideMotion) || 0, 0.2, 1.0);
+      }
+    }
+    _vkAdaptiveCurveState.currentAmount = lerpScalar(_vkAdaptiveCurveState.currentAmount, _vkAdaptiveCurveState.targetAmount, 0.05);
+    _vkAdaptiveCurveState.currentTone = lerpScalar(_vkAdaptiveCurveState.currentTone, _vkAdaptiveCurveState.targetTone, 0.05);
+    _vkAdaptiveCurveState.currentMotion = lerpScalar(_vkAdaptiveCurveState.currentMotion, _vkAdaptiveCurveState.targetMotion, 0.05);
+    try {
+      renderer.setVkAdaptiveCurveState({
+        amount: _vkAdaptiveCurveState.currentAmount,
+        tone: _vkAdaptiveCurveState.currentTone,
+        motion: _vkAdaptiveCurveState.currentMotion
+      });
+      renderer.setMotionLevel((_motionSmoothed == null ? 0 : _motionSmoothed) * _vkAdaptiveCurveState.currentMotion);
+    } catch (e) {}
   }
 
   /**
@@ -244,6 +363,8 @@ function createRenderPipeline() {
     monitor = perfMod.createPerformanceMonitor();
     var sourceKind = opts.sourceKind === 'vk' ? 'vk' : 'native';
     _sourceKind = sourceKind;
+    // [VK Adaptive Curve]
+    _resetVkAdaptiveCurveState();
     // init 阶段先以 'standard' 档位建 program；真正切到 VK 时 setShaderLevel('vk')
     // VK：必须 preserveDrawingBuffer，否则高光封面 canvasToTempFilePath 恒为黑图
     return renderer.init({
@@ -304,6 +425,10 @@ function createRenderPipeline() {
           isDrawingLock = false;
           
           var totalCost = _now() - startT;
+          // [VK Adaptive Curve]
+          if (_sourceKind === 'vk' && frame && frame.vkFrame) {
+            _updateVkAdaptiveCurve(totalCost, cycleDelta);
+          }
           // 2. 双重背压检测：区分“系统线程调度抖动”与“真实的渲染/编码积压”
           // 如果 cycleDelta 大但 totalCost 小，说明只是 JS 被抢占，并没有造成管线背压
           if (totalCost > 38 || (cycleDelta > 45 && totalCost > 15)) {
@@ -407,6 +532,8 @@ function createRenderPipeline() {
       if (err) {
         mode = 'off';
         _resetMotionState();
+        // [VK Adaptive Curve]
+        _resetVkAdaptiveCurveState();
         if (source && source.isRunning && source.isRunning()) {
           try { source.stop(); } catch (e) {}
         }
@@ -426,6 +553,8 @@ function createRenderPipeline() {
       mode = nextMode;
       if (toOff) {
         _resetMotionState();
+        // [VK Adaptive Curve]
+        _resetVkAdaptiveCurveState();
       }
       // 切入/离开 vk 时重置降级触发状态
       if (mode !== 'vk') {
@@ -458,6 +587,8 @@ function createRenderPipeline() {
       }
       if (fromOff) {
         _resetMotionState();
+        // [VK Adaptive Curve]
+        _resetVkAdaptiveCurveState();
         renderer.setShaderLevel(nextMode);
         var sp = source.start();
         if (!sp || typeof sp.then !== 'function') {
@@ -478,6 +609,8 @@ function createRenderPipeline() {
         return;
       }
       renderer.setShaderLevel(nextMode);
+      // [VK Adaptive Curve]
+      _resetVkAdaptiveCurveState();
       if (monitor) monitor.reset();
       finalize(null);
     } catch (e) {
@@ -601,6 +734,8 @@ function createRenderPipeline() {
     _vkDegradeFired = false;
     _vkBeforeDraw = null;
     _resetMotionState();
+    // [VK Adaptive Curve]
+    _resetVkAdaptiveCurveState();
     framesRendered = 0;
     lastFrameAt = 0;
   }
@@ -671,6 +806,21 @@ function createRenderPipeline() {
     if (monitor) monitor.reset();
   }
 
+  // [VK Adaptive Curve]
+  function getVkAdaptiveDebugConfig() {
+    return debugConfig;
+  }
+
+  // [VK Adaptive Curve]
+  function setVkAdaptiveDebugConfig(patch) {
+    if (!patch) return;
+    if (Object.prototype.hasOwnProperty.call(patch, 'enable')) debugConfig.enable = !!patch.enable;
+    if (Object.prototype.hasOwnProperty.call(patch, 'overrideAmount')) debugConfig.overrideAmount = patch.overrideAmount;
+    if (Object.prototype.hasOwnProperty.call(patch, 'overrideTone')) debugConfig.overrideTone = patch.overrideTone;
+    if (Object.prototype.hasOwnProperty.call(patch, 'overrideMotion')) debugConfig.overrideMotion = patch.overrideMotion;
+    if (Object.prototype.hasOwnProperty.call(patch, 'freezeAuto')) debugConfig.freezeAuto = !!patch.freezeAuto;
+  }
+
   api = {
     init: init,
     setMode: setMode,
@@ -685,6 +835,8 @@ function createRenderPipeline() {
     setVkRecordingHook: setVkRecordingHook,
     hintThermalPressure: hintThermalPressure,
     pauseAutoDegradeOnce: pauseAutoDegradeOnce,
+    getVkAdaptiveDebugConfig: getVkAdaptiveDebugConfig,
+    setVkAdaptiveDebugConfig: setVkAdaptiveDebugConfig,
     snapshot: function() { return monitor ? monitor.snapshot() : null; },
     /**
      * 诊断快照：工具条用；不依赖 perf 窗口，首帧也能读到。
@@ -694,11 +846,25 @@ function createRenderPipeline() {
       return {
         mode: mode,
         framesRendered: framesRendered,
-        sinceLastFrameMs: lastFrameAt ? (_now() - lastFrameAt) : -1
+        sinceLastFrameMs: lastFrameAt ? (_now() - lastFrameAt) : -1,
+        vkAdaptiveCurve: {
+          avgLuminance: _vkAdaptiveCurveState.avgLuminance,
+          loadIndex: _vkAdaptiveCurveState.loadIndex,
+          nightFactor: _vkAdaptiveCurveState.nightFactor,
+          currentAmount: _vkAdaptiveCurveState.currentAmount,
+          currentTone: _vkAdaptiveCurveState.currentTone,
+          currentMotion: _vkAdaptiveCurveState.currentMotion,
+          targetAmount: _vkAdaptiveCurveState.targetAmount,
+          targetTone: _vkAdaptiveCurveState.targetTone,
+          targetMotion: _vkAdaptiveCurveState.targetMotion
+        }
       };
     }
   };
   return api;
 }
 
-module.exports = { createRenderPipeline: createRenderPipeline };
+module.exports = {
+  createRenderPipeline: createRenderPipeline,
+  debugConfig: debugConfig
+};

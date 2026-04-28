@@ -542,6 +542,86 @@
     </view>
   </view>
 
+  <view
+    wx:if="{{vkDebugPanelVisible && enhanceMode === 'vk'}}"
+    class="vk-debug-panel"
+    catchtap="stopEnhanceToolbarBubble"
+    catchtouchmove="noopCatchMove"
+  >
+    <view class="vk-debug-panel__head" catchlongpress="onVkDebugToolbarLongPress">
+      <view class="vk-debug-panel__title">VK Debug</view>
+      <view class="vk-debug-panel__badge {{vkDebugFreezeAuto ? 'vk-debug-panel__badge--freeze' : ''}}">
+        {{vkDebugFreezeAuto ? 'AUTO FROZEN' : 'AUTO LIVE'}}
+      </view>
+    </view>
+
+    <view class="vk-debug-panel__row">
+      <view class="vk-debug-panel__meta">
+        <text class="vk-debug-panel__label">Amount</text>
+        <text class="vk-debug-panel__value">{{vkDebugAmount}}</text>
+      </view>
+      <slider
+        min="35"
+        max="70"
+        step="1"
+        value="{{vkDebugAmountPct}}"
+        activeColor="#ff7a45"
+        backgroundColor="rgba(255,255,255,0.18)"
+        block-size="18"
+        bindchanging="onVkDebugAmountChanging"
+        bindchange="onVkDebugAmountChanging"
+      />
+    </view>
+
+    <view class="vk-debug-panel__row">
+      <view class="vk-debug-panel__meta">
+        <text class="vk-debug-panel__label">Tone</text>
+        <text class="vk-debug-panel__value">{{vkDebugTone}}</text>
+      </view>
+      <slider
+        min="50"
+        max="120"
+        step="1"
+        value="{{vkDebugTonePct}}"
+        activeColor="#36cfc9"
+        backgroundColor="rgba(255,255,255,0.18)"
+        block-size="18"
+        bindchanging="onVkDebugToneChanging"
+        bindchange="onVkDebugToneChanging"
+      />
+    </view>
+
+    <view class="vk-debug-panel__row">
+      <view class="vk-debug-panel__meta">
+        <text class="vk-debug-panel__label">Motion</text>
+        <text class="vk-debug-panel__value">{{vkDebugMotion}}</text>
+      </view>
+      <slider
+        min="20"
+        max="100"
+        step="1"
+        value="{{vkDebugMotionPct}}"
+        activeColor="#69c0ff"
+        backgroundColor="rgba(255,255,255,0.18)"
+        block-size="18"
+        bindchanging="onVkDebugMotionChanging"
+        bindchange="onVkDebugMotionChanging"
+      />
+    </view>
+
+    <view class="vk-debug-panel__switch-row">
+      <view class="vk-debug-panel__switch-copy">
+        <text class="vk-debug-panel__label">freezeAuto</text>
+        <text class="vk-debug-panel__hint">防止自动曲线偷偷改回参数</text>
+      </view>
+      <switch
+        checked="{{vkDebugFreezeAuto}}"
+        color="#ff7a45"
+        bindchange="onVkDebugFreezeAutoChange"
+      />
+    </view>
+  </view>
+
   <!-- Level 3: 管理抽屉 (drawerMode 0=隐藏 1=打开) -->
   <view wx:if="{{drawerMode === 1}}">
 
@@ -550,7 +630,7 @@
 
     <!-- 高清渲染调试工具条：仅白名单机型显示；抽屉打开时常驻顶部，便于对比画质 + 观测 FPS -->
     <view wx:if="{{enhanceWhitelisted}}" class="enhance-mode-toolbar {{enhanceVkTransitioning ? 'enhance-mode-toolbar--transitioning' : ''}}" catchtap="stopEnhanceToolbarBubble">
-      <view class="enhance-mode-status">
+      <view class="enhance-mode-status" catchlongpress="onVkDebugToolbarLongPress">
         <text class="enhance-mode-k">画质增强</text>
         <text class="enhance-mode-v">{{c.enhanceModeLabel(enhanceMode)}} · {{enhanceFpsText}}</text>
       </view>

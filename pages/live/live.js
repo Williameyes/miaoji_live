@@ -480,6 +480,14 @@ Page({
      * 抽屉打开时工具条展示的实时 FPS 文案（如 "28 fps"）；未启用时显示 "— fps"。
      */
     enhanceFpsText: '— fps',
+    vkDebugPanelVisible: false,
+    vkDebugAmount: 0.58,
+    vkDebugAmountPct: 58,
+    vkDebugTone: 0.95,
+    vkDebugTonePct: 95,
+    vkDebugMotion: 0.72,
+    vkDebugMotionPct: 72,
+    vkDebugFreezeAuto: false,
     isVkTimeshift: false
   },
 
@@ -1205,6 +1213,7 @@ Page({
     this._replayOutroTimer = null;
     this._replayPrimeTimerA = null;
     this._replayPrimeTimerB = null;
+    this._vkDebugHotkeyHandler = null;
     this.initHealthLogs();
 
     this.syncMatchConfigFromPageSources();
@@ -2087,6 +2096,7 @@ Page({
         if (self._renderPipeline !== pipeline) return;
         pipeline.setMode('vk', { reason: 'user', force: true });
         pipeline.start();
+        self._syncVkAdaptiveDebugConfigToPipeline();
         try {
           if (typeof pipeline.setVkZoom === 'function') {
             pipeline.setVkZoom(1);
@@ -3827,6 +3837,7 @@ Page({
 
   onShow: function () {
     this._livePageVisible = true;
+    this._bindVkDebugHotkey();
     try {
       wx.showShareMenu({
         withShareTicket: true,
@@ -4524,6 +4535,7 @@ Page({
   },
 
   onUnload: function () {
+    this._unbindVkDebugHotkey();
     if (this._windowResizeListener && wx.offWindowResize) {
       try {
         wx.offWindowResize(this._windowResizeListener);
@@ -4634,6 +4646,7 @@ Page({
   },
 
   onHide: function () {
+    this._unbindVkDebugHotkey();
     if (this._cameraShowInitWatchTimer) {
       clearTimeout(this._cameraShowInitWatchTimer);
       this._cameraShowInitWatchTimer = null;
@@ -8106,6 +8119,94 @@ Page({
   onBackgroundLongPress: function () {
     if (this.isMultiTouch) return;
     this.openDrawerMode1();
+  },
+
+  _syncVkAdaptiveDebugConfigToPipeline: function () {
+    var patch = {
+      enable: true,
+      overrideAmount: this.data.vkDebugAmount,
+      overrideTone: this.data.vkDebugTone,
+      overrideMotion: this.data.vkDebugMotion,
+      freezeAuto: !!this.data.vkDebugFreezeAuto
+    };
+    try {
+      renderPipelineMod.debugConfig.enable = patch.enable;
+      renderPipelineMod.debugConfig.overrideAmount = patch.overrideAmount;
+      renderPipelineMod.debugConfig.overrideTone = patch.overrideTone;
+      renderPipelineMod.debugConfig.overrideMotion = patch.overrideMotion;
+      renderPipelineMod.debugConfig.freezeAuto = patch.freezeAuto;
+    } catch (e0) { }
+    if (this._renderPipeline && typeof this._renderPipeline.setVkAdaptiveDebugConfig === 'function') {
+      try {
+        this._renderPipeline.setVkAdaptiveDebugConfig(patch);
+      } catch (e1) { }
+    }
+  },
+
+  _toggleVkDebugPanel: function () {
+    var nextVisible = !this.data.vkDebugPanelVisible;
+    this.setData({ vkDebugPanelVisible: nextVisible });
+    if (nextVisible) {
+      this._syncVkAdaptiveDebugConfigToPipeline();
+    }
+  },
+
+  _bindVkDebugHotkey: function () {
+    if (this._vkDebugHotkeyHandler) return;
+    if (typeof document === 'undefined' || !document || !document.addEventListener) return;
+    var self = this;
+    this._vkDebugHotkeyHandler = function (evt) {
+      if (!evt) return;
+      var key = String(evt.key || '').toLowerCase();
+      if (!(evt.ctrlKey || evt.metaKey) || key !== 'd') return;
+      if (evt.preventDefault) evt.preventDefault();
+      self._toggleVkDebugPanel();
+    };
+    document.addEventListener('keydown', this._vkDebugHotkeyHandler, true);
+  },
+
+  _unbindVkDebugHotkey: function () {
+    if (!this._vkDebugHotkeyHandler) return;
+    if (typeof document !== 'undefined' && document && document.removeEventListener) {
+      try {
+        document.removeEventListener('keydown', this._vkDebugHotkeyHandler, true);
+      } catch (e) { }
+    }
+    this._vkDebugHotkeyHandler = null;
+  },
+
+  onVkDebugToolbarLongPress: function () {
+    this._toggleVkDebugPanel();
+  },
+
+  onVkDebugAmountChanging: function (e) {
+    var v = Number(e && e.detail ? e.detail.value : 58);
+    if (!isFinite(v)) v = 58;
+    var amount = Math.max(35, Math.min(70, v)) / 100;
+    this.setData({ vkDebugAmount: amount, vkDebugAmountPct: Math.round(amount * 100) });
+    this._syncVkAdaptiveDebugConfigToPipeline();
+  },
+
+  onVkDebugToneChanging: function (e) {
+    var v = Number(e && e.detail ? e.detail.value : 95);
+    if (!isFinite(v)) v = 95;
+    var tone = Math.max(50, Math.min(120, v)) / 100;
+    this.setData({ vkDebugTone: tone, vkDebugTonePct: Math.round(tone * 100) });
+    this._syncVkAdaptiveDebugConfigToPipeline();
+  },
+
+  onVkDebugMotionChanging: function (e) {
+    var v = Number(e && e.detail ? e.detail.value : 72);
+    if (!isFinite(v)) v = 72;
+    var motion = Math.max(20, Math.min(100, v)) / 100;
+    this.setData({ vkDebugMotion: motion, vkDebugMotionPct: Math.round(motion * 100) });
+    this._syncVkAdaptiveDebugConfigToPipeline();
+  },
+
+  onVkDebugFreezeAutoChange: function (e) {
+    var checked = !!(e && e.detail ? e.detail.value : false);
+    this.setData({ vkDebugFreezeAuto: checked });
+    this._syncVkAdaptiveDebugConfigToPipeline();
   },
 
   /**
