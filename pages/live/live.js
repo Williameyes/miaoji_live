@@ -959,6 +959,7 @@ Page({
       if (!selfWatch.data.cameraMounted || selfWatch.data.isRecovering) return;
       if (selfWatch._cameraInitDone) return;
       selfWatch.appendHealthLog('camera_init_watchdog_rebuild', {});
+      selfWatch.armNativeEnhanceModeRestoreAfterCameraRebuild('camera_init_watchdog');
       selfWatch.rebuildCameraComponent(() => {
         if (!selfWatch._livePageVisible || !selfWatch.data.liveStreamAllowed) return;
         selfWatch.setData({
@@ -1032,6 +1033,8 @@ Page({
   _enhanceModeSwitchGuardUntil: 0,
   /** 原生画质：零帧自愈后应 setMode 的目标档位（off|lite|standard|strong） */
   _pendingEnhanceModeAfterRecover: null,
+  /** 相机硬恢复/看门狗重建后应恢复的原生增强档位（off|lite|standard|strong）。 */
+  _pendingEnhanceModeAfterCameraRebuild: null,
   /** {@link onEnhanceModePick} 安排的零帧检测定时器 */
   _enhanceZeroFrameRecoverTimer: null,
   segmentBuffer: [],
@@ -1094,6 +1097,8 @@ Page({
   _rollingTempMissingStreak: 0,
   /** 连续出现“temp 终态丢失”计数，超过阈值触发硬恢复。 */
   _rollingTempTerminalFailStreak: 0,
+  /** 最近一次 startRecord operate fail 的时间戳；与 temp 丢失联合判定 camera 真故障。 */
+  _lastSegmentOperateFailAt: 0,
 
   onLoad: function () {
     /** 相机 bindinitdone 完成前禁止 startRecord，否则部分机型预览一直黑屏 */
@@ -1182,6 +1187,7 @@ Page({
     this._segmentStartRecoveringFromOperateFail = false;
     this._rollingTempMissingStreak = 0;
     this._rollingTempTerminalFailStreak = 0;
+    this._lastSegmentOperateFailAt = 0;
     this.segmentPersistFailStreak = 0;
     this.segmentStartFailStormCycles = 0;
     /** 当前是否进入“仅允许长按重启”故障态。 */
@@ -1384,6 +1390,9 @@ Page({
       cameraInitDone: !!this._cameraInitDone,
       isRecovering: !!this.data.isRecovering,
       recoveryLock: !!this._recoveryLock,
+      enhanceMode: this.data.enhanceMode || 'off',
+      enhanceCanvasVisible: !!this.data.enhanceCanvasVisible,
+      enhanceVkTransitioning: !!this.data.enhanceVkTransitioning,
       pipelineHealth: this.data.pipelineHealth || '',
       startRecordFailStreak: this.startRecordFailStreak,
       segmentStartFailStormCycles: this.segmentStartFailStormCycles || 0,
@@ -1881,11 +1890,13 @@ Page({
     if (!enabled) return;
     var initial = this._pendingEnhanceModeAfterBoot
       || this._pendingEnhanceModeAfterVk
+      || this._pendingEnhanceModeAfterCameraRebuild
       || this._pendingEnhanceModeAfterRecover
       || 'off';
     if (initial === 'off') {
       this._pendingEnhanceModeAfterBoot = null;
       this._pendingEnhanceModeAfterVk = null;
+      this._pendingEnhanceModeAfterCameraRebuild = null;
       this._pendingEnhanceModeAfterRecover = null;
       if (this.data.enhanceCanvasVisible || this.data.enhanceMode !== 'off') {
         this.setData({ enhanceCanvasVisible: false, enhanceMode: 'off' });
@@ -1925,9 +1936,11 @@ Page({
         if (self._renderPipeline !== pipeline) return;
         var initial = self._pendingEnhanceModeAfterBoot
           || self._pendingEnhanceModeAfterVk
+          || self._pendingEnhanceModeAfterCameraRebuild
           || self._pendingEnhanceModeAfterRecover
           || 'off';
         self._pendingEnhanceModeAfterBoot = null;
+        self._pendingEnhanceModeAfterCameraRebuild = null;
         pipeline.setMode(initial, { reason: 'user', force: true });
         if (initial !== 'off') {
           pipeline.start();
@@ -1946,6 +1959,7 @@ Page({
           self._applyPendingEnhanceModeAfterRecover();
         }
       }).catch(function (err) {
+        self._pendingEnhanceModeAfterCameraRebuild = null;
         self._pendingEnhanceModeAfterRecover = null;
         self.appendHealthLog('enhance_render_boot_fail', {
           errMsg: (err && err.message) || String(err),
@@ -1975,6 +1989,24 @@ Page({
     }
     if (this.data.enhanceCanvasVisible || this.data.enhanceMode !== 'off') {
       this.setData({ enhanceCanvasVisible: false, enhanceMode: 'off' });
+    }
+  },
+
+  /**
+   * 在相机重建前记住当前原生增强档位；rebuild 完成后由 _maybeBootEnhanceRender 恢复。
+   * VK 模式使用专门的切换编排，不走这里。
+   * @param {string} reason
+   * @returns {void}
+   */
+  armNativeEnhanceModeRestoreAfterCameraRebuild: function (reason) {
+    var mode = this.data && this.data.enhanceMode ? String(this.data.enhanceMode) : 'off';
+    if (mode === 'vk') return;
+    this._pendingEnhanceModeAfterCameraRebuild = mode;
+    if (mode !== 'off') {
+      this.appendHealthLog('enhance_mode_restore_armed', {
+        mode: mode,
+        reason: reason || ''
+      });
     }
   },
 
@@ -4633,6 +4665,8 @@ Page({
       this._liveStorageSevereModalTimer = null;
     }
     this._pendingEnhanceModeAfterRecover = null;
+    this._pendingEnhanceModeAfterCameraRebuild = null;
+    this._lastSegmentOperateFailAt = 0;
     this._teardownEnhanceRender();
     this.stopEnhanceFpsPolling();
     this.setData({
@@ -4723,6 +4757,8 @@ Page({
       this._enhanceZeroFrameRecoverTimer = null;
     }
     this._pendingEnhanceModeAfterRecover = null;
+    this._pendingEnhanceModeAfterCameraRebuild = null;
+    this._lastSegmentOperateFailAt = 0;
     this._teardownEnhanceRender();
     this.stopEnhanceFpsPolling();
     this.setData({ cameraMounted: false, cameraContext: null, isRecording: false });
@@ -5048,6 +5084,7 @@ Page({
     this.segmentPersistFailStreak = 0;
     this.segmentStartFailStormCycles = 0;
     this._rollingTempTerminalFailStreak = 0;
+    this._lastSegmentOperateFailAt = 0;
     this.setData({
       isRecovering: true,
       showRecoveryVeil: true,
@@ -5073,6 +5110,7 @@ Page({
       }
     }, recoverUiFailsafeMs);
     this.startRecoveryProgressAnim();
+    this.armNativeEnhanceModeRestoreAfterCameraRebuild('hard_recover');
     this.stopRollingRecording(() => {
       this.rebuildCameraComponent(() => {
         this._cameraInitDone = false;
@@ -5591,6 +5629,7 @@ Page({
         }
         const isOperateFail = lowerErr.indexOf('operate fail') >= 0;
         if (isOperateFail) {
+          this._lastSegmentOperateFailAt = Date.now();
           if (this._segmentStartRecoveringFromOperateFail) {
             this.scheduleStartOneSegmentRetry(sessionId, 0, 520);
             return;
@@ -6612,12 +6651,11 @@ Page({
   /**
    * temp 文件在 stopRecord 后连续出现“终态丢失”时的处理。
    *
-   * 经 iOS 现网验证：硬恢复 camera 组件对该场景无改善，反而会引发
-   * 「seg1/seg2 即 hard recover」的重启风暴；真正的根因往往是上一段
-   * stopRecord 的落盘时序问题，下一段自然分段回到正常节拍即可自愈。
+   * 默认仍以“观察 + 放行下一段”为主，避免把偶发 temp 抖动放大成恢复风暴。
+   * 但若它与最近的 startRecord operate fail 成簇出现，说明已不只是单纯落盘慢，
+   * 更可能是 native camera/record 会话退化，此时升级到受控 hard recover。
    *
-   * 因此这里**只记录日志并清空计数**，不再主动硬恢复或配额熔断，避免
-   * 误弹“存储已满”或反复重启相机影响直播观感。
+   * 这样既保留了对偶发 temp 丢失的容忍，也能在真故障时尽快自愈，减少黑屏/空录持续时间。
    *
    * @param {number} streak 当前连续失败次数
    * @param {number} segNo 触发时片段号
@@ -6626,7 +6664,34 @@ Page({
   maybeHardRecoverForTempMissingStorm: function (streak, segNo) {
     const n = Number(streak || 0);
     if (n < 2) return;
-    this.appendHealthLog('temp_missing_storm_observed', { streak: n, segNo });
+    const now = Date.now();
+    const operateFailAgoMs = this._lastSegmentOperateFailAt > 0
+      ? now - this._lastSegmentOperateFailAt
+      : -1;
+    this.appendHealthLog('temp_missing_storm_observed', {
+      streak: n,
+      segNo,
+      operateFailAgoMs: operateFailAgoMs
+    });
+    const recentOperateFail =
+      this._lastSegmentOperateFailAt > 0 && operateFailAgoMs >= 0 && operateFailAgoMs <= 15000;
+    if (
+      recentOperateFail
+      && this.data.enhanceMode !== 'vk'
+      && now - (this._lastTempMissingStormRecoverAt || 0) >= 18000
+      && this._livePageVisible
+      && !this.data.isRecovering
+      && !this._recoveryLock
+    ) {
+      this._lastTempMissingStormRecoverAt = now;
+      this.appendHealthLog('temp_missing_storm_hard_recover', {
+        streak: n,
+        segNo,
+        operateFailAgoMs: operateFailAgoMs
+      });
+      this.hardRecoverLivePipeline('auto:temp_missing_storm_operate_fail');
+      return;
+    }
     this._rollingTempTerminalFailStreak = 0;
   },
 
