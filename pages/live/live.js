@@ -1115,6 +1115,11 @@ Page({
     // 自动模式数据监听
     this._onBleDataUpdate = this._onBleDataUpdate.bind(this);
     eventBus.on('BLE_DATA_UPDATE', this._onBleDataUpdate);
+    this._onBleConnectionUpdate = this._onBleConnectionUpdate.bind(this);
+    eventBus.on('BLE_CONNECTION_UPDATE', this._onBleConnectionUpdate);
+
+    /** 自动记分更新节流戳 */
+    this._lastBleUpdateAt = 0;
 
     // 机型白名单：由 app.js 冷启动评估；live 页只读镜像一份到 data，驱动调试工具条可见性。
     this.setData({
@@ -1305,57 +1310,94 @@ Page({
   onUnload: function () {
     this._cleanup(); // 现有的清理逻辑
     eventBus.off('BLE_DATA_UPDATE', this._onBleDataUpdate);
+    eventBus.off('BLE_CONNECTION_UPDATE', this._onBleConnectionUpdate);
     wx.setKeepScreenOn({ keepScreenOn: false });
   },
 
   // ─── 蓝牙自动模式逻辑 ──────────────────────────────────
 
+  _onBleConnectionUpdate: function (res) {
+    if (!res.connected && this.data.isAutoMode) {
+      console.warn('[Live] BLE disconnected in AutoMode, switching back to manual');
+      this.setData({ isAutoMode: false }, () => {
+        this.updateTeamGroupWidth(true);
+      });
+      wx.showToast({
+        title: '采集端连接断开，已恢复手动模式',
+        icon: 'none',
+        duration: 2500
+      });
+    }
+  },
+
   _onBleDataUpdate: function (data) {
-    if (!this.data.isAutoMode) {
-      // 即使不在自动模式，也更新倒计时显示用的缓存值
-      this.setData({
+    const now = Date.now();
+    // 节流：如果是密集数据包，限制更新频率（约 10fps）以防 UI 卡死
+    if (now - this._lastBleUpdateAt < 100) {
+      return;
+    }
+    this._lastBleUpdateAt = now;
+
+    try {
+      if (!this.data.isAutoMode) {
+        // 即使不在自动模式，也更新倒计时显示用的缓存值
+        this.setData({
+          bleMinutes: data.minutes,
+          bleSeconds: data.seconds,
+          bleShotClock: data.shotClock
+        });
+        return;
+      }
+
+      // 自动模式：全量同步
+      const mc = this.data.matchConfig;
+      let changed = false;
+
+      if (mc.teamA.score !== data.homeScore) {
+        mc.teamA.score = data.homeScore;
+        changed = true;
+      }
+      if (mc.teamB.score !== data.awayScore) {
+        mc.teamB.score = data.awayScore;
+        changed = true;
+      }
+      if (mc.period !== data.period) {
+        mc.period = data.period;
+        changed = true;
+      }
+
+      const patch = {
         bleMinutes: data.minutes,
         bleSeconds: data.seconds,
         bleShotClock: data.shotClock
-      });
-      return;
-    }
+      };
 
-    // 自动模式：全量同步
-    const mc = this.data.matchConfig;
-    let changed = false;
+      if (changed) {
+        patch.matchConfig = mc;
+        // 同步到全局
+        app.globalData.matchConfig = mc;
+        wx.setStorageSync('matchConfig', mc);
+      }
 
-    if (mc.teamA.score !== data.homeScore) {
-      mc.teamA.score = data.homeScore;
-      changed = true;
+      this.setData(patch);
+    } catch (e) {
+      console.error('[Live] _onBleDataUpdate error:', e);
     }
-    if (mc.teamB.score !== data.awayScore) {
-      mc.teamB.score = data.awayScore;
-      changed = true;
-    }
-    if (mc.period !== data.period) {
-      mc.period = data.period;
-      changed = true;
-    }
-
-    const patch = {
-      bleMinutes: data.minutes,
-      bleSeconds: data.seconds,
-      bleShotClock: data.shotClock
-    };
-
-    if (changed) {
-      patch.matchConfig = mc;
-      // 同步到全局
-      app.globalData.matchConfig = mc;
-      wx.setStorageSync('matchConfig', mc);
-    }
-
-    this.setData(patch);
   },
 
   onPeriodLongPress: function () {
     const self = this;
+
+    // 白名单检查：仅允许特定设备/用户使用实验功能
+    if (!this.data.enhanceWhitelisted) {
+      wx.showModal({
+        title: '提示',
+        content: '该功能需要设备支持，请联系客服！',
+        showCancel: false
+      });
+      return;
+    }
+
     const items = this.data.isAutoMode ? ['恢复手动记分'] : ['切换至自动记分（蓝牙同步）'];
     
     wx.showActionSheet({
@@ -1374,7 +1416,9 @@ Page({
             return;
           }
 
-          self.setData({ isAutoMode: nextMode });
+          self.setData({ isAutoMode: nextMode }, () => {
+            self.updateTeamGroupWidth(true);
+          });
           wx.showToast({
             title: nextMode ? '已切换至自动模式' : '已恢复手动模式',
             icon: 'none'
@@ -4644,7 +4688,7 @@ Page({
     let widthPx = needRpx * rpxToPx;
     const boardPx = shortEdge * 0.98;
     /** 需与 `.period-center-outer` 的最小宽度 + padding 保持一致。 */
-    const centerRpx = 80;
+    const centerRpx = this.data.isAutoMode ? 106 : 80;
     const maxSidePx = Math.max(72, (boardPx - centerRpx * rpxToPx) / 2 - 4);
     widthPx = Math.min(widthPx, maxSidePx);
     return Math.round(widthPx);

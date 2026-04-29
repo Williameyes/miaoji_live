@@ -187,6 +187,9 @@
 
       <!-- 记分条主体：左右等宽且比分固定（色条视觉约 50% 高度，操作热区保持原 min-height） -->
       <view class="main-score-bar">
+        <!-- 占位，平衡右侧的 24s，确保中心对齐 -->
+        <view wx:if="{{isAutoMode}}" class="shot-clock-placeholder"></view>
+
         <!-- 球队 A 容器 -->
         <view
           class="team-group team-a-group"
@@ -197,7 +200,6 @@
             style="background-color: {{matchConfig.teamA.rgbaBg || 'rgba(230, 67, 64, 0.7)'}}"
           ></view>
           <view class="team-group-row">
-            <!-- 队名部分：点击+1，长按快速+1 -->
             <view
               class="team-name team-name--a"
               catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
@@ -205,11 +207,10 @@
               bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
               data-team="teamA"
               data-type="plus"
-              style="color: {{matchConfig.teamA.textColor}}; opacity: {{isAutoMode ? 0.5 : 1}};"
+              style="color: {{matchConfig.teamA.textColor}};"
             >
               <text class="team-name-inner">{{c.limitTeamName(matchConfig.teamA.name || '队A')}}</text>
             </view>
-            <!-- 比分部分：点击-1，长按快速-1 -->
             <view
               class="score-value"
               catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
@@ -217,7 +218,7 @@
               bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
               data-team="teamA"
               data-type="minus"
-              style="color: {{matchConfig.teamA.textColor}}; opacity: {{isAutoMode ? 0.5 : 1}};"
+              style="color: {{matchConfig.teamA.textColor}};"
             >
               {{matchConfig.teamA.score}}
             </view>
@@ -225,10 +226,15 @@
         </view>
 
         <!-- 中间节次：单击循环切换 -->
-        <view class="period-center-outer" bindtap="{{isAutoMode ? '' : 'onPeriodTap'}}" bindlongpress="onPeriodLongPress">
+        <view class="period-center-outer {{isAutoMode ? 'period-center-outer--auto' : ''}}" bindtap="onPeriodTap" bindlongpress="onPeriodLongPress">
           <view class="period-strip"></view>
-          <view class="period-text" style="color: {{periodFlash ? '#000000' : '#fff'}}">
-            {{periods[matchConfig.period]}}
+          <view class="period-container">
+            <view class="period-text {{isAutoMode ? 'period-text--auto' : ''}}" style="color: {{periodFlash ? '#000000' : '#fff'}}">
+              {{periods[matchConfig.period]}}
+            </view>
+            <view wx:if="{{isAutoMode}}" class="period-time" style="color: {{periodFlash ? '#000000' : '#fff'}}">
+              {{c.zeroPad2(bleMinutes)}}:{{c.zeroPad2(bleSeconds)}}
+            </view>
           </view>
         </view>
 
@@ -250,7 +256,7 @@
               bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
               data-team="teamB"
               data-type="minus"
-              style="color: {{matchConfig.teamB.textColor}}; opacity: {{isAutoMode ? 0.5 : 1}};"
+              style="color: {{matchConfig.teamB.textColor}};"
             >
               {{matchConfig.teamB.score}}
             </view>
@@ -262,26 +268,20 @@
               bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
               data-team="teamB"
               data-type="plus"
-              style="color: {{matchConfig.teamB.textColor}}; opacity: {{isAutoMode ? 0.5 : 1}};"
+              style="color: {{matchConfig.teamB.textColor}};"
             >
               <text class="team-name-inner">{{c.limitTeamName(matchConfig.teamB.name || '队B')}}</text>
             </view>
           </view>
         </view>
+
+        <!-- 24秒倒计时 (自动模式) -->
+        <view wx:if="{{isAutoMode}}" class="shot-clock-outer {{bleShotClock <= 5 ? 'shot-clock-outer--warn' : ''}}">
+          {{bleShotClock}}
+        </view>
       </view>
 
-      <!-- 自动模式下的状态显示（时间 + 24秒） -->
-      <view class="auto-mode-status-box" wx:if="{{isAutoMode}}">
-        <view class="auto-mode-item auto-mode-item--time">
-          <text class="auto-mode-label">TIME</text>
-          <text class="auto-mode-value">{{c.zeroPad2(bleMinutes)}}:{{c.zeroPad2(bleSeconds)}}</text>
-        </view>
-        <view class="auto-mode-divider"></view>
-        <view class="auto-mode-item auto-mode-item--shot">
-          <text class="auto-mode-label">SHOT</text>
-          <text class="auto-mode-value {{bleShotClock <= 5 ? 'auto-mode-value--warn' : ''}}">{{bleShotClock}}s</text>
-        </view>
-      </view>
+
     </view>
 
   </view>
