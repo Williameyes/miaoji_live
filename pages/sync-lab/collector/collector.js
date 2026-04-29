@@ -962,11 +962,15 @@ Page({
         uuid: BLE.SERVICE_UUID,
         characteristics: [{
           uuid: BLE.CHAR_SCORE_UUID,
-          properties: { read: true, notify: true },
+          properties: { read: true, notify: true, indicate: true },
           permission: {
             read: true, readEncrypted: false,
-            write: false, writeEncrypted: false
+            write: true, writeEncrypted: false
           },
+          descriptors: [{
+            uuid: BLE.CCCD_UUID,
+            permission: { read: true, write: true }
+          }],
           value: new ArrayBuffer(BLE.PACKET_LENGTH)
         }]
       },

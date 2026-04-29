@@ -1,6 +1,7 @@
 /**
  * @fileoverview 直播端 (Central / GATT Client)
  * 职责：扫描 "SG_XXXX" 设备、连接、订阅 notify、解码7字节包、更新UI；断线自动重连。
+ * v2: 移除 Read Polling，纯靠 Notify 推送。
  */
 
 var BLE = require('../../../utils/ble-protocol.js');
@@ -12,7 +13,6 @@ var SCAN_TIMEOUT_MS = 20000;
 
 var _reconnectTimer = null;
 var _scanTimeoutTimer = null;
-var _pollReadTimer = null;
 var _targetDeviceId = '';
 var _targetServiceId = '';
 var _targetCharId = '';
@@ -45,11 +45,13 @@ Page({
     var sys = wx.getSystemInfoSync();
     this.setData({ statusBarHeight: sys.statusBarHeight || 0 });
     wx.setKeepScreenOn({ keepScreenOn: true });
+    console.log('[Broadcaster] Page Loaded');
   },
 
   onUnload: function () {
     this._cleanup();
     wx.setKeepScreenOn({ keepScreenOn: false });
+    console.log('[Broadcaster] Page Unloaded');
   },
 
   // ─── 输入匹配码 ─────────────────────────────────────
@@ -82,6 +84,8 @@ Page({
     _rxPacketCount = 0;
     this.setData({ rxPacketCount: 0, lastFrameText: '', lastRxAtText: '', anomalyHint: '' });
 
+    console.log('[Broadcaster] Starting scan for:', targetName);
+
     wx.openBluetoothAdapter({
       mode: 'central',
       success: function () {
@@ -93,6 +97,7 @@ Page({
           if (self.data.bleState === 'scanning') {
             wx.stopBluetoothDevicesDiscovery();
             self.setData({ bleState: 'idle', bleStateText: '未找到设备，请重试' });
+            console.warn('[Broadcaster] Scan timeout, device not found');
           }
         }, SCAN_TIMEOUT_MS);
 
@@ -102,6 +107,7 @@ Page({
             var d = devices[i];
             var name = d.name || d.localName || '';
             if (name === targetName) {
+              console.log('[Broadcaster] Device found:', name, 'ID:', d.deviceId);
               wx.stopBluetoothDevicesDiscovery();
               clearTimeout(_scanTimeoutTimer);
               _targetDeviceId = d.deviceId;
@@ -115,6 +121,9 @@ Page({
         wx.startBluetoothDevicesDiscovery({
           services: [BLE.SERVICE_UUID],
           allowDuplicatesKey: false,
+          success: function() {
+            console.log('[Broadcaster] Discovery started');
+          },
           fail: function (err) {
             self.setData({ bleState: 'idle', bleStateText: '扫描启动失败' });
             console.error('[Broadcaster] startDiscovery fail', err);
@@ -134,9 +143,12 @@ Page({
     var self = this;
     if (!_targetDeviceId) return;
 
+    console.log('[Broadcaster] Connecting to:', _targetDeviceId);
+
     wx.createBLEConnection({
       deviceId: _targetDeviceId,
       success: function () {
+        console.log('[Broadcaster] Connection success');
         self.setData({ bleState: 'connected', bleStateText: '已连接 ✓' });
         wx.vibrateShort({ type: 'medium' });
         self._bindDisconnectListener();
@@ -154,7 +166,7 @@ Page({
     try { wx.offBLEConnectionStateChange(); } catch (e) { }
     wx.onBLEConnectionStateChange(function (res) {
       if (res.deviceId === _targetDeviceId && !res.connected) {
-        console.log('[Broadcaster] disconnected, will reconnect');
+        console.log('[Broadcaster] BLE disconnected res=', res);
         self.setData({ bleState: 'reconnecting', bleStateText: '断线，重连中…' });
         self._scheduleReconnect();
       }
@@ -165,21 +177,21 @@ Page({
 
   _discoverServices: function () {
     var self = this;
+    console.log('[Broadcaster] Discovering services for:', _targetDeviceId);
     wx.getBLEDeviceServices({
       deviceId: _targetDeviceId,
       success: function (res) {
         var services = res.services || [];
-        console.log('[Broadcaster] services discovered count=%s list=%o', services.length, services.map(function (item) {
-          return item.uuid;
-        }));
+        console.log('[Broadcaster] Services found:', services.length);
         for (var i = 0; i < services.length; i++) {
           if (services[i].uuid.toLowerCase() === BLE.SERVICE_UUID.toLowerCase()) {
             _targetServiceId = services[i].uuid;
+            console.log('[Broadcaster] Target service found:', _targetServiceId);
             self._discoverCharacteristics();
             return;
           }
         }
-        console.error('[Broadcaster] service not found');
+        console.error('[Broadcaster] Target service not found in list');
         self._scheduleReconnect();
       },
       fail: function (err) {
@@ -191,26 +203,23 @@ Page({
 
   _discoverCharacteristics: function () {
     var self = this;
+    console.log('[Broadcaster] Discovering characteristics for service:', _targetServiceId);
     wx.getBLEDeviceCharacteristics({
       deviceId: _targetDeviceId,
       serviceId: _targetServiceId,
       success: function (res) {
         var chars = res.characteristics || [];
-        console.log('[Broadcaster] characteristics discovered count=%s list=%o', chars.length, chars.map(function (item) {
-          return {
-            uuid: item.uuid,
-            properties: item.properties
-          };
-        }));
+        console.log('[Broadcaster] Characteristics found:', chars.length);
         for (var i = 0; i < chars.length; i++) {
           var c = chars[i];
           if (c.uuid.toLowerCase() === BLE.CHAR_SCORE_UUID.toLowerCase()) {
             _targetCharId = c.uuid;
+            console.log('[Broadcaster] Target characteristic found:', _targetCharId, 'properties:', c.properties);
             self._subscribeNotify(c.uuid);
             return;
           }
         }
-        console.error('[Broadcaster] characteristic not found');
+        console.error('[Broadcaster] Target characteristic not found in list');
       },
       fail: function (err) {
         console.error('[Broadcaster] getBLEDeviceCharacteristics fail', err);
@@ -220,39 +229,42 @@ Page({
 
   _subscribeNotify: function (charId) {
     var self = this;
+    console.log('[Broadcaster] Subscribing notify for char:', charId);
     wx.notifyBLECharacteristicValueChange({
       deviceId: _targetDeviceId,
       serviceId: _targetServiceId,
       characteristicId: charId,
       state: true,
       success: function () {
-        console.log('[Broadcaster] notify subscribed service=%s char=%s', _targetServiceId, charId);
-        self._stopReadPolling();
+        console.log('[Broadcaster] Notify subscription SUCCESS for char:', charId);
         self._listenValues();
+        // 订阅成功后立刻读一次初始值
         self._readCurrentValue(charId);
       },
       fail: function (err) {
-        console.error('[Broadcaster] notifyBLECharacteristicValueChange fail', err);
-        console.warn('[Broadcaster] fallback to read polling');
-        self._listenValues();
-        self._startReadPolling(charId);
+        console.error('[Broadcaster] notifyBLECharacteristicValueChange FAIL', err);
+        wx.showToast({ title: '通知订阅失败', icon: 'none' });
       }
     });
   },
 
   _listenValues: function () {
     var self = this;
+    console.log('[Broadcaster] Starting to listen for value changes');
     try { wx.offBLECharacteristicValueChange(); } catch (e) { }
     wx.onBLECharacteristicValueChange(function (res) {
       if (res.deviceId !== _targetDeviceId) return;
-      console.log('[Broadcaster] characteristic changed device=%s service=%s char=%s len=%s hex=%s', res.deviceId, res.serviceId, res.characteristicId, res.value && res.value.byteLength, toHex(res.value));
+      
+      var hex = toHex(res.value);
+      console.log('[Broadcaster] RX Data: char=%s len=%s hex=%s', res.characteristicId, res.value && res.value.byteLength, hex);
+
       if (!res.value || res.value.byteLength !== BLE.PACKET_LENGTH) {
-        console.log('[Broadcaster] ignore empty/non-packet change');
+        console.warn('[Broadcaster] RX Ignored: invalid packet length');
         return;
       }
       var decoded = BLE.decodePacket(res.value);
       if (!decoded) {
-        console.warn('[Broadcaster] CRC decode fail, frame dropped');
+        console.error('[Broadcaster] RX Ignored: CRC Checksum fail');
         return;
       }
       _rxPacketCount += 1;
@@ -263,9 +275,11 @@ Page({
         '24=' + decoded.shotClock
       ].join(' · ');
       var nextRxAtText = formatClockTime(new Date());
-      console.log('[Broadcaster] rx seq=%s frame=%s', _rxPacketCount, nextFrameText);
+      console.log('[Broadcaster] RX Frame #%s: %s', _rxPacketCount, nextFrameText);
+      
       // 纠错：与上一帧比较逻辑合理性
       if (_prevFrame && !BLE.isLogicallyValid(_prevFrame, decoded)) {
+        console.warn('[Broadcaster] RX Ignored: Logical validation failed', decoded);
         self.setData({
           anomalyHint: '⚠️ 异常帧，已跳过',
           rxPacketCount: _rxPacketCount,
@@ -274,9 +288,9 @@ Page({
         });
         wx.vibrateShort({ type: 'light' });
         setTimeout(function () { self.setData({ anomalyHint: '' }); }, 2000);
-        console.warn('[Broadcaster] logically invalid frame, skipped', decoded);
         return;
       }
+      
       _prevFrame = decoded;
       self.setData({
         homeScore: decoded.homeScore,
@@ -294,34 +308,18 @@ Page({
   },
 
   _readCurrentValue: function (charId) {
+    console.log('[Broadcaster] Reading current value for char:', charId);
     wx.readBLECharacteristicValue({
       deviceId: _targetDeviceId,
       serviceId: _targetServiceId,
       characteristicId: charId,
       success: function (res) {
-        console.log('[Broadcaster] readBLECharacteristicValue ok', res);
+        console.log('[Broadcaster] readBLECharacteristicValue triggered');
       },
       fail: function (err) {
         console.warn('[Broadcaster] readBLECharacteristicValue fail', err);
       }
     });
-  },
-
-  _startReadPolling: function (charId) {
-    var self = this;
-    self._stopReadPolling();
-    self._readCurrentValue(charId);
-    _pollReadTimer = setInterval(function () {
-      if (self.data.bleState !== 'connected' || !_targetDeviceId || !_targetServiceId) return;
-      self._readCurrentValue(charId);
-    }, 250);
-  },
-
-  _stopReadPolling: function () {
-    if (_pollReadTimer) {
-      clearInterval(_pollReadTimer);
-      _pollReadTimer = null;
-    }
   },
 
   // ─── 断线重连 ─────────────────────────────────────────
@@ -330,11 +328,15 @@ Page({
     var self = this;
     clearTimeout(_reconnectTimer);
     if (_targetDeviceId) {
-      try { wx.closeBLEConnection({ deviceId: _targetDeviceId }); } catch (e) { }
+      try { 
+        console.log('[Broadcaster] Closing connection for reconnecting...');
+        wx.closeBLEConnection({ deviceId: _targetDeviceId }); 
+      } catch (e) { }
     }
     this.setData({ bleState: 'reconnecting', bleStateText: '断线，' + (RECONNECT_INTERVAL_MS / 1000) + 's 后重连…' });
     _reconnectTimer = setTimeout(function () {
       if (self.data.bleState === 'reconnecting' && _targetDeviceId) {
+        console.log('[Broadcaster] Reconnecting now...');
         self.setData({ bleStateText: '重连中…' });
         self._connect();
       }
@@ -344,6 +346,7 @@ Page({
   // ─── 断开 ─────────────────────────────────────────────
 
   onDisconnectTap: function () {
+    console.log('[Broadcaster] Manual disconnect requested');
     this._cleanup();
     this.setData({ bleState: 'idle', bleStateText: '未连接', connectedName: '', matchCodeInput: '' });
   },
@@ -356,11 +359,11 @@ Page({
       if (typeof done === 'function') done();
     };
 
+    console.log('[Broadcaster] Cleaning up BLE resources');
     clearTimeout(_reconnectTimer);
     clearTimeout(_scanTimeoutTimer);
     _reconnectTimer = null;
     _scanTimeoutTimer = null;
-    this._stopReadPolling();
     try { wx.offBluetoothDeviceFound(); } catch (e) { }
     try { wx.offBLEConnectionStateChange(); } catch (e) {}
     try { wx.offBLECharacteristicValueChange(); } catch (e) {}
@@ -375,7 +378,10 @@ Page({
     _rxPacketCount = 0;
     try {
       wx.closeBluetoothAdapter({
-        complete: function () { finalize(); }
+        complete: function () { 
+          console.log('[Broadcaster] Bluetooth Adapter closed');
+          finalize(); 
+        }
       });
     } catch (e) {
       finalize();
