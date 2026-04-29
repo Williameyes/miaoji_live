@@ -200,24 +200,24 @@
             <!-- 队名部分：点击+1，长按快速+1 -->
             <view
               class="team-name team-name--a"
-              catchtap="onScoreTap"
-              bindlongpress="onScoreLongPress"
-              bindtouchend="onScoreTouchEnd"
+              catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
+              bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
+              bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
               data-team="teamA"
               data-type="plus"
-              style="color: {{matchConfig.teamA.textColor}}"
+              style="color: {{matchConfig.teamA.textColor}}; opacity: {{isAutoMode ? 0.5 : 1}};"
             >
               <text class="team-name-inner">{{c.limitTeamName(matchConfig.teamA.name || '队A')}}</text>
             </view>
             <!-- 比分部分：点击-1，长按快速-1 -->
             <view
               class="score-value"
-              catchtap="onScoreTap"
-              bindlongpress="onScoreLongPress"
-              bindtouchend="onScoreTouchEnd"
+              catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
+              bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
+              bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
               data-team="teamA"
               data-type="minus"
-              style="color: {{matchConfig.teamA.textColor}}"
+              style="color: {{matchConfig.teamA.textColor}}; opacity: {{isAutoMode ? 0.5 : 1}};"
             >
               {{matchConfig.teamA.score}}
             </view>
@@ -225,7 +225,7 @@
         </view>
 
         <!-- 中间节次：单击循环切换 -->
-        <view class="period-center-outer" bindtap="onPeriodTap">
+        <view class="period-center-outer" bindtap="{{isAutoMode ? '' : 'onPeriodTap'}}" bindlongpress="onPeriodLongPress">
           <view class="period-strip"></view>
           <view class="period-text" style="color: {{periodFlash ? '#000000' : '#fff'}}">
             {{periods[matchConfig.period]}}
@@ -245,28 +245,41 @@
             <!-- 比分部分：点击-1，长按快速-1 -->
             <view
               class="score-value"
-              catchtap="onScoreTap"
-              bindlongpress="onScoreLongPress"
-              bindtouchend="onScoreTouchEnd"
+              catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
+              bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
+              bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
               data-team="teamB"
               data-type="minus"
-              style="color: {{matchConfig.teamB.textColor}}"
+              style="color: {{matchConfig.teamB.textColor}}; opacity: {{isAutoMode ? 0.5 : 1}};"
             >
               {{matchConfig.teamB.score}}
             </view>
             <!-- 队名部分：点击+1，长按快速+1 -->
             <view
               class="team-name team-name--b"
-              catchtap="onScoreTap"
-              bindlongpress="onScoreLongPress"
-              bindtouchend="onScoreTouchEnd"
+              catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
+              bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
+              bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
               data-team="teamB"
               data-type="plus"
-              style="color: {{matchConfig.teamB.textColor}}"
+              style="color: {{matchConfig.teamB.textColor}}; opacity: {{isAutoMode ? 0.5 : 1}};"
             >
               <text class="team-name-inner">{{c.limitTeamName(matchConfig.teamB.name || '队B')}}</text>
             </view>
           </view>
+        </view>
+      </view>
+
+      <!-- 自动模式下的状态显示（时间 + 24秒） -->
+      <view class="auto-mode-status-box" wx:if="{{isAutoMode}}">
+        <view class="auto-mode-item auto-mode-item--time">
+          <text class="auto-mode-label">TIME</text>
+          <text class="auto-mode-value">{{c.zeroPad2(bleMinutes)}}:{{c.zeroPad2(bleSeconds)}}</text>
+        </view>
+        <view class="auto-mode-divider"></view>
+        <view class="auto-mode-item auto-mode-item--shot">
+          <text class="auto-mode-label">SHOT</text>
+          <text class="auto-mode-value {{bleShotClock <= 5 ? 'auto-mode-value--warn' : ''}}">{{bleShotClock}}s</text>
         </view>
       </view>
     </view>

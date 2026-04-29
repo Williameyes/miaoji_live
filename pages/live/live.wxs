@@ -46,9 +46,15 @@ function enhanceModeLabel(mode) {
   return '关闭';
 }
 
+function zeroPad2(n) {
+  var s = '' + n;
+  return s.length < 2 ? '0' + s : s;
+}
+
 module.exports = {
   eqColor: eqColor,
   ballActive: ballActive,
   limitTeamName: limitTeamName,
-  enhanceModeLabel: enhanceModeLabel
+  enhanceModeLabel: enhanceModeLabel,
+  zeroPad2: zeroPad2
 };

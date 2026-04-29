@@ -7,6 +7,8 @@ const storageEst = require('../../utils/file-storage-estimate.js');
 const clipsStorage = require('../../utils/miaoxie-clips-storage.js');
 const renderPipelineMod = require('../../utils/render/render-pipeline.js');
 const vkCanvasRecorderMod = require('../../utils/render/vk-canvas-recorder.js');
+const eventBus = require('../../utils/eventBus.js');
+const bleManager = require('../../services/bleManager.js');
 const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
 
 /** 回放缩放离散档位（捏合吸附 / 双击等共用，至 3x 后下一轮回到 1x） */
@@ -488,7 +490,13 @@ Page({
     vkDebugMotion: 0.72,
     vkDebugMotionPct: 72,
     vkDebugFreezeAuto: false,
-    isVkTimeshift: false
+    isVkTimeshift: false,
+    
+    // --- 自动模式相关 ---
+    isAutoMode: false,
+    bleMinutes: 0,
+    bleSeconds: 0,
+    bleShotClock: 24
   },
 
   /**
@@ -1103,6 +1111,11 @@ Page({
   onLoad: function () {
     /** 相机 bindinitdone 完成前禁止 startRecord，否则部分机型预览一直黑屏 */
     this._cameraInitDone = false;
+
+    // 自动模式数据监听
+    this._onBleDataUpdate = this._onBleDataUpdate.bind(this);
+    eventBus.on('BLE_DATA_UPDATE', this._onBleDataUpdate);
+
     // 机型白名单：由 app.js 冷启动评估；live 页只读镜像一份到 data，驱动调试工具条可见性。
     this.setData({
       enhanceWhitelisted: !!(app.globalData && app.globalData.enableEnhanceRender),
@@ -1113,6 +1126,12 @@ Page({
         && app.globalData.vkModeSupported
         && app.globalData.enableEnhanceRender)
     });
+    
+    // 检查蓝牙管理器当前状态，同步初始模式（可选，默认手动）
+    if (bleManager.isConnected) {
+      console.log('[Live] BLE is connected, ready for AutoMode');
+    }
+
     this._rollingKickoffTimer = null;
     this._opsToolsTimer = null;
     this._opsAckTimer = null;
@@ -1282,6 +1301,89 @@ Page({
 
     // 直播核心拉起统一放在 onShow，避免 onLoad + onShow 并发触发 camera 重建。
   },
+
+  onUnload: function () {
+    this._cleanup(); // 现有的清理逻辑
+    eventBus.off('BLE_DATA_UPDATE', this._onBleDataUpdate);
+    wx.setKeepScreenOn({ keepScreenOn: false });
+  },
+
+  // ─── 蓝牙自动模式逻辑 ──────────────────────────────────
+
+  _onBleDataUpdate: function (data) {
+    if (!this.data.isAutoMode) {
+      // 即使不在自动模式，也更新倒计时显示用的缓存值
+      this.setData({
+        bleMinutes: data.minutes,
+        bleSeconds: data.seconds,
+        bleShotClock: data.shotClock
+      });
+      return;
+    }
+
+    // 自动模式：全量同步
+    const mc = this.data.matchConfig;
+    let changed = false;
+
+    if (mc.teamA.score !== data.homeScore) {
+      mc.teamA.score = data.homeScore;
+      changed = true;
+    }
+    if (mc.teamB.score !== data.awayScore) {
+      mc.teamB.score = data.awayScore;
+      changed = true;
+    }
+    if (mc.period !== data.period) {
+      mc.period = data.period;
+      changed = true;
+    }
+
+    const patch = {
+      bleMinutes: data.minutes,
+      bleSeconds: data.seconds,
+      bleShotClock: data.shotClock
+    };
+
+    if (changed) {
+      patch.matchConfig = mc;
+      // 同步到全局
+      app.globalData.matchConfig = mc;
+      wx.setStorageSync('matchConfig', mc);
+    }
+
+    this.setData(patch);
+  },
+
+  onPeriodLongPress: function () {
+    const self = this;
+    const items = this.data.isAutoMode ? ['恢复手动记分'] : ['切换至自动记分（蓝牙同步）'];
+    
+    wx.showActionSheet({
+      itemList: items,
+      itemColor: this.data.isAutoMode ? '#FF4D4F' : '#4ADE80',
+      success: (res) => {
+        if (res.tapIndex === 0) {
+          const nextMode = !self.data.isAutoMode;
+          
+          if (nextMode && !bleManager.isConnected) {
+            wx.showModal({
+              title: '提示',
+              content: '蓝牙尚未连接，请先在同步实验室页面连接采集端。',
+              showCancel: false
+            });
+            return;
+          }
+
+          self.setData({ isAutoMode: nextMode });
+          wx.showToast({
+            title: nextMode ? '已切换至自动模式' : '已恢复手动模式',
+            icon: 'none'
+          });
+        }
+      }
+    });
+  },
+
 
   /**
    * 初始化直播健康日志缓冲。
