@@ -55,7 +55,7 @@
       <view class="col-top-code" wx:if="{{matchCode}}">码 {{matchCode}}</view>
       <view class="col-top-code col-top-code--muted" wx:else>码待生成</view>
       <view class="col-top-hz" wx:if="{{ocrTransitioning}}">OCR 启动中</view>
-      <view class="col-top-hz" wx:elif="{{ocrEnabled}}">OCR 2Hz</view>
+      <view class="col-top-hz" wx:elif="{{ocrEnabled}}">OCR 实时</view>
     </view>
 
     <!-- ③ 底部控制条 -->
