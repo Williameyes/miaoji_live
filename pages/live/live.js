@@ -71,6 +71,340 @@ const ENHANCE_SWITCH_GUARD_MS = 1000;
  * 部分基础库在首帧/nextTick 调 showModal 会静默失败。
  */
 const LIVE_STORAGE_SEVERE_MODAL_DELAY_MS = 560;
+const HIGHLIGHT_LOCK_TIMEOUT = 3000;
+const HIGHLIGHT_LOCK_TIMEOUT_MAX_MS = 9200;
+const MIN_RECOVER_INTERVAL = 15000;
+const RECORDER_SAFE_RESTART_DELAY_MIN_MS = 120;
+const RECORDER_SAFE_RESTART_DELAY_MAX_MS = 180;
+const RECORDER_STATE = {
+  IDLE: 'idle',
+  FLUSHING: 'flushing',
+  READY: 'ready',
+  STARTING: 'starting',
+  RECORDING: 'recording',
+  STOPPING: 'stopping',
+  RECOVERING: 'recovering'
+};
+
+class RecorderCore {
+  constructor(page) {
+    this.page = page;
+    this.state = RECORDER_STATE.IDLE;
+    this.isRecovering = false;
+    this.lastRecoverAt = 0;
+    this.recoverFailCount = 0;
+    this.pendingHighlight = null;
+    this.recordSessionId = 0;
+    this.lastStopAt = 0;
+    this._ownerDepth = 0;
+    this._highlightTimeoutTimer = null;
+  }
+
+  _log(eventName, detail) {
+    if (!this.page || typeof this.page.appendHealthLog !== 'function') return;
+    this.page.appendHealthLog(eventName, detail || {});
+  }
+
+  _mirrorPendingHighlight(pending) {
+    this.pendingHighlight = pending || null;
+    this.page.pendingHighlight = this.pendingHighlight;
+  }
+
+  syncSession(sessionId) {
+    this.recordSessionId = Number(sessionId || 0);
+  }
+
+  isOwnerActive() {
+    return this._ownerDepth > 0;
+  }
+
+  withOwner(source, action, fn) {
+    this._ownerDepth += 1;
+    this._log('recorder_owner_request', {
+      triggerSource: source || 'unknown',
+      action: action || '',
+      stateBefore: this.state,
+      stateAfter: this.state
+    });
+    try {
+      return typeof fn === 'function' ? fn() : undefined;
+    } finally {
+      this._ownerDepth = Math.max(0, this._ownerDepth - 1);
+    }
+  }
+
+  setState(nextState, source) {
+    const next = nextState || RECORDER_STATE.IDLE;
+    const prev = this.state;
+    if (prev === next) return;
+    this.state = next;
+    this.isRecovering = next === RECORDER_STATE.RECOVERING;
+    this._log('recorder_state_change', {
+      triggerSource: source || 'unknown',
+      stateBefore: prev,
+      stateAfter: next
+    });
+  }
+
+  enterDegradedMode(source) {
+    if (this.page.data.recorderDegradedMode) return;
+    this.page.setData({ recorderDegradedMode: true });
+    this._log('recover_enter_degraded_mode', {
+      triggerSource: source || 'unknown',
+      stateBefore: this.state,
+      stateAfter: this.state
+    });
+  }
+
+  leaveDegradedMode() {
+    if (!this.page.data.recorderDegradedMode) return;
+    this.page.setData({ recorderDegradedMode: false });
+  }
+
+  setPendingHighlight(meta) {
+    const page = this.page;
+    const now = Date.now();
+    const pending = {
+      clickTime: now,
+      startTime: now - (page.highlightLeadMs || 8000),
+      endTime: now,
+      id: meta.id || String(now),
+      createdAt: now,
+      matchName: meta.matchName || (page.data.matchConfig && page.data.matchConfig.matchName) || '未命名比赛',
+      matchId: meta.matchId || page.resolveMatchIdForHighlightStorage(),
+      cover: meta.cover || page.data.defaultCover
+    };
+    if (this._highlightTimeoutTimer) {
+      clearTimeout(this._highlightTimeoutTimer);
+      this._highlightTimeoutTimer = null;
+    }
+    this._mirrorPendingHighlight(pending);
+    /**
+     * 稳定性优先：
+     * - 3s 仅适合作为“最短锁释放时间”，不适合作为统一超时。
+     * - 过去 8s 高光不再等待未来段，只需要等“包含 clickTime 的当前段”安全 stop+flush。
+     * - 因此超时应覆盖“当前段剩余录制时长 + flush 裕量”，而不是固定 3s。
+     * - 仍保留上限，避免真断流时永久占锁。
+     */
+    let timeoutMs = HIGHLIGHT_LOCK_TIMEOUT;
+    const segmentDurationMs = Number(page.segmentDurationMs || 0);
+    const recordStartAt = Number(page.lastRecordStartAt || 0);
+    if (
+      segmentDurationMs > 0
+      && recordStartAt > 0
+      && recordStartAt <= now
+    ) {
+      const elapsedMs = now - recordStartAt;
+      const remainMs = Math.max(0, segmentDurationMs - elapsedMs);
+      const waitBudgetMs = remainMs + 1200;
+      timeoutMs = Math.max(
+        HIGHLIGHT_LOCK_TIMEOUT,
+        Math.min(HIGHLIGHT_LOCK_TIMEOUT_MAX_MS, waitBudgetMs)
+      );
+    }
+    this._highlightTimeoutTimer = setTimeout(() => {
+      this._highlightTimeoutTimer = null;
+      if (!this.pendingHighlight || this.pendingHighlight.id !== pending.id) return;
+      this._log('highlight_soft_timeout_release', {
+        triggerSource: 'highlight_timeout',
+        stateBefore: this.state,
+        stateAfter: this.state,
+        clickTime: pending.clickTime,
+        timeoutMs: timeoutMs
+      });
+      this.clearPendingHighlight();
+      page.endHighlightSaving();
+    }, timeoutMs);
+    return pending;
+  }
+
+  clearPendingHighlight() {
+    if (this._highlightTimeoutTimer) {
+      clearTimeout(this._highlightTimeoutTimer);
+      this._highlightTimeoutTimer = null;
+    }
+    this._mirrorPendingHighlight(null);
+  }
+
+  noteTimelineGap(source, gapMs) {
+    this._log('timeline_gap_detected', {
+      triggerSource: source || 'unknown',
+      stateBefore: this.state,
+      stateAfter: this.state,
+      gapMs: gapMs || 0
+    });
+  }
+
+  maybeGenerateHighlight() {
+    const pending = this.pendingHighlight;
+    if (!pending) return false;
+    const segments = Array.isArray(this.page.rollingSegments) ? this.page.rollingSegments : [];
+    const covered = segments.some((seg) =>
+      seg
+      && typeof seg.startTime === 'number'
+      && typeof seg.endTime === 'number'
+      && seg.startTime <= pending.clickTime
+      && seg.endTime >= pending.clickTime
+    );
+    if (!covered) return false;
+    this.clearPendingHighlight();
+    this.page._generateHighlight(pending.startTime, pending.endTime, pending);
+    return true;
+  }
+
+  canStart() {
+    return this.state === RECORDER_STATE.READY;
+  }
+
+  markReady(source) {
+    if (this.state === RECORDER_STATE.RECOVERING) return;
+    this.setState(RECORDER_STATE.READY, source || 'ready');
+  }
+
+  markIdle(source) {
+    if (this.state === RECORDER_STATE.RECOVERING) return;
+    this.setState(RECORDER_STATE.IDLE, source || 'idle');
+  }
+
+  noteStopTimestamp() {
+    this.lastStopAt = Date.now();
+  }
+
+  waitForFlushComplete(source, flushPromise, onReady) {
+    this.setState(RECORDER_STATE.FLUSHING, source || 'flush_begin');
+    const done = () => {
+      this.markReady(source || 'flush_done');
+      if (typeof onReady === 'function') onReady();
+    };
+    Promise.resolve(flushPromise)
+      .catch(() => Promise.resolve())
+      .then(() => {
+        const poll = () => {
+          if (this.page.rollingFsBusy || this.page._rollingPersistInFlight > 0) {
+            setTimeout(poll, 50);
+            return;
+          }
+          done();
+        };
+        poll();
+      });
+  }
+
+  requestTryStartWhenReady(source) {
+    return this.withOwner(source, 'tryStartWhenReady', () => {
+      if (this.isRecovering) return;
+      if (this.state !== RECORDER_STATE.READY) return;
+      this.page._tryStartRollingWhenCameraReadyImpl();
+    });
+  }
+
+  requestStartRolling(source) {
+    return this.withOwner(source, 'startRolling', () => {
+      if (this.isRecovering) return;
+      if (!this.canStart()) return;
+      this.page._startRollingRecordingImpl();
+    });
+  }
+
+  requestStartSegment(source, sessionId, retryCount) {
+    return this.withOwner(source, 'startSegment', () => {
+      if (this.isRecovering) return;
+      const now = Date.now();
+      if (!this.canStart()) return;
+      if (now - this.lastStopAt < this.getSafeRestartDelayMs()) return;
+      this.setState(RECORDER_STATE.STARTING, source);
+      this.page._startOneSegmentImpl(sessionId, retryCount);
+    });
+  }
+
+  requestStopSegment(source, sessionId) {
+    return this.withOwner(source, 'stopSegment', () => {
+      if (this.isRecovering) return;
+      this.setState(RECORDER_STATE.STOPPING, source);
+      this.page._stopOneSegmentImpl(sessionId);
+    });
+  }
+
+  requestStopRolling(source, onStopped) {
+    return this.withOwner(source, 'stopRolling', () => {
+      this.setState(RECORDER_STATE.STOPPING, source);
+      this.page._stopRollingRecordingImpl(() => {
+        this.markIdle(source);
+        if (typeof onStopped === 'function') onStopped();
+      });
+    });
+  }
+
+  requestReplayPause(source, onPaused) {
+    return this.withOwner(source, 'replayPause', () => {
+      if (typeof onPaused === 'function') {
+        if (wx.nextTick) wx.nextTick(onPaused);
+        else setTimeout(onPaused, 0);
+      }
+    });
+  }
+
+  requestReplayResume(source) {
+    return this.withOwner(source, 'replayResume', () => {});
+  }
+
+  requestRecover(source) {
+    const now = Date.now();
+    if (this.isRecovering || this.state === RECORDER_STATE.RECOVERING) {
+      return false;
+    }
+    if (now - this.lastRecoverAt < MIN_RECOVER_INTERVAL) {
+      this._log('recover_rejected_by_cooldown', {
+        triggerSource: source || 'unknown',
+        stateBefore: this.state,
+        stateAfter: this.state,
+        remainMs: MIN_RECOVER_INTERVAL - (now - this.lastRecoverAt)
+      });
+      return false;
+    }
+    this.lastRecoverAt = now;
+    this.setState(RECORDER_STATE.RECOVERING, source);
+    return this.withOwner(source, 'recover', () => this.page._hardRecoverLivePipelineImpl(source));
+  }
+
+  onRecoverSuccess(source) {
+    this.recoverFailCount = 0;
+    this.leaveDegradedMode();
+    this.markReady(source || 'recover_success');
+  }
+
+  onRecoverFail(source) {
+    this.recoverFailCount += 1;
+    if (this.recoverFailCount >= 3) {
+      this.enterDegradedMode(source);
+    }
+    this.markIdle(source || 'recover_fail');
+  }
+
+  onSegmentStartSuccess(source, sessionId) {
+    this.syncSession(sessionId);
+    this.setState(RECORDER_STATE.RECORDING, source || 'segment_start_ok');
+  }
+
+  onSegmentStartFail(source) {
+    if (this.state === RECORDER_STATE.STARTING) {
+      this.markReady(source || 'segment_start_fail');
+    }
+  }
+
+  onSegmentStopSuccess(source, flushPromise, onReady) {
+    this.noteStopTimestamp();
+    this.waitForFlushComplete(source || 'segment_stop_ok', flushPromise, onReady);
+  }
+
+  getSafeRestartDelayMs() {
+    const base = isLiveHostIos() ? 150 : 120;
+    return Math.max(
+      RECORDER_SAFE_RESTART_DELAY_MIN_MS,
+      Math.min(RECORDER_SAFE_RESTART_DELAY_MAX_MS, base)
+    );
+  }
+}
 
 /**
  * 本地存储键：是否已展示「超频模式无机位切换」提示（仅首次）。
@@ -267,6 +601,8 @@ Page({
     highlightSaveConicEndDeg: 0,
     /** 是否正在保存高光（事务锁：覆盖 stopRecord→落盘→copy→入库 全链路） */
     isSavingHighlight: false,
+    /** RecorderCore 熔断后的降级态：仅保留基础录制与基础高光。 */
+    recorderDegradedMode: false,
     isRecording: false,
     longPressTimer: null,
     periodFlash: false,
@@ -686,21 +1022,19 @@ Page({
           return;
         }
 
-        this.rebuildCameraComponent(() => {
-          const nextCtx = wx.createCameraContext(this);
-          this.setData(
-            {
+        this.rebuildCameraComponent((generation) => {
+          this.remountCameraComponent({
+            generation,
+            extraData: {
               liveEntitlementChecking: false,
               liveStreamAllowed: true,
-              cameraMounted: true,
-              cameraContext: nextCtx,
               showVipGate: false,
               vipGateTitle: '',
               vipGateSubtext: '',
               vipGateMinor: '',
               vipGateRetryVisible: false
             },
-            () => {
+            onMounted: () => {
               this._entitlementEverAllowedInSession = true;
               if (typeof onAllowed === 'function') {
                 onAllowed();
@@ -710,7 +1044,7 @@ Page({
                 try { fn(); } catch (e) { }
               });
             }
-          );
+          });
         });
         this._entitlementChecking = false;
       })
@@ -968,11 +1302,10 @@ Page({
       if (selfWatch._cameraInitDone) return;
       selfWatch.appendHealthLog('camera_init_watchdog_rebuild', {});
       selfWatch.armNativeEnhanceModeRestoreAfterCameraRebuild('camera_init_watchdog');
-      selfWatch.rebuildCameraComponent(() => {
+      selfWatch.rebuildCameraComponent((generation) => {
         if (!selfWatch._livePageVisible || !selfWatch.data.liveStreamAllowed) return;
-        selfWatch.setData({
-          cameraMounted: true,
-          cameraContext: wx.createCameraContext(selfWatch)
+        selfWatch.remountCameraComponent({
+          generation
         });
       });
     }, 2600);
@@ -988,9 +1321,9 @@ Page({
   segmentDurationMs: 8000,
   /** 用户点击保存后，回放时希望覆盖的精彩窗口长度（毫秒），可与物理切片时长解耦 */
   highlightPlaybackWindowMs: 8000,
-  /** 时间驱动高光窗口：点击前 6s + 点击后 2s，合计 8s。 */
-  highlightLeadMs: 6000,
-  highlightTailMs: 2000,
+  /** 时间驱动高光窗口：严格保存点击前过去 8s，不再等待未来片段。 */
+  highlightLeadMs: 8000,
+  highlightTailMs: 0,
   /**
    * stopRecord 与下一段 startRecord 之间的冷却；过短易在部分机型引发句柄未释放。
    * 略缩短可减小墙钟「真空」与状态灯 PAUSE 体感，需与稳定性平衡。
@@ -1091,6 +1424,7 @@ Page({
   _lastSegmentOperateFailAt: 0,
 
   onLoad: function () {
+    this._recorderCore = new RecorderCore(this);
     /** 相机 bindinitdone 完成前禁止 startRecord，否则部分机型预览一直黑屏 */
     this._cameraInitDone = false;
 
@@ -1171,6 +1505,11 @@ Page({
     /** 相机重建锁，避免短时多次重建触发 “can insert only one camera”。 */
     this._cameraRebuildLock = false;
     this._cameraRebuildQueue = [];
+    /** 相机重建代次；每次 unmount + rebuild 递增，用于丢弃过期 remount 回调。 */
+    this._cameraRebuildGeneration = 0;
+    /** 相机 remount 进行中标记，避免同一代次重复 setData(cameraMounted=true)。 */
+    this._cameraMountInFlight = false;
+    this._cameraMountInFlightGeneration = 0;
     /** 最近一次硬恢复时间戳：防止短时连点/连错触发恢复风暴。 */
     this._lastHardRecoverAt = 0;
     /** temp 丢失风暴触发硬恢复的节流戳。 */
@@ -1829,7 +2168,11 @@ Page({
       }
     }
     this.clearHighlightSavePipelineState();
-    this.pendingHighlight = null;
+    if (this._recorderCore) {
+      this._recorderCore.clearPendingHighlight();
+    } else {
+      this.pendingHighlight = null;
+    }
     this.endHighlightSaving();
     /**
      * iOS 上 persist 失败后 rolling 易与相机争用进入 start_fail；中止高光后软恢复 rolling，
@@ -1953,6 +2296,9 @@ Page({
       this.stopRecoveryProgressAnim(true);
       this.setData({ isRecovering: false, showRecoveryVeil: false });
       this._recoveryLock = false;
+      if (this._recorderCore) {
+        this._recorderCore.onRecoverSuccess('camera_init');
+      }
       if (this._manualRecoveryPendingAck) {
         this._manualRecoveryPendingAck = false;
         this.emitRecoverySuccessFeedback();
@@ -1976,6 +2322,9 @@ Page({
     }
     this._insertConflictRecovering = false;
     this.appendHealthLog('camera_init', { maxZoom: maxZoom, minZoom: minZoom });
+    if (this._recorderCore) {
+      this._recorderCore.markReady('camera_init');
+    }
     // 增强渲染（灰度）：仅在 app.globalData.enableEnhanceRender=true 时拉起；
     // 与 rolling startRecord 通过 onCameraFrame 共存，不占用相机独占权。
     this._maybeBootEnhanceRender();
@@ -2288,6 +2637,7 @@ Page({
    * @returns {void}
    */
   _orchestrateSwitchToVk: function () {
+    if (this.data.recorderDegradedMode) return;
     if (!this.data.enhanceVkSupported) return;
     if (this.data.enhanceMode === 'vk') return;
     if (this.data.enhanceVkTransitioning) return;
@@ -2307,12 +2657,16 @@ Page({
         self.stopRollingRecording(function () {
           // 销毁原生增强管线
           self._teardownEnhanceRender();
+          self._cameraRebuildGeneration = (self._cameraRebuildGeneration || 0) + 1;
+          self._cameraMountInFlight = false;
+          self._cameraMountInFlightGeneration = 0;
           // 卸 camera（利用 rebuildCameraComponent 的锁语义，但我们不重新 mount）
           self.setData({
             cameraMounted: false,
             cameraContext: null,
             isRecording: false
           }, function () {
+            self._lastCameraUnmountAt = Date.now();
             // 留足时间让原生 camera 句柄释放，避免 VKSession.start 与硬件争用黑屏。
             var bootDelay = VK_BOOT_DELAY_MS_ANDROID;
             try {
@@ -2350,6 +2704,9 @@ Page({
    * @param {'off'|'standard'|'strong'} targetMode
    */
   _orchestrateSwitchFromVk: function (targetMode) {
+    if (this.data.recorderDegradedMode && targetMode !== 'off') {
+      targetMode = 'off';
+    }
     if (this.data.enhanceMode !== 'vk' && !this.data.enhanceVkTransitioning) {
       // 已不在 VK 模式且没在切换中：仅做普通 setMode
       if (typeof this.setEnhanceMode === 'function') this.setEnhanceMode(targetMode);
@@ -2365,17 +2722,21 @@ Page({
     self._pendingEnhanceModeAfterVk = targetMode;
     // 重建 camera 组件（rebuildCameraComponent 里会调 _teardownEnhanceRender + mount=false）
     // 然后我们在其回调里 setData({cameraMounted:true}) 触发新组件渲染与 bindinitdone
-    self.rebuildCameraComponent(function () {
+    self.rebuildCameraComponent(function (generation) {
       var mountExtra = 0;
       try {
         var siMount = wx.getSystemInfoSync();
         if (siMount && siMount.platform === 'ios') mountExtra = VK_POST_TEARDOWN_MOUNT_EXTRA_MS_IOS;
       } catch (eM) { }
       setTimeout(function () {
-        self.setData({ cameraMounted: true, cameraContext: wx.createCameraContext(self) }, function () {
-          // camera 的 onCameraInit 会触发 tryStartRollingWhenCameraReady 与 _maybeBootEnhanceRender
-          // 这里只负责把转场标志撤掉；真正的 setMode 在 _maybeBootEnhanceRender 完成后被 _applyPendingEnhanceModeAfterVk 消费
-          self.setData({ enhanceVkTransitioning: false });
+        if (!self._livePageVisible) return;
+        self.remountCameraComponent({
+          generation,
+          onMounted: function () {
+            // camera 的 onCameraInit 会触发 tryStartRollingWhenCameraReady 与 _maybeBootEnhanceRender
+            // 这里只负责把转场标志撤掉；真正的 setMode 在 _maybeBootEnhanceRender 完成后被 _applyPendingEnhanceModeAfterVk 消费
+            self.setData({ enhanceVkTransitioning: false });
+          }
         });
       }, mountExtra);
     });
@@ -2602,11 +2963,105 @@ Page({
   },
 
   /**
+   * 统一重新挂载 camera 组件，避免多个恢复/切模路径并发执行重复 mount。
+   * @param {{
+   *   generation?: number,
+   *   extraData?: Record<string, any>,
+   *   onMounted?: function(WechatMiniprogram.CameraContext): void
+   * }} [opts]
+   * @returns {boolean}
+   */
+  remountCameraComponent: function (opts, source) {
+    if (this._recorderCore && !this._recorderCore.isOwnerActive()) {
+      return this._recorderCore.withOwner(
+        source || 'remountCameraComponent',
+        'cameraRemount',
+        () => this._remountCameraComponentImpl(opts)
+      );
+    }
+    return this._remountCameraComponentImpl(opts);
+  },
+
+  _remountCameraComponentImpl: function (opts) {
+    const options = opts || {};
+    const generation =
+      typeof options.generation === 'number'
+        ? options.generation
+        : (this._cameraRebuildGeneration || 0);
+    if (generation !== (this._cameraRebuildGeneration || 0)) {
+      this.appendHealthLog('camera_mount_skip_stale_generation', {
+        requestGeneration: generation,
+        activeGeneration: this._cameraRebuildGeneration || 0
+      });
+      return false;
+    }
+    if (this._cameraMountInFlight) {
+      this.appendHealthLog('camera_mount_skip_inflight', {
+        requestGeneration: generation,
+        inflightGeneration: this._cameraMountInFlightGeneration || 0
+      });
+      return false;
+    }
+    this._cameraMountInFlight = true;
+    this._cameraMountInFlightGeneration = generation;
+    const finalize = () => {
+      this._cameraMountInFlight = false;
+      this._cameraMountInFlightGeneration = 0;
+    };
+    const nextPatch = Object.assign({}, options.extraData || {}, {
+      cameraMounted: true
+    });
+    this.setData(nextPatch, () => {
+      if (generation !== (this._cameraRebuildGeneration || 0)) {
+        finalize();
+        this.appendHealthLog('camera_mount_abandon_after_setdata', {
+          requestGeneration: generation,
+          activeGeneration: this._cameraRebuildGeneration || 0
+        });
+        return;
+      }
+      const bindCameraContext = () => {
+        if (generation !== (this._cameraRebuildGeneration || 0)) {
+          finalize();
+          this.appendHealthLog('camera_mount_abandon_before_context', {
+            requestGeneration: generation,
+            activeGeneration: this._cameraRebuildGeneration || 0
+          });
+          return;
+        }
+        const nextCameraContext = wx.createCameraContext(this);
+        this.setData({ cameraContext: nextCameraContext, isRecording: false }, () => {
+          finalize();
+          if (typeof options.onMounted === 'function') {
+            try {
+              options.onMounted(nextCameraContext);
+            } catch (e) { }
+          }
+        });
+      };
+      if (wx.nextTick) wx.nextTick(bindCameraContext);
+      else setTimeout(bindCameraContext, 0);
+    });
+    return true;
+  },
+
+  /**
    * 强制重建 camera 组件并释放旧上下文，避免会话切换后复用脏资源。
    * @param {function(): void} [onRebuilt]
    * @returns {void}
    */
-  rebuildCameraComponent: function (onRebuilt) {
+  rebuildCameraComponent: function (onRebuilt, source) {
+    if (this._recorderCore && !this._recorderCore.isOwnerActive()) {
+      return this._recorderCore.withOwner(
+        source || 'rebuildCameraComponent',
+        'cameraRebuild',
+        () => this._rebuildCameraComponentImpl(onRebuilt)
+      );
+    }
+    return this._rebuildCameraComponentImpl(onRebuilt);
+  },
+
+  _rebuildCameraComponentImpl: function (onRebuilt) {
     if (this._cameraRebuildLock) {
       if (typeof onRebuilt === 'function') {
         this._cameraRebuildQueue.push(onRebuilt);
@@ -2614,6 +3069,10 @@ Page({
       return;
     }
     this._cameraRebuildLock = true;
+    const generation = (this._cameraRebuildGeneration || 0) + 1;
+    this._cameraRebuildGeneration = generation;
+    this._cameraMountInFlight = false;
+    this._cameraMountInFlightGeneration = 0;
     this._cameraInitDone = false;
     // 重建 camera 必然产生新的 cameraContext；先销毁旧增强管线，避免 listener / GL 资源悬挂
     this._teardownEnhanceRender();
@@ -2625,7 +3084,7 @@ Page({
     }, () => {
       this._lastCameraUnmountAt = Date.now();
       const kick = () => {
-        if (typeof onRebuilt === 'function') onRebuilt();
+        if (typeof onRebuilt === 'function') onRebuilt(generation);
         this._cameraRebuildLock = false;
         const queued = this._cameraRebuildQueue.splice(0, this._cameraRebuildQueue.length);
         if (queued.length > 0) {
@@ -2718,9 +3177,9 @@ Page({
    * @returns {void}
    */
   scheduleAfterStopRecord: function (fn) {
-    const base = this.recordCooldownAfterStopMs || 500;
-    const ms =
-      base + this.getAdaptiveRecordCooldownExtraMs() + this.getIosParallelRollingStopExtraMs();
+    const ms = this._recorderCore
+      ? this._recorderCore.getSafeRestartDelayMs()
+      : RECORDER_SAFE_RESTART_DELAY_MIN_MS;
     setTimeout(() => {
       const extra = typeof this._postUserLocalPersistCooldownMs === 'number'
         ? this._postUserLocalPersistCooldownMs
@@ -2737,6 +3196,24 @@ Page({
       }
       run();
     }, ms);
+  },
+
+  /**
+   * 强制 stop/re-align 路径也必须先回到 READY，再允许下一次 start。
+   * @param {string} source
+   * @param {function(): void} fn
+   * @returns {void}
+   */
+  scheduleAfterForcedStopReady: function (source, fn) {
+    if (this._recorderCore) {
+      this._recorderCore.onSegmentStopSuccess(
+        source || 'forced_stop_ready',
+        Promise.resolve(),
+        () => this.scheduleAfterStopRecord(fn)
+      );
+      return;
+    }
+    this.scheduleAfterStopRecord(fn);
   },
 
   /**
@@ -2771,7 +3248,16 @@ Page({
    * 会遗留「假 true」，此处若拦截则永远无法 startRollingRecording，高光永远无片段。
    * @returns {void}
    */
-  tryStartRollingWhenCameraReady: function () {
+  tryStartRollingWhenCameraReady: function (source) {
+    if (this._recorderCore) {
+      return this._recorderCore.requestTryStartWhenReady(
+        source || 'tryStartRollingWhenCameraReady'
+      );
+    }
+    return this._tryStartRollingWhenCameraReadyImpl();
+  },
+
+  _tryStartRollingWhenCameraReadyImpl: function () {
     const now = Date.now();
     if (this._fileQuotaCircuitUntil && now < this._fileQuotaCircuitUntil) {
       this.appendHealthLog('rolling_start_blocked_by_file_quota_circuit', {
@@ -2781,7 +3267,7 @@ Page({
     }
     if (!this.rollingActive || !this._cameraInitDone) return;
     if (!this.data.cameraContext) return;
-    this.startRollingRecording();
+    this._startRollingRecordingImpl();
   },
 
   updateZoom: function (zoomVal) {
@@ -4550,7 +5036,11 @@ Page({
     if (this.pendingHighlight && this.pendingHighlight.timeout) {
       clearTimeout(this.pendingHighlight.timeout);
     }
-    this.pendingHighlight = null;
+    if (this._recorderCore) {
+      this._recorderCore.clearPendingHighlight();
+    } else {
+      this.pendingHighlight = null;
+    }
     this.clearHighlightSavePipelineState();
     this.rollingSegments = [];
     this.segmentBuffer = [];
@@ -4602,7 +5092,7 @@ Page({
       showRecoveryVeil: false,
       showStoragePressureModal: false
     });
-    this.stopRollingRecording();
+    this.stopRollingRecording(undefined, 'page_unload');
   },
 
   onHide: function () {
@@ -4639,7 +5129,6 @@ Page({
       clearTimeout(this._replayPauseWaitTimer);
       this._replayPauseWaitTimer = null;
     }
-    this.rollingActive = false;
     this._rollingPausedForReplay = false;
     this.clearHighlightSavePipelineState();
     this.endHighlightSaving();
@@ -4667,17 +5156,7 @@ Page({
       this._relaunchPressTimer = null;
     }
     this._insertConflictRecovering = false;
-    this._needManualRelaunch = false;
-    this._hardRecoverAwaitingCamera = false;
-    this._recoveryLock = false;
-    this._manualRecoveryPendingAck = false;
-    this.highlightMaterializeQueue = [];
-    this.highlightMaterializeRunning = false;
-    if (this.data.isRecovering) {
-      this.setData({ isRecovering: false, showRecoveryVeil: false });
-    }
     this.appendHealthLog('page_hide', {});
-    this._cameraInitDone = false;
     if (this._enhanceZeroFrameRecoverTimer) {
       clearTimeout(this._enhanceZeroFrameRecoverTimer);
       this._enhanceZeroFrameRecoverTimer = null;
@@ -4685,10 +5164,7 @@ Page({
     this._pendingEnhanceModeAfterRecover = null;
     this._pendingEnhanceModeAfterCameraRebuild = null;
     this._lastSegmentOperateFailAt = 0;
-    this._teardownEnhanceRender();
     this.stopEnhanceFpsPolling();
-    this.setData({ cameraMounted: false, cameraContext: null, isRecording: false });
-    this.stopRollingRecording();
   },
 
   /**
@@ -4898,6 +5374,9 @@ Page({
     this.stopRecoveryProgressAnim(false);
     this.setData({ isRecovering: false, showRecoveryVeil: false });
     this._recoveryLock = false;
+    if (this._recorderCore) {
+      this._recorderCore.onRecoverFail(reason || 'unknown');
+    }
     this.appendHealthLog('hard_recover_fail', {
       reason: reason || 'unknown',
       diag: this.getLiveRollingDiagSnapshot({})
@@ -4917,6 +5396,13 @@ Page({
    * @returns {void}
    */
   hardRecoverLivePipeline: function (trigger) {
+    if (this._recorderCore) {
+      return this._recorderCore.requestRecover(trigger || 'manual');
+    }
+    return this._hardRecoverLivePipelineImpl(trigger);
+  },
+
+  _hardRecoverLivePipelineImpl: function (trigger) {
     if (this._recoveryLock) return;
     const source = trigger || 'manual';
     const now = Date.now();
@@ -4976,15 +5462,8 @@ Page({
       if (!this._hardRecoverAwaitingCamera) return;
       this.appendHealthLog('hard_recover_timeout', { trigger: source });
       // 超时后二次强制重建一次，避免 iOS 在 stop 后偶发不再触发 initdone。
-      this.rebuildCameraComponent(() => {
-        this.setData({ cameraMounted: true }, () => {
-          const bindCameraContext = () => {
-            const nextCameraContext = wx.createCameraContext(this);
-            this.setData({ cameraContext: nextCameraContext, isRecording: false });
-          };
-          if (wx.nextTick) wx.nextTick(bindCameraContext);
-          else setTimeout(bindCameraContext, 0);
-        });
+      this.rebuildCameraComponent((generation) => {
+        this.remountCameraComponent({ generation });
       });
       if (this._recoveryFailSafeTimer) {
         clearTimeout(this._recoveryFailSafeTimer);
@@ -4996,10 +5475,14 @@ Page({
     }, 6000);
     this.rollingActive = false;
     this.rollingSessionId += 1;
-    if (this.pendingHighlight && this.pendingHighlight.timeout) {
-      clearTimeout(this.pendingHighlight.timeout);
+    if (this._recorderCore) {
+      this._recorderCore.clearPendingHighlight();
+    } else {
+      if (this.pendingHighlight && this.pendingHighlight.timeout) {
+        clearTimeout(this.pendingHighlight.timeout);
+      }
+      this.pendingHighlight = null;
     }
-    this.pendingHighlight = null;
     this.clearHighlightSavePipelineState();
     /** 避免 isSavingHighlight 仍为 true 时阻塞 FAB / 自动恢复，且与 Native is recording 假死叠加 */
     this.endHighlightSaving();
@@ -5037,28 +5520,56 @@ Page({
     }, recoverUiFailsafeMs);
     this.startRecoveryProgressAnim();
     this.armNativeEnhanceModeRestoreAfterCameraRebuild('hard_recover');
+    const allowCameraRebuild = !!(
+      this._recorderCore && this._recorderCore.recoverFailCount >= 2
+    );
     this.stopRollingRecording(() => {
-      this.rebuildCameraComponent(() => {
-        this._cameraInitDone = false;
-        this.rollingSegments = [];
-        this.segmentBuffer = [];
-        this.lastSegmentAt = Date.now();
-        this.setData({ cameraMounted: true }, () => {
-          const bindCameraContext = () => {
-            const nextCameraContext = wx.createCameraContext(this);
-            this.setData({ cameraContext: nextCameraContext, isRecording: false }, () => {
-              this.rollingActive = true;
-              this.rollingSessionId += 1;
-              this.highlightMissStreak = 0;
-              this._cameraFaultStreak = 0;
-              this.appendHealthLog('hard_recover_rebuild_done', { trigger: source });
-            });
-          };
-          if (wx.nextTick) wx.nextTick(bindCameraContext);
-          else setTimeout(bindCameraContext, 0);
+      this.rollingSegments = [];
+      this.segmentBuffer = [];
+      this.lastSegmentAt = Date.now();
+      if (!allowCameraRebuild) {
+        this.appendHealthLog('hard_recover_recorder_restart_only', { trigger: source });
+        this.rollingActive = true;
+        this.rollingSessionId += 1;
+        this.highlightMissStreak = 0;
+        this._cameraFaultStreak = 0;
+        this.tryStartRollingWhenCameraReady('recover_restart_only');
+        if (this._recoveryGuardTimer) {
+          clearTimeout(this._recoveryGuardTimer);
+          this._recoveryGuardTimer = null;
+        }
+        if (this._recoverUiFailsafeTimer) {
+          clearTimeout(this._recoverUiFailsafeTimer);
+          this._recoverUiFailsafeTimer = null;
+        }
+        this._hardRecoverAwaitingCamera = false;
+        this.stopRecoveryProgressAnim(true);
+        this.setData({ isRecovering: false, showRecoveryVeil: false });
+        this._recoveryLock = false;
+        if (this._manualRecoveryPendingAck) {
+          this._manualRecoveryPendingAck = false;
+          this.emitRecoverySuccessFeedback();
+        }
+        if (this._recorderCore) {
+          this._recorderCore.onRecoverSuccess('recorder_restart_only');
+        }
+        this.tryStartRollingWhenCameraReady('recover_restart_only');
+        return;
+      }
+      this._cameraInitDone = false;
+      this.rebuildCameraComponent((generation) => {
+        this.remountCameraComponent({
+          generation,
+          onMounted: () => {
+            this.rollingActive = true;
+            this.rollingSessionId += 1;
+            this.highlightMissStreak = 0;
+            this._cameraFaultStreak = 0;
+            this.appendHealthLog('hard_recover_rebuild_done', { trigger: source });
+          }
         });
       });
-    });
+    }, 'hard_recover');
   },
 
   /**
@@ -5382,7 +5893,14 @@ Page({
     };
   },
 
-  startRollingRecording: function () {
+  startRollingRecording: function (source) {
+    if (this._recorderCore) {
+      return this._recorderCore.requestStartRolling(source || 'startRollingRecording');
+    }
+    return this._startRollingRecordingImpl();
+  },
+
+  _startRollingRecordingImpl: function () {
     if (!this.data.cameraContext) return;
     /** 已在录时勿重复拉起，避免双 startRecord；假阳性 isRecording 由 onShow 的 stopRollingRecording 收口 */
     if (this.data.isRecording) return;
@@ -5409,13 +5927,19 @@ Page({
               complete: () => {
                 this.setData({ isRecording: false });
                 this.lastRecordStartAt = 0;
-                this.scheduleAfterStopRecord(() => this.startOneSegment(sessionId, 0));
+                this.scheduleAfterForcedStopReady(
+                  'watchdog_stop_complete',
+                  () => this.startOneSegment(sessionId, 0, 'watchdog_restart')
+                );
               }
             });
           } catch (e) {
             this.setData({ isRecording: false });
             this.lastRecordStartAt = 0;
-            this.scheduleAfterStopRecord(() => this.startOneSegment(sessionId, 0));
+            this.scheduleAfterForcedStopReady(
+              'watchdog_stop_catch',
+              () => this.startOneSegment(sessionId, 0, 'watchdog_restart')
+            );
           }
           return;
         }
@@ -5425,11 +5949,22 @@ Page({
         if (!streamIdleTooLong) return;
         this.startOneSegment(sessionId, 0);
       }, this.segmentDurationMs * 3);
-      this.startOneSegment(sessionId);
+      this.startOneSegment(sessionId, 0, 'rolling_kickoff');
     });
   },
 
-  startOneSegment: function (sessionId, retryCount = 0) {
+  startOneSegment: function (sessionId, retryCount = 0, source) {
+    if (this._recorderCore) {
+      return this._recorderCore.requestStartSegment(
+        source || 'startOneSegment',
+        sessionId,
+        retryCount
+      );
+    }
+    return this._startOneSegmentImpl(sessionId, retryCount);
+  },
+
+  _startOneSegmentImpl: function (sessionId, retryCount = 0) {
     if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
     if (!this.data.cameraContext) return;
     if (this.data.storageSevereLock) {
@@ -5446,6 +5981,9 @@ Page({
       success: () => {
         this._startOneSegmentInFlight = false;
         if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
+        if (this._recorderCore) {
+          this._recorderCore.onSegmentStartSuccess('segment_start_ok', sessionId);
+        }
         this.clearSegmentStartRetryTimer();
         this._segmentStartRecoveringFromIsRecording = false;
         this._segmentStartRecoveringFromOperateFail = false;
@@ -5483,6 +6021,9 @@ Page({
       fail: (err) => {
         this._startOneSegmentInFlight = false;
         if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
+        if (this._recorderCore) {
+          this._recorderCore.onSegmentStartFail('segment_start_fail');
+        }
         this.startRecordFailStreak += 1;
         const errMsg = err && err.errMsg ? String(err.errMsg) : '';
         /** 全量 diag 仅在连续失败时附带，避免健康缓冲被长直播刷屏撑满 */
@@ -5531,16 +6072,16 @@ Page({
             this.setData({ isRecording: false });
             this.lastRecordStartAt = 0;
             const extraAlign = this.getIsRecordingConflictExtraStartDelayMs();
-            this.scheduleAfterStopRecord(() => {
+            this.scheduleAfterForcedStopReady('is_recording_conflict_stop', () => {
               this._segmentStartRecoveringFromIsRecording = false;
               if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
               if (extraAlign > 0) {
                 setTimeout(() => {
                   if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
-                  this.startOneSegment(sessionId, 0);
+                  this.startOneSegment(sessionId, 0, 'is_recording_conflict_retry');
                 }, extraAlign);
               } else {
-                this.startOneSegment(sessionId, 0);
+                this.startOneSegment(sessionId, 0, 'is_recording_conflict_retry');
               }
             });
           };
@@ -5569,11 +6110,11 @@ Page({
           const restartAfterStop = () => {
             this.setData({ isRecording: false });
             this.lastRecordStartAt = 0;
-            this.scheduleAfterStopRecord(() => {
+            this.scheduleAfterForcedStopReady('operate_fail_stop', () => {
               this._segmentStartRecoveringFromOperateFail = false;
               if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
               if (this._needManualRelaunch) return;
-              this.startOneSegment(sessionId, 0);
+              this.startOneSegment(sessionId, 0, 'operate_fail_retry');
             });
           };
           try {
@@ -5629,7 +6170,10 @@ Page({
           this.startRecordFailStreak = 0;
           this.setData({ isRecording: false });
           this.lastRecordStartAt = 0;
-          this.scheduleAfterStopRecord(() => this.startOneSegment(sessionId, 0));
+          this.scheduleAfterForcedStopReady(
+            'start_fail_storm_reset',
+            () => this.startOneSegment(sessionId, 0, 'start_fail_storm_retry')
+          );
           return;
         }
         this.scheduleStartOneSegmentRetry(sessionId, nextRetry, delay);
@@ -5637,7 +6181,14 @@ Page({
     });
   },
 
-  stopOneSegment: function (sessionId) {
+  stopOneSegment: function (sessionId, source) {
+    if (this._recorderCore) {
+      return this._recorderCore.requestStopSegment(source || 'stopOneSegment', sessionId);
+    }
+    return this._stopOneSegmentImpl(sessionId);
+  },
+
+  _stopOneSegmentImpl: function (sessionId) {
     if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
     if (!this.data.cameraContext || !this.data.isRecording) return;
     this.data.cameraContext.stopRecord({
@@ -5650,51 +6201,39 @@ Page({
         /** 在 copy 完成前就刷新心跳，避免仅依赖 finalize 时写盘慢导致看门狗误判空闲 */
         this.lastSegmentAt = Date.now();
         this.segmentCounter += 1;
+        let persistPromise = Promise.resolve();
         if (tempPath) {
           /**
            * Android：落盘与下一段并行（temp 相对稳定）。
            * iOS：**必须先完成本段 temp→稳定路径**，再 schedule 下一段 startRecord；否则下一段相机起来后，
            * 系统常提前回收上一段 temp，导致 copy/save 全失败、高光五连重试仍 segment_persist_reject_temp_unstable。
            */
-          const persistPromise = this.onSegmentRecorded(
+          persistPromise = this.onSegmentRecorded(
             tempPath,
             this.segmentCounter,
             sessionId,
             recordStartWallMs
           );
-          const kickNextSegment = () => {
-            if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
-            if (this.data.storageSevereLock) {
-              try {
-                this.appendHealthLog('next_segment_suppressed_storage_severe', {});
-              } catch (eN) { }
-              return;
-            }
-            this.scheduleAfterStopRecord(() => this.startOneSegment(sessionId));
-          };
-          let iosSerialPersist = false;
-          try {
-            const siStop = wx.getSystemInfoSync();
-            iosSerialPersist = !!(siStop && siStop.platform === 'ios');
-          } catch (eStopPlat) {
-            iosSerialPersist = false;
-          }
-          if (iosSerialPersist) {
-            persistPromise.then(kickNextSegment, kickNextSegment);
-          } else {
-            persistPromise.catch(() => { });
-            kickNextSegment();
-          }
-          return;
+        } else {
+          this.abortHighlightAfterStopIfNeeded(sessionId, 'empty_temp_path');
         }
-        this.abortHighlightAfterStopIfNeeded(sessionId, 'empty_temp_path');
-        if (this.data.storageSevereLock) {
-          try {
-            this.appendHealthLog('next_segment_suppressed_storage_severe', { reason: 'empty_temp' });
-          } catch (eE) { }
-          return;
+        const kickNextSegment = () => {
+          if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
+          if (this.data.storageSevereLock) {
+            try {
+              this.appendHealthLog('next_segment_suppressed_storage_severe', {
+                reason: tempPath ? 'storage_severe' : 'empty_temp'
+              });
+            } catch (eN) { }
+            return;
+          }
+          this.scheduleAfterStopRecord(() => this.startOneSegment(sessionId, 0, 'segment_flush_ready'));
+        };
+        if (this._recorderCore) {
+          this._recorderCore.onSegmentStopSuccess('segment_stop_ok', persistPromise, kickNextSegment);
+        } else {
+          Promise.resolve(persistPromise).finally(kickNextSegment);
         }
-        this.scheduleAfterStopRecord(() => this.startOneSegment(sessionId));
       },
       fail: (err) => {
         if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
@@ -5712,6 +6251,14 @@ Page({
           } catch (eF) { }
           return;
         }
+        if (this._recorderCore) {
+          this._recorderCore.onSegmentStopSuccess(
+            'segment_stop_fail_fallback',
+            Promise.resolve(),
+            () => this.scheduleAfterStopRecord(() => this.startOneSegment(sessionId, 0, 'segment_stop_fail_ready'))
+          );
+          return;
+        }
         this.scheduleAfterStopRecord(() => this.startOneSegment(sessionId));
       }
     });
@@ -5722,7 +6269,17 @@ Page({
    * @param {function(): void} [onStopped] 在录制状态已释放后调用（无录制时下一 tick 调用）
    * @returns {void}
    */
-  stopRollingRecording: function (onStopped) {
+  stopRollingRecording: function (onStopped, source) {
+    if (this._recorderCore) {
+      return this._recorderCore.requestStopRolling(
+        source || 'stopRollingRecording',
+        onStopped
+      );
+    }
+    return this._stopRollingRecordingImpl(onStopped);
+  },
+
+  _stopRollingRecordingImpl: function (onStopped) {
     this.clearSegmentStartRetryTimer();
     this._startOneSegmentInFlight = false;
     this._segmentStartRecoveringFromIsRecording = false;
@@ -5815,6 +6372,14 @@ Page({
       return Promise.resolve();
     }
     if (!Array.isArray(this.rollingSegments)) this.rollingSegments = [];
+    const prev = this.rollingSegments.length
+      ? this.rollingSegments[this.rollingSegments.length - 1]
+      : null;
+    if (prev && typeof prev.endTime === 'number' && segment.startTime > prev.endTime + 240) {
+      if (this._recorderCore) {
+        this._recorderCore.noteTimelineGap('segment_recorded', segment.startTime - prev.endTime);
+      }
+    }
     this.rollingSegments.push(segment);
     while (this.rollingSegments.length > (this.rollingBufferMax || 3)) {
       this.rollingSegments.shift();
@@ -6433,6 +6998,50 @@ Page({
     const coverTempPath = typeof task.coverTempPath === 'string' ? task.coverTempPath : '';
     const fs = wx.getFileSystemManager();
     const dir = this.getHighlightDir();
+    /**
+     * 真机稳定性优先：
+     * - `wxfile://tmp_*` 视频在部分真机上 `fs.rename` 会直接 permission denied。
+     * - 对临时录制文件优先使用 `saveFile(tempFilePath -> USER_DATA_PATH)`；
+     * - 仅当源不是 temp 文件时才退回 `copyFile`。
+     * @param {string} fromPath
+     * @param {string} toPath
+     * @param {(savedPath: string) => void} resolve
+     * @returns {void}
+     */
+    const persistTempLikeFile = (fromPath, toPath, resolve) => {
+      const src = typeof fromPath === 'string' ? fromPath : '';
+      const dst = typeof toPath === 'string' ? toPath : '';
+      if (!src || !dst) {
+        resolve('');
+        return;
+      }
+      const isTempLike =
+        src.indexOf('wxfile://tmp_') === 0
+        || src.indexOf(`${wx.env.USER_DATA_PATH}/tmp_`) === 0
+        || src.indexOf('/tmp_') >= 0;
+      const useCopyFallback = () => {
+        if (!fs.copyFile) {
+          resolve('');
+          return;
+        }
+        fs.copyFile({
+          srcPath: src,
+          destPath: dst,
+          success: () => resolve(dst),
+          fail: () => resolve('')
+        });
+      };
+      if (isTempLike) {
+        fs.saveFile({
+          tempFilePath: src,
+          filePath: dst,
+          success: (r) => resolve((r && r.savedFilePath) ? r.savedFilePath : dst),
+          fail: useCopyFallback
+        });
+        return;
+      }
+      useCopyFallback();
+    };
     const copyOne = (srcPath, idx) => new Promise((resolve) => {
       const filePath = `${dir}/${task.id}_${idx}.mp4`;
 
@@ -6450,31 +7059,14 @@ Page({
             resolve('');
           };
 
-          const tryFallback = () => {
-            fs.saveFile({
-              tempFilePath: fromPath,
-              filePath,
-              success: (r) => {
-                cleanupOriginal();
-                resolve((r && r.savedFilePath) ? r.savedFilePath : filePath);
-              },
-              fail: handleFail
-            });
-          };
-
-          if (fs.rename) {
-            fs.rename({
-              oldPath: fromPath,
-              newPath: filePath,
-              success: () => {
-                cleanupOriginal();
-                resolve(filePath);
-              },
-              fail: tryFallback
-            });
-          } else {
-            tryFallback();
-          }
+          persistTempLikeFile(fromPath, filePath, (savedPath) => {
+            if (!savedPath) {
+              handleFail();
+              return;
+            }
+            cleanupOriginal();
+            resolve(savedPath);
+          });
         };
 
         if (task.isVkTimeshift) {
@@ -6549,28 +7141,9 @@ Page({
         };
         if (savedPaths.length === segments.length && coverTempPath) {
           const coverDest = `${dir}/${task.id}_cover.jpg`;
-          if (fs.rename) {
-            fs.rename({
-              oldPath: coverTempPath,
-              newPath: coverDest,
-              success: () => applyClipUpdate(coverDest),
-              fail: () => {
-                fs.saveFile({
-                  tempFilePath: coverTempPath,
-                  filePath: coverDest,
-                  success: () => applyClipUpdate(coverDest),
-                  fail: () => applyClipUpdate('')
-                });
-              }
-            });
-          } else {
-            fs.saveFile({
-              tempFilePath: coverTempPath,
-              filePath: coverDest,
-              success: () => applyClipUpdate(coverDest),
-              fail: () => applyClipUpdate('')
-            });
-          }
+          persistTempLikeFile(coverTempPath, coverDest, (savedPath) => {
+            applyClipUpdate(savedPath || '');
+          });
         } else {
           applyClipUpdate('');
         }
@@ -6914,12 +7487,15 @@ Page({
    * @returns {void}
    */
   onHighlightClick: function (meta) {
-    const now = Date.now();
     const m = meta && typeof meta === 'object' ? meta : {};
+    if (this._recorderCore) {
+      return this._recorderCore.setPendingHighlight(m);
+    }
+    const now = Date.now();
     this.pendingHighlight = {
       clickTime: now,
-      startTime: now - (this.highlightLeadMs || 6000),
-      endTime: now + (this.highlightTailMs || 2000),
+      startTime: now - (this.highlightLeadMs || 8000),
+      endTime: now,
       id: m.id || String(now),
       createdAt: now,
       matchName: m.matchName || (this.data.matchConfig && this.data.matchConfig.matchName) || '未命名比赛',
@@ -6929,10 +7505,15 @@ Page({
   },
 
   /**
-   * MOD: 安全时机调度高光生成。仅当 rolling 素材池已覆盖 pending.endTime 时生成。
+   * MOD: 安全时机调度高光生成。
+   * 过去 8s 模式下，只要“包含 clickTime 的当前段”已经 stop+flush 完成并入 rolling buffer，
+   * 就可以生成高光；不再等待未来片段。
    * @returns {void}
    */
   _tryGenerateHighlight: function () {
+    if (this._recorderCore) {
+      return this._recorderCore.maybeGenerateHighlight();
+    }
     if (!this.pendingHighlight) return;
     const pending = this.pendingHighlight;
     const { startTime, endTime } = pending;
@@ -7083,12 +7664,20 @@ Page({
       matchId: currentMatchId,
       cover: this.data.defaultCover
     });
-    this.tryStartRollingWhenCameraReady();
+    this.tryStartRollingWhenCameraReady('highlight_request');
     this.vibrate('heavy');
     this.lastHighlightRequestAt = this.pendingHighlight.clickTime;
+    const recordStartAt = Number(this.lastRecordStartAt || 0);
+    const expectedFlushAt =
+      recordStartAt > 0
+        ? Math.max(
+          this.pendingHighlight.clickTime + 120,
+          recordStartAt + (this.segmentDurationMs || 8000)
+        )
+        : this.pendingHighlight.clickTime + HIGHLIGHT_LOCK_TIMEOUT;
     this.startHighlightSaveProgressAnim(
       this.pendingHighlight.clickTime,
-      this.pendingHighlight.endTime
+      expectedFlushAt
     );
     this.appendHealthLog('highlight_click_time_marked', {
       clickTime: this.pendingHighlight.clickTime,
@@ -7328,6 +7917,10 @@ Page({
    */
   onEnhanceModePick: function (e) {
     if (!this.data.enhanceWhitelisted) return;
+    if (this.data.recorderDegradedMode) {
+      wx.showToast({ title: '当前为稳定优先模式', icon: 'none', duration: 1600 });
+      return;
+    }
     if (this.data.enhanceVkTransitioning) return;
     if (Date.now() < (this._enhanceModeSwitchGuardUntil || 0)) {
       try {
@@ -8080,50 +8673,18 @@ Page({
    * @returns {void}
    */
   pauseRollingForReplay: function (onPaused) {
-    const done = () => {
-      if (typeof onPaused === 'function') {
-        if (wx.nextTick) wx.nextTick(onPaused);
-        else setTimeout(onPaused, 0);
-      }
-    };
-    if (this._rollingPausedForReplay) {
-      done();
-      return;
-    }
-    /**
-     * 必须等 rolling 落盘结束再 bump rollingSessionId。
-     * iOS 串行落盘较慢；若 busy 时仍 ++，onSegmentRecorded 内 sessionOk 变 false，整段不落盘 → segment_persist_reject_temp_unstable。
-     * 禁止「等满 N 次后强制继续」：此前会在仍 busy 时 ++，与高光/回放强相关。
-     */
-    if (this.rollingFsBusy) {
-      this._replayPauseWaitAttempts = (this._replayPauseWaitAttempts || 0) + 1;
-      if (this._replayPauseWaitAttempts % 50 === 0) {
-        this.appendHealthLog('replay_pause_defer_rolling_fs_busy_long', {
-          attempt: this._replayPauseWaitAttempts
-        });
-      } else if (this._replayPauseWaitAttempts <= 5 || this._replayPauseWaitAttempts % 15 === 0) {
-        this.appendHealthLog('replay_pause_defer_rolling_fs_busy', {
-          attempt: this._replayPauseWaitAttempts
-        });
-      }
-      if (this._replayPauseWaitTimer) {
-        clearTimeout(this._replayPauseWaitTimer);
-      }
-      this._replayPauseWaitTimer = setTimeout(() => {
-        this._replayPauseWaitTimer = null;
-        this.pauseRollingForReplay(onPaused);
-      }, 100);
-      return;
-    }
-    this._replayPauseWaitAttempts = 0;
-    this._rollingPausedForReplay = true;
-    this.appendHealthLog('replay_pause_rolling', {});
-    this.rollingActive = false;
-    this.rollingSessionId += 1;
-    this.stopRollingRecording(() => {
-      this.setData({ isRecording: false });
-      done();
+    this._rollingPausedForReplay = false;
+    this.appendHealthLog('replay_pause_ui_only', {
+      recorderState: this._recorderCore ? this._recorderCore.state : ''
     });
+    if (this._recorderCore) {
+      this._recorderCore.requestReplayPause('replay', onPaused);
+      return;
+    }
+    if (typeof onPaused === 'function') {
+      if (wx.nextTick) wx.nextTick(onPaused);
+      else setTimeout(onPaused, 0);
+    }
   },
 
   /**
@@ -8131,71 +8692,13 @@ Page({
    * @returns {void}
    */
   resumeRollingAfterReplay: function () {
-    if (!this._rollingPausedForReplay) return;
     this._rollingPausedForReplay = false;
-    if (!this.data.liveStreamAllowed || this.data.isRecovering || this._recoveryLock) return;
-    /**
-     * VK 模式无原生 <camera>，此处若按「相机未就绪」走 hardRecover 会 rebuildCameraComponent →
-     * _teardownEnhanceRender，误销毁 VKSession 并退出 VK。回放仅暂停了 rolling 标志位，VK 预览应原样继续。
-     */
-    if (this.data.enhanceMode === 'vk') {
-      this.appendHealthLog('replay_resume_vk_skip_native', {});
-      this.rollingActive = true;
-      try {
-        this.updatePipelineHealth();
-      } catch (eH) { }
-      return;
+    this.appendHealthLog('replay_resume_ui_only', {
+      recorderState: this._recorderCore ? this._recorderCore.state : ''
+    });
+    if (this._recorderCore) {
+      this._recorderCore.requestReplayResume('replay');
     }
-    if (!this.data.cameraMounted || !this.data.cameraContext || !this._cameraInitDone) {
-      if (Date.now() < (this._insertCameraRecoverCooldownUntil || 0)) {
-        this.appendHealthLog('replay_resume_wait_insert_cooldown', {});
-        return;
-      }
-      this.appendHealthLog('replay_resume_need_recover', {});
-      this.hardRecoverLivePipeline('auto:resume_after_replay');
-      return;
-    }
-    this.appendHealthLog('replay_resume_rolling', {});
-    this.rollingActive = true;
-    this.startRecordFailStreak = 0;
-    let resumeLagMs = 0;
-    try {
-      const si = wx.getSystemInfoSync();
-      if (si && si.platform === 'android') {
-        const seg = typeof this.segmentCounter === 'number' ? this.segmentCounter : 0;
-        resumeLagMs = 360 + Math.min(820, Math.floor(seg / 10) * 52);
-      }
-    } catch (e) {
-      resumeLagMs = 0;
-    }
-    if (resumeLagMs > 0) {
-      this.appendHealthLog('replay_resume_android_delay', { ms: resumeLagMs });
-    }
-    const kickResume = () => {
-      this.tryStartRollingWhenCameraReady();
-    };
-    /**
-     * 回放刚结束时 rolling 落盘可能仍未完成，立即 startRecord 易与日志中 segment_start_fail 簇叠加。
-     * @returns {void}
-     */
-    const waitFsThenKick = () => {
-      if (this.rollingFsBusy) {
-        this._replayResumeFsWaitAttempts = (this._replayResumeFsWaitAttempts || 0) + 1;
-        if (this._replayResumeFsWaitAttempts > 42) {
-          this._replayResumeFsWaitAttempts = 0;
-          this.appendHealthLog('replay_resume_fs_wait_cap', {});
-          kickResume();
-          return;
-        }
-        setTimeout(waitFsThenKick, 120);
-        return;
-      }
-      this._replayResumeFsWaitAttempts = 0;
-      /** 须在落盘空闲后再 bump，避免与 pause 边界上未完成的 onSegmentRecorded 竞态（同 pause 侧根因） */
-      this.rollingSessionId += 1;
-      kickResume();
-    };
-    setTimeout(waitFsThenKick, resumeLagMs > 0 ? resumeLagMs : 0);
   },
 
   /**
