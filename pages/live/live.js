@@ -72,7 +72,7 @@ const ENHANCE_SWITCH_GUARD_MS = 1000;
  */
 const LIVE_STORAGE_SEVERE_MODAL_DELAY_MS = 560;
 const HIGHLIGHT_LOCK_TIMEOUT = 3000;
-const HIGHLIGHT_LOCK_TIMEOUT_MAX_MS = 9200;
+const HIGHLIGHT_LOCK_TIMEOUT_MAX_MS = 11000;
 const MIN_RECOVER_INTERVAL = 15000;
 const RECORDER_SAFE_RESTART_DELAY_MIN_MS = 120;
 const RECORDER_SAFE_RESTART_DELAY_MAX_MS = 180;
@@ -96,6 +96,7 @@ class RecorderCore {
     this.pendingHighlight = null;
     this.recordSessionId = 0;
     this.lastStopAt = 0;
+    this._recentFlushLagMs = 1800;
     this._ownerDepth = 0;
     this._highlightTimeoutTimer = null;
   }
@@ -164,12 +165,17 @@ class RecorderCore {
   setPendingHighlight(meta) {
     const page = this.page;
     const now = Date.now();
+    const clickTimeRaw =
+      meta && typeof meta.clickTime === 'number' && isFinite(meta.clickTime)
+        ? Number(meta.clickTime)
+        : now;
+    const clickTime = Math.min(now, Math.max(0, clickTimeRaw));
     const pending = {
-      clickTime: now,
-      startTime: now - (page.highlightLeadMs || 8000),
-      endTime: now,
+      clickTime: clickTime,
+      startTime: clickTime - (page.highlightLeadMs || 8000),
+      endTime: clickTime,
       id: meta.id || String(now),
-      createdAt: now,
+      createdAt: clickTime,
       matchName: meta.matchName || (page.data.matchConfig && page.data.matchConfig.matchName) || '未命名比赛',
       matchId: meta.matchId || page.resolveMatchIdForHighlightStorage(),
       cover: meta.cover || page.data.defaultCover
@@ -189,14 +195,15 @@ class RecorderCore {
     let timeoutMs = HIGHLIGHT_LOCK_TIMEOUT;
     const segmentDurationMs = Number(page.segmentDurationMs || 0);
     const recordStartAt = Number(page.lastRecordStartAt || 0);
+    const flushLagBudgetMs = this._recentFlushLagMs || 1800;
     if (
       segmentDurationMs > 0
       && recordStartAt > 0
       && recordStartAt <= now
     ) {
-      const elapsedMs = now - recordStartAt;
+      const elapsedMs = clickTime - recordStartAt;
       const remainMs = Math.max(0, segmentDurationMs - elapsedMs);
-      const waitBudgetMs = remainMs + 1200;
+      const waitBudgetMs = remainMs + flushLagBudgetMs + 500;
       timeoutMs = Math.max(
         HIGHLIGHT_LOCK_TIMEOUT,
         Math.min(HIGHLIGHT_LOCK_TIMEOUT_MAX_MS, waitBudgetMs)
@@ -205,6 +212,49 @@ class RecorderCore {
     this._highlightTimeoutTimer = setTimeout(() => {
       this._highlightTimeoutTimer = null;
       if (!this.pendingHighlight || this.pendingHighlight.id !== pending.id) return;
+      const clickCoveredByBufferedSegment = (Array.isArray(page.rollingSegments) ? page.rollingSegments : [])
+        .some((seg) =>
+          seg
+          && typeof seg.startTime === 'number'
+          && typeof seg.endTime === 'number'
+          && seg.startTime <= pending.clickTime
+          && seg.endTime >= pending.clickTime
+        );
+      if (clickCoveredByBufferedSegment) {
+        this._log('highlight_timeout_promoted_to_generate', {
+          triggerSource: 'highlight_timeout',
+          stateBefore: this.state,
+          stateAfter: this.state,
+          clickTime: pending.clickTime
+        });
+        this.clearPendingHighlight();
+        page._generateHighlight(pending.startTime, pending.endTime, pending);
+        return;
+      }
+      if (this.state === RECORDER_STATE.STOPPING || this.state === RECORDER_STATE.FLUSHING) {
+        const extendMs = Math.max(1200, Math.min(2600, flushLagBudgetMs));
+        this._log('highlight_timeout_extended_for_flush', {
+          triggerSource: 'highlight_timeout',
+          stateBefore: this.state,
+          stateAfter: this.state,
+          clickTime: pending.clickTime,
+          extendMs: extendMs
+        });
+        this._highlightTimeoutTimer = setTimeout(() => {
+          this._highlightTimeoutTimer = null;
+          if (!this.pendingHighlight || this.pendingHighlight.id !== pending.id) return;
+          this._log('highlight_soft_timeout_release', {
+            triggerSource: 'highlight_timeout_after_extend',
+            stateBefore: this.state,
+            stateAfter: this.state,
+            clickTime: pending.clickTime,
+            timeoutMs: timeoutMs + extendMs
+          });
+          this.clearPendingHighlight();
+          page.endHighlightSaving();
+        }, extendMs);
+        return;
+      }
       this._log('highlight_soft_timeout_release', {
         triggerSource: 'highlight_timeout',
         stateBefore: this.state,
@@ -268,6 +318,16 @@ class RecorderCore {
 
   noteStopTimestamp() {
     this.lastStopAt = Date.now();
+  }
+
+  noteFlushLag(flushLagMs) {
+    const lag = Number(flushLagMs || 0);
+    if (!isFinite(lag) || lag <= 0) return;
+    const clamped = Math.max(600, Math.min(3200, Math.round(lag)));
+    this._recentFlushLagMs = Math.max(
+      600,
+      Math.min(3200, Math.round(this._recentFlushLagMs * 0.65 + clamped * 0.35))
+    );
   }
 
   waitForFlushComplete(source, flushPromise, onReady) {
@@ -5577,19 +5637,44 @@ Page({
    * @returns {void}
    */
   onRecoveryFabTap: function () {
-    if (this.data.isRecovering) return;
+    this.appendHealthLog('recovery_fab_tap', {
+      pipelineHealth: this.data.pipelineHealth,
+      opsControlText: this.data.opsControlText,
+      isRecording: !!this.data.isRecording,
+      rollingActive: !!this.rollingActive,
+      recorderState: this._recorderCore ? this._recorderCore.state : ''
+    });
+    if (this.data.isRecovering) {
+      this.appendHealthLog('recovery_fab_tap_ignored', { reason: 'recovering' });
+      return;
+    }
     if (this.data.storageSevereLock) {
+      this.appendHealthLog('recovery_fab_tap_ignored', { reason: 'storage_severe' });
       this._showLightHint('请先清理空间');
       return;
     }
     if (this.data.isSavingHighlight || this.pendingHighlight) {
+      this.appendHealthLog('recovery_fab_tap_ignored', {
+        reason: this.data.isSavingHighlight ? 'saving_highlight' : 'pending_highlight'
+      });
       return;
     }
     if (this._recoveryFabLongPressConsumed) {
       this._recoveryFabLongPressConsumed = false;
+      this.appendHealthLog('recovery_fab_tap_ignored', { reason: 'longpress_consumed' });
       return;
     }
-    if (this.data.pipelineHealth === 'recording' || this.data.enhanceMode === 'vk') {
+    const canCaptureWhileRolling =
+      !!this.rollingActive
+      && !!this._cameraInitDone
+      && !!this.data.cameraContext
+      && !this.data.isRecovering
+      && !this._recoveryLock;
+    if (
+      this.data.pipelineHealth === 'recording'
+      || this.data.enhanceMode === 'vk'
+      || canCaptureWhileRolling
+    ) {
       this.requestHighlightCapture();
       return;
     }
@@ -5601,7 +5686,9 @@ Page({
       this.vibrate('light');
       this.appendHealthLog('recovery_fab_tap_recover', {});
       this.hardRecoverLivePipeline('manual_tap');
+      return;
     }
+    this.appendHealthLog('recovery_fab_tap_ignored', { reason: 'not_recording_or_err' });
   },
 
   /**
@@ -6202,6 +6289,7 @@ Page({
         this.lastSegmentAt = Date.now();
         this.segmentCounter += 1;
         let persistPromise = Promise.resolve();
+        const stopCompletedAt = Date.now();
         if (tempPath) {
           /**
            * Android：落盘与下一段并行（temp 相对稳定）。
@@ -6218,6 +6306,9 @@ Page({
           this.abortHighlightAfterStopIfNeeded(sessionId, 'empty_temp_path');
         }
         const kickNextSegment = () => {
+          if (this._recorderCore) {
+            this._recorderCore.noteFlushLag(Date.now() - stopCompletedAt);
+          }
           if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
           if (this.data.storageSevereLock) {
             try {
@@ -7605,6 +7696,13 @@ Page({
    */
   requestHighlightCapture: function () {
     if (this._highlightRequestLock || this.data.isSavingHighlight || this.pendingHighlight) {
+      this.appendHealthLog('highlight_request_ignored', {
+        reason: this._highlightRequestLock
+          ? 'request_lock'
+          : this.data.isSavingHighlight
+            ? 'saving_highlight'
+            : 'pending_highlight'
+      });
       return;
     }
     if (this.data.storageSevereLock) {
@@ -7640,6 +7738,10 @@ Page({
     }
 
     const now = Date.now();
+    const anchorClickTime =
+      this.data.isRecording
+        ? now
+        : Math.max(0, Number(this.lastSegmentAt || now));
     const matchName = this.data.matchConfig.matchName || '未命名比赛';
     const id = String(now);
     if (vkHighlight) {
@@ -7658,11 +7760,19 @@ Page({
     }
 
     this.beginHighlightSaving();
+    this.appendHealthLog('highlight_request', {
+      anchorClickTime,
+      now,
+      isRecording: !!this.data.isRecording,
+      recorderState: this._recorderCore ? this._recorderCore.state : '',
+      rollingActive: !!this.rollingActive
+    });
     this.onHighlightClick({
       id,
       matchName,
       matchId: currentMatchId,
-      cover: this.data.defaultCover
+      cover: this.data.defaultCover,
+      clickTime: anchorClickTime
     });
     this.tryStartRollingWhenCameraReady('highlight_request');
     this.vibrate('heavy');
