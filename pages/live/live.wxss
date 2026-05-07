@@ -2372,6 +2372,9 @@ page {
   box-shadow: 0 10rpx 36rpx rgba(0, 0, 0, 0.34);
   backdrop-filter: blur(10px);
   pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  max-height: 76vh;
 }
 
 .vk-debug-panel__head {
@@ -2379,6 +2382,26 @@ page {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 12rpx;
+  flex-shrink: 0;
+}
+
+.vk-debug-panel__body {
+  flex: 1;
+  min-height: 0;
+  height: 56vh;
+}
+
+.vk-debug-panel__scene-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.vk-debug-panel__caption {
+  font-size: 13rpx;
+  color: rgba(255, 255, 255, 0.44);
+  line-height: 1.2;
+  margin-bottom: 4rpx;
 }
 
 .vk-debug-panel__title {
@@ -2386,6 +2409,13 @@ page {
   font-weight: 600;
   color: #ffffff;
   letter-spacing: 0.8rpx;
+}
+
+.vk-debug-panel__subhead {
+  margin-top: 4rpx;
+  font-size: 13rpx;
+  color: rgba(255, 255, 255, 0.48);
+  line-height: 1.35;
 }
 
 .vk-debug-panel__badge {
@@ -2399,6 +2429,104 @@ page {
 .vk-debug-panel__badge--freeze {
   color: #fff3f0;
   background: rgba(255, 122, 69, 0.28);
+}
+
+.vk-debug-panel__selector-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12rpx;
+  margin-bottom: 10rpx;
+}
+
+.vk-debug-panel__selector-scroll {
+  width: 100%;
+  margin-bottom: 10rpx;
+}
+
+.vk-debug-panel__selector-track {
+  display: inline-flex;
+  flex-direction: row;
+  gap: 8rpx;
+  padding-right: 10rpx;
+  white-space: nowrap;
+}
+
+.vk-debug-panel__preset-pill {
+  flex: 0 0 auto;
+  padding: 7rpx 12rpx;
+  border-radius: 999rpx;
+  font-size: 14rpx;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1rpx solid rgba(255, 255, 255, 0.08);
+}
+
+.vk-debug-panel__preset-pill--active {
+  color: #fff8ef;
+  background: rgba(255, 122, 69, 0.22);
+  border-color: rgba(255, 122, 69, 0.38);
+  box-shadow: 0 6rpx 16rpx rgba(255, 122, 69, 0.16);
+}
+
+.vk-debug-panel__actions {
+  display: flex;
+  padding: 2rpx 0 10rpx;
+}
+
+.vk-debug-panel__action-btn {
+  flex-shrink: 0;
+  padding: 8rpx 14rpx;
+  border-radius: 999rpx;
+  font-size: 14rpx;
+  color: #ffe7de;
+  background: rgba(255, 122, 69, 0.16);
+  border: 1rpx solid rgba(255, 122, 69, 0.28);
+}
+
+.vk-debug-panel__action-btn--busy {
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(54, 207, 201, 0.16);
+  border-color: rgba(54, 207, 201, 0.28);
+}
+
+.vk-debug-panel__action-hint {
+  font-size: 12rpx;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.vk-debug-panel__sampling-box {
+  padding: 10rpx 0 12rpx;
+  border-top: 1rpx solid rgba(255, 255, 255, 0.08);
+}
+
+.vk-debug-panel__sampling-meta {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12rpx;
+}
+
+.vk-debug-panel__sampling-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+  min-width: 0;
+}
+
+.vk-debug-panel__sampling-progress {
+  margin-top: 8rpx;
+}
+
+.vk-debug-panel__params-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12rpx;
+  padding-top: 10rpx;
+  border-top: 1rpx solid rgba(255, 255, 255, 0.08);
 }
 
 .vk-debug-panel__row {

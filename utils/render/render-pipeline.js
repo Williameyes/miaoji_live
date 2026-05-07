@@ -821,6 +821,11 @@ function createRenderPipeline() {
     if (Object.prototype.hasOwnProperty.call(patch, 'freezeAuto')) debugConfig.freezeAuto = !!patch.freezeAuto;
   }
 
+  function sampleVkEnvironmentFrameStats(options) {
+    if (mode !== 'vk' || !renderer || typeof renderer.sampleVkEnvironmentFrameStats !== 'function') return null;
+    return renderer.sampleVkEnvironmentFrameStats(options || null);
+  }
+
   api = {
     init: init,
     setMode: setMode,
@@ -837,6 +842,7 @@ function createRenderPipeline() {
     pauseAutoDegradeOnce: pauseAutoDegradeOnce,
     getVkAdaptiveDebugConfig: getVkAdaptiveDebugConfig,
     setVkAdaptiveDebugConfig: setVkAdaptiveDebugConfig,
+    sampleVkEnvironmentFrameStats: sampleVkEnvironmentFrameStats,
     snapshot: function() { return monitor ? monitor.snapshot() : null; },
     /**
      * 诊断快照：工具条用；不依赖 perf 窗口，首帧也能读到。

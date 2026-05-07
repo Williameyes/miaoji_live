@@ -7,6 +7,9 @@ const storageEst = require('../../utils/file-storage-estimate.js');
 const clipsStorage = require('../../utils/miaoxie-clips-storage.js');
 const renderPipelineMod = require('../../utils/render/render-pipeline.js');
 const vkCanvasRecorderMod = require('../../utils/render/vk-canvas-recorder.js');
+const vkPresetManagerMod = require('./vk-preset-manager.js');
+const vkEnvironmentSamplerMod = require('./vk-environment-sampler.js');
+const vkSceneAnalyzerMod = require('./vk-scene-analyzer.js');
 const eventBus = require('../../utils/eventBus.js');
 const bleManager = require('../../services/bleManager.js');
 const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
@@ -879,13 +882,31 @@ Page({
      */
     enhanceFpsText: '— fps',
     vkDebugPanelVisible: false,
-    vkDebugAmount: 0.58,
-    vkDebugAmountPct: 58,
-    vkDebugTone: 0.95,
-    vkDebugTonePct: 95,
+    vkPresetCurrent: 'OUTDOOR_NORMAL',
+    vkPresetCurrentLabel: '户外标准',
+    vkPresetOptions: vkPresetManagerMod.VK_PRESET_OPTIONS,
+    vkEnvSamplingState: 'IDLE',
+    vkEnvSamplingButtonText: '检测画质',
+    vkEnvSamplingHint: '',
+    vkEnvSamplingProgressText: '',
+    vkEnvSamplingCount: 0,
+    vkEnvSamplingTarget: 10,
+    vkEnvSamplingLastCount: 0,
+    vkEnvRecommendedPreset: '',
+    vkEnvRecommendedApplyPreset: '',
+    vkEnvRecommendedLabel: '',
+    vkEnvRecommendedConfidencePct: 0,
+    vkEnvAutoAdjustSummary: '',
+    vkDebugAmount: 0.50,
+    vkDebugAmountPct: 50,
+    vkDebugAmountOffsetPct: 0,
+    vkDebugTone: 0.88,
+    vkDebugTonePct: 88,
+    vkDebugToneOffsetPct: 0,
     vkDebugMotion: 0.72,
     vkDebugMotionPct: 72,
-    vkDebugFreezeAuto: false,
+    vkDebugMotionOffsetPct: 0,
+    vkDebugFreezeAuto: true,
     isVkTimeshift: false,
     
     // --- 自动模式相关 ---
@@ -1485,6 +1506,8 @@ Page({
 
   onLoad: function () {
     this._recorderCore = new RecorderCore(this);
+    this._initVkPresetSystem();
+    this._initVkEnvironmentSampler();
     /** 相机 bindinitdone 完成前禁止 startRecord，否则部分机型预览一直黑屏 */
     this._cameraInitDone = false;
 
@@ -5039,6 +5062,14 @@ Page({
   },
 
   onUnload: function () {
+    if (this._vkEnvironmentSampler && typeof this._vkEnvironmentSampler.destroy === 'function') {
+      this._vkEnvironmentSampler.destroy();
+      this._vkEnvironmentSampler = null;
+    }
+    if (this._vkPresetManager && typeof this._vkPresetManager.destroy === 'function') {
+      this._vkPresetManager.destroy();
+      this._vkPresetManager = null;
+    }
     this._unbindVkDebugHotkey();
     if (this._windowResizeListener && wx.offWindowResize) {
       try {
@@ -5156,6 +5187,9 @@ Page({
   },
 
   onHide: function () {
+    if (this._vkEnvironmentSampler && typeof this._vkEnvironmentSampler.stop === 'function') {
+      this._vkEnvironmentSampler.stop({ silent: false, keepCompletedState: false });
+    }
     this._unbindVkDebugHotkey();
     if (this._cameraShowInitWatchTimer) {
       clearTimeout(this._cameraShowInitWatchTimer);
@@ -7931,12 +7965,16 @@ Page({
   },
 
   _syncVkAdaptiveDebugConfigToPipeline: function () {
+    var runtimeConfig = this._vkPresetManager && typeof this._vkPresetManager.getSnapshot === 'function'
+      ? this._vkPresetManager.getSnapshot().runtimeConfig
+      : null;
+    var lockOn = !!this.data.vkDebugFreezeAuto;
     var patch = {
-      enable: true,
-      overrideAmount: this.data.vkDebugAmount,
-      overrideTone: this.data.vkDebugTone,
-      overrideMotion: this.data.vkDebugMotion,
-      freezeAuto: !!this.data.vkDebugFreezeAuto
+      enable: lockOn,
+      overrideAmount: runtimeConfig && typeof runtimeConfig.amount === 'number' ? runtimeConfig.amount : this.data.vkDebugAmount,
+      overrideTone: runtimeConfig && typeof runtimeConfig.tone === 'number' ? runtimeConfig.tone : this.data.vkDebugTone,
+      overrideMotion: runtimeConfig && typeof runtimeConfig.motion === 'number' ? runtimeConfig.motion : this.data.vkDebugMotion,
+      freezeAuto: lockOn
     };
     try {
       renderPipelineMod.debugConfig.enable = patch.enable;
@@ -7988,34 +8026,222 @@ Page({
     this._toggleVkDebugPanel();
   },
 
-  onVkDebugAmountChanging: function (e) {
-    var v = Number(e && e.detail ? e.detail.value : 58);
-    if (!isFinite(v)) v = 58;
-    var amount = Math.max(35, Math.min(70, v)) / 100;
-    this.setData({ vkDebugAmount: amount, vkDebugAmountPct: Math.round(amount * 100) });
+  _initVkPresetSystem: function () {
+    var self = this;
+    if (this._vkPresetManager && typeof this._vkPresetManager.destroy === 'function') {
+      this._vkPresetManager.destroy();
+    }
+    this._vkPresetManager = new vkPresetManagerMod.VKPresetManager({
+      durationMs: 280,
+      onUpdate: function (snapshot) {
+        self._applyVkPresetSnapshot(snapshot);
+      }
+    });
+    this._applyVkPresetSnapshot(this._vkPresetManager.getSnapshot());
+  },
+
+  _initVkEnvironmentSampler: function () {
+    var self = this;
+    if (this._vkEnvironmentSampler && typeof this._vkEnvironmentSampler.destroy === 'function') {
+      this._vkEnvironmentSampler.destroy();
+    }
+    this._vkEnvironmentSampler = new vkEnvironmentSamplerMod.VKEnvironmentSampler({
+      intervalMs: 300,
+      maxFrames: 10,
+      sampleWidth: 160,
+      sampleHeight: 90,
+      getFrameStats: function (opts) {
+        if (!self._renderPipeline || typeof self._renderPipeline.sampleVkEnvironmentFrameStats !== 'function') return null;
+        return self._renderPipeline.sampleVkEnvironmentFrameStats(opts || null);
+      },
+      onStateChange: function (snapshot) {
+        self._applyVkEnvironmentSamplerSnapshot(snapshot);
+      },
+      onComplete: function (snapshot) {
+        self._applyVkEnvironmentSamplerSnapshot(snapshot);
+        self._handleVkEnvironmentSamplingComplete(snapshot);
+      }
+    });
+    this._applyVkEnvironmentSamplerSnapshot(this._vkEnvironmentSampler.getSnapshot());
+  },
+
+  _applyVkEnvironmentSamplerSnapshot: function (snapshot) {
+    if (!snapshot) return;
+    var state = snapshot.state || 'IDLE';
+    var nextData = {
+      vkEnvSamplingState: state,
+      vkEnvSamplingCount: snapshot.collected || 0,
+      vkEnvSamplingTarget: snapshot.target || 10,
+      vkEnvSamplingLastCount: state === 'COMPLETED' ? (snapshot.collected || 0) : this.data.vkEnvSamplingLastCount
+    };
+    if (state === 'SAMPLING') {
+      nextData.vkEnvSamplingButtonText = '环境采样中';
+      nextData.vkEnvSamplingHint = '请缓慢移动镜头，采样球场不同区域';
+      nextData.vkEnvSamplingProgressText = (snapshot.collected || 0) + '/' + (snapshot.target || 10);
+    } else if (state === 'COMPLETED') {
+      nextData.vkEnvSamplingButtonText = '重新检测';
+      nextData.vkEnvSamplingHint = this.data.vkEnvRecommendedLabel
+        ? ('推荐场景：' + this.data.vkEnvRecommendedLabel + ' · ' + this.data.vkEnvRecommendedConfidencePct + '%')
+        : '采样完成，已获取环境帧统计';
+      nextData.vkEnvSamplingProgressText = '完成 ' + (snapshot.collected || 0) + '/' + (snapshot.target || 10);
+    } else {
+      nextData.vkEnvSamplingButtonText = '检测画质';
+      nextData.vkEnvSamplingHint = snapshot.collected ? '' : '';
+      nextData.vkEnvSamplingProgressText = '';
+    }
+    this._vkEnvLastFrameStats = Array.isArray(snapshot.frameStats) ? snapshot.frameStats.slice() : [];
+    this.setData(nextData);
+  },
+
+  onVkEnvironmentSampleTap: function () {
+    if (this.data.enhanceMode !== 'vk') return;
+    if (!this._vkEnvironmentSampler) this._initVkEnvironmentSampler();
+    if (!this._renderPipeline || typeof this._renderPipeline.sampleVkEnvironmentFrameStats !== 'function') {
+      wx.showToast({ title: 'VK 采样器未就绪', icon: 'none', duration: 1600 });
+      return;
+    }
+    if (this.data.vkEnvSamplingState === 'SAMPLING') return;
+    var started = this._vkEnvironmentSampler.start();
+    if (!started) {
+      wx.showToast({ title: '无法开始环境采样', icon: 'none', duration: 1600 });
+      return;
+    }
+    this.setData({
+      vkEnvRecommendedPreset: '',
+      vkEnvRecommendedApplyPreset: '',
+      vkEnvRecommendedLabel: '',
+      vkEnvRecommendedConfidencePct: 0,
+      vkEnvAutoAdjustSummary: ''
+    });
+  },
+
+  _handleVkEnvironmentSamplingComplete: function (snapshot) {
+    if (!snapshot || !Array.isArray(snapshot.frameStats) || snapshot.frameStats.length < 1) return;
+    if (this.data.enhanceMode !== 'vk') return;
+    var analysis = vkSceneAnalyzerMod.analyzeFrameStats(snapshot.frameStats);
+    this._vkEnvAnalysisResult = analysis;
+    var confidencePct = Math.round((analysis.confidence || 0) * 100);
+    this.setData({
+      vkEnvRecommendedPreset: analysis.preset || '',
+      vkEnvRecommendedApplyPreset: analysis.applyPreset || '',
+      vkEnvRecommendedLabel: analysis.label || '',
+      vkEnvRecommendedConfidencePct: confidencePct
+    });
+    try {
+      console.info('[VKAnalyze] Result:', analysis.preset, '(Confidence:', confidencePct + '%)', analysis.finalStats);
+    } catch (eLog) { }
+    this.appendHealthLog('vk_scene_analyze_result', {
+      preset: analysis.preset || '',
+      applyPreset: analysis.applyPreset || '',
+      confidencePct: confidencePct,
+      reason: analysis.reason || '',
+      finalStats: analysis.finalStats || null,
+      autoAdjustOffset: analysis.autoAdjustOffset || null
+    });
+    if (this._vkPresetManager && analysis.applyPreset) {
+      this._applyVkPresetSnapshot(
+        this._vkPresetManager.applyRecommendedPreset(
+          String(analysis.applyPreset),
+          analysis.autoAdjustOffset || null
+        )
+      );
+    }
+    if (this.data.vkEnvSamplingState === 'COMPLETED') {
+      this.setData({
+        vkEnvSamplingHint: '推荐场景：' + (analysis.label || analysis.applyLabel || analysis.applyPreset || '') + ' · ' + confidencePct + '%'
+      });
+    }
+    try {
+      wx.showToast({
+        title: '已推荐：' + (analysis.applyLabel || analysis.label || analysis.applyPreset || ''),
+        icon: 'none',
+        duration: 1800
+      });
+    } catch (eToast) { }
+  },
+
+  _applyVkPresetSnapshot: function (snapshot) {
+    if (!snapshot) return;
+    var finalConfig = snapshot.finalConfig || {};
+    var autoAdjustOffset = snapshot.autoAdjustOffset || {};
+    var manualOffset = snapshot.manualOffset || {};
+    var autoAdjustSummary = [];
+    if (autoAdjustOffset.tone) autoAdjustSummary.push('Tone ' + (autoAdjustOffset.tone > 0 ? '+' : '') + autoAdjustOffset.tone.toFixed(2));
+    if (autoAdjustOffset.amount) autoAdjustSummary.push('Amount ' + (autoAdjustOffset.amount > 0 ? '+' : '') + autoAdjustOffset.amount.toFixed(2));
+    if (autoAdjustOffset.motion) autoAdjustSummary.push('Motion ' + (autoAdjustOffset.motion > 0 ? '+' : '') + autoAdjustOffset.motion.toFixed(2));
+    this.setData({
+      vkPresetCurrent: snapshot.currentPreset || 'OUTDOOR_NORMAL',
+      vkPresetCurrentLabel: snapshot.currentPresetLabel || '户外标准',
+      vkEnvAutoAdjustSummary: autoAdjustSummary.join(' · '),
+      vkDebugAmount: typeof finalConfig.amount === 'number' ? finalConfig.amount : this.data.vkDebugAmount,
+      vkDebugAmountPct: Math.round((finalConfig.amount || 0) * 100),
+      vkDebugTone: typeof finalConfig.tone === 'number' ? finalConfig.tone : this.data.vkDebugTone,
+      vkDebugTonePct: Math.round((finalConfig.tone || 0) * 100),
+      vkDebugMotion: typeof finalConfig.motion === 'number' ? finalConfig.motion : this.data.vkDebugMotion,
+      vkDebugMotionPct: Math.round((finalConfig.motion || 0) * 100),
+      vkDebugAmountOffsetPct: Math.round((manualOffset.amount || 0) * 100),
+      vkDebugToneOffsetPct: Math.round((manualOffset.tone || 0) * 100),
+      vkDebugMotionOffsetPct: Math.round((manualOffset.motion || 0) * 100)
+    });
     this._syncVkAdaptiveDebugConfigToPipeline();
+  },
+
+  onVkPresetPick: function (e) {
+    var name = e && e.currentTarget && e.currentTarget.dataset
+      ? e.currentTarget.dataset.preset
+      : '';
+    if (!this._vkPresetManager || !name) return;
+    this._applyVkPresetSnapshot(this._vkPresetManager.applyPreset(String(name)));
+  },
+
+  onVkPresetRestore: function () {
+    if (!this._vkPresetManager) return;
+    var recommendedPreset = this.data.vkEnvRecommendedApplyPreset || '';
+    var recommendedOffset = this._vkEnvAnalysisResult && this._vkEnvAnalysisResult.autoAdjustOffset
+      ? this._vkEnvAnalysisResult.autoAdjustOffset
+      : null;
+    if (recommendedPreset) {
+      this._applyVkPresetSnapshot(this._vkPresetManager.restoreRecommendedPreset(String(recommendedPreset), recommendedOffset));
+      return;
+    }
+    this._applyVkPresetSnapshot(this._vkPresetManager.restorePreset());
+  },
+
+  onVkDebugAmountChanging: function (e) {
+    var v = Number(e && e.detail ? e.detail.value : 50);
+    if (!isFinite(v)) v = 50;
+    var amount = Math.max(45, Math.min(65, v)) / 100;
+    if (!this._vkPresetManager) return;
+    this._applyVkPresetSnapshot(this._vkPresetManager.setManualValue('amount', amount));
   },
 
   onVkDebugToneChanging: function (e) {
-    var v = Number(e && e.detail ? e.detail.value : 95);
-    if (!isFinite(v)) v = 95;
-    var tone = Math.max(50, Math.min(120, v)) / 100;
-    this.setData({ vkDebugTone: tone, vkDebugTonePct: Math.round(tone * 100) });
-    this._syncVkAdaptiveDebugConfigToPipeline();
+    var v = Number(e && e.detail ? e.detail.value : 80);
+    if (!isFinite(v)) v = 80;
+    var tone = Math.max(80, Math.min(95, v)) / 100;
+    if (!this._vkPresetManager) return;
+    this._applyVkPresetSnapshot(this._vkPresetManager.setManualValue('tone', tone));
   },
 
   onVkDebugMotionChanging: function (e) {
-    var v = Number(e && e.detail ? e.detail.value : 72);
-    if (!isFinite(v)) v = 72;
-    var motion = Math.max(20, Math.min(100, v)) / 100;
-    this.setData({ vkDebugMotion: motion, vkDebugMotionPct: Math.round(motion * 100) });
-    this._syncVkAdaptiveDebugConfigToPipeline();
+    var v = Number(e && e.detail ? e.detail.value : 60);
+    if (!isFinite(v)) v = 60;
+    var motion = Math.max(60, Math.min(82, v)) / 100;
+    if (!this._vkPresetManager) return;
+    this._applyVkPresetSnapshot(this._vkPresetManager.setManualValue('motion', motion));
   },
 
   onVkDebugFreezeAutoChange: function (e) {
     var checked = !!(e && e.detail ? e.detail.value : false);
     this.setData({ vkDebugFreezeAuto: checked });
     this._syncVkAdaptiveDebugConfigToPipeline();
+    try {
+      wx.showToast({
+        title: checked ? '已锁定推荐参数' : '已切回 VK 自动曲线',
+        icon: 'none',
+        duration: 1400
+      });
+    } catch (eToast) { }
   },
 
   /**
@@ -8059,6 +8285,9 @@ Page({
       return;
     }
     if (this.data.enhanceMode === 'vk') {
+      if (this._vkEnvironmentSampler && typeof this._vkEnvironmentSampler.stop === 'function') {
+        this._vkEnvironmentSampler.stop({ silent: false, keepCompletedState: false });
+      }
       this.appendHealthLog('enhance_mode_manual_pick', { mode: mode, orchestrator: 'out' });
       this._orchestrateSwitchFromVk(mode);
     } else if (typeof this.setEnhanceMode === 'function') {

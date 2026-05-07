@@ -80,6 +80,12 @@ function createWebglSharpenRenderer() {
   var fboRgbTex = null;
   var fboRgbW = 0;
   var fboRgbH = 0;
+  /** 一次性环境采样：缩小版 FBO，仅在用户手动检测时短暂读回 160x90。 */
+  var samplerFbo = null;
+  var samplerTex = null;
+  var samplerW = 0;
+  var samplerH = 0;
+  var samplerRgba = null;
   /** 列主序 3x3 单位矩阵，getDisplayTransform 缺失时兜底。 */
   var MAT3_IDENTITY = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
   /** 热降频渐变控制（Lerp） */
@@ -377,6 +383,122 @@ function createWebglSharpenRenderer() {
       highlightRatio: sceneAdaptiveProfile.highlightRatio,
       profileName: sceneAdaptiveProfile.profileName
     };
+  }
+
+  function ensureSamplerFbo(w, h) {
+    if (!gl) return false;
+    var nextW = Math.max(1, Math.floor(w));
+    var nextH = Math.max(1, Math.floor(h));
+    if (samplerFbo && samplerTex && samplerW === nextW && samplerH === nextH && samplerRgba && samplerRgba.length === nextW * nextH * 4) {
+      return true;
+    }
+    if (samplerTex) {
+      try { gl.deleteTexture(samplerTex); } catch (e0) {}
+      samplerTex = null;
+    }
+    if (samplerFbo) {
+      try { gl.deleteFramebuffer(samplerFbo); } catch (e1) {}
+      samplerFbo = null;
+    }
+    samplerFbo = gl.createFramebuffer();
+    samplerTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, samplerTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, nextW, nextH, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, samplerFbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, samplerTex, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    samplerW = nextW;
+    samplerH = nextH;
+    samplerRgba = new Uint8Array(nextW * nextH * 4);
+    return true;
+  }
+
+  function sampleVkEnvironmentFrameStats(options) {
+    var opts = options || {};
+    if (!gl || !program || !vbo || !fboRgb || !fboRgbTex || fboRgbW < 1 || fboRgbH < 1) return null;
+    var targetW = Math.max(1, Math.floor(opts.sampleWidth || 160));
+    var targetH = Math.max(1, Math.floor(opts.sampleHeight || 90));
+    if (!ensureSamplerFbo(targetW, targetH)) return null;
+    try {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, samplerFbo);
+      gl.viewport(0, 0, samplerW, samplerH);
+      gl.clearColor(0.0, 0.0, 0.0, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.useProgram(program);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, fboRgbTex);
+      gl.uniform1i(uniformLocs.uTex, 0);
+      if (uniformLocs.uTexel) {
+        gl.uniform2f(uniformLocs.uTexel, 1 / Math.max(1, fboRgbW), 1 / Math.max(1, fboRgbH));
+      }
+      if (uniformLocs.uInvTexel) {
+        gl.uniform2f(uniformLocs.uInvTexel, 1 / Math.max(1, fboRgbW), 1 / Math.max(1, fboRgbH));
+      }
+      if (uniformLocs.uAmount) gl.uniform1f(uniformLocs.uAmount, 0);
+      if (uniformLocs.uMotion) gl.uniform1f(uniformLocs.uMotion, 0);
+      if (uniformLocs.uContrast) gl.uniform1f(uniformLocs.uContrast, 0);
+      if (uniformLocs.uGamma) gl.uniform1f(uniformLocs.uGamma, 1);
+      if (uniformLocs.uSaturation) gl.uniform1f(uniformLocs.uSaturation, 1);
+      if (uniformLocs.uVkZoom) gl.uniform1f(uniformLocs.uVkZoom, 1);
+      setSharpenProgramUvIdentity();
+      gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+      gl.enableVertexAttribArray(attribLocs.aPos);
+      gl.vertexAttribPointer(attribLocs.aPos, 2, gl.FLOAT, false, 16, 0);
+      gl.enableVertexAttribArray(attribLocs.aUv);
+      gl.vertexAttribPointer(attribLocs.aUv, 2, gl.FLOAT, false, 16, 8);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.readPixels(0, 0, samplerW, samplerH, gl.RGBA, gl.UNSIGNED_BYTE, samplerRgba);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      var total = samplerW * samplerH;
+      var sum = 0;
+      var sumSq = 0;
+      var sumR = 0;
+      var sumG = 0;
+      var sumB = 0;
+      var highlight = 0;
+      var dark = 0;
+      var minL = 255;
+      var maxL = 0;
+      for (var i = 0; i < total; i++) {
+        var base = i * 4;
+        var r = samplerRgba[base];
+        var g = samplerRgba[base + 1];
+        var b = samplerRgba[base + 2];
+        var luma = (r + g + b) / 3;
+        sumR += r;
+        sumG += g;
+        sumB += b;
+        sum += luma;
+        sumSq += luma * luma;
+        if (luma > 220) highlight += 1;
+        if (luma < 40) dark += 1;
+        if (luma < minL) minL = luma;
+        if (luma > maxL) maxL = luma;
+      }
+      var mean = total > 0 ? (sum / total) : 0;
+      var variance = total > 0 ? Math.max(0, (sumSq / total) - mean * mean) : 0;
+      gl.viewport(0, 0, canvasNode.width || 1, canvasNode.height || 1);
+      return {
+        width: samplerW,
+        height: samplerH,
+        brightness: Math.round(mean * 1000) / 1000,
+        highlightRatio: Math.round((highlight / Math.max(1, total)) * 10000) / 10000,
+        darkRatio: Math.round((dark / Math.max(1, total)) * 10000) / 10000,
+        contrast: Math.round(Math.sqrt(variance) * 1000) / 1000,
+        contrastRange: Math.round((maxL - minL) * 1000) / 1000,
+        avgR: Math.round((sumR / Math.max(1, total)) * 1000) / 1000,
+        avgG: Math.round((sumG / Math.max(1, total)) * 1000) / 1000,
+        avgB: Math.round((sumB / Math.max(1, total)) * 1000) / 1000
+      };
+    } catch (err) {
+      try { gl.bindFramebuffer(gl.FRAMEBUFFER, null); } catch (e2) {}
+      return null;
+    }
   }
 
   /**
@@ -958,8 +1080,13 @@ function createWebglSharpenRenderer() {
         if (yuvProgram) { gl.deleteProgram(yuvProgram); yuvProgram = null; }
         if (fboRgbTex) { gl.deleteTexture(fboRgbTex); fboRgbTex = null; }
         if (fboRgb) { gl.deleteFramebuffer(fboRgb); fboRgb = null; }
+        if (samplerTex) { gl.deleteTexture(samplerTex); samplerTex = null; }
+        if (samplerFbo) { gl.deleteFramebuffer(samplerFbo); samplerFbo = null; }
         fboRgbW = 0;
         fboRgbH = 0;
+        samplerW = 0;
+        samplerH = 0;
+        samplerRgba = null;
         yuvLocs = {
           aPos: -1,
           aUv: -1,
@@ -1005,6 +1132,7 @@ function createWebglSharpenRenderer() {
     getCanvasNode: getCanvasNode,
     setVkAdaptiveCurveState: setVkAdaptiveCurveState,
     getVkSceneStats: getVkSceneStats,
+    sampleVkEnvironmentFrameStats: sampleVkEnvironmentFrameStats,
     setVkZoom: setVkZoom,
     setNativeZoomCompensation: setNativeZoomCompensation,
     setMotionLevel: setMotionLevel,

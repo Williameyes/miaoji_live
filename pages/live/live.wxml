@@ -562,20 +562,69 @@
     catchtouchmove="noopCatchMove"
   >
     <view class="vk-debug-panel__head" catchlongpress="onVkDebugToolbarLongPress">
-      <view class="vk-debug-panel__title">VK Debug</view>
-      <view class="vk-debug-panel__badge {{vkDebugFreezeAuto ? 'vk-debug-panel__badge--freeze' : ''}}">
-        {{vkDebugFreezeAuto ? 'AUTO FROZEN' : 'AUTO LIVE'}}
+      <view class="vk-debug-panel__scene-copy">
+        <view class="vk-debug-panel__caption">当前场景</view>
+        <view class="vk-debug-panel__title">{{vkPresetCurrentLabel}}</view>
       </view>
+      <view class="vk-debug-panel__badge {{vkDebugFreezeAuto ? 'vk-debug-panel__badge--freeze' : ''}}">
+        {{vkDebugFreezeAuto ? 'PARAM LOCK' : 'AUTO LIVE'}}
+      </view>
+    </view>
+
+    <scroll-view class="vk-debug-panel__body" scroll-y enhanced show-scrollbar="{{false}}">
+    <view class="vk-debug-panel__selector-head">
+      <text class="vk-debug-panel__label">场景选择</text>
+      <view class="vk-debug-panel__action-btn" catchtap="onVkPresetRestore">恢复推荐</view>
+    </view>
+
+    <scroll-view class="vk-debug-panel__selector-scroll" scroll-x enhanced show-scrollbar="{{false}}">
+      <view class="vk-debug-panel__selector-track">
+        <view
+          wx:for="{{vkPresetOptions}}"
+          wx:key="name"
+          class="vk-debug-panel__preset-pill {{vkPresetCurrent === item.name ? 'vk-debug-panel__preset-pill--active' : ''}}"
+          catchtap="onVkPresetPick"
+          data-preset="{{item.name}}"
+        >{{item.label}}</view>
+      </view>
+    </scroll-view>
+
+    <view class="vk-debug-panel__actions">
+      <view class="vk-debug-panel__action-hint">切换场景会立即套用 preset，并保留你当前的人工微调</view>
+    </view>
+
+    <view class="vk-debug-panel__sampling-box">
+      <view class="vk-debug-panel__sampling-meta">
+        <view class="vk-debug-panel__sampling-copy">
+          <text class="vk-debug-panel__label">环境采样</text>
+          <text wx:if="{{vkEnvSamplingHint}}" class="vk-debug-panel__hint">{{vkEnvSamplingHint}}</text>
+        </view>
+        <view
+          class="vk-debug-panel__action-btn {{vkEnvSamplingState === 'SAMPLING' ? 'vk-debug-panel__action-btn--busy' : ''}}"
+          catchtap="onVkEnvironmentSampleTap"
+        >{{vkEnvSamplingButtonText}}</view>
+      </view>
+      <view wx:if="{{vkEnvSamplingProgressText}}" class="vk-debug-panel__sampling-progress">
+        <text class="vk-debug-panel__value">{{vkEnvSamplingProgressText}}</text>
+      </view>
+      <view wx:if="{{vkEnvAutoAdjustSummary}}" class="vk-debug-panel__sampling-progress">
+        <text class="vk-debug-panel__hint">自动微调：{{vkEnvAutoAdjustSummary}}</text>
+      </view>
+    </view>
+
+    <view class="vk-debug-panel__params-head">
+      <text class="vk-debug-panel__label">当前参数</text>
+      <text class="vk-debug-panel__hint">滑杆只修改人工微调，不覆盖推荐值</text>
     </view>
 
     <view class="vk-debug-panel__row">
       <view class="vk-debug-panel__meta">
         <text class="vk-debug-panel__label">Amount</text>
-        <text class="vk-debug-panel__value">{{vkDebugAmount}}</text>
+        <text class="vk-debug-panel__value">{{vkDebugAmount}} / {{vkDebugAmountOffsetPct}}%</text>
       </view>
       <slider
-        min="35"
-        max="70"
+        min="45"
+        max="65"
         step="1"
         value="{{vkDebugAmountPct}}"
         activeColor="#ff7a45"
@@ -589,11 +638,11 @@
     <view class="vk-debug-panel__row">
       <view class="vk-debug-panel__meta">
         <text class="vk-debug-panel__label">Tone</text>
-        <text class="vk-debug-panel__value">{{vkDebugTone}}</text>
+        <text class="vk-debug-panel__value">{{vkDebugTone}} / {{vkDebugToneOffsetPct}}%</text>
       </view>
       <slider
-        min="50"
-        max="120"
+        min="80"
+        max="95"
         step="1"
         value="{{vkDebugTonePct}}"
         activeColor="#36cfc9"
@@ -607,11 +656,11 @@
     <view class="vk-debug-panel__row">
       <view class="vk-debug-panel__meta">
         <text class="vk-debug-panel__label">Motion</text>
-        <text class="vk-debug-panel__value">{{vkDebugMotion}}</text>
+        <text class="vk-debug-panel__value">{{vkDebugMotion}} / {{vkDebugMotionOffsetPct}}%</text>
       </view>
       <slider
-        min="20"
-        max="100"
+        min="60"
+        max="82"
         step="1"
         value="{{vkDebugMotionPct}}"
         activeColor="#69c0ff"
@@ -624,8 +673,8 @@
 
     <view class="vk-debug-panel__switch-row">
       <view class="vk-debug-panel__switch-copy">
-        <text class="vk-debug-panel__label">freezeAuto</text>
-        <text class="vk-debug-panel__hint">防止自动曲线偷偷改回参数</text>
+        <text class="vk-debug-panel__label">锁定参数</text>
+        <text class="vk-debug-panel__hint">VK preset 生效时建议保持锁定，避免自动曲线抢回控制</text>
       </view>
       <switch
         checked="{{vkDebugFreezeAuto}}"
@@ -633,6 +682,7 @@
         bindchange="onVkDebugFreezeAutoChange"
       />
     </view>
+    </scroll-view>
   </view>
 
   <!-- Level 3: 管理抽屉 (drawerMode 0=隐藏 1=打开) -->
