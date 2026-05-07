@@ -1779,7 +1779,7 @@ Page({
       return;
     }
 
-    const items = this.data.isAutoMode ? ['恢复手动记分'] : ['切换至自动记分（蓝牙同步）'];
+    const items = this.data.isAutoMode ? ['恢复手动记分'] : ['切换至自动记分（敬请期待）'];
     
     wx.showActionSheet({
       itemList: items,
