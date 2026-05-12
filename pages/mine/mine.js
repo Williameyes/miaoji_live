@@ -37,7 +37,6 @@ const PLACEHOLDER_NICK = '微信用户';
 const SYNC_LAB_WHITELIST = [
   'owImn7cUbBnTEk2Mx9IyZDnbVR1I',
   'owImn7YI-B-Zm8PCXCEW7BDiu--E',
-  'owImn7ctZbR2ZwLLAjoUbbfV5Yjc',
   'owImn7d3tOlRRlyhLMggkDNYZBr4'
 ];
 

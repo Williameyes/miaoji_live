@@ -14,6 +14,17 @@ const eventBus = require('../../utils/eventBus.js');
 const bleManager = require('../../services/bleManager.js');
 const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
 
+/**
+ * 画质增强内测白名单 OpenID。
+ * 仅此列表内用户在设备能力通过时可看到增强设置控制条。
+ */
+const ENHANCE_BETA_WHITELIST = [
+  'owImn7cUbBnTEk2Mx9IyZDnbVR1I',
+  'owImn7YI-B-Zm8PCXCEW7BDiu--E',
+  'owImn7ctZbR2ZwLLAjoUbbfV5Yjc',
+  'owImn7d3tOlRRlyhLMggkDNYZBr4'
+];
+
 /** 回放缩放离散档位（捏合吸附 / 双击等共用，至 3x 后下一轮回到 1x） */
 const REPLAY_ZOOM_LEVELS = [1, 1.5, 2, 2.5, 3];
 /** 与档位比较的容差，避免浮点抖动 */
@@ -41,6 +52,31 @@ const REPLAY_ZOOM_ANIM_MS = 300;
 const REPLAY_TAP_MOVE_SLOP_PX = 15;
 /** 边界夹紧时的浮点余量，减轻与原生 out-of-bounds 判定冲突 */
 const REPLAY_PAN_CLAMP_EPS = 0.5;
+
+function resolveCurrentUserOpenId() {
+  let openid = '';
+  const globalUserInfo = app.globalData && app.globalData.userInfo;
+  if (globalUserInfo && typeof globalUserInfo === 'object') {
+    const maybeOpenid = globalUserInfo.openid;
+    if (typeof maybeOpenid === 'string') {
+      openid = maybeOpenid.trim();
+    }
+  }
+  if (!openid) {
+    try {
+      const cached = wx.getStorageSync(STORAGE_USER_INFO_KEY);
+      if (cached && typeof cached === 'object' && typeof cached.openid === 'string') {
+        openid = cached.openid.trim();
+      }
+    } catch (e) {}
+  }
+  return openid;
+}
+
+function checkEnhanceBetaWhitelist() {
+  const openid = resolveCurrentUserOpenId();
+  return openid.length > 0 && ENHANCE_BETA_WHITELIST.indexOf(openid) !== -1;
+}
 
 /** 双指下滑唤醒曝光/对焦条：中点下移阈值（px），与捏合区分 */
 const AE_TWO_FINGER_DOWN_PX = 52;
@@ -868,6 +904,11 @@ Page({
      */
     enhanceWhitelisted: false,
     /**
+     * 当前用户是否在画质增强内测白名单中。
+     * 仅当用户命中白名单且机型能力通过时，长按空白区打开抽屉后才显示增强设置条。
+     */
+    enhanceBetaWhitelisted: false,
+    /**
      * 本机是否支持 VK 模式；由 app.js 冷启动用 `evaluateVkSupportCached` 判定。
      * 为 true 时工具条显示"VK 模式"按钮；进入 VK 需用户确认（精彩回放会暂停）。
      */
@@ -1520,15 +1561,20 @@ Page({
     /** 自动记分更新节流戳 */
     this._lastBleUpdateAt = 0;
 
+    const enhanceDeviceWhitelisted = !!(app.globalData && app.globalData.enableEnhanceRender);
+    const enhanceBetaWhitelisted = checkEnhanceBetaWhitelist();
+
     // 机型白名单：由 app.js 冷启动评估；live 页只读镜像一份到 data，驱动调试工具条可见性。
     this.setData({
-      enhanceWhitelisted: !!(app.globalData && app.globalData.enableEnhanceRender),
+      enhanceWhitelisted: enhanceDeviceWhitelisted,
+      enhanceBetaWhitelisted: enhanceBetaWhitelisted,
       // VK 入口与增强白名单绑定：若因熔断或机型未过白名单导致 enableEnhanceRender=false，
       // 则 VK 入口一并隐藏（否则 VK 切出→standard 时 _maybeBootEnhanceRender 会 early return，
       // 导致相机重建后无锐化、_pendingEnhanceModeAfterVk 永不被消费）。
       enhanceVkSupported: !!(app.globalData
         && app.globalData.vkModeSupported
-        && app.globalData.enableEnhanceRender)
+        && app.globalData.enableEnhanceRender
+        && enhanceBetaWhitelisted)
     });
     
     // 检查蓝牙管理器当前状态，同步初始模式（可选，默认手动）
@@ -4365,6 +4411,20 @@ Page({
   onShow: function () {
     this._livePageVisible = true;
     this._bindVkDebugHotkey();
+    const enhanceBetaWhitelisted = checkEnhanceBetaWhitelist();
+    const enhanceVkSupported = !!(app.globalData
+      && app.globalData.vkModeSupported
+      && app.globalData.enableEnhanceRender
+      && enhanceBetaWhitelisted);
+    if (
+      this.data.enhanceBetaWhitelisted !== enhanceBetaWhitelisted
+      || this.data.enhanceVkSupported !== enhanceVkSupported
+    ) {
+      this.setData({
+        enhanceBetaWhitelisted: enhanceBetaWhitelisted,
+        enhanceVkSupported: enhanceVkSupported
+      });
+    }
     try {
       wx.showShareMenu({
         withShareTicket: true,
@@ -8252,7 +8312,7 @@ Page({
    * @param {WechatMiniprogram.TouchEvent} e data-mode: off|standard|strong
    */
   onEnhanceModePick: function (e) {
-    if (!this.data.enhanceWhitelisted) return;
+    if (!this.data.enhanceWhitelisted || !this.data.enhanceBetaWhitelisted) return;
     if (this.data.recorderDegradedMode) {
       wx.showToast({ title: '当前为稳定优先模式', icon: 'none', duration: 1600 });
       return;
@@ -8342,7 +8402,7 @@ Page({
    * @returns {void}
    */
   startEnhanceFpsPolling: function () {
-    if (!this.data.enhanceWhitelisted) return;
+    if (!this.data.enhanceWhitelisted || !this.data.enhanceBetaWhitelisted) return;
     if (this._enhanceFpsPollTimer) return;
     var self = this;
     var poll = function () {

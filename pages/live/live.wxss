@@ -375,6 +375,10 @@ page {
   z-index: 5; /* 位于相机之上，UI 之下 */
 }
 
+.gesture-layer--disabled {
+  pointer-events: none;
+}
+
 /* 底部居中记分板 */
 .bottom-center-board {
   position: absolute;
@@ -2365,6 +2369,8 @@ page {
   right: 18rpx;
   z-index: 235;
   width: 300rpx;
+  height: 76vh;
+  max-height: 76vh;
   padding: 16rpx 18rpx 18rpx;
   border-radius: 20rpx;
   background: rgba(12, 15, 22, 0.84);
@@ -2374,7 +2380,8 @@ page {
   pointer-events: auto;
   display: flex;
   flex-direction: column;
-  max-height: 76vh;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .vk-debug-panel__head {
@@ -2386,9 +2393,14 @@ page {
 }
 
 .vk-debug-panel__body {
-  flex: 1;
+  display: block;
+  flex: 0 0 auto;
   min-height: 0;
-  height: 56vh;
+  height: calc(76vh - 92rpx);
+  max-height: calc(76vh - 92rpx);
+  width: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 .vk-debug-panel__scene-copy {

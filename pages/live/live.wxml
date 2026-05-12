@@ -36,7 +36,7 @@
   </view>
 
   <!-- Level 0.5: 透明手势层 (专门处理双指缩放) -->
-  <view class="gesture-layer"
+  <view class="gesture-layer {{vkDebugPanelVisible && enhanceMode === 'vk' ? 'gesture-layer--disabled' : ''}}"
     bindtouchstart="onTouchStart" 
     bindtouchmove="onTouchMove"
     bindtouchend="onTouchEnd"
@@ -559,7 +559,6 @@
     wx:if="{{vkDebugPanelVisible && enhanceMode === 'vk'}}"
     class="vk-debug-panel"
     catchtap="stopEnhanceToolbarBubble"
-    catchtouchmove="noopCatchMove"
   >
     <view class="vk-debug-panel__head" catchlongpress="onVkDebugToolbarLongPress">
       <view class="vk-debug-panel__scene-copy">
@@ -571,13 +570,25 @@
       </view>
     </view>
 
-    <scroll-view class="vk-debug-panel__body" scroll-y enhanced show-scrollbar="{{false}}">
+    <scroll-view
+      class="vk-debug-panel__body"
+      scroll-y="{{true}}"
+      enhanced="{{true}}"
+      enable-passive="{{true}}"
+      show-scrollbar="{{false}}"
+    >
     <view class="vk-debug-panel__selector-head">
       <text class="vk-debug-panel__label">场景选择</text>
       <view class="vk-debug-panel__action-btn" catchtap="onVkPresetRestore">恢复推荐</view>
     </view>
 
-    <scroll-view class="vk-debug-panel__selector-scroll" scroll-x enhanced show-scrollbar="{{false}}">
+    <scroll-view
+      class="vk-debug-panel__selector-scroll"
+      scroll-x="{{true}}"
+      enhanced="{{true}}"
+      enable-passive="{{true}}"
+      show-scrollbar="{{false}}"
+    >
       <view class="vk-debug-panel__selector-track">
         <view
           wx:for="{{vkPresetOptions}}"
@@ -691,8 +702,8 @@
     <!-- 遮罩：点击关闭（z-index 低于面板，不拦截面板内点击） -->
     <view class="drawer-mode-backdrop" catchtap="closeAllDrawers"></view>
 
-    <!-- 高清渲染调试工具条：仅白名单机型显示；抽屉打开时常驻顶部，便于对比画质 + 观测 FPS -->
-    <view wx:if="{{enhanceWhitelisted}}" class="enhance-mode-toolbar {{enhanceVkTransitioning ? 'enhance-mode-toolbar--transitioning' : ''}}" catchtap="stopEnhanceToolbarBubble">
+    <!-- 高清渲染调试工具条：仅内测白名单用户且设备能力通过时显示；需先长按空白区打开抽屉 -->
+    <view wx:if="{{enhanceWhitelisted && enhanceBetaWhitelisted}}" class="enhance-mode-toolbar {{enhanceVkTransitioning ? 'enhance-mode-toolbar--transitioning' : ''}}" catchtap="stopEnhanceToolbarBubble">
       <view class="enhance-mode-status" catchlongpress="onVkDebugToolbarLongPress">
         <text class="enhance-mode-k">画质增强</text>
         <text class="enhance-mode-v">{{c.enhanceModeLabel(enhanceMode)}} · {{enhanceFpsText}}</text>
