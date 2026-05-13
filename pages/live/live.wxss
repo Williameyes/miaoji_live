@@ -111,7 +111,7 @@ page {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 0;
+  gap: 12rpx;
   pointer-events: none;
   box-sizing: border-box;
 }
@@ -189,6 +189,156 @@ page {
   color: #f8fafc;
   background: rgba(74, 222, 128, 0.22);
   border-color: rgba(74, 222, 128, 0.45);
+}
+
+/* 自动记分：左侧 BLE 圆钮（与 ◎ 同栈，REC 同款 recover-fab） */
+.live-ble-fab.recover-fab {
+  pointer-events: auto;
+  opacity: 0.88;
+}
+
+.live-ble-fab--muted.recover-fab {
+  opacity: 0.58;
+}
+
+.live-ble-fab-progress--on {
+  background: conic-gradient(
+    from -90deg,
+    rgba(95, 217, 95, 0.35) 0deg,
+    rgba(48, 52, 58, 0.55) 360deg
+  ) !important;
+}
+
+.live-ble-fab-progress--off {
+  background: conic-gradient(
+    from -90deg,
+    rgba(120, 120, 130, 0.2) 0deg,
+    rgba(48, 52, 58, 0.55) 360deg
+  ) !important;
+}
+
+.live-ble-fab-inner {
+  background: rgba(10, 12, 16, 0.52) !important;
+  border: 1rpx solid rgba(255, 255, 255, 0.12) !important;
+}
+
+.live-ble-fab-text {
+  font-size: 10rpx !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.5rpx !important;
+  color: rgba(255, 255, 255, 0.88) !important;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace !important;
+}
+
+.live-ble-panel-backdrop {
+  position: fixed;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 28;
+  background: rgba(0, 0, 0, 0.22);
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-start;
+  padding: 0 0 118rpx 16rpx;
+  box-sizing: border-box;
+  pointer-events: auto;
+}
+
+.live-ble-panel--compact {
+  pointer-events: auto;
+  width: auto;
+  min-width: 200rpx;
+  max-width: 280rpx;
+  padding: 12rpx 14rpx 12rpx;
+  border-radius: 14rpx;
+  background: rgba(14, 16, 20, 0.94);
+  border: 1rpx solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 8rpx 28rpx rgba(0, 0, 0, 0.4);
+  box-sizing: border-box;
+}
+
+.live-ble-busy-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12rpx;
+  margin-bottom: 0;
+}
+
+.live-ble-busy-text {
+  font-size: 13rpx;
+  color: rgba(255, 255, 255, 0.75);
+  flex: 1;
+  min-width: 0;
+}
+
+.live-ble-busy-cancel {
+  font-size: 13rpx;
+  font-weight: 600;
+  color: #93c5fd;
+  flex-shrink: 0;
+}
+
+.live-ble-input--compact {
+  width: 100%;
+  height: 44rpx;
+  padding: 0 12rpx;
+  margin-bottom: 10rpx;
+  border-radius: 10rpx;
+  background: rgba(0, 0, 0, 0.38);
+  border: 1rpx solid rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-size: 18rpx;
+  font-weight: 600;
+  letter-spacing: 2rpx;
+  box-sizing: border-box;
+}
+
+.live-ble-actions--compact {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8rpx;
+  justify-content: space-between;
+}
+
+.live-ble-btn {
+  border-radius: 999rpx;
+  font-weight: 600;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.live-ble-btn--ghost {
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1rpx solid rgba(255, 255, 255, 0.12);
+}
+
+.live-ble-btn--primary {
+  color: #0f172a;
+  background: linear-gradient(180deg, #86efac 0%, #4ade80 100%);
+  border: 1rpx solid rgba(74, 222, 128, 0.45);
+}
+
+.live-ble-btn--warn {
+  color: #fff;
+  background: rgba(248, 113, 113, 0.22);
+  border: 1rpx solid rgba(248, 113, 113, 0.45);
+}
+
+.live-ble-btn--disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.live-ble-btn--sm {
+  min-width: 0;
+  padding: 8rpx 16rpx;
+  font-size: 13rpx;
 }
 
 /* 呼出条：在 16:9 画幅内左侧，叠层高于角标/记分条热区 */
@@ -598,38 +748,6 @@ page {
   line-height: 1;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.5rpx;
-}
-
-.shot-clock-outer {
-  width: 30rpx;
-  height: 30rpx;
-  background: rgba(0, 0, 0, 0.45);
-  border: 1rpx solid rgba(255, 255, 255, 0.15);
-  border-radius: 6rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 15rpx;
-  font-weight: normal;
-  color: #ffb800;
-  margin-left: 12rpx; /* 与队名容器的间距 */
-  flex-shrink: 0;
-  font-variant-numeric: tabular-nums;
-  box-sizing: border-box;
-}
-
-.shot-clock-placeholder {
-  width: 30rpx;
-  height: 30rpx;
-  margin-right: 12rpx; /* 对称间距 */
-  flex-shrink: 0;
-  visibility: hidden;
-}
-
-.shot-clock-outer--warn {
-  color: #ff4d4f;
-  border-color: rgba(255, 77, 79, 0.4);
-  background: rgba(255, 77, 79, 0.12);
 }
 
 .replay-overlay {

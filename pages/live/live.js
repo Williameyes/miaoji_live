@@ -13,6 +13,8 @@ const vkSceneAnalyzerMod = require('./vk-scene-analyzer.js');
 const eventBus = require('../../utils/eventBus.js');
 const { checkSyncLabWhitelist } = require('../../utils/sync-lab-whitelist.js');
 const bleManager = require('../../services/bleManager.js');
+const bleProtocol = require('../../utils/ble-protocol.js');
+const liveBleQuick = require('../../utils/live-ble-quick-connect.js');
 const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
 
 /**
@@ -960,7 +962,16 @@ Page({
     isAutoMode: false,
     bleMinutes: 0,
     bleSeconds: 0,
-    bleShotClock: 24
+    /** 采集端蓝牙已连接（与 bleManager 同步，用于角标） */
+    liveBleChipConnected: false,
+    /** 是否展开 Live 内蓝牙快连面板 */
+    liveBlePanelOpen: false,
+    /** 4 位匹配码输入 */
+    liveBleQuickCode: '',
+    /** 正在扫描或连接中 */
+    liveBleQuickBusy: false,
+    /** 快连面板状态说明（仅扫描/错误时简短展示） */
+    liveBleQuickStatusText: ''
   },
 
   /**
@@ -1762,30 +1773,256 @@ Page({
       this._updateLiveStageLayout();
     } catch (eL0) { }
 
+    try {
+      this._liveBleSyncChipConnected();
+    } catch (eBle0) {}
+
     // 直播核心拉起统一放在 onShow，避免 onLoad + onShow 并发触发 camera 重建。
+    this._liveBlePreferAutoAfterConnect = false;
+    this._liveBleQuickScanRunner = null;
+    this._liveBleAutoRestoreConsumed = false;
   },
 
-  onUnload: function () {
-    this._cleanup(); // 现有的清理逻辑
-    eventBus.off('BLE_DATA_UPDATE', this._onBleDataUpdate);
-    eventBus.off('BLE_CONNECTION_UPDATE', this._onBleConnectionUpdate);
-    wx.setKeepScreenOn({ keepScreenOn: false });
-  },
-
-  // ─── 蓝牙自动模式逻辑 ──────────────────────────────────
+  // 已合并至文件后部 onUnload：此处不再重复定义，避免后项覆盖导致事件未解绑。
 
   _onBleConnectionUpdate: function (res) {
-    if (!res.connected && this.data.isAutoMode) {
-      console.warn('[Live] BLE disconnected in AutoMode, switching back to manual');
-      this.setData({ isAutoMode: false }, () => {
+    var connected = !!res.connected;
+    if (this.data.liveBleChipConnected !== connected) {
+      this.setData({ liveBleChipConnected: connected });
+    }
+
+    if (!connected) {
+      if (this.data.isAutoMode) {
+        this._liveBlePreferAutoAfterConnect = true;
+        console.warn('[Live] BLE disconnected in AutoMode, switching back to manual');
+        this.setData({ isAutoMode: false }, () => {
+          this.updateTeamGroupWidth(true);
+        });
+        wx.showToast({
+          title: '采集端已断开，已恢复手动。点「蓝牙」可重连',
+          icon: 'none',
+          duration: 2800
+        });
+      }
+      return;
+    }
+
+    if (connected && this._liveBlePreferAutoAfterConnect && this.data.autoSyncWhitelisted) {
+      this._liveBlePreferAutoAfterConnect = false;
+      this._liveBleAutoRestoreConsumed = true;
+      this.setData({ isAutoMode: true }, () => {
         this.updateTeamGroupWidth(true);
       });
-      wx.showToast({
-        title: '采集端连接断开，已恢复手动模式',
-        icon: 'none',
-        duration: 2500
-      });
     }
+  },
+
+  /**
+   * 与 bleManager 同步角标（onShow 等调用）。
+   * @returns {void}
+   */
+  _liveBleSyncChipConnected: function () {
+    if (!this.data.autoSyncWhitelisted) return;
+    var c = !!bleManager.isConnected;
+    if (this.data.liveBleChipConnected !== c) {
+      this.setData({ liveBleChipConnected: c });
+    }
+  },
+
+  /**
+   * 打开蓝牙快连面板并预填上次匹配码。
+   * @returns {void}
+   */
+  _liveBleOpenQuickPanelPrefilled: function () {
+    if (!this.data.autoSyncWhitelisted) return;
+    var code = '';
+    try {
+      code = String(wx.getStorageSync(liveBleQuick.STORAGE_LAST_MATCH_CODE) || '');
+    } catch (e0) {}
+    code = code.replace(/\D/g, '').slice(0, 4);
+    this.setData({
+      liveBlePanelOpen: true,
+      liveBleQuickCode: code || this.data.liveBleQuickCode,
+      liveBleQuickStatusText: ''
+    });
+  },
+
+  /**
+   * 点击左侧「BLE」圆钮：展开/收起快连面板（仅自动记分模式可见）。
+   * @returns {void}
+   */
+  onLiveBleChipTap: function () {
+    if (!this.data.autoSyncWhitelisted) return;
+    this._liveBleSyncChipConnected();
+    if (this.data.liveBlePanelOpen) {
+      if (!this.data.liveBleQuickBusy) {
+        this.setData({ liveBlePanelOpen: false, liveBleQuickStatusText: '' });
+      }
+      return;
+    }
+    this._liveBleOpenQuickPanelPrefilled();
+  },
+
+  /**
+   * 轻点遮罩关闭快连面板（扫描中不可关，避免误触中断）。
+   * @returns {void}
+   */
+  onLiveBlePanelBackdropTap: function () {
+    if (this.data.liveBleQuickBusy) {
+      this._liveBleAbortQuickScanSilently();
+    }
+    this.setData({ liveBlePanelOpen: false, liveBleQuickStatusText: '' });
+  },
+
+  /**
+   * 阻止点击穿透到遮罩（空 catch）。
+   * @returns {void}
+   */
+  noopCatchTap: function () {},
+
+  /**
+   * 匹配码输入框变更。
+   * @param {object} e 微信 input 事件
+   * @returns {void}
+   */
+  onLiveBleMatchCodeInput: function (e) {
+    var v = String((e.detail && e.detail.value) || '').replace(/\D/g, '').slice(0, 4);
+    this.setData({ liveBleQuickCode: v });
+  },
+
+  /**
+   * 执行扫描并连接采集端（与 sync-lab broadcaster 同源流程）。
+   * @returns {void}
+   */
+  onLiveBleQuickConnectRun: function () {
+    var self = this;
+    if (!this.data.autoSyncWhitelisted || this.data.liveBleQuickBusy) return;
+    var code = String(this.data.liveBleQuickCode || '').replace(/\D/g, '');
+    if (code.length !== 4) {
+      wx.showToast({ title: '请输入 4 位匹配码', icon: 'none' });
+      return;
+    }
+    if (this._liveBleQuickScanRunner) {
+      try {
+        this._liveBleQuickScanRunner.cancel();
+      } catch (e0) {}
+      this._liveBleQuickScanRunner = null;
+    }
+    var deviceName = bleProtocol.DEVICE_NAME_PREFIX + code;
+    this.setData({ liveBleQuickBusy: true, liveBleQuickStatusText: '扫描中' });
+    var runner = liveBleQuick.startLiveBleQuickScan({
+      deviceName: deviceName,
+      onPhase: function (phase, detail) {
+        var text = '';
+        if (phase === 'scanning') text = '扫描中';
+        else if (phase === 'connecting') text = '连接中';
+        else if (phase === 'connected') text = '';
+        else if (phase === 'not_found') text = '未发现设备';
+        else if (phase === 'error') text = String(detail || '失败').slice(0, 40);
+        else if (phase === 'cancelled') text = '';
+        self.setData({ liveBleQuickStatusText: text });
+      }
+    });
+    this._liveBleQuickScanRunner = runner;
+    runner.finished
+      .then(function () {
+        self._liveBleQuickScanRunner = null;
+        try {
+          wx.setStorageSync(liveBleQuick.STORAGE_LAST_MATCH_CODE, code);
+        } catch (eS) {}
+        var autoRestored = !!self._liveBleAutoRestoreConsumed;
+        self._liveBleAutoRestoreConsumed = false;
+        var patch = {
+          liveBleQuickBusy: false,
+          liveBlePanelOpen: false,
+          liveBleQuickStatusText: ''
+        };
+        if (self.data.autoSyncWhitelisted) {
+          patch.isAutoMode = true;
+        }
+        self.setData(patch, function () {
+          if (patch.isAutoMode) {
+            self.updateTeamGroupWidth(true);
+          }
+        });
+        wx.showToast({
+          title: autoRestored ? '已连接，自动记分已恢复' : '已连接并开启自动记分',
+          icon: 'success',
+          duration: 1600
+        });
+      })
+      .catch(function (err) {
+        self._liveBleQuickScanRunner = null;
+        self.setData({
+          liveBleQuickBusy: false,
+          liveBleChipConnected: !!bleManager.isConnected,
+          liveBleQuickStatusText: ''
+        });
+        var msg = err && err.message ? String(err.message) : '';
+        if (msg === 'not_found') {
+          wx.showToast({ title: '未找到设备', icon: 'none' });
+        } else if (msg !== 'cancelled') {
+          wx.showToast({ title: '连接失败', icon: 'none' });
+        }
+      });
+  },
+
+  /**
+   * 主动断开采集端蓝牙（与节次长按菜单「手动」独立，便于更换设备）。
+   * @returns {void}
+   */
+  onLiveBleDisconnectTap: function () {
+    var self = this;
+    if (!bleManager.isConnected) {
+      this.setData({ liveBlePanelOpen: false, liveBleChipConnected: false, liveBleQuickStatusText: '' });
+      return;
+    }
+    this.setData({ liveBleQuickBusy: true });
+    Promise.resolve(bleManager.disconnect())
+      .then(function () {
+        self._liveBlePreferAutoAfterConnect = false;
+        self.setData(
+          {
+            liveBleQuickBusy: false,
+            liveBleChipConnected: false,
+            liveBlePanelOpen: false,
+            liveBleQuickStatusText: '',
+            isAutoMode: false
+          },
+          function () {
+            self.updateTeamGroupWidth(true);
+          }
+        );
+        wx.showToast({ title: '已断开蓝牙', icon: 'none' });
+      })
+      .catch(function () {
+        self.setData({ liveBleQuickBusy: false });
+      });
+  },
+
+  /**
+   * 页面隐藏或中断扫描时调用：停止发现、清理句柄。
+   * @returns {void}
+   */
+  _liveBleAbortQuickScanSilently: function () {
+    if (this._liveBleQuickScanRunner) {
+      try {
+        this._liveBleQuickScanRunner.cancel();
+      } catch (eA) {}
+      this._liveBleQuickScanRunner = null;
+    }
+    if (this.data.liveBleQuickBusy) {
+      this.setData({ liveBleQuickBusy: false });
+    }
+  },
+
+  /**
+   * 用户取消正在进行的扫描/连接。
+   * @returns {void}
+   */
+  onLiveBleQuickScanCancelTap: function () {
+    if (!this.data.liveBleQuickBusy) return;
+    this._liveBleAbortQuickScanSilently();
+    this.setData({ liveBleQuickStatusText: '' });
   },
 
   _onBleDataUpdate: function (data) {
@@ -1798,11 +2035,10 @@ Page({
 
     try {
       if (!this.data.isAutoMode) {
-        // 即使不在自动模式，也更新倒计时显示用的缓存值
+        // 即使不在自动模式，也更新节间时钟显示用的缓存值（进攻 24s 已由采集端下线）
         this.setData({
           bleMinutes: data.minutes,
-          bleSeconds: data.seconds,
-          bleShotClock: data.shotClock
+          bleSeconds: data.seconds
         });
         return;
       }
@@ -1822,15 +2058,11 @@ Page({
         mc.teamB.score = data.awayScore;
         changed = true;
       }
-      if (mc.period !== data.period) {
-        mc.period = data.period;
-        changed = true;
-      }
+      // 节次由直播页手动切换并持久化；采集端已不再同步可靠节次，禁止用 BLE 覆盖
 
       const patch = {
         bleMinutes: data.minutes,
-        bleSeconds: data.seconds,
-        bleShotClock: data.shotClock
+        bleSeconds: data.seconds
       };
 
       if (changed) {
@@ -1864,12 +2096,12 @@ Page({
           const nextMode = !self.data.isAutoMode;
           
           if (nextMode && !bleManager.isConnected) {
-            wx.showModal({
-              title: '提示',
-              content: '蓝牙尚未连接，请先在同步实验室页面连接采集端。',
-              showCancel: false
-            });
+            self._liveBleOpenQuickPanelPrefilled();
             return;
+          }
+
+          if (!nextMode) {
+            self._liveBlePreferAutoAfterConnect = false;
           }
 
           self.setData({ isAutoMode: nextMode }, () => {
@@ -4474,6 +4706,9 @@ Page({
 
     this.syncMatchConfigFromPageSources();
     try {
+      this._liveBleSyncChipConnected();
+    } catch (eBleChip) {}
+    try {
       const cid =
         wx.getStorageSync('currentMatchId') || (app.globalData && app.globalData.currentMatchId) || '';
       clipsStorage.mergeDefaultClipBucketIfTargetEmpty(String(cid || '').trim());
@@ -5160,6 +5395,12 @@ Page({
   },
 
   onUnload: function () {
+    try {
+      eventBus.off('BLE_DATA_UPDATE', this._onBleDataUpdate);
+      eventBus.off('BLE_CONNECTION_UPDATE', this._onBleConnectionUpdate);
+    } catch (eBleOff) {}
+    wx.setKeepScreenOn({ keepScreenOn: false });
+    this._liveBleAbortQuickScanSilently();
     if (this._vkEnvironmentSampler && typeof this._vkEnvironmentSampler.destroy === 'function') {
       this._vkEnvironmentSampler.destroy();
       this._vkEnvironmentSampler = null;
@@ -5303,6 +5544,8 @@ Page({
       this.setData({ showStoragePressureModal: false });
     }
     this._livePageVisible = false;
+    this._liveBleAbortQuickScanSilently();
+    this.setData({ liveBlePanelOpen: false, liveBleQuickStatusText: '' });
     this._cacheLampBatchRunning = false;
     if (this._lightHintFadeTimer) {
       try {
@@ -5877,9 +6120,12 @@ Page({
 
   // 节次切换
   onPeriodTap: function () {
-    let { period } = this.data.matchConfig;
-    period = (period + 1) % this.data.periods.length;
-    this.setData({ 'matchConfig.period': period });
+    const len = this.data.periods.length;
+    if (!len) return;
+    const next = (this.data.matchConfig.period + 1) % len;
+    this.setData({ 'matchConfig.period': next }, () => {
+      this.persistConfig();
+    });
     this.vibrate('light');
   },
 

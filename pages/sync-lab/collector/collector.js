@@ -60,8 +60,8 @@ var OCR_SCORE_JUMP_REVERT_EPSILON = 4;
  * @type {number}
  */
 var OCR_SCORE_JUMP_MANUAL_GUARD_MS = 1500;
-/** 一般大单帧跳变需连续多少帧解析出相同 (主,客) 分才接受。 */
-var OCR_SCORE_JUMP_STREAK_NORMAL = 2;
+/** 一般大单帧跳变需连续多少帧解析出相同 (主,客) 分才接受（非截断类）。 */
+var OCR_SCORE_JUMP_STREAK_NORMAL = 3;
 /**
  * 疑似「高位截断」误读（如 111→11）时要求更多连续一致帧，减轻稳定误读过关。
  * @type {number}
@@ -458,7 +458,14 @@ Page({
     var p = parseInt(e.currentTarget.dataset.p, 10);
     if (!p || p < 1 || p > 8) return;
     this.setData({ period: p });
-    this._notify();
+    this._notify({
+      homeScore: this.data.homeScore,
+      awayScore: this.data.awayScore,
+      period: p,
+      minutes: this.data.minutes,
+      seconds: this.data.seconds,
+      shotClock: this.data.shotClock
+    });
   },
 
   // ─── OCR 开关 ────────────────────────────────────────
@@ -1150,16 +1157,24 @@ Page({
     var prevT = ocrFrameClockSec(_lastCommittedFrame);
     var newT = (Number(timeInfo.minutes) || 0) * 60 + (Number(timeInfo.seconds) || 0);
     if (newT === prevT) return;
-    this.setData({
-      minutes: timeInfo.minutes,
-      seconds: timeInfo.seconds,
+    var snap = {
       homeScore: _lastCommittedFrame.homeScore,
       awayScore: _lastCommittedFrame.awayScore,
       period: this.data.period,
+      minutes: timeInfo.minutes,
+      seconds: timeInfo.seconds,
       shotClock: this.data.shotClock
+    };
+    this.setData({
+      minutes: snap.minutes,
+      seconds: snap.seconds,
+      homeScore: snap.homeScore,
+      awayScore: snap.awayScore,
+      period: snap.period,
+      shotClock: snap.shotClock
     });
     _lastNotifyWallAt = wallMs;
-    this._notify();
+    this._notify(snap);
   },
 
   /**
@@ -1311,12 +1326,11 @@ Page({
       shotClock: frame.shotClock
     });
     _pendingOcrFrame = null;
-    _lastCommittedFrame = Object.assign({}, frame);
     _lastCommittedFrameKey = frameKey;
     _lastRejectedStableFrameKey = '';
     _lastRejectedStableFrameCount = 0;
     _lastNotifyWallAt = wall;
-    this._notify();
+    this._notify(frame);
   },
 
   // ─── BLE：启动 / 停止 ────────────────────────────────
@@ -1423,7 +1437,7 @@ Page({
 
     _server.onCharacteristicReadRequest(function (res) {
       if (!_server) return;
-      var d = self.data;
+      var d = _lastCommittedFrame || self.data;
       _server.writeCharacteristicValue({
         serviceId: BLE.SERVICE_UUID,
         characteristicId: BLE.CHAR_SCORE_UUID,
@@ -1502,29 +1516,62 @@ Page({
 
   onHomeScorePlus: function () {
     bumpManualScoreEditGate();
-    this.setData({ homeScore: this.data.homeScore + 1 });
-    this._notify();
+    var nh = this.data.homeScore + 1;
+    this.setData({ homeScore: nh });
+    this._notify({
+      homeScore: nh,
+      awayScore: this.data.awayScore,
+      period: this.data.period,
+      minutes: this.data.minutes,
+      seconds: this.data.seconds,
+      shotClock: this.data.shotClock
+    });
   },
   onAwayScorePlus: function () {
     bumpManualScoreEditGate();
-    this.setData({ awayScore: this.data.awayScore + 1 });
-    this._notify();
+    var na = this.data.awayScore + 1;
+    this.setData({ awayScore: na });
+    this._notify({
+      homeScore: this.data.homeScore,
+      awayScore: na,
+      period: this.data.period,
+      minutes: this.data.minutes,
+      seconds: this.data.seconds,
+      shotClock: this.data.shotClock
+    });
   },
   onPeriodPlus: function () {
     bumpManualScoreEditGate();
-    if (this.data.period < 8) this.setData({ period: this.data.period + 1 });
-    this._notify();
+    var cur = this.data.period;
+    var np = cur < 8 ? cur + 1 : cur;
+    if (cur < 8) this.setData({ period: np });
+    this._notify({
+      homeScore: this.data.homeScore,
+      awayScore: this.data.awayScore,
+      period: np,
+      minutes: this.data.minutes,
+      seconds: this.data.seconds,
+      shotClock: this.data.shotClock
+    });
   },
   onReset: function () {
     bumpManualScoreEditGate();
     this.setData({ homeScore: 0, awayScore: 0, period: 1, minutes: 10, seconds: 0, shotClock: 24 });
-    this._notify();
+    this._notify({
+      homeScore: 0,
+      awayScore: 0,
+      period: 1,
+      minutes: 10,
+      seconds: 0,
+      shotClock: 24
+    });
   },
 
   // ─── BLE 推送 notify ─────────────────────────────────
 
   /**
-   * 在退避窗口结束后补发当前比分（读最新 this.data）。
+   * 在退避窗口结束后补发：使用 `_lastCommittedFrame` 编码，与 `_notify` 写入的快照一致。
+   * @returns {void}
    */
   _flushBleNotifyIfReady: function () {
     var self = this;
@@ -1540,7 +1587,8 @@ Page({
       }
       return;
     }
-    var d = self.data;
+    var d = _lastCommittedFrame;
+    if (!d) return;
     _server.writeCharacteristicValue({
       serviceId: BLE.SERVICE_UUID,
       characteristicId: BLE.CHAR_SCORE_UUID,
@@ -1573,15 +1621,31 @@ Page({
     });
   },
 
-  _notify: function () {
-    _lastCommittedFrame = {
-      homeScore: this.data.homeScore,
-      awayScore: this.data.awayScore,
-      period: this.data.period,
-      minutes: this.data.minutes,
-      seconds: this.data.seconds,
-      shotClock: this.data.shotClock
-    };
+  /**
+   * 同步「已提交」状态并尝试 BLE notify。
+   * @param {{ homeScore?: number, awayScore?: number, period?: number, minutes?: number, seconds?: number, shotClock?: number } | void} snapshot 若传入则写入 `_lastCommittedFrame` 并用于后续 encode；否则用当前 `this.data`（仅适合未与 setData 交叉的调用）。
+   * @returns {void}
+   */
+  _notify: function (snapshot) {
+    if (snapshot && typeof snapshot === 'object') {
+      _lastCommittedFrame = {
+        homeScore: Number(snapshot.homeScore) || 0,
+        awayScore: Number(snapshot.awayScore) || 0,
+        period: Number(snapshot.period) || 1,
+        minutes: Number(snapshot.minutes) || 0,
+        seconds: Number(snapshot.seconds) || 0,
+        shotClock: Number(snapshot.shotClock) || 0
+      };
+    } else {
+      _lastCommittedFrame = {
+        homeScore: this.data.homeScore,
+        awayScore: this.data.awayScore,
+        period: this.data.period,
+        minutes: this.data.minutes,
+        seconds: this.data.seconds,
+        shotClock: this.data.shotClock
+      };
+    }
     if (!_server || !_connectedDeviceId) return;
     this._flushBleNotifyIfReady();
   }

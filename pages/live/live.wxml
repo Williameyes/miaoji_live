@@ -130,18 +130,62 @@
       </view>
     </view>
 
-    <!-- 相机设置 ◎：与 REC 角对称，落在黑边；呼出条在 cameraSettingsPanelStyle -->
+    <!-- 相机设置 ◎：与 REC 角对称，落在黑边；自动记分开启时在其上方叠 BLE 快连（REC 同款圆钮） -->
     <view
       class="left-camera-fab-stack"
       style="{{leftCameraFabStyle}}"
       wx:if="{{cameraMounted && liveStreamAllowed && !isReplaying && drawerMode === 0 && enhanceMode !== 'vk'}}"
     >
+      <view
+        wx:if="{{isAutoMode && autoSyncWhitelisted}}"
+        class="recover-fab recover-fab--ok live-ble-fab {{liveBleChipConnected ? '' : 'live-ble-fab--muted'}}"
+        catchtap="onLiveBleChipTap"
+      >
+        <view class="recover-fab-ring">
+          <view
+            class="recover-fab-progress {{liveBleChipConnected ? 'live-ble-fab-progress--on' : 'live-ble-fab-progress--off'}}"
+          ></view>
+          <view class="recover-fab-inner live-ble-fab-inner">
+            <text class="recover-fab-text live-ble-fab-text">BLE</text>
+          </view>
+        </view>
+      </view>
       <view class="recover-fab recover-fab--ok left-cam-fab" catchtap="onCameraSettingsFabTap">
         <view class="recover-fab-ring">
           <view class="recover-fab-progress left-cam-fab-progress"></view>
           <view class="recover-fab-inner left-cam-fab-inner">
             <text class="recover-fab-text left-cam-fab-glyph">◎</text>
           </view>
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{autoSyncWhitelisted && liveBlePanelOpen}}" class="live-ble-panel-backdrop" catchtap="onLiveBlePanelBackdropTap">
+      <view class="live-ble-panel live-ble-panel--compact" catchtap="noopCatchTap">
+        <view wx:if="{{liveBleQuickBusy}}" class="live-ble-busy-row">
+          <text class="live-ble-busy-text">{{liveBleQuickStatusText}}</text>
+          <text class="live-ble-busy-cancel" catchtap="onLiveBleQuickScanCancelTap">取消</text>
+        </view>
+        <block wx:if="{{!liveBleChipConnected && !liveBleQuickBusy}}">
+          <input
+            class="live-ble-input live-ble-input--compact"
+            type="number"
+            maxlength="4"
+            placeholder="4位码"
+            value="{{liveBleQuickCode}}"
+            bindinput="onLiveBleMatchCodeInput"
+          />
+          <view class="live-ble-actions live-ble-actions--compact">
+            <view class="live-ble-btn live-ble-btn--ghost live-ble-btn--sm" catchtap="onLiveBlePanelBackdropTap">关闭</view>
+            <view class="live-ble-btn live-ble-btn--primary live-ble-btn--sm" catchtap="onLiveBleQuickConnectRun">连接</view>
+          </view>
+        </block>
+        <view wx:if="{{!liveBleQuickBusy && liveBleChipConnected}}" class="live-ble-actions live-ble-actions--compact">
+          <view class="live-ble-btn live-ble-btn--ghost live-ble-btn--sm" catchtap="onLiveBlePanelBackdropTap">关闭</view>
+          <view
+            class="live-ble-btn live-ble-btn--warn live-ble-btn--sm {{liveBleQuickBusy ? 'live-ble-btn--disabled' : ''}}"
+            catchtap="onLiveBleDisconnectTap"
+          >断开</view>
         </view>
       </view>
     </view>
@@ -187,9 +231,6 @@
 
       <!-- 记分条主体：左右等宽且比分固定（色条视觉约 50% 高度，操作热区保持原 min-height） -->
       <view class="main-score-bar">
-        <!-- 占位，平衡右侧的 24s，确保中心对齐 -->
-        <view wx:if="{{isAutoMode}}" class="shot-clock-placeholder"></view>
-
         <!-- 球队 A 容器 -->
         <view
           class="team-group team-a-group"
@@ -273,11 +314,6 @@
               <text class="team-name-inner">{{c.limitTeamName(matchConfig.teamB.name || '队B')}}</text>
             </view>
           </view>
-        </view>
-
-        <!-- 24秒倒计时 (自动模式) -->
-        <view wx:if="{{isAutoMode}}" class="shot-clock-outer {{bleShotClock <= 5 ? 'shot-clock-outer--warn' : ''}}">
-          {{bleShotClock}}
         </view>
       </view>
 
