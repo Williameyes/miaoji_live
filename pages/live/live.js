@@ -1781,6 +1781,7 @@ Page({
     this._liveBlePreferAutoAfterConnect = false;
     this._liveBleQuickScanRunner = null;
     this._liveBleAutoRestoreConsumed = false;
+    this._liveBlePersistTimer = null;
   },
 
   // 已合并至文件后部 onUnload：此处不再重复定义，避免后项覆盖导致事件未解绑。
@@ -1792,6 +1793,7 @@ Page({
     }
 
     if (!connected) {
+      this._liveBleFlushScorePersist();
       if (this.data.isAutoMode) {
         this._liveBlePreferAutoAfterConnect = true;
         console.warn('[Live] BLE disconnected in AutoMode, switching back to manual');
@@ -1972,6 +1974,7 @@ Page({
    */
   onLiveBleDisconnectTap: function () {
     var self = this;
+    this._liveBleFlushScorePersist();
     if (!bleManager.isConnected) {
       this.setData({ liveBlePanelOpen: false, liveBleChipConnected: false, liveBleQuickStatusText: '' });
       return;
@@ -2025,6 +2028,43 @@ Page({
     this.setData({ liveBleQuickStatusText: '' });
   },
 
+  /**
+   * 将当前 `matchConfig` 比分经 {@link persistConfig} 落盘（含 MIAOXIE_MATCHES），与手动记分同源。
+   * 使用短防抖合并连续 BLE 包，减轻 Storage 写入频率。
+   * @returns {void}
+   */
+  _liveBleScheduleScorePersist: function () {
+    var self = this;
+    if (this._liveBlePersistTimer) {
+      clearTimeout(this._liveBlePersistTimer);
+      this._liveBlePersistTimer = null;
+    }
+    this._liveBlePersistTimer = setTimeout(function () {
+      self._liveBlePersistTimer = null;
+      try {
+        self.persistConfig();
+      } catch (eP) {
+        console.error('[Live] BLE score persist:', eP);
+      }
+    }, 320);
+  },
+
+  /**
+   * 取消防抖并立即执行比分落盘（断线、回手动、离页等路径调用）。
+   * @returns {void}
+   */
+  _liveBleFlushScorePersist: function () {
+    if (this._liveBlePersistTimer) {
+      clearTimeout(this._liveBlePersistTimer);
+      this._liveBlePersistTimer = null;
+    }
+    try {
+      this.persistConfig();
+    } catch (eP) {
+      console.error('[Live] BLE score persist flush:', eP);
+    }
+  },
+
   _onBleDataUpdate: function (data) {
     const now = Date.now();
     // 节流：如果是密集数据包，限制更新频率（约 10fps）以防 UI 卡死
@@ -2067,9 +2107,7 @@ Page({
 
       if (changed) {
         patch.matchConfig = mc;
-        // 同步到全局
-        app.globalData.matchConfig = mc;
-        wx.setStorageSync('matchConfig', mc);
+        this._liveBleScheduleScorePersist();
       }
 
       this.setData(patch);
@@ -2102,6 +2140,7 @@ Page({
 
           if (!nextMode) {
             self._liveBlePreferAutoAfterConnect = false;
+            self._liveBleFlushScorePersist();
           }
 
           self.setData({ isAutoMode: nextMode }, () => {
@@ -5401,6 +5440,7 @@ Page({
     } catch (eBleOff) {}
     wx.setKeepScreenOn({ keepScreenOn: false });
     this._liveBleAbortQuickScanSilently();
+    this._liveBleFlushScorePersist();
     if (this._vkEnvironmentSampler && typeof this._vkEnvironmentSampler.destroy === 'function') {
       this._vkEnvironmentSampler.destroy();
       this._vkEnvironmentSampler = null;
@@ -5545,6 +5585,7 @@ Page({
     }
     this._livePageVisible = false;
     this._liveBleAbortQuickScanSilently();
+    this._liveBleFlushScorePersist();
     this.setData({ liveBlePanelOpen: false, liveBleQuickStatusText: '' });
     this._cacheLampBatchRunning = false;
     if (this._lightHintFadeTimer) {
