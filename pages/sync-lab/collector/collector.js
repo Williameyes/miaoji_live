@@ -29,16 +29,26 @@ var REQ = require('../../../utils/request.js');
 var STORAGE_KEY_ROIS = 'sync_lab_rois_v1';
 /** 当前 OCR 队列 ROI 数量：主队分、客队分、时间（已移除 24 秒 ROI）。 */
 var OCR_ROI_COUNT = 3;
+var OCR_MIN_INTERVAL_BASE_MS = 160;
 var OCR_MIN_INTERVAL_MS = 160;
 var OCR_PUMP_INTERVAL_MS = 120;
 /** 单 ROI runOCR 超时（略收紧，避免长时间占用导致时间 ROI 断层）。 */
 var OCR_RUN_TIMEOUT_MS = 720;
 var OCR_TIMEOUT_SETTLE_MS = 0;
 var OCR_MAX_VARIANTS_PER_RUN = 3;
+var OCR_SCORE_TICK_INTERVAL = 8;
+var OCR_TIME_PREDICT_MAX_STALE_MS = 5000;
+var OCR_CLOCK_PREDICT_TICK_MS = 250;
+var OCR_CLOCK_PREDICT_ACTIVE_MS = 4500;
+var OCR_CLOCK_CATCHUP_MAX_DROP_SEC = 20;
+var OCR_CLOCK_CATCHUP_FAST_INTERVAL_MS = 520;
+var OCR_CLOCK_NORMAL_INTERVAL_MS = 900;
+var OCR_CLOCK_PAUSE_CONFIRM_MS = 1200;
+var OCR_CLOCK_RESUME_CONFIRM_MS = 700;
 /** 时间 ROI 刷新间隔（收紧以减轻跳秒观感）。 */
 var OCR_TIME_REFRESH_MS = 160;
-/** 比分 ROI 刷新间隔（略放宽，把时间槽让给时钟）。 */
-var OCR_SCORE_REFRESH_MS = 720;
+/** 比分 ROI 刷新间隔（放宽，把更多 OCR 槽让给时钟；比分另有确认门禁）。 */
+var OCR_SCORE_REFRESH_MS = 1200;
 /**
  * 距上次时间 ROI 解析成功超过该毫秒时，在队列中优先时间 ROI。
  * @type {number}
@@ -69,6 +79,7 @@ var OCR_SCORE_JUMP_STREAK_NORMAL = 3;
 var OCR_SCORE_JUMP_STREAK_TRUNC = 5;
 /** 长时运行：约 50 分钟温和重建 VK 会话，降低 session 僵死与内存爬升风险 */
 var OCR_SESSION_REBUILD_MS = 50 * 60 * 1000;
+var OCR_SESSION_ROTATE_MS = 18 * 60 * 1000;
 /** 健康检查间隔（重建判定、后台恢复） */
 var OCR_HEALTH_INTERVAL_MS = 60 * 1000;
 /** 连续 runOCR 超时/异常达到该次数后触发温和重建（滑动窗口内） */
@@ -90,6 +101,8 @@ var _server = null;
 var _connectedDeviceId = '';
 var _cameraContext = null;
 var _cameraFrameListener = null;
+var _ocrVkCanvas = null;
+var _ocrVkGl = null;
 
 /** @type {any} VKSession 实例 */
 var _vkSession = null;
@@ -98,6 +111,7 @@ var _pendingOcrFrame = null;
 var _lastCommittedFrameKey = '';
 var _bleStarting = false;
 var _ocrBootTimer = 0;
+var _ocrCameraRemountTimer = 0;
 var _ocrSessionToken = 0;
 var _ocrAnchorWatchdogTimer = 0;
 var _ocrAnchorEventCount = 0;
@@ -111,10 +125,16 @@ var _ocrRunLastTs = 0;
 var _ocrRunState = null;
 var _ocrRunTimeout = 0;
 var _ocrTimeoutSettleUntil = 0;
+var _ocrBusySince = 0;
+var _ocrRunStartedAt = 0;
 var _ocrQueueCursor = 0;
+var _ocrTick = 0;
 var _ocrManualMode = false;
 /** 最近一次时间 ROI 解析出合法 mm:ss 的墙钟时间戳（供时间优先调度）。 */
 var _ocrLastTimeSuccessTs = 0;
+/** 预测时钟：OCR 短时掉帧时根据墙钟平滑补秒，减轻恢复后跳秒。 */
+var _predictedClock = null;
+var _predictedClockWallTs = 0;
 /** 最近一次成功 BLE 提交的墙钟时间戳（供单帧时钟回跳检测）。 */
 var _lastNotifyWallAt = 0;
 /** 待下一帧复核的帧快照（时间疑似 OCR 跳变时暂缓 _notify）。 */
@@ -128,12 +148,34 @@ var _lastRejectedStableFrameKey = '';
 var _lastRejectedStableFrameCount = 0;
 var _ocrLastRoiRunTs = [0, 0, 0];
 var _ocrRoiBackoffUntil = [0, 0, 0];
+var _ocrRoiTextSeq = [0, 0, 0];
 /** VK 会话启动时间戳，用于定时温和重建 */
 var _ocrSessionStartedAt = 0;
+var _ocrSessionBootAt = 0;
 /** 周期性 OCR 健康检查 */
 var _ocrHealthTimer = 0;
 /** 手动 OCR 在滑动窗口内的失败时间戳（timeout / run 抛错） */
 var _ocrManualFailTimestamps = [];
+var _ocrConsecutiveTimeout = 0;
+var _ocrFrameBufferPool = null;
+var _lastPreviewFrameKey = '';
+var _ocrStats = {
+  timeout: 0,
+  rotate: 0,
+  success: 0,
+  avgCost: 0
+};
+var _clockPredictTimer = 0;
+var _clockPredictUntil = 0;
+var _lastClockPredictEmitWallTs = 0;
+var _lastClockPredictEmitSec = -1;
+var _clockMode = 'unknown'; // 'unknown' | 'running' | 'paused'
+var _lastOcrClockSec = -1;
+var _lastOcrClockWallTs = 0;
+var _sameOcrClockSince = 0;
+var _clockPauseCandidateUntil = 0;
+var _clockResumeCandidateSec = -1;
+var _clockResumeCandidateSince = 0;
 /** 是否因小程序 onHide 暂停了相机帧泵（onShow 恢复） */
 var _ocrPausedForBackground = false;
 /** BLE notify 退避截止时刻 */
@@ -146,6 +188,7 @@ var _bleNotifyRetryTimer = 0;
 /** 相机预览区实际 px 尺寸 */
 var _previewW = 0;
 var _previewH = 0;
+var _cameraReadyAt = 0;
 
 /**
  * 拖拽/缩放状态
@@ -194,6 +237,113 @@ function bumpManualScoreEditGate() {
   _scoreJumpHold = null;
 }
 
+function ensureOcrFrameBuffer(size) {
+  if (!_ocrFrameBufferPool || _ocrFrameBufferPool.length !== size) {
+    _ocrFrameBufferPool = new Uint8Array(size);
+  }
+  return _ocrFrameBufferPool;
+}
+
+function buildOcrScheduleQueue() {
+  _ocrTick += 1;
+  var queue = [];
+  queue.push(2);
+  if (_ocrTick % OCR_SCORE_TICK_INTERVAL === 0) {
+    queue.push(0);
+    queue.push(1);
+  }
+  return queue;
+}
+
+function getOcrMaxVariantsForRoi(roiIdx) {
+  return roiIdx === 2 ? 2 : 1;
+}
+
+function cloneClock(clock) {
+  if (!clock) return null;
+  return {
+    minutes: Number(clock.minutes) || 0,
+    seconds: Number(clock.seconds) || 0
+  };
+}
+
+function subtractClock(clock, elapsedSec) {
+  if (!clock) return null;
+  var total = (Number(clock.minutes) || 0) * 60 + (Number(clock.seconds) || 0) - (elapsedSec || 0);
+  if (total < 0) total = 0;
+  return {
+    minutes: Math.floor(total / 60),
+    seconds: total % 60
+  };
+}
+
+function getPredictedClock() {
+  if (!_predictedClock) return null;
+  if (!_predictedClockWallTs) return cloneClock(_predictedClock);
+  var age = Date.now() - _predictedClockWallTs;
+  if (_clockMode === 'paused') return cloneClock(_predictedClock);
+  if (_clockMode !== 'running') {
+    if (age > OCR_TIME_PREDICT_MAX_STALE_MS) return null;
+    return cloneClock(_predictedClock);
+  }
+  var baseSec = clockToTotalSec(_predictedClock);
+  var maxAge = Math.max(OCR_TIME_PREDICT_MAX_STALE_MS, (baseSec + 2) * 1000);
+  if (age > maxAge) return null;
+  return subtractClock(_predictedClock, Math.floor(age / 1000));
+}
+
+function updatePredictedClock(clock) {
+  _predictedClock = cloneClock(clock);
+  _predictedClockWallTs = Date.now();
+}
+
+function clockToTotalSec(clock) {
+  if (!clock) return 0;
+  return (Number(clock.minutes) || 0) * 60 + (Number(clock.seconds) || 0);
+}
+
+function clockFromTotalSec(totalSec) {
+  var total = Math.max(0, Number(totalSec) || 0);
+  return {
+    minutes: Math.floor(total / 60),
+    seconds: total % 60
+  };
+}
+
+function isLargeScoreDrop(prev, homeScore, awayScore) {
+  if (!prev) return false;
+  return (
+    (Number(prev.homeScore) || 0) - homeScore >= OCR_SCORE_JUMP_CONFIRM_THRESHOLD ||
+    (Number(prev.awayScore) || 0) - awayScore >= OCR_SCORE_JUMP_CONFIRM_THRESHOLD
+  );
+}
+
+function shouldPreviewScore(scoreIdx, score) {
+  if (!_lastCommittedFrame) return true;
+  var prev = scoreIdx === 0
+    ? Number(_lastCommittedFrame.homeScore) || 0
+    : Number(_lastCommittedFrame.awayScore) || 0;
+  return Math.abs(score - prev) < OCR_SCORE_JUMP_CONFIRM_THRESHOLD;
+}
+
+function getClockCatchupUntil(now, lagSec) {
+  var lag = Math.max(1, Number(lagSec) || 1);
+  return now + Math.max(OCR_CLOCK_PREDICT_ACTIVE_MS, (lag + 2) * 1000);
+}
+
+function getClockRunUntil(now, clockSec) {
+  var sec = Math.max(1, Number(clockSec) || 1);
+  return now + Math.max(OCR_CLOCK_PREDICT_ACTIVE_MS, (sec + 2) * 1000);
+}
+
+function filterClockByMode(clock) {
+  if (!clock) return null;
+  if (_clockMode === 'paused' && _predictedClock) {
+    if (clockToTotalSec(clock) !== clockToTotalSec(_predictedClock)) return null;
+  }
+  return clock;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 Page({
@@ -240,13 +390,22 @@ Page({
       previewPxH: camH
     });
     _cameraContext = wx.createCameraContext(this);
+    _cameraReadyAt = Date.now();
     wx.setKeepScreenOn({ keepScreenOn: true });
     this._checkAccess();
     this._loadRois();
   },
 
+  onReady: function () {
+    var self = this;
+    this._initOcrVkCanvas().catch(function (err) {
+      console.error('[Collector][OCR] init hidden webgl fail', err);
+    });
+  },
+
   onCameraInit: function () {
     _cameraContext = wx.createCameraContext(this);
+    _cameraReadyAt = Date.now();
     console.log('[Collector][OCR] camera init, context refreshed');
   },
 
@@ -484,22 +643,96 @@ Page({
   },
 
   _startOcr: function () {
-    var self = this;
     var token = ++_ocrSessionToken;
+    this._clearOcrBootTimers();
+    this._stopOcrSession();
+    this._prepareCameraForOcrBoot(token, 'start');
+  },
+
+  _clearOcrBootTimers: function () {
     if (_ocrBootTimer) {
       clearTimeout(_ocrBootTimer);
       _ocrBootTimer = 0;
     }
-    this._stopOcrSession();
+    if (_ocrCameraRemountTimer) {
+      clearTimeout(_ocrCameraRemountTimer);
+      _ocrCameraRemountTimer = 0;
+    }
+  },
+
+  _prepareCameraForOcrBoot: function (token, reason) {
+    var self = this;
+    var bootDelay = _getVkBootDelayMs();
+    this._clearOcrBootTimers();
+    console.log('[Collector][OCR] prepare camera for boot token=%s reason=%s bootDelay=%s', token, reason || '', bootDelay);
     this.setData({ ocrTransitioning: true, cameraMounted: true }, function () {
+      if (!_cameraContext) {
+        _cameraContext = wx.createCameraContext(self);
+        _cameraReadyAt = Date.now();
+      }
       _ocrBootTimer = setTimeout(function () {
         _ocrBootTimer = 0;
+        if (token !== _ocrSessionToken) return;
+        var readyAge = _cameraReadyAt ? (Date.now() - _cameraReadyAt) : -1;
+        console.log('[Collector][OCR] boot window open token=%s reason=%s cameraReadyAgeMs=%s cameraCtx=%s', token, reason || '', readyAge, !!_cameraContext);
         self._bootOcrSession(token);
-      }, 80);
+      }, bootDelay);
     });
   },
 
   _bootOcrSession: function (token) {
+    var self = this;
+    if (token !== _ocrSessionToken) return;
+    this._initOcrVkCanvas().then(function () {
+      self._bootOcrSessionWithGl(token);
+    }).catch(function (err) {
+      console.warn('[Collector][OCR] hidden webgl unavailable, continue without gl', err);
+      self._bootOcrSessionWithGl(token);
+    });
+  },
+
+  _initOcrVkCanvas: function () {
+    var self = this;
+    if (_ocrVkCanvas && _ocrVkGl) return Promise.resolve();
+    return new Promise(function (resolve, reject) {
+      self.createSelectorQuery()
+        .select('#ocrVkCanvas')
+        .node()
+        .exec(function (res) {
+          if (!res || !res[0] || !res[0].node) {
+            reject(new Error('ocrVkCanvas node not found'));
+            return;
+          }
+          var canvasNode = res[0].node;
+          try {
+            var gl = canvasNode.getContext('webgl', {
+              antialias: false,
+              depth: false,
+              stencil: false,
+              alpha: false,
+              preserveDrawingBuffer: false
+            });
+            if (!gl) {
+              reject(new Error('ocrVkCanvas webgl unavailable'));
+              return;
+            }
+            var width = Math.max(2, Math.floor(_previewW || 851));
+            var height = Math.max(2, Math.floor(_previewH || 393));
+            canvasNode.width = width;
+            canvasNode.height = height;
+            try { gl.viewport(0, 0, width, height); } catch (eViewport) { }
+            _ocrVkCanvas = canvasNode;
+            _ocrVkGl = gl;
+            console.log('[Collector][OCR] hidden webgl ready size=%sx%s', width, height);
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        });
+    });
+  },
+
+  _bootOcrSessionWithGl: function (token) {
     var self = this;
     if (token !== _ocrSessionToken) return;
     _lastHandleTs = 0;
@@ -515,6 +748,7 @@ Page({
     _ocrManualMode = false;
     _ocrLastRoiRunTs = [0, 0, 0];
     _ocrRoiBackoffUntil = [0, 0, 0];
+    _ocrRoiTextSeq = [0, 0, 0];
     _ocrLastTimeSuccessTs = Date.now();
     _timeJumpHoldFrame = null;
     _scoreJumpHold = null;
@@ -526,18 +760,28 @@ Page({
     }
     var session = null;
     try {
-      session = wx.createVKSession({ track: { OCR: { mode: 2 } } });
+      session = wx.createVKSession({ version: 'v1', track: { OCR: { mode: 2 } } });
     } catch (eCreate) {
-      self._stopOcrSession();
-      self._restoreCameraPreview(function () {
-        self.setData({ ocrEnabled: false, ocrTransitioning: false });
-      });
-      console.error('[Collector] createVKSession fail', eCreate);
-      wx.showToast({ title: 'OCR 初始化失败', icon: 'none' });
-      return;
+      try {
+        session = wx.createVKSession({ track: { OCR: { mode: 2 } } });
+        console.warn('[Collector][OCR] createVKSession fallback without explicit version');
+      } catch (eCreateFallback) {
+        try {
+          session = wx.createVKSession({ track: { OCR: { mode: 2 } }, gl: _ocrVkGl });
+          console.warn('[Collector][OCR] createVKSession fallback with hidden gl');
+        } catch (eCreateWithGl) {
+          self._stopOcrSession();
+          self._restoreCameraPreview(function () {
+            self.setData({ ocrEnabled: false, ocrTransitioning: false });
+          });
+          console.error('[Collector] createVKSession fail', eCreateWithGl || eCreateFallback || eCreate);
+          wx.showToast({ title: 'OCR 初始化失败', icon: 'none' });
+          return;
+        }
+      }
     }
     _vkSession = session;
-    console.log('[Collector][OCR] boot session token=%s delay=%s preview=%sx%s rois=%o', token, 80, _previewW, _previewH, this.data.rois);
+    console.log('[Collector][OCR] boot session token=%s delay=%s preview=%sx%s readyAt=%s rois=%o', token, _getVkBootDelayMs(), _previewW, _previewH, _cameraReadyAt || 0, this.data.rois);
     session.start(function (err) {
       if (token !== _ocrSessionToken) {
         try { session.stop(); } catch (eStale) { }
@@ -559,15 +803,11 @@ Page({
         return;
       }
       self.setData({ ocrEnabled: true, ocrTransitioning: false });
+      _ocrSessionBootAt = Date.now();
       self._startOcrHealthTimer();
-      console.log('[Collector] VKSession started (native anchors first)');
-      _ocrAnchorWatchdogTimer = setTimeout(function () {
-        if (_vkSession === session && _ocrNativeTextEventCount === 0 && !_ocrManualMode) {
-          console.warn('[Collector][OCR] no native text anchors within 3000ms, fallback to manual ROI pump');
-          _ocrManualMode = true;
-          self._startOcrFramePump(session, token);
-        }
-      }, 3000);
+      console.log('[Collector] VKSession started (manual ROI OCR mode)');
+      _ocrManualMode = true;
+      self._startOcrFramePump(session, token);
 
       session.on('updateAnchors', function (a) {
         if (_vkSession !== session) return;
@@ -606,16 +846,152 @@ Page({
     var roiIdx = _ocrRunState.currentIdx;
     var text = collectAnchorTexts(list).join(' ').trim();
     if (this.data.debugMode) {
-      console.log('[Collector][OCR] roi result idx=%s label=%s text=%s', roiIdx, this.data.rois[roiIdx] && this.data.rois[roiIdx].label, text);
+      console.log('[Collector][OCR] roi result idx=%s label=%s text=%s anchors=%s sample=%o', roiIdx, this.data.rois[roiIdx] && this.data.rois[roiIdx].label, text, list.length, list.length ? summarizeAnchorForLog(list[0]) : null);
     }
+    _ocrStats.success += 1;
+    _ocrConsecutiveTimeout = 0;
+    OCR_MIN_INTERVAL_MS = OCR_MIN_INTERVAL_BASE_MS;
     if (this._shouldRetryCurrentVariant(roiIdx, text)) {
       this._advanceCurrentVariantOrQueue('invalid-text');
       return;
     }
+    _ocrRoiTextSeq[roiIdx] = (_ocrRoiTextSeq[roiIdx] || 0) + 1;
+    if (roiIdx === 2) {
+      this._recordOcrClockSample(parseTime(text));
+    }
+    _ocrRunState.updatedRoiIdx = roiIdx;
     _ocrRunState.rawTexts[roiIdx] = text;
-    this._applyPartialOcrPreview(_ocrRunState.rawTexts);
+    this._applyPartialOcrPreview(_ocrRunState.rawTexts, roiIdx);
     _ocrRunState.queuePos += 1;
     this._runNextRoiOcr();
+  },
+
+  _recordOcrClockSample: function (clock) {
+    if (!clock) return;
+    var now = Date.now();
+    _ocrLastTimeSuccessTs = now;
+    var nextSec = clockToTotalSec(clock);
+    var prevOcrSec = _lastOcrClockSec;
+    var prevOcrWallTs = _lastOcrClockWallTs || now;
+
+    if (!_predictedClock || prevOcrSec < 0) {
+      _lastOcrClockSec = nextSec;
+      _lastOcrClockWallTs = now;
+      updatePredictedClock(clock);
+      _lastClockPredictEmitSec = nextSec;
+      _sameOcrClockSince = now;
+      _clockMode = 'unknown';
+      return;
+    }
+
+    if (nextSec === prevOcrSec) {
+      _lastOcrClockSec = nextSec;
+      _lastOcrClockWallTs = now;
+      _clockResumeCandidateSec = -1;
+      _clockResumeCandidateSince = 0;
+      if (!_sameOcrClockSince) _sameOcrClockSince = prevOcrWallTs;
+      _clockPauseCandidateUntil = now + OCR_CLOCK_PAUSE_CONFIRM_MS;
+      var committedNearSample = !_lastCommittedFrame || Math.abs(ocrFrameClockSec(_lastCommittedFrame) - nextSec) <= 1;
+      if (committedNearSample && now - _sameOcrClockSince >= OCR_CLOCK_PAUSE_CONFIRM_MS) {
+        _clockMode = 'paused';
+        updatePredictedClock(clock);
+        _lastClockPredictEmitSec = nextSec;
+        this._clearClockPredictTimer();
+        return;
+      }
+      return;
+    }
+
+    if (nextSec < prevOcrSec) {
+      if (_clockMode === 'paused') {
+        var resumeConfirmed =
+          (_clockResumeCandidateSec === nextSec && now - _clockResumeCandidateSince >= OCR_CLOCK_RESUME_CONFIRM_MS) ||
+          (_clockResumeCandidateSec >= 0 && nextSec < _clockResumeCandidateSec);
+        if (!resumeConfirmed) {
+          _clockResumeCandidateSec = nextSec;
+          _clockResumeCandidateSince = now;
+          _clockPauseCandidateUntil = now + OCR_CLOCK_RESUME_CONFIRM_MS;
+          return;
+        }
+      }
+      _lastOcrClockSec = nextSec;
+      _lastOcrClockWallTs = now;
+      _sameOcrClockSince = now;
+      _clockPauseCandidateUntil = 0;
+      _clockResumeCandidateSec = -1;
+      _clockResumeCandidateSince = 0;
+      var drop = prevOcrSec - nextSec;
+      var elapsedSec = Math.max(0, Math.floor((now - prevOcrWallTs) / 1000));
+      var plausibleDrop = Math.max(OCR_CLOCK_CATCHUP_MAX_DROP_SEC, elapsedSec + 2);
+      if (drop <= plausibleDrop) {
+        _clockMode = 'running';
+        updatePredictedClock(clock);
+        _clockPredictUntil = Math.max(_clockPredictUntil || 0, getClockRunUntil(now, nextSec));
+        this._ensureClockPredictTimer();
+      }
+      return;
+    }
+
+    _lastOcrClockSec = nextSec;
+    _lastOcrClockWallTs = now;
+    _sameOcrClockSince = now;
+    _clockPauseCandidateUntil = 0;
+    _clockResumeCandidateSec = -1;
+    _clockResumeCandidateSince = 0;
+    _clockMode = 'unknown';
+    updatePredictedClock(clock);
+    _clockPredictUntil = 0;
+    _lastClockPredictEmitSec = nextSec;
+  },
+
+  _ensureClockPredictTimer: function () {
+    if (_clockPredictTimer) return;
+    var self = this;
+    _clockPredictTimer = setInterval(function () {
+      self._onClockPredictTick();
+    }, OCR_CLOCK_PREDICT_TICK_MS);
+  },
+
+  _clearClockPredictTimer: function () {
+    if (_clockPredictTimer) {
+      clearInterval(_clockPredictTimer);
+      _clockPredictTimer = 0;
+    }
+    _clockPredictUntil = 0;
+    _lastClockPredictEmitWallTs = 0;
+    _lastClockPredictEmitSec = -1;
+  },
+
+  _onClockPredictTick: function () {
+    if (!this.data.ocrEnabled || !_lastCommittedFrame) {
+      this._clearClockPredictTimer();
+      return;
+    }
+    var now = Date.now();
+    if (!_clockPredictUntil || now > _clockPredictUntil) {
+      this._clearClockPredictTimer();
+      return;
+    }
+    if (_clockMode !== 'running') {
+      this._clearClockPredictTimer();
+      return;
+    }
+    if (_clockPauseCandidateUntil && now < _clockPauseCandidateUntil) return;
+    var predicted = getPredictedClock();
+    if (!predicted) return;
+    var committedSec = ocrFrameClockSec(_lastCommittedFrame);
+    if (committedSec <= 0) {
+      this._clearClockPredictTimer();
+      return;
+    }
+    var predictedSec = clockToTotalSec(predicted);
+    if (predictedSec >= committedSec) return;
+    var lag = committedSec - predictedSec;
+    var minEmitMs = lag > 2 ? OCR_CLOCK_CATCHUP_FAST_INTERVAL_MS : OCR_CLOCK_NORMAL_INTERVAL_MS;
+    if (_lastClockPredictEmitWallTs && now - _lastClockPredictEmitWallTs < minEmitMs) return;
+    var emitSec = Math.max(predictedSec, committedSec - 1);
+    if (emitSec === _lastClockPredictEmitSec) return;
+    this._emitTimeOnlyIfChanged(clockFromTotalSec(emitSec), now);
   },
 
   _startOcrFramePump: function (session, token) {
@@ -661,6 +1037,7 @@ Page({
 
   _maybeRunManualOcr: function (session, token, rgbaBuffer, frameW, frameH) {
     var now = Date.now();
+    var expectedBytes = frameW * frameH * 4;
     if (_ocrRunBusy) return;
     if (now < _ocrTimeoutSettleUntil) return;
     if (now - _ocrRunLastTs < OCR_MIN_INTERVAL_MS) return;
@@ -672,6 +1049,9 @@ Page({
       }
       return;
     }
+    if (_ocrPumpFrameCount <= 3 || rgbaBuffer.byteLength !== expectedBytes) {
+      console.log('[Collector][OCR] manual frame bytes=%s expected=%s frame=%sx%s', rgbaBuffer.byteLength, expectedBytes, frameW, frameH);
+    }
 
     if (typeof session.runOCR !== 'function') {
       console.error('[Collector][OCR] session.runOCR unavailable');
@@ -680,9 +1060,12 @@ Page({
 
     _ocrRunLastTs = now;
     _ocrRunBusy = true;
+    _ocrBusySince = now;
+    _ocrRunStartedAt = now;
     var queue = buildOcrQueue(now, this.data.rois);
     if (!queue.length) {
       _ocrRunBusy = false;
+      _ocrBusySince = 0;
       return;
     }
     _ocrRunState = {
@@ -698,13 +1081,12 @@ Page({
     };
     if (this.data.debugMode) {
       console.log('[Collector][OCR] queue=%o', _ocrRunState.queue.map(function (idx) { return idx + ':' + ((_ocrRunState.rawTexts[idx] && _ocrRunState.rawTexts[idx].slice(0, 12)) || ''); }));
-      console.log('[Collector][OCR] manual run start frame=%sx%s bytes=%s', frameW, frameH, rgbaBuffer.byteLength);
+      console.log('[Collector][OCR] manual run start frame=%sx%s bytes=%s mode=roi', frameW, frameH, rgbaBuffer.byteLength);
     }
     this._runNextRoiOcr();
   },
 
   _runNextRoiOcr: function () {
-    var self = this;
     var state = _ocrRunState;
     if (!state || !_ocrRunBusy) return;
     if (state.token !== _ocrSessionToken || _vkSession !== state.session) {
@@ -749,12 +1131,19 @@ Page({
       console.log('[Collector][OCR] runOCR idx=%s label=%s variant=%s/%s crop=%sx%s', state.currentIdx, roi.label, state.currentVariantPos + 1, state.currentVariants.length, crop.width, crop.height);
     }
     _ocrLastRoiRunTs[state.currentIdx] = Date.now();
+    _ocrBusySince = _ocrLastRoiRunTs[state.currentIdx];
     _ocrRunTimeout = setTimeout(function () {
-      console.warn('[Collector][OCR] runOCR timeout idx=%s label=%s', state.currentIdx, roi.label);
+      console.warn('[Collector][OCR] runOCR timeout idx=%s label=%s crop=%sx%s', state.currentIdx, roi.label, crop.width, crop.height);
       _ocrRunTimeout = 0;
       if (!_ocrRunState) return;
+      _ocrTimeoutSettleUntil = Date.now() + OCR_TIMEOUT_SETTLE_MS;
       _ocrRoiBackoffUntil[state.currentIdx] = Date.now() + 1500;
-      self._applyPartialOcrPreview(_ocrRunState.rawTexts);
+      _ocrConsecutiveTimeout += 1;
+      _ocrStats.timeout += 1;
+      if (_ocrConsecutiveTimeout >= 3) {
+        OCR_MIN_INTERVAL_MS = 260;
+      }
+      self._applyPartialOcrPreview(_ocrRunState.rawTexts, -1);
       self._advanceCurrentVariantOrQueue('timeout');
     }, OCR_RUN_TIMEOUT_MS);
 
@@ -769,6 +1158,7 @@ Page({
         clearTimeout(_ocrRunTimeout);
         _ocrRunTimeout = 0;
       }
+      _ocrTimeoutSettleUntil = Date.now() + OCR_TIMEOUT_SETTLE_MS;
       _ocrRoiBackoffUntil[state.currentIdx] = Date.now() + 1500;
       console.error('[Collector][OCR] runOCR fail idx=%s label=%s err=%o', state.currentIdx, roi.label, eRun);
       this._advanceCurrentVariantOrQueue('fail');
@@ -783,7 +1173,7 @@ Page({
     }
     if (state.currentVariants &&
       state.currentVariantPos + 1 < state.currentVariants.length &&
-      state.currentVariantPos + 1 < OCR_MAX_VARIANTS_PER_RUN) {
+      state.currentVariantPos + 1 < getOcrMaxVariantsForRoi(state.currentIdx)) {
       state.currentVariantPos += 1;
       if (this.data.debugMode) {
         console.log('[Collector][OCR] retry variant idx=%s label=%s reason=%s next=%s/%s', state.currentIdx, this.data.rois[state.currentIdx] && this.data.rois[state.currentIdx].label, reason, state.currentVariantPos + 1, state.currentVariants.length);
@@ -814,14 +1204,19 @@ Page({
     }
     var state = _ocrRunState;
     _ocrRunBusy = false;
+    _ocrBusySince = 0;
     _ocrRunState = null;
     if (!aborted) _ocrTimeoutSettleUntil = 0;
     if (!state || aborted) return;
     _ocrManualFailTimestamps = [];
+    var cost = Date.now() - (_ocrRunStartedAt || Date.now());
+    _ocrStats.avgCost = _ocrStats.avgCost
+      ? Math.round(_ocrStats.avgCost * 0.8 + cost * 0.2)
+      : cost;
     if (this.data.debugMode) {
-      console.log('[Collector][OCR] manual run done roiTexts=%o', state.rawTexts);
+      console.log('[Collector][OCR] manual run done roiTexts=%o cost=%s', state.rawTexts, cost);
     }
-    this._applyOcrRoiTexts(state.rawTexts);
+    this._applyOcrRoiTexts(state.rawTexts, typeof state.updatedRoiIdx === 'number' ? state.updatedRoiIdx : -1);
   },
 
   _stopOcr: function (skipRemount) {
@@ -838,7 +1233,8 @@ Page({
     this.setData({ ocrEnabled: false, ocrTransitioning: false, cameraMounted: true });
   },
 
-  _stopOcrSession: function () {
+  _stopOcrSession: function (preserveClock) {
+    this._clearOcrBootTimers();
     this._clearOcrHealthTimer();
     if (_ocrAnchorWatchdogTimer) {
       clearTimeout(_ocrAnchorWatchdogTimer);
@@ -852,18 +1248,35 @@ Page({
     _ocrNativeTextEventCount = 0;
     _ocrAnchorLogSeq = 0;
     _ocrRunBusy = false;
+    _ocrBusySince = 0;
     _ocrRunState = null;
     _ocrRunLastTs = 0;
+    _ocrRunStartedAt = 0;
     _ocrTimeoutSettleUntil = 0;
     _ocrQueueCursor = 0;
+    _ocrTick = 0;
     _ocrManualMode = false;
     _ocrLastRoiRunTs = [0, 0, 0];
     _ocrRoiBackoffUntil = [0, 0, 0];
+    _ocrRoiTextSeq = [0, 0, 0];
     _ocrLastTimeSuccessTs = Date.now();
+    if (!preserveClock) {
+      _predictedClock = null;
+      _predictedClockWallTs = 0;
+      _clockMode = 'unknown';
+      _lastOcrClockSec = -1;
+      _lastOcrClockWallTs = 0;
+      _sameOcrClockSince = 0;
+      _clockPauseCandidateUntil = 0;
+      _clockResumeCandidateSec = -1;
+      _clockResumeCandidateSince = 0;
+      this._clearClockPredictTimer();
+      _lastNotifyWallAt = 0;
+      _lastCommittedFrame = null;
+    }
     _timeJumpHoldFrame = null;
     _scoreJumpHold = null;
     _manualScoreEditAt = 0;
-    _lastNotifyWallAt = 0;
     if (_vkSession) {
       this._cancelOcrFramePump();
       try {
@@ -878,12 +1291,17 @@ Page({
     _lastHandleTs = 0;
     _pendingOcrFrame = null;
     _lastCommittedFrameKey = '';
-    _lastCommittedFrame = null;
     _lastRejectedStableFrameKey = '';
     _lastRejectedStableFrameCount = 0;
     _ocrPausedForBackground = false;
     _ocrSessionStartedAt = 0;
+    _ocrSessionBootAt = 0;
     _ocrManualFailTimestamps = [];
+    _ocrConsecutiveTimeout = 0;
+    _ocrFrameBufferPool = null;
+    _lastPreviewFrameKey = '';
+    OCR_MIN_INTERVAL_MS = OCR_MIN_INTERVAL_BASE_MS;
+    this._ocrRotatePending = false;
   },
 
   /**
@@ -903,6 +1321,7 @@ Page({
     var self = this;
     this._clearOcrHealthTimer();
     _ocrSessionStartedAt = Date.now();
+    _ocrSessionBootAt = _ocrSessionStartedAt;
     _ocrHealthTimer = setInterval(function () {
       self._onOcrHealthTick();
     }, OCR_HEALTH_INTERVAL_MS);
@@ -915,6 +1334,16 @@ Page({
     if (!_vkSession || !this.data.ocrEnabled || this.data.ocrTransitioning) return;
     var started = _ocrSessionStartedAt || 0;
     if (!started) return;
+    if (_ocrRunBusy && _ocrBusySince && Date.now() - _ocrBusySince > 3000) {
+      console.error('[Collector][OCR] deadlock detected busyMs=%s', Date.now() - _ocrBusySince);
+      this._rotateOcrSession('deadlock');
+      return;
+    }
+    if (_ocrSessionBootAt && Date.now() - _ocrSessionBootAt >= OCR_SESSION_ROTATE_MS) {
+      console.warn('[Collector][OCR] rotate session uptime=%s', Date.now() - _ocrSessionBootAt);
+      this._rotateOcrSession('scheduled-rotate');
+      return;
+    }
     if (Date.now() - started >= OCR_SESSION_REBUILD_MS) {
       this._softRestartOcrSession('uptime');
     }
@@ -950,24 +1379,39 @@ Page({
    */
   _softRestartOcrSession: function (reason) {
     if (!this.data.ocrEnabled || this.data.ocrTransitioning) return;
-    var self = this;
     console.warn('[Collector][OCR] soft VK session rebuild reason=%s', reason || '');
     var token = ++_ocrSessionToken;
-    if (_ocrBootTimer) {
-      clearTimeout(_ocrBootTimer);
-      _ocrBootTimer = 0;
-    }
     this._clearOcrHealthTimer();
-    this._stopOcrSession();
-    this.setData({ ocrTransitioning: true }, function () {
-      _ocrBootTimer = setTimeout(function () {
-        _ocrBootTimer = 0;
-        self._bootOcrSession(token);
-      }, 200);
-    });
+    this._stopOcrSession(true);
+    this._prepareCameraForOcrBoot(token, 'soft-restart:' + (reason || 'unknown'));
   },
 
-  _applyOcrRoiTexts: function (rawTexts) {
+  _rotateOcrSession: function (reason) {
+    if (!this.data.ocrEnabled) return;
+    if (this._ocrRotatePending) return;
+    this._ocrRotatePending = true;
+    _ocrStats.rotate += 1;
+    console.warn('[Collector][OCR] rotate begin reason=%s', reason || '');
+    this._cancelOcrFramePump();
+    if (_ocrRunTimeout) {
+      clearTimeout(_ocrRunTimeout);
+      _ocrRunTimeout = 0;
+    }
+    _ocrRunBusy = false;
+    _ocrBusySince = 0;
+    _ocrRunState = null;
+    var self = this;
+    var token = ++_ocrSessionToken;
+    setTimeout(function () {
+      self._stopOcrSession(true);
+      setTimeout(function () {
+        self._ocrRotatePending = false;
+        self._prepareCameraForOcrBoot(token, 'rotate:' + (reason || 'unknown'));
+      }, 300);
+    }, 120);
+  },
+
+  _applyOcrRoiTexts: function (rawTexts, updatedRoiIdx) {
     var rois = this.data.rois;
     var debugMode = this.data.debugMode;
     var changed = false;
@@ -997,19 +1441,28 @@ Page({
     var parsedRois = rois.map(function (roi, idx) {
       return Object.assign({}, roi, { rawText: rawTexts[idx] });
     });
-    this._applyParsedPreview(parsedRois);
-    this._parseAndMaybeNotify(parsedRois);
+    this._applyParsedPreview(parsedRois, updatedRoiIdx);
+    this._parseAndMaybeNotify(parsedRois, updatedRoiIdx);
   },
 
-  _applyPartialOcrPreview: function (rawTexts) {
+  _applyPartialOcrPreview: function (rawTexts, updatedRoiIdx) {
     var rois = this.data.rois.map(function (roi, idx) {
       return Object.assign({}, roi, { rawText: rawTexts[idx] || '' });
     });
-    this._applyParsedPreview(rois);
+    this._applyParsedPreview(rois, updatedRoiIdx);
   },
 
   _restoreCameraPreview: function (done) {
-    if (typeof done === 'function') done();
+    var self = this;
+    if (this.data.cameraMounted) {
+      if (typeof done === 'function') done();
+      return;
+    }
+    this.setData({ cameraMounted: true }, function () {
+      _cameraContext = wx.createCameraContext(self);
+      _cameraReadyAt = Date.now();
+      if (typeof done === 'function') done();
+    });
   },
 
   // ─── OCR 锚点处理（兜底门控 + 局部 setData）────────
@@ -1107,22 +1560,30 @@ Page({
     if (debugMode) {
       console.log('[Collector][OCR] roiTexts=%o', rawTexts);
     }
-    this._applyParsedPreview(parsedRois);
-    this._parseAndMaybeNotify(parsedRois);
+    this._applyParsedPreview(parsedRois, -1);
+    this._parseAndMaybeNotify(parsedRois, -1);
   },
 
-  _applyParsedPreview: function (rois) {
+  _applyParsedPreview: function (rois, updatedRoiIdx) {
     var next = {};
     var changed = false;
     var homeScore = parseScore(rois[0].rawText);
     var awayScore = parseScore(rois[1].rawText);
-    var timeInfo = parseTime(rois[2].rawText);
+    var timeInfo = updatedRoiIdx === 2 ? filterClockByMode(parseTime(rois[2].rawText)) : null;
+    if (!timeInfo) timeInfo = getPredictedClock();
+    if (timeInfo && _lastCommittedFrame) {
+      var prevT = ocrFrameClockSec(_lastCommittedFrame);
+      var previewT = clockToTotalSec(timeInfo);
+      if (previewT < prevT - 1 && prevT - previewT <= OCR_CLOCK_CATCHUP_MAX_DROP_SEC) {
+        timeInfo = clockFromTotalSec(prevT - 1);
+      }
+    }
 
-    if (homeScore !== null && homeScore !== this.data.homeScore) {
+    if (homeScore !== null && homeScore !== this.data.homeScore && shouldPreviewScore(0, homeScore)) {
       next.homeScore = homeScore;
       changed = true;
     }
-    if (awayScore !== null && awayScore !== this.data.awayScore) {
+    if (awayScore !== null && awayScore !== this.data.awayScore && shouldPreviewScore(1, awayScore)) {
       next.awayScore = awayScore;
       changed = true;
     }
@@ -1138,6 +1599,14 @@ Page({
     }
 
     if (!changed) return;
+    var previewKey = [
+      typeof next.homeScore === 'number' ? next.homeScore : this.data.homeScore,
+      typeof next.awayScore === 'number' ? next.awayScore : this.data.awayScore,
+      typeof next.minutes === 'number' ? next.minutes : this.data.minutes,
+      typeof next.seconds === 'number' ? next.seconds : this.data.seconds
+    ].join('|');
+    if (previewKey === _lastPreviewFrameKey) return;
+    _lastPreviewFrameKey = previewKey;
     if (this.data.debugMode) {
       console.log('[Collector][OCR] preview update=%o', next);
     }
@@ -1153,10 +1622,20 @@ Page({
    */
   _emitTimeOnlyIfChanged: function (timeInfo, wallMs) {
     if (!timeInfo || !_lastCommittedFrame) return;
-    if (!_server || !_connectedDeviceId) return;
     var prevT = ocrFrameClockSec(_lastCommittedFrame);
     var newT = (Number(timeInfo.minutes) || 0) * 60 + (Number(timeInfo.seconds) || 0);
     if (newT === prevT) return;
+    if (newT > prevT) return;
+    var drop = prevT - newT;
+    if (drop > 1) {
+      if (drop > OCR_CLOCK_CATCHUP_MAX_DROP_SEC) return;
+      var minEmitMs = drop > 2 ? OCR_CLOCK_CATCHUP_FAST_INTERVAL_MS : OCR_CLOCK_NORMAL_INTERVAL_MS;
+      if (_lastClockPredictEmitWallTs && wallMs - _lastClockPredictEmitWallTs < minEmitMs) return;
+      newT = prevT - 1;
+      timeInfo = clockFromTotalSec(newT);
+      _clockPredictUntil = Math.max(_clockPredictUntil || 0, getClockCatchupUntil(wallMs, drop));
+      this._ensureClockPredictTimer();
+    }
     var snap = {
       homeScore: _lastCommittedFrame.homeScore,
       awayScore: _lastCommittedFrame.awayScore,
@@ -1174,25 +1653,60 @@ Page({
       shotClock: snap.shotClock
     });
     _lastNotifyWallAt = wallMs;
+    _lastClockPredictEmitWallTs = wallMs;
+    _lastClockPredictEmitSec = newT;
     this._notify(snap);
+  },
+
+  _smoothFrameClockForCommit: function (frame, wallMs, hasTimeInfo) {
+    if (!_lastCommittedFrame || !hasTimeInfo) return frame;
+    var prevT = ocrFrameClockSec(_lastCommittedFrame);
+    var nextT = ocrFrameClockSec(frame);
+    if (nextT >= prevT) return frame;
+    var drop = prevT - nextT;
+    if (drop <= 1) return frame;
+    if (drop > OCR_CLOCK_CATCHUP_MAX_DROP_SEC) {
+      var glitchHoldClock = clockFromTotalSec(prevT);
+      frame.minutes = glitchHoldClock.minutes;
+      frame.seconds = glitchHoldClock.seconds;
+      if (this.data.debugMode) {
+        console.log('[Collector][OCR] clock drop ignored prev=%s next=%s drop=%s', prevT, nextT, drop);
+      }
+      return frame;
+    }
+    var minEmitMs = drop > 2 ? OCR_CLOCK_CATCHUP_FAST_INTERVAL_MS : OCR_CLOCK_NORMAL_INTERVAL_MS;
+    if (_lastClockPredictEmitWallTs && wallMs - _lastClockPredictEmitWallTs < minEmitMs) {
+      var holdClock = clockFromTotalSec(prevT);
+      frame.minutes = holdClock.minutes;
+      frame.seconds = holdClock.seconds;
+      _clockPredictUntil = Math.max(_clockPredictUntil || 0, getClockCatchupUntil(wallMs, drop));
+      this._ensureClockPredictTimer();
+      return frame;
+    }
+    var smoothClock = clockFromTotalSec(prevT - 1);
+    frame.minutes = smoothClock.minutes;
+    frame.seconds = smoothClock.seconds;
+    _clockPredictUntil = Math.max(_clockPredictUntil || 0, getClockCatchupUntil(wallMs, drop));
+    this._ensureClockPredictTimer();
+    if (this.data.debugMode) {
+      console.log('[Collector][OCR] smooth clock drop prev=%s next=%s emit=%s', prevT, nextT, prevT - 1);
+    }
+    return frame;
   },
 
   /**
    * 解析 ROI 文字 → 比赛状态；节次与 24 秒仅人工，OCR 不解析。
    * 对「短墙钟间隔内比赛时钟异常回跳」暂缓整帧 notify，待下一帧复核。
    */
-  _parseAndMaybeNotify: function (rois) {
+  _parseAndMaybeNotify: function (rois, updatedRoiIdx) {
     var homeScore = parseScore(rois[0].rawText);
     var awayScore = parseScore(rois[1].rawText);
-    var timeInfo = parseTime(rois[2] && rois[2].rawText ? rois[2].rawText : '');
-    /**
-     * 时间优先调度依赖「时间 ROI 是否刚产出可读时钟」，与整帧是否可提交无关。
-     * 若仅在此处更新 _ocrLastTimeSuccessTs，在比分尚未解析成功时提前 return 会导致
-     * timeStarved 恒真、队列永远只跑时间 ROI → 比分永远为 null。
-     */
-    if (timeInfo) {
-      _ocrLastTimeSuccessTs = Date.now();
-    }
+    var ocrTimeInfo = updatedRoiIdx === 2
+      ? filterClockByMode(parseTime(rois[2] && rois[2].rawText ? rois[2].rawText : ''))
+      : null;
+    var timeInfo = ocrTimeInfo;
+    // _ocrLastTimeSuccessTs 只在时间 ROI 真实产出时更新，避免旧 rawText 被反复当成新时钟样本。
+    if (!timeInfo) timeInfo = getPredictedClock();
 
     if (homeScore === null || awayScore === null) {
       if (this.data.debugMode) {
@@ -1209,9 +1723,29 @@ Page({
     } else if (_lastCommittedFrame) {
       var dMax = maxScoreDeltaVsCommitted(_lastCommittedFrame, homeScore, awayScore);
       if (dMax >= OCR_SCORE_JUMP_CONFIRM_THRESHOLD) {
+        if (isLargeScoreDrop(_lastCommittedFrame, homeScore, awayScore)) {
+          _scoreJumpHold = {
+            homeScore: homeScore,
+            awayScore: awayScore,
+            streak: 0,
+            since: wallPre,
+            blockedDrop: true,
+            homeSeq: _ocrRoiTextSeq[0] || 0,
+            awaySeq: _ocrRoiTextSeq[1] || 0
+          };
+          if (this.data.debugMode) {
+            console.log('[Collector][OCR] score drop blocked prev=%o h=%s a=%s seq=%o', _lastCommittedFrame, homeScore, awayScore, _ocrRoiTextSeq);
+          }
+          this._emitTimeOnlyIfChanged(timeInfo, wallPre);
+          return;
+        }
         var truncH = isLikelyTruncateGlitch(_lastCommittedFrame.homeScore, homeScore);
         var truncA = isLikelyTruncateGlitch(_lastCommittedFrame.awayScore, awayScore);
         var needStreak = (truncH || truncA) ? OCR_SCORE_JUMP_STREAK_TRUNC : OCR_SCORE_JUMP_STREAK_NORMAL;
+        var changedHome = Math.abs(homeScore - _lastCommittedFrame.homeScore) >= OCR_SCORE_JUMP_CONFIRM_THRESHOLD;
+        var changedAway = Math.abs(awayScore - _lastCommittedFrame.awayScore) >= OCR_SCORE_JUMP_CONFIRM_THRESHOLD;
+        var homeSeq = _ocrRoiTextSeq[0] || 0;
+        var awaySeq = _ocrRoiTextSeq[1] || 0;
 
         if (
           Math.abs(homeScore - _lastCommittedFrame.homeScore) <= OCR_SCORE_JUMP_REVERT_EPSILON &&
@@ -1223,13 +1757,26 @@ Page({
           _scoreJumpHold.homeScore === homeScore &&
           _scoreJumpHold.awayScore === awayScore
         ) {
-          _scoreJumpHold.streak = (_scoreJumpHold.streak || 1) + 1;
+          var hasFreshScoreRead = false;
+          if (changedHome && _scoreJumpHold.homeSeq !== homeSeq) {
+            _scoreJumpHold.homeSeq = homeSeq;
+            hasFreshScoreRead = true;
+          }
+          if (changedAway && _scoreJumpHold.awaySeq !== awaySeq) {
+            _scoreJumpHold.awaySeq = awaySeq;
+            hasFreshScoreRead = true;
+          }
+          if (hasFreshScoreRead) {
+            _scoreJumpHold.streak = (_scoreJumpHold.streak || 1) + 1;
+          }
         } else {
           _scoreJumpHold = {
             homeScore: homeScore,
             awayScore: awayScore,
             streak: 1,
-            since: wallPre
+            since: wallPre,
+            homeSeq: homeSeq,
+            awaySeq: awaySeq
           };
         }
 
@@ -1257,6 +1804,7 @@ Page({
       _scoreJumpHold = null;
     }
 
+    var hasFrameClock = !!ocrTimeInfo;
     var period = this.data.period;
     var shotClock = this.data.shotClock;
     var frame = {
@@ -1269,6 +1817,7 @@ Page({
     };
 
     var wall = Date.now();
+    frame = this._smoothFrameClockForCommit(frame, wall, hasFrameClock);
 
     if (_timeJumpHoldFrame && _timeJumpHoldFrame._holdSince) {
       var holdAge = wall - _timeJumpHoldFrame._holdSince;
@@ -1330,6 +1879,8 @@ Page({
     _lastRejectedStableFrameKey = '';
     _lastRejectedStableFrameCount = 0;
     _lastNotifyWallAt = wall;
+    _lastClockPredictEmitWallTs = wall;
+    _lastClockPredictEmitSec = ocrFrameClockSec(frame);
     this._notify(frame);
   },
 
@@ -1751,8 +2302,7 @@ function parseTime(raw) {
  * @returns {number}
  */
 function ocrFrameClockSec(f) {
-  if (!f) return 0;
-  return (Number(f.minutes) || 0) * 60 + (Number(f.seconds) || 0);
+  return clockToTotalSec(f);
 }
 
 /**
@@ -1931,6 +2481,10 @@ function summarizeAnchorForLog(anchor) {
     text: anchor.text,
     hasPoints: !!(anchor.points && anchor.points.length),
     pointsLen: anchor.points && anchor.points.length ? anchor.points.length : 0,
+    hasBox: !!(anchor.box && anchor.box.length),
+    boxLen: anchor.box && anchor.box.length ? anchor.box.length : 0,
+    centerX: typeof anchor.centerX === 'number' ? anchor.centerX : null,
+    centerY: typeof anchor.centerY === 'number' ? anchor.centerY : null,
     origin: anchor.origin || null,
     size: anchor.size || null,
     keys: Object.keys(anchor).slice(0, 12)
@@ -1951,6 +2505,23 @@ function extractAnchorCenter(anchor) {
     px = px / pts.length;
     py = py / pts.length;
     return normalizeAnchorPoint(px, py, 'points');
+  }
+
+  var box = anchor.box;
+  if (box && box.length) {
+    var bx = 0;
+    var by = 0;
+    for (var bi = 0; bi < box.length; bi++) {
+      bx += Number(box[bi].x) || 0;
+      by += Number(box[bi].y) || 0;
+    }
+    bx = bx / box.length;
+    by = by / box.length;
+    return normalizeAnchorPoint(bx, by, 'box');
+  }
+
+  if (typeof anchor.centerX !== 'undefined' && typeof anchor.centerY !== 'undefined') {
+    return normalizeAnchorPoint(Number(anchor.centerX) || 0, Number(anchor.centerY) || 0, 'center');
   }
 
   var origin = anchor.origin;

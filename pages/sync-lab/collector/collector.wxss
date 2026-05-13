@@ -10,6 +10,16 @@ page { background: #000; }
   background: #000;
 }
 
+.col-ocr-vk-canvas {
+  position: fixed;
+  left: -9999px;
+  top: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
 /* ── 未授权锁定占位 ── */
 .col-locked {
   width: 100%;

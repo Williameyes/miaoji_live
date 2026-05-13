@@ -1,6 +1,7 @@
 <!-- 采集端横屏模式：相机全屏，所有控件用 cover-view 叠加 -->
 <!-- 登录 + 白名单双重门控：未授权用户页面内容完全不渲染 -->
 <view class="col-root">
+  <canvas type="webgl" id="ocrVkCanvas" class="col-ocr-vk-canvas"></canvas>
 
   <!-- ── 未授权占位 ── -->
   <view class="col-locked" wx:if="{{!isLogin || !isInWhitelist}}">
