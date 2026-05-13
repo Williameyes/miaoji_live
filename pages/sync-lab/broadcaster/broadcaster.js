@@ -174,16 +174,11 @@ Page({
     return n < 10 ? '0' + n : String(n);
   },
 
-  _formatClockTime: function (d) {
-    if (!d) return '';
-    return [
-      this._zeroPad2(d.getHours()),
-      this._zeroPad2(data.getMinutes()), // 注意：这里原代码有个错误，应该是 d
-      this._zeroPad2(d.getSeconds())
-    ].join(':');
-  },
-  
-  // 修正一下 formatClockTime 的小错误
+  /**
+   * 将 Date 格式化为 HH:mm:ss（用于调试页展示）。
+   * @param {Date|undefined|null} d 日期对象
+   * @returns {string}
+   */
   _formatClockTime: function (d) {
     if (!d) return '';
     return [

@@ -27,47 +27,10 @@ const {
   parseExpireAtToMs
 } = require('../../utils/referral.js');
 
+const { checkSyncLabWhitelist } = require('../../utils/sync-lab-whitelist.js');
+
 /** 后端占位昵称，需引导用户完善 */
 const PLACEHOLDER_NICK = '微信用户';
-
-/**
- * 自动同步实验功能白名单 OpenID。
- * 仅允许此列表内的用户进入 pages/sync-lab/index。
- */
-const SYNC_LAB_WHITELIST = [
-  'owImn7cUbBnTEk2Mx9IyZDnbVR1I',
-  'owImn7YI-B-Zm8PCXCEW7BDiu--E',
-  'owImn7d3tOlRRlyhLMggkDNYZBr4'
-];
-
-/**
- * 检查当前已登录用户的 OpenID 是否在实验功能白名单内。
- * OpenID 从 globalData.userInfo 或 Storage 缓存中读取，无需网络请求。
- * @returns {boolean}
- */
-function checkSyncLabWhitelist() {
-  let openid = '';
-  const gi = app.globalData && app.globalData.userInfo;
-  if (gi && typeof gi === 'object') {
-    const o = /** @type {Record<string, unknown>} */ (gi);
-    if (typeof o.openid === 'string') {
-      openid = o.openid.trim();
-    }
-  }
-  if (!openid) {
-    try {
-      const { STORAGE_USER_INFO_KEY: KEY } = require('../../utils/request.js');
-      const cached = wx.getStorageSync(KEY);
-      if (cached && typeof cached === 'object') {
-        const c = /** @type {Record<string, unknown>} */ (cached);
-        if (typeof c.openid === 'string') {
-          openid = c.openid.trim();
-        }
-      }
-    } catch (e) {}
-  }
-  return openid.length > 0 && SYNC_LAB_WHITELIST.indexOf(openid) !== -1;
-}
 
 /**
  * 判断是否为微信侧常见默认头像（小尺寸 132 等），避免登录时把明文 URL 传给服务端覆盖用户已上传的 COS 头像。

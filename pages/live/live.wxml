@@ -226,7 +226,7 @@
         </view>
 
         <!-- 中间节次：单击循环切换 -->
-        <view class="period-center-outer {{isAutoMode ? 'period-center-outer--auto' : ''}}" bindtap="onPeriodTap" bindlongpress="onPeriodLongPress">
+        <view class="period-center-outer {{isAutoMode ? 'period-center-outer--auto' : ''}}" bindtap="onPeriodTap" bindlongpress="{{autoSyncWhitelisted ? 'onPeriodLongPress' : ''}}">
           <view class="period-strip"></view>
           <view class="period-container">
             <view class="period-text {{isAutoMode ? 'period-text--auto' : ''}}" style="color: {{periodFlash ? '#000000' : '#fff'}}">

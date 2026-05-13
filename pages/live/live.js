@@ -11,6 +11,7 @@ const vkPresetManagerMod = require('./vk-preset-manager.js');
 const vkEnvironmentSamplerMod = require('./vk-environment-sampler.js');
 const vkSceneAnalyzerMod = require('./vk-scene-analyzer.js');
 const eventBus = require('../../utils/eventBus.js');
+const { checkSyncLabWhitelist } = require('../../utils/sync-lab-whitelist.js');
 const bleManager = require('../../services/bleManager.js');
 const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
 
@@ -909,6 +910,11 @@ Page({
      */
     enhanceBetaWhitelisted: false,
     /**
+     * 当前用户是否在 sync-lab / 自动记分实验白名单（OpenID，与「我的」页 sync-lab 同源）。
+     * 与 `enableEnhanceRender` / `enhanceWhitelisted` 解耦：非增强机型亦可使用节次长按自动记分。
+     */
+    autoSyncWhitelisted: false,
+    /**
      * 本机是否支持 VK 模式；由 app.js 冷启动用 `evaluateVkSupportCached` 判定。
      * 为 true 时工具条显示"VK 模式"按钮；进入 VK 需用户确认（精彩回放会暂停）。
      */
@@ -1563,11 +1569,13 @@ Page({
 
     const enhanceDeviceWhitelisted = !!(app.globalData && app.globalData.enableEnhanceRender);
     const enhanceBetaWhitelisted = checkEnhanceBetaWhitelist();
+    const autoSyncWhitelisted = checkSyncLabWhitelist();
 
     // 机型白名单：由 app.js 冷启动评估；live 页只读镜像一份到 data，驱动调试工具条可见性。
     this.setData({
       enhanceWhitelisted: enhanceDeviceWhitelisted,
       enhanceBetaWhitelisted: enhanceBetaWhitelisted,
+      autoSyncWhitelisted: autoSyncWhitelisted,
       // VK 入口与增强白名单绑定：若因熔断或机型未过白名单导致 enableEnhanceRender=false，
       // 则 VK 入口一并隐藏（否则 VK 切出→standard 时 _maybeBootEnhanceRender 会 early return，
       // 导致相机重建后无锐化、_pendingEnhanceModeAfterVk 永不被消费）。
@@ -1798,6 +1806,9 @@ Page({
         });
         return;
       }
+      if (!this.data.autoSyncWhitelisted) {
+        return;
+      }
 
       // 自动模式：全量同步
       const mc = this.data.matchConfig;
@@ -1838,13 +1849,8 @@ Page({
   onPeriodLongPress: function () {
     const self = this;
 
-    // 白名单检查：仅允许特定设备/用户使用实验功能
-    if (!this.data.enhanceWhitelisted) {
-      wx.showModal({
-        title: '提示',
-        content: '该功能需要设备支持，请联系客服！',
-        showCancel: false
-      });
+    // 与 sync-lab 同源 OpenID 白名单；非白名单在 WXML 已不绑定 longpress，此处仅防御性短路。
+    if (!this.data.autoSyncWhitelisted) {
       return;
     }
 
@@ -2461,11 +2467,23 @@ Page({
   },
 
   /**
-   * 按 app.globalData.enableEnhanceRender 决定是否拉起增强渲染管线。
+   * 按机型能力（enableEnhanceRender）与内测白名单（enhanceBetaWhitelisted）决定是否拉起增强渲染管线；
+   * 与抽屉内「画质增强」工具条可见条件一致，避免仅机型通过的非白名单用户仍走 WebGL 锐化。
    * 幂等：存在旧管线先销毁再重建（硬恢复后调用同样安全）。
    * @returns {void}
    */
   _maybeBootEnhanceRender: function () {
+    var experimentEligible = !!(this.data.enhanceWhitelisted && this.data.enhanceBetaWhitelisted);
+    if (!experimentEligible) {
+      this._pendingEnhanceModeAfterBoot = null;
+      this._pendingEnhanceModeAfterVk = null;
+      this._pendingEnhanceModeAfterCameraRebuild = null;
+      this._pendingEnhanceModeAfterRecover = null;
+      if (this._renderPipeline || this.data.enhanceCanvasVisible || this.data.enhanceMode !== 'off') {
+        this._teardownEnhanceRender();
+      }
+      return;
+    }
     var enabled = !!(app.globalData && app.globalData.enableEnhanceRender);
     if (!enabled) return;
     var initial = this._pendingEnhanceModeAfterBoot
@@ -2953,6 +2971,10 @@ Page({
     if (mode === 'off') {
       this._teardownEnhanceRender();
       this.resetViewModeToNormal();
+      return;
+    }
+    var enhanceExperimentEligible = !!(this.data.enhanceWhitelisted && this.data.enhanceBetaWhitelisted);
+    if (!enhanceExperimentEligible) {
       return;
     }
     if (!this._renderPipeline) {
@@ -4412,6 +4434,7 @@ Page({
     this._livePageVisible = true;
     this._bindVkDebugHotkey();
     const enhanceBetaWhitelisted = checkEnhanceBetaWhitelist();
+    const autoSyncWhitelisted = checkSyncLabWhitelist();
     const enhanceVkSupported = !!(app.globalData
       && app.globalData.vkModeSupported
       && app.globalData.enableEnhanceRender
@@ -4419,11 +4442,26 @@ Page({
     if (
       this.data.enhanceBetaWhitelisted !== enhanceBetaWhitelisted
       || this.data.enhanceVkSupported !== enhanceVkSupported
+      || this.data.autoSyncWhitelisted !== autoSyncWhitelisted
     ) {
-      this.setData({
+      const patch = {
         enhanceBetaWhitelisted: enhanceBetaWhitelisted,
-        enhanceVkSupported: enhanceVkSupported
+        enhanceVkSupported: enhanceVkSupported,
+        autoSyncWhitelisted: autoSyncWhitelisted
+      };
+      if (!autoSyncWhitelisted && this.data.isAutoMode) {
+        patch.isAutoMode = false;
+      }
+      const self = this;
+      this.setData(patch, function () {
+        if (patch.isAutoMode === false) {
+          self.updateTeamGroupWidth(true);
+        }
       });
+    }
+    var enhanceExperimentEligible = !!(this.data.enhanceWhitelisted && enhanceBetaWhitelisted);
+    if (!enhanceExperimentEligible && (this.data.enhanceCanvasVisible || this.data.enhanceMode !== 'off' || this._renderPipeline)) {
+      this._teardownEnhanceRender();
     }
     try {
       wx.showShareMenu({

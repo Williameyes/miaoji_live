@@ -10,6 +10,15 @@
  *   - VKSession 错误过滤（saaa/node js 底层错误不弹 Toast）
  *   - BLE 校验升级为 CRC-8/SMBUS（ble-protocol.js v2）
  *
+ * 长时运行（数小时直播）：
+ *   - 定时温和重建 VK 会话；手动 OCR 失败堆积时延迟温和重建
+ *   - onHide 停相机帧泵、onShow 恢复，减轻后台无效回调
+ *   - BLE notify 失败指数退避 + 定时补发，避免半连接写风暴
+ *   - OCR 解析后仅按 frameKey 去重；仅 3 个 ROI（主/客分、时间），24 秒与节次改人工，减轻 CPU 与跳秒
+ *   - 时间 ROI 优先调度 + 短窗「时钟回跳」暂缓整帧 notify（阈值偏保守，减少对顺计时干扰）
+ *   - 现场实体记分牌由技术台改分为主；大单帧比分跳变用 streak 确认，截断式误读(111→11)要求更多连续一致帧
+ *   - 比分待确认时仍推送「上一已确认比分 + 新时间」，避免时间因整帧暂缓而累积跳秒
+ *
  * ROI 选区数据结构（归一化坐标，相对于相机预览区）：
  *   { x: 0-1, y: 0-1, w: 0-1, h: 0-1, label: string, rawText: string, pctStyle: string }
  */
@@ -18,21 +27,62 @@ var BLE = require('../../../utils/ble-protocol.js');
 var REQ = require('../../../utils/request.js');
 
 var STORAGE_KEY_ROIS = 'sync_lab_rois_v1';
+/** 当前 OCR 队列 ROI 数量：主队分、客队分、时间（已移除 24 秒 ROI）。 */
+var OCR_ROI_COUNT = 3;
 var OCR_MIN_INTERVAL_MS = 160;
 var OCR_PUMP_INTERVAL_MS = 120;
-var OCR_RUN_TIMEOUT_MS = 980;
+/** 单 ROI runOCR 超时（略收紧，避免长时间占用导致时间 ROI 断层）。 */
+var OCR_RUN_TIMEOUT_MS = 720;
 var OCR_TIMEOUT_SETTLE_MS = 0;
 var OCR_MAX_VARIANTS_PER_RUN = 3;
-var OCR_TIME_REFRESH_MS = 240;
-var OCR_SHOT_REFRESH_MS = 420;
-var OCR_SCORE_REFRESH_MS = 600;
+/** 时间 ROI 刷新间隔（收紧以减轻跳秒观感）。 */
+var OCR_TIME_REFRESH_MS = 160;
+/** 比分 ROI 刷新间隔（略放宽，把时间槽让给时钟）。 */
+var OCR_SCORE_REFRESH_MS = 720;
+/**
+ * 距上次时间 ROI 解析成功超过该毫秒时，在队列中优先时间 ROI。
+ * @type {number}
+ */
+var OCR_TIME_PRIORITY_MS = 150;
+/**
+ * 任一侧相对上一提交比分变化 ≥ 该阈值时，需连续两帧解析出相同 (主,客) 分才接受，
+ * 抑制 118→8、150→1 等丢位误读；常规单回合得分变化通常低于该值。
+ * @type {number}
+ */
+var OCR_SCORE_JUMP_CONFIRM_THRESHOLD = 10;
+/**
+ * 大单帧跳变后若 OCR 读回与上一提交相差在该范围内，视为抖回上一稳定值，清除待确认。
+ * @type {number}
+ */
+var OCR_SCORE_JUMP_REVERT_EPSILON = 4;
+/**
+ * 仅当用户在「本采集页」点按改分/重置时短旁路大单帧门禁（技术台改分走现场记分牌，不经过此处）。
+ * @type {number}
+ */
+var OCR_SCORE_JUMP_MANUAL_GUARD_MS = 1500;
+/** 一般大单帧跳变需连续多少帧解析出相同 (主,客) 分才接受。 */
+var OCR_SCORE_JUMP_STREAK_NORMAL = 2;
+/**
+ * 疑似「高位截断」误读（如 111→11）时要求更多连续一致帧，减轻稳定误读过关。
+ * @type {number}
+ */
+var OCR_SCORE_JUMP_STREAK_TRUNC = 5;
+/** 长时运行：约 50 分钟温和重建 VK 会话，降低 session 僵死与内存爬升风险 */
+var OCR_SESSION_REBUILD_MS = 50 * 60 * 1000;
+/** 健康检查间隔（重建判定、后台恢复） */
+var OCR_HEALTH_INTERVAL_MS = 60 * 1000;
+/** 连续 runOCR 超时/异常达到该次数后触发温和重建（滑动窗口内） */
+var OCR_MANUAL_FAIL_THRESHOLD = 8;
+var OCR_MANUAL_FAIL_WINDOW_MS = 90 * 1000;
+/** BLE notify 失败后最大退避（毫秒），避免半连接时写特征风暴 */
+var BLE_NOTIFY_BACKOFF_MAX_MS = 8000;
+var BLE_NOTIFY_BACKOFF_BASE_MS = 220;
 var ROI_MIN_SIZE = 0.05; // 归一化最小宽/高，防止缩至 0
 
 var DEFAULT_ROIS = [
   { x: 0.05, y: 0.15, w: 0.25, h: 0.20, label: '主队分', rawText: '' },
   { x: 0.70, y: 0.15, w: 0.25, h: 0.20, label: '客队分', rawText: '' },
-  { x: 0.30, y: 0.35, w: 0.40, h: 0.18, label: '时间', rawText: '' },
-  { x: 0.70, y: 0.60, w: 0.25, h: 0.15, label: '24秒', rawText: '' }
+  { x: 0.30, y: 0.35, w: 0.40, h: 0.18, label: '时间', rawText: '' }
 ];
 
 /** @type {WechatMiniprogram.BLEPeripheralServer | null} */
@@ -63,11 +113,35 @@ var _ocrRunTimeout = 0;
 var _ocrTimeoutSettleUntil = 0;
 var _ocrQueueCursor = 0;
 var _ocrManualMode = false;
+/** 最近一次时间 ROI 解析出合法 mm:ss 的墙钟时间戳（供时间优先调度）。 */
+var _ocrLastTimeSuccessTs = 0;
+/** 最近一次成功 BLE 提交的墙钟时间戳（供单帧时钟回跳检测）。 */
+var _lastNotifyWallAt = 0;
+/** 待下一帧复核的帧快照（时间疑似 OCR 跳变时暂缓 _notify）。 */
+var _timeJumpHoldFrame = null;
+/** 大单帧比分跳变待确认：同分值 streak 达标后放行。 */
+var _scoreJumpHold = null;
+/** 最近一次本采集页内手动改分时间（技术台改分不经过；仅短旁路用）。 */
+var _manualScoreEditAt = 0;
 var _lastCommittedFrame = null;
 var _lastRejectedStableFrameKey = '';
 var _lastRejectedStableFrameCount = 0;
-var _ocrLastRoiRunTs = [0, 0, 0, 0];
-var _ocrRoiBackoffUntil = [0, 0, 0, 0];
+var _ocrLastRoiRunTs = [0, 0, 0];
+var _ocrRoiBackoffUntil = [0, 0, 0];
+/** VK 会话启动时间戳，用于定时温和重建 */
+var _ocrSessionStartedAt = 0;
+/** 周期性 OCR 健康检查 */
+var _ocrHealthTimer = 0;
+/** 手动 OCR 在滑动窗口内的失败时间戳（timeout / run 抛错） */
+var _ocrManualFailTimestamps = [];
+/** 是否因小程序 onHide 暂停了相机帧泵（onShow 恢复） */
+var _ocrPausedForBackground = false;
+/** BLE notify 退避截止时刻 */
+var _bleNotifyBackoffUntil = 0;
+/** BLE notify 失败次数（用于指数退避） */
+var _bleNotifyFailStreak = 0;
+/** 退避结束后补发一次的定时器 */
+var _bleNotifyRetryTimer = 0;
 
 /** 相机预览区实际 px 尺寸 */
 var _previewW = 0;
@@ -109,6 +183,15 @@ function _getCameraRemountDelayMs() {
     if (sys && sys.platform === 'ios') return 220;
   } catch (e) { }
   return 120;
+}
+
+/**
+ * 用户在本采集页手动改分后极短窗口内放宽大单帧门禁（技术台改分仅反映在现场记分牌，主流程不依赖此项）。
+ * @returns {void}
+ */
+function bumpManualScoreEditGate() {
+  _manualScoreEditAt = Date.now();
+  _scoreJumpHold = null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -178,6 +261,30 @@ Page({
     wx.setKeepScreenOn({ keepScreenOn: false });
   },
 
+  /**
+   * 小程序进入后台：停止相机帧监听，减少无意义回调与半停相机导致的堆积。
+   * 不销毁 VK，回到前台后由 onShow 恢复泵（手动 OCR 模式）。
+   */
+  onHide: function () {
+    if (!this.data.ocrEnabled) return;
+    _ocrPausedForBackground = true;
+    this._cancelOcrFramePump();
+    console.log('[Collector][OCR] paused frame pump (onHide)');
+  },
+
+  /**
+   * 回到前台：若 OCR 仍开启且此前因后台暂停了帧泵，在手动模式下重新挂载监听。
+   */
+  onShow: function () {
+    if (!_ocrPausedForBackground || !this.data.ocrEnabled) return;
+    _ocrPausedForBackground = false;
+    var session = _vkSession;
+    if (!session || !_ocrManualMode) return;
+    var token = _ocrSessionToken;
+    console.log('[Collector][OCR] resume frame pump after foreground token=%s', token);
+    this._startOcrFramePump(session, token);
+  },
+
   // ─── 访问控制 ────────────────────────────────────────
 
   /**
@@ -207,9 +314,20 @@ Page({
   _loadRois: function () {
     try {
       var saved = wx.getStorageSync(STORAGE_KEY_ROIS);
-      if (saved && Array.isArray(saved) && saved.length === 4) {
-        this.setData({ rois: _withPctStyle(saved) });
-        return;
+      if (saved && Array.isArray(saved) && saved.length) {
+        var normalized = saved.slice(0);
+        var migrated = false;
+        if (normalized.length >= 4) {
+          normalized = normalized.slice(0, 3);
+          migrated = true;
+        }
+        if (normalized.length === 3) {
+          this.setData({ rois: _withPctStyle(normalized) });
+          if (migrated) {
+            this._saveRois();
+          }
+          return;
+        }
       }
     } catch (e) { }
     this.setData({ rois: _withPctStyle(DEFAULT_ROIS.map(function (r) { return Object.assign({}, r); })) });
@@ -388,7 +506,13 @@ Page({
     _ocrAnchorLogSeq = 0;
     _ocrQueueCursor = 0;
     _ocrManualMode = false;
-    _ocrRoiBackoffUntil = [0, 0, 0, 0];
+    _ocrLastRoiRunTs = [0, 0, 0];
+    _ocrRoiBackoffUntil = [0, 0, 0];
+    _ocrLastTimeSuccessTs = Date.now();
+    _timeJumpHoldFrame = null;
+    _scoreJumpHold = null;
+    _manualScoreEditAt = 0;
+    _lastNotifyWallAt = 0;
     if (_ocrAnchorWatchdogTimer) {
       clearTimeout(_ocrAnchorWatchdogTimer);
       _ocrAnchorWatchdogTimer = 0;
@@ -428,6 +552,7 @@ Page({
         return;
       }
       self.setData({ ocrEnabled: true, ocrTransitioning: false });
+      self._startOcrHealthTimer();
       console.log('[Collector] VKSession started (native anchors first)');
       _ocrAnchorWatchdogTimer = setTimeout(function () {
         if (_vkSession === session && _ocrNativeTextEventCount === 0 && !_ocrManualMode) {
@@ -646,6 +771,9 @@ Page({
   _advanceCurrentVariantOrQueue: function (reason) {
     var state = _ocrRunState;
     if (!state) return;
+    if (reason === 'timeout' || reason === 'fail') {
+      this._recordManualOcrFailure(reason);
+    }
     if (state.currentVariants &&
       state.currentVariantPos + 1 < state.currentVariants.length &&
       state.currentVariantPos + 1 < OCR_MAX_VARIANTS_PER_RUN) {
@@ -663,11 +791,11 @@ Page({
   _shouldRetryCurrentVariant: function (roiIdx, text) {
     var state = _ocrRunState;
     if (!state || !state.currentVariants || state.currentVariants.length <= 1) return false;
-    if (roiIdx === 3) {
-      return parseShotClock(text) === null;
-    }
     if (roiIdx === 0 || roiIdx === 1) {
       return parseScore(text) === null;
+    }
+    if (roiIdx === 2) {
+      return parseTime(text) === null;
     }
     return false;
   },
@@ -682,6 +810,7 @@ Page({
     _ocrRunState = null;
     if (!aborted) _ocrTimeoutSettleUntil = 0;
     if (!state || aborted) return;
+    _ocrManualFailTimestamps = [];
     if (this.data.debugMode) {
       console.log('[Collector][OCR] manual run done roiTexts=%o', state.rawTexts);
     }
@@ -703,6 +832,7 @@ Page({
   },
 
   _stopOcrSession: function () {
+    this._clearOcrHealthTimer();
     if (_ocrAnchorWatchdogTimer) {
       clearTimeout(_ocrAnchorWatchdogTimer);
       _ocrAnchorWatchdogTimer = 0;
@@ -720,8 +850,13 @@ Page({
     _ocrTimeoutSettleUntil = 0;
     _ocrQueueCursor = 0;
     _ocrManualMode = false;
-    _ocrLastRoiRunTs = [0, 0, 0, 0];
-    _ocrRoiBackoffUntil = [0, 0, 0, 0];
+    _ocrLastRoiRunTs = [0, 0, 0];
+    _ocrRoiBackoffUntil = [0, 0, 0];
+    _ocrLastTimeSuccessTs = Date.now();
+    _timeJumpHoldFrame = null;
+    _scoreJumpHold = null;
+    _manualScoreEditAt = 0;
+    _lastNotifyWallAt = 0;
     if (_vkSession) {
       this._cancelOcrFramePump();
       try {
@@ -739,6 +874,90 @@ Page({
     _lastCommittedFrame = null;
     _lastRejectedStableFrameKey = '';
     _lastRejectedStableFrameCount = 0;
+    _ocrPausedForBackground = false;
+    _ocrSessionStartedAt = 0;
+    _ocrManualFailTimestamps = [];
+  },
+
+  /**
+   * 停止 OCR 健康检查定时器。
+   */
+  _clearOcrHealthTimer: function () {
+    if (_ocrHealthTimer) {
+      clearInterval(_ocrHealthTimer);
+      _ocrHealthTimer = 0;
+    }
+  },
+
+  /**
+   * VK 启动成功后开始计时，周期性检查是否需要温和重建会话。
+   */
+  _startOcrHealthTimer: function () {
+    var self = this;
+    this._clearOcrHealthTimer();
+    _ocrSessionStartedAt = Date.now();
+    _ocrHealthTimer = setInterval(function () {
+      self._onOcrHealthTick();
+    }, OCR_HEALTH_INTERVAL_MS);
+  },
+
+  /**
+   * 健康检查：会话存活过久则温和重建，避免 VK 长时间僵死与内存爬升。
+   */
+  _onOcrHealthTick: function () {
+    if (!_vkSession || !this.data.ocrEnabled || this.data.ocrTransitioning) return;
+    var started = _ocrSessionStartedAt || 0;
+    if (!started) return;
+    if (Date.now() - started >= OCR_SESSION_REBUILD_MS) {
+      this._softRestartOcrSession('uptime');
+    }
+  },
+
+  /**
+   * 记录手动 OCR 单次失败（超时/run 抛错），滑动窗口内过多则温和重建 VK。
+   * @param {string} reason 失败原因标记
+   */
+  _recordManualOcrFailure: function (reason) {
+    if (!_ocrManualMode) return;
+    var now = Date.now();
+    _ocrManualFailTimestamps.push(now);
+    while (
+      _ocrManualFailTimestamps.length &&
+      (now - _ocrManualFailTimestamps[0]) > OCR_MANUAL_FAIL_WINDOW_MS
+    ) {
+      _ocrManualFailTimestamps.shift();
+    }
+    if (_ocrManualFailTimestamps.length >= OCR_MANUAL_FAIL_THRESHOLD) {
+      console.warn('[Collector][OCR] manual fail threshold reached reason=%s count=%s', reason, _ocrManualFailTimestamps.length);
+      _ocrManualFailTimestamps = [];
+      var self = this;
+      setTimeout(function () {
+        self._softRestartOcrSession('manual-fail');
+      }, 0);
+    }
+  },
+
+  /**
+   * 温和重建 VK OCR 会话：不关闭 BLE，不打断用户「OCR 已开」状态，仅 stop/destroy 后重新 boot。
+   * @param {string} reason 日志用原因
+   */
+  _softRestartOcrSession: function (reason) {
+    if (!this.data.ocrEnabled || this.data.ocrTransitioning) return;
+    var self = this;
+    console.warn('[Collector][OCR] soft VK session rebuild reason=%s', reason || '');
+    var token = ++_ocrSessionToken;
+    if (_ocrBootTimer) {
+      clearTimeout(_ocrBootTimer);
+      _ocrBootTimer = 0;
+    }
+    this._clearOcrHealthTimer();
+    this._stopOcrSession();
+    this.setData({ ocrTransitioning: true }, function () {
+      _ocrBootTimer = setTimeout(function () {
+        _ocrBootTimer = 0;
+        self._bootOcrSession(token);
+      }, 200);
+    });
   },
 
   _applyOcrRoiTexts: function (rawTexts) {
@@ -804,7 +1023,9 @@ Page({
     }
 
     var rois = this.data.rois;
-    var rawTexts = ['', '', '', ''];
+    var rawTexts = rois.map(function () {
+      return '';
+    });
     var debugMode = this.data.debugMode;
     var debugLines = debugMode ? [] : null;
     var roiBounds = [];
@@ -876,7 +1097,9 @@ Page({
     var parsedRois = rois.map(function (roi, idx) {
       return Object.assign({}, roi, { rawText: rawTexts[idx] });
     });
-    console.log('[Collector][OCR] roiTexts=%o', rawTexts);
+    if (debugMode) {
+      console.log('[Collector][OCR] roiTexts=%o', rawTexts);
+    }
     this._applyParsedPreview(parsedRois);
     this._parseAndMaybeNotify(parsedRois);
   },
@@ -887,8 +1110,6 @@ Page({
     var homeScore = parseScore(rois[0].rawText);
     var awayScore = parseScore(rois[1].rawText);
     var timeInfo = parseTime(rois[2].rawText);
-    var period = parsePeriod(rois[2].rawText);
-    var shotClock = parseShotClock(rois[3].rawText);
 
     if (homeScore !== null && homeScore !== this.data.homeScore) {
       next.homeScore = homeScore;
@@ -908,14 +1129,6 @@ Page({
         changed = true;
       }
     }
-    if (period !== null && period !== this.data.period) {
-      next.period = period;
-      changed = true;
-    }
-    if (shotClock !== null && shotClock !== this.data.shotClock) {
-      next.shotClock = shotClock;
-      changed = true;
-    }
 
     if (!changed) return;
     if (this.data.debugMode) {
@@ -925,14 +1138,46 @@ Page({
   },
 
   /**
-   * 解析 ROI 文字 → 比赛状态；联调阶段只做去重，拿到有效数值就立刻推送。
+   * 在比分尚待 streak 确认时，仍将「上一已确认主客分 + 新时间」写入 data 并 notify，
+   * 避免整帧 return 导致 BLE 时间停更、下一帧一次性补秒产生跳 2s。
+   * @param {{ minutes: number, seconds: number } | null} timeInfo
+   * @param {number} wallMs
+   * @returns {void}
+   */
+  _emitTimeOnlyIfChanged: function (timeInfo, wallMs) {
+    if (!timeInfo || !_lastCommittedFrame) return;
+    if (!_server || !_connectedDeviceId) return;
+    var prevT = ocrFrameClockSec(_lastCommittedFrame);
+    var newT = (Number(timeInfo.minutes) || 0) * 60 + (Number(timeInfo.seconds) || 0);
+    if (newT === prevT) return;
+    this.setData({
+      minutes: timeInfo.minutes,
+      seconds: timeInfo.seconds,
+      homeScore: _lastCommittedFrame.homeScore,
+      awayScore: _lastCommittedFrame.awayScore,
+      period: this.data.period,
+      shotClock: this.data.shotClock
+    });
+    _lastNotifyWallAt = wallMs;
+    this._notify();
+  },
+
+  /**
+   * 解析 ROI 文字 → 比赛状态；节次与 24 秒仅人工，OCR 不解析。
+   * 对「短墙钟间隔内比赛时钟异常回跳」暂缓整帧 notify，待下一帧复核。
    */
   _parseAndMaybeNotify: function (rois) {
     var homeScore = parseScore(rois[0].rawText);
     var awayScore = parseScore(rois[1].rawText);
-    var timeInfo = parseTime(rois[2].rawText);
-    var period = parsePeriod(rois[2].rawText);
-    var shotClock = parseShotClock(rois[3].rawText);
+    var timeInfo = parseTime(rois[2] && rois[2].rawText ? rois[2].rawText : '');
+    /**
+     * 时间优先调度依赖「时间 ROI 是否刚产出可读时钟」，与整帧是否可提交无关。
+     * 若仅在此处更新 _ocrLastTimeSuccessTs，在比分尚未解析成功时提前 return 会导致
+     * timeStarved 恒真、队列永远只跑时间 ROI → 比分永远为 null。
+     */
+    if (timeInfo) {
+      _ocrLastTimeSuccessTs = Date.now();
+    }
 
     if (homeScore === null || awayScore === null) {
       if (this.data.debugMode) {
@@ -941,14 +1186,111 @@ Page({
       return;
     }
 
+    var wallPre = Date.now();
+    var bypassScoreJumpHold =
+      wallPre - (_manualScoreEditAt || 0) < OCR_SCORE_JUMP_MANUAL_GUARD_MS;
+    if (bypassScoreJumpHold) {
+      _scoreJumpHold = null;
+    } else if (_lastCommittedFrame) {
+      var dMax = maxScoreDeltaVsCommitted(_lastCommittedFrame, homeScore, awayScore);
+      if (dMax >= OCR_SCORE_JUMP_CONFIRM_THRESHOLD) {
+        var truncH = isLikelyTruncateGlitch(_lastCommittedFrame.homeScore, homeScore);
+        var truncA = isLikelyTruncateGlitch(_lastCommittedFrame.awayScore, awayScore);
+        var needStreak = (truncH || truncA) ? OCR_SCORE_JUMP_STREAK_TRUNC : OCR_SCORE_JUMP_STREAK_NORMAL;
+
+        if (
+          Math.abs(homeScore - _lastCommittedFrame.homeScore) <= OCR_SCORE_JUMP_REVERT_EPSILON &&
+          Math.abs(awayScore - _lastCommittedFrame.awayScore) <= OCR_SCORE_JUMP_REVERT_EPSILON
+        ) {
+          _scoreJumpHold = null;
+        } else if (
+          _scoreJumpHold &&
+          _scoreJumpHold.homeScore === homeScore &&
+          _scoreJumpHold.awayScore === awayScore
+        ) {
+          _scoreJumpHold.streak = (_scoreJumpHold.streak || 1) + 1;
+        } else {
+          _scoreJumpHold = {
+            homeScore: homeScore,
+            awayScore: awayScore,
+            streak: 1,
+            since: wallPre
+          };
+        }
+
+        if (_scoreJumpHold && (_scoreJumpHold.streak || 1) < needStreak) {
+          if (this.data.debugMode) {
+            console.log(
+              '[Collector][OCR] score jump hold dMax=%s need=%s streak=%s h=%s a=%s trunc=%s/%s',
+              dMax,
+              needStreak,
+              _scoreJumpHold.streak,
+              homeScore,
+              awayScore,
+              truncH,
+              truncA
+            );
+          }
+          this._emitTimeOnlyIfChanged(timeInfo, wallPre);
+          return;
+        }
+        _scoreJumpHold = null;
+      } else {
+        _scoreJumpHold = null;
+      }
+    } else {
+      _scoreJumpHold = null;
+    }
+
+    var period = this.data.period;
+    var shotClock = this.data.shotClock;
     var frame = {
       homeScore: homeScore,
       awayScore: awayScore,
-      period: period !== null ? period : this.data.period,
+      period: period,
       minutes: timeInfo ? timeInfo.minutes : this.data.minutes,
       seconds: timeInfo ? timeInfo.seconds : this.data.seconds,
-      shotClock: shotClock !== null ? shotClock : this.data.shotClock
+      shotClock: shotClock
     };
+
+    var wall = Date.now();
+
+    if (_timeJumpHoldFrame && _timeJumpHoldFrame._holdSince) {
+      var holdAge = wall - _timeJumpHoldFrame._holdSince;
+      if (holdAge > 900) {
+        _timeJumpHoldFrame = null;
+      } else {
+        var hg = ocrFrameClockSec(_timeJumpHoldFrame);
+        var ng = ocrFrameClockSec(frame);
+        var pg = _lastCommittedFrame ? ocrFrameClockSec(_lastCommittedFrame) : ng;
+        if (Math.abs(ng - hg) <= 1) {
+          frame.minutes = _timeJumpHoldFrame.minutes;
+          frame.seconds = _timeJumpHoldFrame.seconds;
+          _timeJumpHoldFrame = null;
+        } else if (_lastCommittedFrame && Math.abs(ng - pg) <= 2) {
+          _timeJumpHoldFrame = null;
+        } else {
+          return;
+        }
+      }
+    }
+
+    if (_lastCommittedFrame && timeInfo && _lastNotifyWallAt) {
+      var dt = wall - _lastNotifyWallAt;
+      if (isSuspiciousGameClockSkip(_lastCommittedFrame, frame, dt)) {
+        _timeJumpHoldFrame = {
+          homeScore: frame.homeScore,
+          awayScore: frame.awayScore,
+          period: frame.period,
+          minutes: frame.minutes,
+          seconds: frame.seconds,
+          shotClock: frame.shotClock,
+          _holdSince: wall
+        };
+        return;
+      }
+    }
+
     var frameKey = buildFrameKey(frame);
     if (this.data.debugMode) {
       console.log('[Collector][OCR] parsed frame=%o key=%s', frame, frameKey);
@@ -973,50 +1315,8 @@ Page({
     _lastCommittedFrameKey = frameKey;
     _lastRejectedStableFrameKey = '';
     _lastRejectedStableFrameCount = 0;
+    _lastNotifyWallAt = wall;
     this._notify();
-  },
-
-  _getCurrentFrameSnapshot: function () {
-    return {
-      homeScore: Number(this.data.homeScore) || 0,
-      awayScore: Number(this.data.awayScore) || 0,
-      period: Number(this.data.period) || 1,
-      minutes: Number(this.data.minutes) || 0,
-      seconds: Number(this.data.seconds) || 0,
-      shotClock: Number(this.data.shotClock) || 0
-    };
-  },
-
-  _shouldCommitFrame: function (frame) {
-    if (!frame) return false;
-    if (!_lastCommittedFrame) {
-      if (_pendingOcrFrame && framesStableEnough(_pendingOcrFrame, frame)) {
-        _pendingOcrFrame = null;
-        return true;
-      }
-      _pendingOcrFrame = Object.assign({}, frame);
-      return false;
-    }
-    if (isImmediateFrameTransition(_lastCommittedFrame, frame)) {
-      _pendingOcrFrame = null;
-      return true;
-    }
-
-    var frameKey = buildFrameKey(frame);
-    if (_pendingOcrFrame && buildFrameKey(_pendingOcrFrame) === frameKey) {
-      _pendingOcrFrame = null;
-      return true;
-    }
-
-    if (_pendingOcrFrame && framesStableEnough(_pendingOcrFrame, frame)) {
-      if (shouldForceResyncFromStableFrame(_lastCommittedFrame, frame) || isRecoverableClockJump(_lastCommittedFrame, frame)) {
-        _pendingOcrFrame = null;
-        return true;
-      }
-    }
-
-    _pendingOcrFrame = Object.assign({}, frame);
-    return false;
   },
 
   // ─── BLE：启动 / 停止 ────────────────────────────────
@@ -1099,11 +1399,23 @@ Page({
     wx.onBLEPeripheralConnectionStateChanged(function (res) {
       if (res.connected) {
         _connectedDeviceId = res.deviceId || '';
+        _bleNotifyFailStreak = 0;
+        _bleNotifyBackoffUntil = 0;
+        if (_bleNotifyRetryTimer) {
+          clearTimeout(_bleNotifyRetryTimer);
+          _bleNotifyRetryTimer = 0;
+        }
         self.setData({ bleState: 'connected', bleStateText: '已连接 ✓' });
         wx.vibrateShort({ type: 'medium' });
         console.log('[Collector] Central connected:', _connectedDeviceId);
       } else {
         _connectedDeviceId = '';
+        if (_bleNotifyRetryTimer) {
+          clearTimeout(_bleNotifyRetryTimer);
+          _bleNotifyRetryTimer = 0;
+        }
+        _bleNotifyFailStreak = 0;
+        _bleNotifyBackoffUntil = 0;
         self.setData({ bleState: 'advertising', bleStateText: '广播中，等待连接…' });
         console.log('[Collector] Central disconnected');
       }
@@ -1164,6 +1476,12 @@ Page({
     };
 
     try { wx.offBLEPeripheralConnectionStateChanged(); } catch (e) { }
+    if (_bleNotifyRetryTimer) {
+      clearTimeout(_bleNotifyRetryTimer);
+      _bleNotifyRetryTimer = 0;
+    }
+    _bleNotifyFailStreak = 0;
+    _bleNotifyBackoffUntil = 0;
     if (_server) {
       try { _server.stopAdvertising(); } catch (e) { }
       try { _server.close(); } catch (e) { }
@@ -1182,18 +1500,78 @@ Page({
 
   // ─── 模拟加分（OCR 关闭时可用）─────────────────────
 
-  onHomeScorePlus: function () { this.setData({ homeScore: this.data.homeScore + 1 }); this._notify(); },
-  onAwayScorePlus: function () { this.setData({ awayScore: this.data.awayScore + 1 }); this._notify(); },
+  onHomeScorePlus: function () {
+    bumpManualScoreEditGate();
+    this.setData({ homeScore: this.data.homeScore + 1 });
+    this._notify();
+  },
+  onAwayScorePlus: function () {
+    bumpManualScoreEditGate();
+    this.setData({ awayScore: this.data.awayScore + 1 });
+    this._notify();
+  },
   onPeriodPlus: function () {
+    bumpManualScoreEditGate();
     if (this.data.period < 8) this.setData({ period: this.data.period + 1 });
     this._notify();
   },
   onReset: function () {
+    bumpManualScoreEditGate();
     this.setData({ homeScore: 0, awayScore: 0, period: 1, minutes: 10, seconds: 0, shotClock: 24 });
     this._notify();
   },
 
   // ─── BLE 推送 notify ─────────────────────────────────
+
+  /**
+   * 在退避窗口结束后补发当前比分（读最新 this.data）。
+   */
+  _flushBleNotifyIfReady: function () {
+    var self = this;
+    if (!_server || !_connectedDeviceId) return;
+    var now = Date.now();
+    if (now < _bleNotifyBackoffUntil) {
+      if (!_bleNotifyRetryTimer) {
+        var waitMs = Math.max(50, _bleNotifyBackoffUntil - now);
+        _bleNotifyRetryTimer = setTimeout(function () {
+          _bleNotifyRetryTimer = 0;
+          self._flushBleNotifyIfReady();
+        }, waitMs);
+      }
+      return;
+    }
+    var d = self.data;
+    _server.writeCharacteristicValue({
+      serviceId: BLE.SERVICE_UUID,
+      characteristicId: BLE.CHAR_SCORE_UUID,
+      value: BLE.encodePacket({
+        homeScore: d.homeScore, awayScore: d.awayScore, period: d.period,
+        minutes: d.minutes, seconds: d.seconds, shotClock: d.shotClock
+      }),
+      needNotify: true,
+      success: function () {
+        _bleNotifyFailStreak = 0;
+        _bleNotifyBackoffUntil = 0;
+        console.log('[Collector] notify ok', d.homeScore, d.awayScore, d.minutes, d.seconds, d.shotClock);
+      },
+      fail: function (err) {
+        _bleNotifyFailStreak = Math.min(_bleNotifyFailStreak + 1, 12);
+        var pow = Math.min(Math.max(_bleNotifyFailStreak - 1, 0), 8);
+        var backoff = Math.min(
+          BLE_NOTIFY_BACKOFF_MAX_MS,
+          Math.round(BLE_NOTIFY_BACKOFF_BASE_MS * Math.pow(2, pow))
+        );
+        _bleNotifyBackoffUntil = Date.now() + backoff;
+        console.warn('[Collector] notify fail — backoff %sms streak=%s err=%o', backoff, _bleNotifyFailStreak, err);
+        if (!_bleNotifyRetryTimer) {
+          _bleNotifyRetryTimer = setTimeout(function () {
+            _bleNotifyRetryTimer = 0;
+            self._flushBleNotifyIfReady();
+          }, backoff);
+        }
+      }
+    });
+  },
 
   _notify: function () {
     _lastCommittedFrame = {
@@ -1205,18 +1583,7 @@ Page({
       shotClock: this.data.shotClock
     };
     if (!_server || !_connectedDeviceId) return;
-    var d = this.data;
-    _server.writeCharacteristicValue({
-      serviceId: BLE.SERVICE_UUID,
-      characteristicId: BLE.CHAR_SCORE_UUID,
-      value: BLE.encodePacket({
-        homeScore: d.homeScore, awayScore: d.awayScore, period: d.period,
-        minutes: d.minutes, seconds: d.seconds, shotClock: d.shotClock
-      }),
-      needNotify: true,
-      success: function () { console.log('[Collector] notify ok', d.homeScore, d.awayScore, d.minutes, d.seconds, d.shotClock); },
-      fail: function (err) { console.warn('[Collector] notify fail', err); }
-    });
+    this._flushBleNotifyIfReady();
   }
 });
 
@@ -1314,67 +1681,65 @@ function parseTime(raw) {
   return { minutes: m, seconds: s };
 }
 
-function parsePeriod(raw) {
-  if (!raw) return null;
-  var text = String(raw);
-  var match = text.match(/第\s*(\d)\s*[节节]/);
-  if (match) {
-    var n = parseInt(match[1], 10);
-    if (!isNaN(n) && n >= 1 && n <= 8) return n;
-  }
-  var fallback = text.match(/\b([1-8])\b(?=.*[节QqPp])/);
-  if (fallback) {
-    var p = parseInt(fallback[1], 10);
-    if (!isNaN(p) && p >= 1 && p <= 8) return p;
-  }
-  return null;
-}
-
-/** 从字符串中提取进攻时钟数值（0-24）。 */
-function parseShotClock(raw) {
-  if (!raw) return null;
-  var matches = String(raw).match(/\d{1,2}/g);
-  if (!matches || !matches.length) return null;
-  var n = parseInt(matches[matches.length - 1], 10);
-  if (isNaN(n) || n < 0 || n > 24) return null;
-  return n;
-}
-
-function scoreStepPenalty(next, prev) {
-  var delta = next - prev;
-  if (delta >= 0 && delta <= 3) return 0;
-  if (delta >= -1 && delta <= 5) return 1;
-  if (delta >= -3 && delta <= 8) return 2;
-  return 3;
-}
-
-/** 比较两帧是否完全相同（连续帧一致性校验）。 */
-function framesEqual(a, b) {
-  if (!a || !b) return false;
-  return a.homeScore === b.homeScore && a.awayScore === b.awayScore &&
-    a.minutes === b.minutes && a.seconds === b.seconds &&
-    a.shotClock === b.shotClock;
+/**
+ * 将帧中的分:秒转为便于比较的总秒数（仅用于同节内 OCR 跳变启发式）。
+ * @param {{ minutes?: number, seconds?: number }} f
+ * @returns {number}
+ */
+function ocrFrameClockSec(f) {
+  if (!f) return 0;
+  return (Number(f.minutes) || 0) * 60 + (Number(f.seconds) || 0);
 }
 
 /**
- * 连续两次 OCR 不要求整帧完全相同。
- * 只要比分/节次一致，且比赛时钟与 24 秒处于合理递减范围内，就认为可以提交最新帧。
+ * 在较短墙钟间隔内，比赛时钟相对上一提交「多跳了」若干秒则视为可疑 OCR，暂缓 notify。
+ * @param {{ minutes?: number, seconds?: number }} prev
+ * @param {{ minutes?: number, seconds?: number }} next
+ * @param {number} wallDtMs
+ * @returns {boolean}
  */
-function framesStableEnough(a, b) {
-  if (!a || !b) return false;
-  if (a.homeScore !== b.homeScore || a.awayScore !== b.awayScore || a.period !== b.period) {
-    return false;
-  }
-
-  var gameClockDelta = Math.abs(frameClockSeconds(a) - frameClockSeconds(b));
-  if (gameClockDelta > 3) return false;
-
-  var shotDelta = Math.abs((a.shotClock || 0) - (b.shotClock || 0));
-  if (shotDelta <= 4) return true;
-
-  return b.shotClock === 24 || b.shotClock === 14;
+function isSuspiciousGameClockSkip(prev, next, wallDtMs) {
+  if (!prev || !next || wallDtMs >= 2000) return false;
+  var prevT = ocrFrameClockSec(prev);
+  var nextT = ocrFrameClockSec(next);
+  if (nextT >= prevT) return false;
+  var drop = prevT - nextT;
+  var plausible = Math.floor(wallDtMs / 280) + 4;
+  return drop > plausible && drop <= 45;
 }
 
+/**
+ * 相对上一提交帧的主/客分单边最大变化量。
+ * @param {{ homeScore?: number, awayScore?: number } | null} prev
+ * @param {number} h
+ * @param {number} a
+ * @returns {number}
+ */
+function maxScoreDeltaVsCommitted(prev, h, a) {
+  if (!prev) return 0;
+  return Math.max(
+    Math.abs(h - (Number(prev.homeScore) || 0)),
+    Math.abs(a - (Number(prev.awayScore) || 0))
+  );
+}
+
+/**
+ * 判断新比分是否相对上一提交更像「高位数字被 OCR 吃掉」(如 111→11)。
+ * @param {number} prev
+ * @param {number} next
+ * @returns {boolean}
+ */
+function isLikelyTruncateGlitch(prev, next) {
+  if (prev == null || next == null) return false;
+  if (next >= prev) return false;
+  if (prev < 22 || prev - next < 9) return false;
+  var ps = String(prev);
+  var ns = String(next);
+  if (!ns.length) return false;
+  return ps.indexOf(ns) === 0;
+}
+
+/** 构造解析后比赛帧的去重 key（仅用于 OCR → setData 去重，非「N 帧一致」门禁）。 */
 function buildFrameKey(frame) {
   return [
     frame.homeScore,
@@ -1384,109 +1749,6 @@ function buildFrameKey(frame) {
     frame.seconds,
     frame.shotClock
   ].join('|');
-}
-
-function frameClockSeconds(frame) {
-  if (!frame) return 0;
-  return ((Number(frame.minutes) || 0) * 60) + (Number(frame.seconds) || 0);
-}
-
-function normalizeFrameAgainstBase(base, next) {
-  var frame = {
-    homeScore: next.homeScore,
-    awayScore: next.awayScore,
-    period: next.period,
-    minutes: next.minutes,
-    seconds: next.seconds,
-    shotClock: next.shotClock
-  };
-  if (!base) return frame;
-
-  if (!isPlausibleScoreTransition(base.homeScore, frame.homeScore)) {
-    frame.homeScore = base.homeScore;
-  }
-  if (!isPlausibleScoreTransition(base.awayScore, frame.awayScore)) {
-    frame.awayScore = base.awayScore;
-  }
-  if (!isPlausiblePeriodTransition(base.period, frame.period, base, frame)) {
-    frame.period = base.period;
-  }
-  if (!isPlausibleGameClockPreview(base, frame)) {
-    frame.minutes = base.minutes;
-    frame.seconds = base.seconds;
-  }
-  if (!isPlausibleShotClockPreview(base, frame)) {
-    frame.shotClock = base.shotClock;
-  }
-  return frame;
-}
-
-function isPlausibleScoreTransition(prev, next) {
-  if (next === null || next === undefined) return false;
-  if (!isFinite(next) || next < 0 || next > 255) return false;
-  if (!isFinite(prev)) return true;
-  var delta = next - prev;
-  return delta >= -1 && delta <= 8;
-}
-
-function isPlausiblePeriodTransition(prevPeriod, nextPeriod, prevFrame, nextFrame) {
-  if (!isFinite(nextPeriod) || nextPeriod < 1 || nextPeriod > 8) return false;
-  if (nextPeriod === prevPeriod) return true;
-  if (nextPeriod === prevPeriod + 1 && frameClockSeconds(prevFrame) <= 5 && frameClockSeconds(nextFrame) >= 8 * 60) {
-    return true;
-  }
-  return false;
-}
-
-function isPlausibleGameClockPreview(prev, next) {
-  if (!prev || !next) return false;
-  if (prev.period !== next.period) return true;
-  var prevClock = frameClockSeconds(prev);
-  var nextClock = frameClockSeconds(next);
-  if (prevClock <= 5 && nextClock >= 8 * 60) return true;
-  var delta = prevClock - nextClock;
-  return delta >= 0 && delta <= 2;
-}
-
-function isPlausibleShotClockPreview(prev, next) {
-  if (!prev || !next) return false;
-  var delta = (Number(prev.shotClock) || 0) - (Number(next.shotClock) || 0);
-  if (delta >= 0 && delta <= 4) return true;
-  return next.shotClock === 24 || next.shotClock === 14;
-}
-
-function isImmediateFrameTransition(prev, next) {
-  if (!prev || !next) return true;
-  if (next.period !== prev.period) {
-    return isPlausiblePeriodTransition(prev.period, next.period, prev, next);
-  }
-
-  var scoreDelta = (next.homeScore - prev.homeScore) + (next.awayScore - prev.awayScore);
-  if (scoreDelta < -1 || scoreDelta > 5) return false;
-  if (!isPlausibleGameClockPreview(prev, next)) return false;
-  return isPlausibleShotClockPreview(prev, next);
-}
-
-function isRecoverableClockJump(prev, next) {
-  if (!prev || !next) return false;
-  if (prev.period !== next.period) return false;
-  var delta = frameClockSeconds(prev) - frameClockSeconds(next);
-  return delta >= 0 && delta <= 4;
-}
-
-function shouldForceResyncFromStableFrame(prev, next) {
-  if (!prev || !next) return false;
-  if (prev.period !== next.period) return false;
-  if (next.homeScore > 255 || next.awayScore > 255) return false;
-  if (next.shotClock < 0 || next.shotClock > 24) return false;
-
-  var scoreDrop = (prev.homeScore - next.homeScore) + (prev.awayScore - next.awayScore);
-  if (scoreDrop < 4) return false;
-
-  var nextClock = frameClockSeconds(next);
-  if (nextClock <= 0) return false;
-
-  return true;
 }
 
 function collectAnchorTexts(anchors) {
@@ -1523,12 +1785,7 @@ function cropRgbaCandidatesByRoi(rgba, frameWidth, frameHeight, roi) {
       expandRect(rect, frameWidth, frameHeight, { dx: 0.04, dy: -0.06, dw: -0.08, dh: 0.12 })
     ]);
   }
-  return buildCropVariants(rgba, frameWidth, frameHeight, [
-    rect,
-    expandRect(rect, frameWidth, frameHeight, { dx: -0.08, dy: -0.08, dw: 0.12, dh: 0.12 }),
-    expandRect(rect, frameWidth, frameHeight, { dx: 0.12, dy: -0.10, dw: 0.18, dh: 0.16 }),
-    expandRect(rect, frameWidth, frameHeight, { dx: -0.14, dy: 0.00, dw: 0.20, dh: 0.10 })
-  ]);
+  return buildCropVariants(rgba, frameWidth, frameHeight, [rect]);
 }
 
 function buildCropVariants(rgba, frameWidth, frameHeight, rects) {
@@ -1556,14 +1813,9 @@ function buildRoiCropRect(frameWidth, frameHeight, roi) {
   } else if (roi.label === '时间') {
     y = Math.max(0, y - Math.floor(h * 0.08));
     h = Math.min(frameHeight - y, Math.floor(h * 1.16));
-  } else if (roi.label === '24秒') {
-    x = Math.max(0, x - Math.floor(w * 0.25));
-    y = Math.max(0, y - Math.floor(h * 0.22));
-    w = Math.min(frameWidth - x, Math.floor(w * 1.55));
-    h = Math.min(frameHeight - y, Math.floor(h * 1.55));
   }
 
-  var padX = Math.max(2, Math.floor(w * (roi.label === '24秒' ? 0.10 : 0.05)));
+  var padX = Math.max(2, Math.floor(w * 0.05));
   var padY = Math.max(2, Math.floor(h * (roi.label === '时间' ? 0.06 : 0.10)));
   x = Math.max(0, x - padX);
   y = Math.max(0, y - padY);
@@ -1667,16 +1919,25 @@ function normalizeAnchorPoint(x, y, source) {
 }
 
 function buildOcrQueue(now, rois) {
+  var n = OCR_ROI_COUNT;
   var due = [];
-  var intervals = [OCR_SCORE_REFRESH_MS, OCR_SCORE_REFRESH_MS, OCR_TIME_REFRESH_MS, OCR_SHOT_REFRESH_MS];
-  for (var i = 0; i < intervals.length; i++) {
+  var intervals = [OCR_SCORE_REFRESH_MS, OCR_SCORE_REFRESH_MS, OCR_TIME_REFRESH_MS];
+  var i;
+  for (i = 0; i < n; i++) {
     if ((_ocrRoiBackoffUntil[i] || 0) > now) continue;
     if (shouldRunRoi(now, i, intervals[i])) due.push(i);
   }
 
+  var timeStarved =
+    (now - (_ocrLastTimeSuccessTs || 0)) >= OCR_TIME_PRIORITY_MS &&
+    ((_ocrRoiBackoffUntil[2] || 0) <= now);
+  if (timeStarved && due.indexOf(2) === -1) {
+    due.push(2);
+  }
+
   if (!due.length) {
-    for (var fi = 0; fi < intervals.length; fi++) {
-      var fallbackIdx = (fi + _ocrQueueCursor) % 4;
+    for (var fi = 0; fi < n; fi++) {
+      var fallbackIdx = (fi + _ocrQueueCursor) % n;
       if ((_ocrRoiBackoffUntil[fallbackIdx] || 0) <= now) {
         due.push(fallbackIdx);
         break;
@@ -1687,12 +1948,16 @@ function buildOcrQueue(now, rois) {
   var missing = [];
   if ((!rois[0] || !rois[0].rawText) && ((_ocrRoiBackoffUntil[0] || 0) <= now)) missing.push(0);
   if ((!rois[1] || !rois[1].rawText) && ((_ocrRoiBackoffUntil[1] || 0) <= now)) missing.push(1);
-  if ((!rois[3] || !rois[3].rawText) && ((_ocrRoiBackoffUntil[3] || 0) <= now)) missing.push(3);
+  if ((!rois[2] || !rois[2].rawText) && ((_ocrRoiBackoffUntil[2] || 0) <= now)) missing.push(2);
   for (var mi = 0; mi < missing.length; mi++) {
     if (due.indexOf(missing[mi]) === -1) due.push(missing[mi]);
   }
 
   due.sort(function (a, b) {
+    if (timeStarved) {
+      if (a === 2 && b !== 2) return -1;
+      if (b === 2 && a !== 2) return 1;
+    }
     var lastA = _ocrLastRoiRunTs[a] || 0;
     var lastB = _ocrLastRoiRunTs[b] || 0;
     if (lastA !== lastB) return lastA - lastB;
@@ -1700,7 +1965,7 @@ function buildOcrQueue(now, rois) {
   });
 
   var picked = due[0];
-  _ocrQueueCursor = (picked + 1) % 4;
+  _ocrQueueCursor = (picked + 1) % n;
   return [picked];
 }
 
@@ -1709,5 +1974,5 @@ function shouldRunRoi(now, idx, intervalMs) {
 }
 
 function rotationDistance(idx) {
-  return (idx - _ocrQueueCursor + 4) % 4;
+  return (idx - _ocrQueueCursor + OCR_ROI_COUNT) % OCR_ROI_COUNT;
 }
