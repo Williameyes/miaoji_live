@@ -32,19 +32,56 @@ var OCR_ROI_COUNT = 3;
 var OCR_MIN_INTERVAL_BASE_MS = 160;
 var OCR_MIN_INTERVAL_MS = 160;
 var OCR_PUMP_INTERVAL_MS = 120;
-/** 单 ROI runOCR 超时（略收紧，避免长时间占用导致时间 ROI 断层）。 */
+/** 单 ROI runOCR 默认超时（比分引擎使用） */
 var OCR_RUN_TIMEOUT_MS = 720;
-var OCR_TIMEOUT_SETTLE_MS = 0;
+/**
+ * 时间 OCR 引擎超时：1500ms。
+ *
+ * 历史教训：曾经按需求把这个值压到 250ms，结果在双泵高频提交下 SDK 实际跑不完，
+ * 我们却已经"放弃 + 释放 busy"并立即提交下一次 runOCR；SDK 内部队列被堆积，
+ * 实际单次耗时被进一步拉到 1000ms+，整个采集链路雪崩（所有 ROI 全部超时，
+ * pending overflow，状态机收不到样本，暂停被误识别为继续倒计时）。
+ *
+ * 现在用 1500ms：让 SDK 有真实的处理时间，避免"未完成→重新提交→队列堆积→更慢"
+ * 死循环；OCR 实际感知到的延迟由状态机内的 captureTs 流水线补偿（realWorldSec =
+ * ocrSec - lostSec）抵消，BLE 推送的依然是当前真实时钟。
+ */
+var OCR_TIME_RUN_TIMEOUT_MS = 1500;
+/**
+ * 任何 OCR 超时后强制等待 350ms 再提交下一次 runOCR：
+ * 给 SDK 内部清队列的时间窗口，避免立刻补刀让队列雪崩。
+ */
+var OCR_TIMEOUT_SETTLE_MS = 350;
 var OCR_MAX_VARIANTS_PER_RUN = 3;
 var OCR_SCORE_TICK_INTERVAL = 8;
 var OCR_TIME_PREDICT_MAX_STALE_MS = 5000;
-var OCR_CLOCK_PREDICT_TICK_MS = 250;
+/** 预测补秒定时器基准 / 最后一分钟激进值 */
+var OCR_CLOCK_PREDICT_TICK_BASE_MS = 250;
+var OCR_CLOCK_PREDICT_TICK_FINAL_MS = 100;
+/** 当前生效的预测补秒间隔（运行时根据 final-minute 模式动态切换） */
+var OCR_CLOCK_PREDICT_TICK_MS = OCR_CLOCK_PREDICT_TICK_BASE_MS;
 var OCR_CLOCK_PREDICT_ACTIVE_MS = 4500;
 var OCR_CLOCK_CATCHUP_MAX_DROP_SEC = 20;
 var OCR_CLOCK_CATCHUP_FAST_INTERVAL_MS = 520;
 var OCR_CLOCK_NORMAL_INTERVAL_MS = 900;
-var OCR_CLOCK_PAUSE_CONFIRM_MS = 1200;
+/** 状态机：PAUSE 持续阈值（同一 realWorldSec 持续这么久即认定停表） */
+var OCR_CLOCK_PAUSE_HOLD_MS = 800;
+/** 状态机：JUMP 持续阈值（异常跳跃维持这么久即视为人工改表） */
+var OCR_CLOCK_JUMP_HOLD_MS = 600;
+/** 状态机：JUMP 判定的「向下跳变」阈值，超过该秒数视为大跨度跳变 */
+var OCR_CLOCK_JUMP_DROP_THRESHOLD = 5;
+/** 状态机：RESUME 判定允许的最大下降秒数（超过则不触发"秒启" force-emit） */
+var OCR_CLOCK_RESUME_DROP_MAX = 2;
+/** 兼容历史代码（已被新状态机取代但仍被部分路径读取） */
+var OCR_CLOCK_PAUSE_CONFIRM_MS = OCR_CLOCK_PAUSE_HOLD_MS;
 var OCR_CLOCK_RESUME_CONFIRM_MS = 700;
+/** 双频双泵基准间隔：时间高频，比分低频，共享单条 VK 运行通道 */
+var TIME_PUMP_INTERVAL_BASE_MS = 120;
+var TIME_PUMP_INTERVAL_FINAL_MS = 80;
+var SCORE_PUMP_INTERVAL_BASE_MS = 800;
+/** 当前生效的双泵间隔（最后一分钟会动态压榨 TIME_PUMP_INTERVAL） */
+var TIME_PUMP_INTERVAL = TIME_PUMP_INTERVAL_BASE_MS;
+var SCORE_PUMP_INTERVAL = SCORE_PUMP_INTERVAL_BASE_MS;
 /** 时间 ROI 刷新间隔（收紧以减轻跳秒观感）。 */
 var OCR_TIME_REFRESH_MS = 160;
 /** 比分 ROI 刷新间隔（放宽，把更多 OCR 槽让给时钟；比分另有确认门禁）。 */
@@ -176,6 +213,16 @@ var _sameOcrClockSince = 0;
 var _clockPauseCandidateUntil = 0;
 var _clockResumeCandidateSec = -1;
 var _clockResumeCandidateSince = 0;
+/** JUMP 候选：异常跳跃需连续 OCR_CLOCK_JUMP_HOLD_MS 维持同值才确认 */
+var _clockJumpCandidateSec = -1;
+var _clockJumpCandidateSince = 0;
+/** 双频双泵节流阀（墙钟时间戳） */
+var _lastTimePumpTs = 0;
+var _lastScorePumpTs = 0;
+/** 比分泵 round-robin 游标（0=主队分, 1=客队分） */
+var _scorePumpCursor = 0;
+/** 是否进入最后一分钟极限调度模式（minutes===0 && seconds<=60） */
+var _isFinalMinuteMode = false;
 /** 是否因小程序 onHide 暂停了相机帧泵（onShow 恢复） */
 var _ocrPausedForBackground = false;
 /** BLE notify 退避截止时刻 */
@@ -754,6 +801,15 @@ Page({
     _scoreJumpHold = null;
     _manualScoreEditAt = 0;
     _lastNotifyWallAt = 0;
+    _lastTimePumpTs = 0;
+    _lastScorePumpTs = 0;
+    _scorePumpCursor = 0;
+    _clockJumpCandidateSec = -1;
+    _clockJumpCandidateSince = 0;
+    _isFinalMinuteMode = false;
+    TIME_PUMP_INTERVAL = TIME_PUMP_INTERVAL_BASE_MS;
+    SCORE_PUMP_INTERVAL = SCORE_PUMP_INTERVAL_BASE_MS;
+    OCR_CLOCK_PREDICT_TICK_MS = OCR_CLOCK_PREDICT_TICK_BASE_MS;
     if (_ocrAnchorWatchdogTimer) {
       clearTimeout(_ocrAnchorWatchdogTimer);
       _ocrAnchorWatchdogTimer = 0;
@@ -831,13 +887,24 @@ Page({
       console.log('[Collector][OCR] event=updateAnchors seq=%s count=%s', _ocrAnchorEventCount, list.length);
     }
 
+    // 防卫 1：引擎未处于忙碌状态。这说明这是上一轮超时后，SDK 慢半拍送回来的迟到事件，坚决丢弃，防止张冠李戴。
     if (!_ocrRunState || !_ocrRunBusy) {
       if (this.data.debugMode) {
-        console.log('[Collector][OCR] unexpected anchor event outside manual run');
+        console.log('[Collector][OCR] drop delayed anchor event (engine not busy)');
       }
       return;
     }
 
+    // 防卫 2：极速折返拦截。微信 OCR 最快也要 150ms 以上。如果本次请求发出去不足 80ms 就收到了回调，
+    // 物理上不可能这么快，这百分之百是上一轮极度迟到的幽灵事件，坚决丢弃！
+    if (Date.now() - _ocrRunStartedAt < 80) {
+      if (this.data.debugMode) {
+        console.warn('[Collector][OCR] drop impossible fast event. age=' + (Date.now() - _ocrRunStartedAt));
+      }
+      return;
+    }
+
+    // 清理本次真实的超时定时器
     if (_ocrRunTimeout) {
       clearTimeout(_ocrRunTimeout);
       _ocrRunTimeout = 0;
@@ -857,7 +924,8 @@ Page({
     }
     _ocrRoiTextSeq[roiIdx] = (_ocrRoiTextSeq[roiIdx] || 0) + 1;
     if (roiIdx === 2) {
-      this._recordOcrClockSample(parseTime(text));
+      var captureTs = (_ocrRunState && _ocrRunState.captureTs) || Date.now();
+      this._recordOcrClockSample(parseTime(text), captureTs);
     }
     _ocrRunState.updatedRoiIdx = roiIdx;
     _ocrRunState.rawTexts[roiIdx] = text;
@@ -866,82 +934,135 @@ Page({
     this._runNextRoiOcr();
   },
 
-  _recordOcrClockSample: function (clock) {
-    if (!clock) return;
+  /**
+   * OCR 时间样本入口（带流水线延迟补偿与非对称信任状态机）。
+   *
+   * 状态机三态：
+   *   - PAUSE：连续 OCR_CLOCK_PAUSE_HOLD_MS 读到同一秒，认定停表，强制对齐预测时钟。
+   *   - RESUME：从 paused 切到 running 时（drop 在 1~2 秒内）立即推送 BLE，无需等待。
+   *   - JUMP：上跳或下跳 > OCR_CLOCK_JUMP_DROP_THRESHOLD 秒，需连续 OCR_CLOCK_JUMP_HOLD_MS
+   *           维持同值才视为人工改表，确认后强制覆盖并立即推送 BLE。
+   *
+   * 流水线补偿：
+   *   - 由于摄像帧 → runOCR → updateAnchors 之间存在 ms 级延迟，
+   *     用 captureTs 推算 lostSec，得到「绝对真实秒」realWorldSec = ocrSec - lostSec。
+   *
+   * @param {{ minutes: number, seconds: number } | null} parsedTime parseTime 输出
+   * @param {number} frameCaptureTs 调用 runOCR 之前的墙钟戳
+   * @returns {void}
+   */
+  _recordOcrClockSample: function (parsedTime, frameCaptureTs) {
+    if (!parsedTime) return;
     var now = Date.now();
     _ocrLastTimeSuccessTs = now;
-    var nextSec = clockToTotalSec(clock);
+
+    // === 1) 流水线延迟补偿：把 OCR 读到的秒数倒推到「现在的真实秒」 ===
+    var processDelayMs = frameCaptureTs ? Math.max(0, now - frameCaptureTs) : 0;
+    var lostSec = Math.floor(processDelayMs / 1000);
+    var ocrSec = clockToTotalSec(parsedTime);
+    var realWorldSec = Math.max(0, ocrSec - lostSec);
+    var realClock = clockFromTotalSec(realWorldSec);
+
     var prevOcrSec = _lastOcrClockSec;
     var prevOcrWallTs = _lastOcrClockWallTs || now;
 
     if (!_predictedClock || prevOcrSec < 0) {
-      _lastOcrClockSec = nextSec;
+      _lastOcrClockSec = realWorldSec;
       _lastOcrClockWallTs = now;
-      updatePredictedClock(clock);
-      _lastClockPredictEmitSec = nextSec;
+      updatePredictedClock(realClock);
+      _lastClockPredictEmitSec = realWorldSec;
       _sameOcrClockSince = now;
       _clockMode = 'unknown';
+      _clockJumpCandidateSec = -1;
+      _clockJumpCandidateSince = 0;
+      this._maybeApplyFinalMinuteMode(realClock);
       return;
     }
 
-    if (nextSec === prevOcrSec) {
-      _lastOcrClockSec = nextSec;
+    var delta = realWorldSec - prevOcrSec;
+    var dropSec = -delta;
+
+    // === 2) 大跨度跳变 / 回表确认（JUMP）===
+    if (delta > 0 || dropSec > OCR_CLOCK_JUMP_DROP_THRESHOLD) {
+      if (_clockJumpCandidateSec === realWorldSec) {
+        if (now - _clockJumpCandidateSince >= OCR_CLOCK_JUMP_HOLD_MS) {
+          if (this.data.debugMode) {
+            console.log('[Collector][OCR] CLOCK JUMP confirmed prev=%s now=%s drop=%s', prevOcrSec, realWorldSec, dropSec);
+          }
+          // 技术台人工改表后（如回表到 5:00），比赛通常即将继续或处于随时开球的死球状态。
+          // 设为 running 让预测时钟立刻接管并平滑输出，避免 OCR 慢半拍时停摆。
+          _clockMode = 'running';
+          _lastOcrClockSec = realWorldSec;
+          _lastOcrClockWallTs = now;
+          _sameOcrClockSince = now;
+          _clockPauseCandidateUntil = 0;
+          _clockResumeCandidateSec = -1;
+          _clockResumeCandidateSince = 0;
+          _clockJumpCandidateSec = -1;
+          _clockJumpCandidateSince = 0;
+          updatePredictedClock(realClock);
+          _lastClockPredictEmitSec = realWorldSec;
+          this._clearClockPredictTimer();
+          this._maybeApplyFinalMinuteMode(realClock);
+          this._emitTimeOnlyIfChanged(realClock, now, true);
+        }
+      } else {
+        _clockJumpCandidateSec = realWorldSec;
+        _clockJumpCandidateSince = now;
+        if (this.data.debugMode) {
+          console.log('[Collector][OCR] CLOCK JUMP candidate prev=%s next=%s drop=%s', prevOcrSec, realWorldSec, dropSec);
+        }
+      }
+      return;
+    }
+
+    // 走出 JUMP 候选窗口后清空
+    _clockJumpCandidateSec = -1;
+    _clockJumpCandidateSince = 0;
+
+    // === 3) 停表强校准（PAUSE）===
+    if (delta === 0) {
+      _lastOcrClockSec = realWorldSec;
       _lastOcrClockWallTs = now;
       _clockResumeCandidateSec = -1;
       _clockResumeCandidateSince = 0;
       if (!_sameOcrClockSince) _sameOcrClockSince = prevOcrWallTs;
-      _clockPauseCandidateUntil = now + OCR_CLOCK_PAUSE_CONFIRM_MS;
-      var committedNearSample = !_lastCommittedFrame || Math.abs(ocrFrameClockSec(_lastCommittedFrame) - nextSec) <= 1;
-      if (committedNearSample && now - _sameOcrClockSince >= OCR_CLOCK_PAUSE_CONFIRM_MS) {
-        _clockMode = 'paused';
-        updatePredictedClock(clock);
-        _lastClockPredictEmitSec = nextSec;
-        this._clearClockPredictTimer();
-        return;
-      }
-      return;
-    }
-
-    if (nextSec < prevOcrSec) {
-      if (_clockMode === 'paused') {
-        var resumeConfirmed =
-          (_clockResumeCandidateSec === nextSec && now - _clockResumeCandidateSince >= OCR_CLOCK_RESUME_CONFIRM_MS) ||
-          (_clockResumeCandidateSec >= 0 && nextSec < _clockResumeCandidateSec);
-        if (!resumeConfirmed) {
-          _clockResumeCandidateSec = nextSec;
-          _clockResumeCandidateSince = now;
-          _clockPauseCandidateUntil = now + OCR_CLOCK_RESUME_CONFIRM_MS;
-          return;
+      _clockPauseCandidateUntil = now + OCR_CLOCK_PAUSE_HOLD_MS;
+      if (now - _sameOcrClockSince >= OCR_CLOCK_PAUSE_HOLD_MS) {
+        if (_clockMode !== 'paused' && this.data.debugMode) {
+          console.log('[Collector][OCR] CLOCK PAUSE confirmed at sec=%s', realWorldSec);
         }
-      }
-      _lastOcrClockSec = nextSec;
-      _lastOcrClockWallTs = now;
-      _sameOcrClockSince = now;
-      _clockPauseCandidateUntil = 0;
-      _clockResumeCandidateSec = -1;
-      _clockResumeCandidateSince = 0;
-      var drop = prevOcrSec - nextSec;
-      var elapsedSec = Math.max(0, Math.floor((now - prevOcrWallTs) / 1000));
-      var plausibleDrop = Math.max(OCR_CLOCK_CATCHUP_MAX_DROP_SEC, elapsedSec + 2);
-      if (drop <= plausibleDrop) {
-        _clockMode = 'running';
-        updatePredictedClock(clock);
-        _clockPredictUntil = Math.max(_clockPredictUntil || 0, getClockRunUntil(now, nextSec));
-        this._ensureClockPredictTimer();
+        _clockMode = 'paused';
+        updatePredictedClock(realClock);
+        _lastClockPredictEmitSec = realWorldSec;
+        this._clearClockPredictTimer();
+        this._maybeApplyFinalMinuteMode(realClock);
       }
       return;
     }
 
-    _lastOcrClockSec = nextSec;
+    // === 4) 秒启恢复（RESUME）/ 正常下降 ===
+    var wasPaused = (_clockMode === 'paused');
+    _lastOcrClockSec = realWorldSec;
     _lastOcrClockWallTs = now;
     _sameOcrClockSince = now;
     _clockPauseCandidateUntil = 0;
     _clockResumeCandidateSec = -1;
     _clockResumeCandidateSince = 0;
-    _clockMode = 'unknown';
-    updatePredictedClock(clock);
-    _clockPredictUntil = 0;
-    _lastClockPredictEmitSec = nextSec;
+    _clockMode = 'running';
+    updatePredictedClock(realClock);
+    _lastClockPredictEmitSec = realWorldSec;
+    _clockPredictUntil = Math.max(_clockPredictUntil || 0, getClockRunUntil(now, realWorldSec));
+    this._ensureClockPredictTimer();
+    this._maybeApplyFinalMinuteMode(realClock);
+
+    // 从 paused 立即恢复，无任何等待，直接推送 BLE
+    if (wasPaused && dropSec >= 1 && dropSec <= OCR_CLOCK_RESUME_DROP_MAX) {
+      if (this.data.debugMode) {
+        console.log('[Collector][OCR] CLOCK RESUME prev=%s now=%s drop=%s (force-emit)', prevOcrSec, realWorldSec, dropSec);
+      }
+      this._emitTimeOnlyIfChanged(realClock, now, true);
+    }
   },
 
   _ensureClockPredictTimer: function () {
@@ -960,6 +1081,36 @@ Page({
     _clockPredictUntil = 0;
     _lastClockPredictEmitWallTs = 0;
     _lastClockPredictEmitSec = -1;
+  },
+
+  /**
+   * 最后一分钟极限调度：minutes===0 && seconds<=60 时压榨 TIME_PUMP_INTERVAL=80、
+   * OCR_CLOCK_PREDICT_TICK_MS=100，提升 SS.m 显示阶段的识别率与补秒颗粒度；
+   * 离开最后一分钟立即恢复基准值并重启预测定时器。
+   * @param {{ minutes: number, seconds: number } | null} clock 真实绝对时钟
+   * @returns {void}
+   */
+  _maybeApplyFinalMinuteMode: function (clock) {
+    if (!clock) return;
+    var minutes = Number(clock.minutes) || 0;
+    var seconds = Number(clock.seconds) || 0;
+    var inFinal = (minutes === 0 && seconds <= 60);
+    if (inFinal === _isFinalMinuteMode) return;
+    _isFinalMinuteMode = inFinal;
+    if (inFinal) {
+      TIME_PUMP_INTERVAL = TIME_PUMP_INTERVAL_FINAL_MS;
+      OCR_CLOCK_PREDICT_TICK_MS = OCR_CLOCK_PREDICT_TICK_FINAL_MS;
+    } else {
+      TIME_PUMP_INTERVAL = TIME_PUMP_INTERVAL_BASE_MS;
+      OCR_CLOCK_PREDICT_TICK_MS = OCR_CLOCK_PREDICT_TICK_BASE_MS;
+    }
+    console.log('[Collector][OCR] final-minute mode=%s timePump=%s predictTick=%s', inFinal, TIME_PUMP_INTERVAL, OCR_CLOCK_PREDICT_TICK_MS);
+    // 重启预测定时器以应用新的间隔（setInterval 创建时已固定原间隔）
+    if (_clockPredictTimer) {
+      clearInterval(_clockPredictTimer);
+      _clockPredictTimer = 0;
+      this._ensureClockPredictTimer();
+    }
   },
 
   _onClockPredictTick: function () {
@@ -994,16 +1145,29 @@ Page({
     this._emitTimeOnlyIfChanged(clockFromTotalSec(emitSec), now);
   },
 
+  /**
+   * 双频双泵：
+   *   - 时间泵（高频 TIME_PUMP_INTERVAL）：仅取时间 ROI，最新帧入引擎，历史帧丢弃。
+   *   - 比分泵（低频 SCORE_PUMP_INTERVAL）：主/客 ROI 轮询，让出运行通道给时间泵。
+   *
+   * 单条 VK runOCR 通道由 _ocrRunBusy 互斥；时间泵优先，比分泵在空闲且未到时间泵周期时执行。
+   * 每次入泵时打包 captureTs（Date.now()），交给时间引擎做后续流水线延迟补偿。
+   * @param {any} session
+   * @param {number} token
+   * @returns {void}
+   */
   _startOcrFramePump: function (session, token) {
     var self = this;
     this._cancelOcrFramePump();
     _ocrPumpFrameCount = 0;
     _ocrPumpLastTickTs = 0;
+    _lastTimePumpTs = 0;
+    _lastScorePumpTs = 0;
     if (!_cameraContext || typeof _cameraContext.onCameraFrame !== 'function') {
       console.error('[Collector][OCR] onCameraFrame unavailable');
       return;
     }
-    console.log('[Collector][OCR] native frame listener start interval=%s', OCR_PUMP_INTERVAL_MS);
+    console.log('[Collector][OCR] dual-pump start time=%s score=%s', TIME_PUMP_INTERVAL, SCORE_PUMP_INTERVAL);
     try {
       _cameraFrameListener = _cameraContext.onCameraFrame(function (frame) {
         if (_vkSession !== session || token !== _ocrSessionToken) return;
@@ -1013,11 +1177,32 @@ Page({
         if (_ocrPumpFrameCount <= 3 || _ocrPumpFrameCount % 300 === 0) {
           console.log('[Collector][OCR] pump seq=%s frame=%s size=%sx%s', _ocrPumpFrameCount, !!(frame && frame.data), frameW, frameH);
         }
-        if (frame && frame.data && frameW > 0 && frameH > 0) {
-          var now = Date.now();
-          if (now - _ocrPumpLastTickTs < OCR_PUMP_INTERVAL_MS) return;
-          _ocrPumpLastTickTs = now;
-          self._maybeRunManualOcr(session, token, frame.data, frameW, frameH);
+        if (!frame || !frame.data || frameW <= 0 || frameH <= 0) return;
+        // 永远只处理最新帧：busy 时直接丢弃当前帧，不排队不积压。
+        if (_ocrRunBusy) return;
+        var captureTs = Date.now();
+        // SDK 节流闸：上一次 OCR 超时后给 SDK OCR_TIMEOUT_SETTLE_MS 缓冲；
+        // 否则连续超时会让 SDK 内部队列雪崩。
+        if (captureTs < _ocrTimeoutSettleUntil) return;
+
+        // 比分泵优先于时间泵：
+        // 时间泵节奏 ~120ms 远小于单次 OCR 耗时（~150-250ms），若把时间泵放在前面，
+        // 引擎刚空出又被它抢走，比分泵会被无限饿死（home/away 的 rawText 永远空，
+        // 进而 _parseAndMaybeNotify 因 parseScore===null 始终 early-return，
+        // 整局比赛比分卡在 0、BLE 也不会推送）。
+        // 比分泵间隔较长（800ms），让它到点先抢一槽，时间泵在间隙里仍能跑 3~4 次。
+        if (captureTs - _lastScorePumpTs >= SCORE_PUMP_INTERVAL) {
+          _lastScorePumpTs = captureTs;
+          _ocrPumpLastTickTs = captureTs;
+          self._runScoreOcrEngine(session, token, frame.data, frameW, frameH, captureTs);
+          return;
+        }
+
+        // 时间泵：在比分泵未到点的间隙抢占运行通道
+        if (captureTs - _lastTimePumpTs >= TIME_PUMP_INTERVAL) {
+          _lastTimePumpTs = captureTs;
+          _ocrPumpLastTickTs = captureTs;
+          self._runTimeOcrEngine(session, token, frame.data, frameW, frameH, captureTs);
         }
       });
       _cameraFrameListener.start();
@@ -1033,55 +1218,100 @@ Page({
     }
     _ocrPumpFrameCount = 0;
     _ocrPumpLastTickTs = 0;
+    _lastTimePumpTs = 0;
+    _lastScorePumpTs = 0;
   },
 
-  _maybeRunManualOcr: function (session, token, rgbaBuffer, frameW, frameH) {
-    var now = Date.now();
-    var expectedBytes = frameW * frameH * 4;
-    if (_ocrRunBusy) return;
-    if (now < _ocrTimeoutSettleUntil) return;
-    if (now - _ocrRunLastTs < OCR_MIN_INTERVAL_MS) return;
+  /**
+   * 时间引擎：仅扫描时间 ROI（idx=2），单 variant，超时则放弃整轮（不重试 variant）。
+   *
+   * 注意超时窗口（OCR_TIME_RUN_TIMEOUT_MS = 1500ms）是 SDK 真实处理时间的上界，
+   * 而不是"想要的延迟"。SDK 在双泵高频提交场景下单次往往要 500-1200ms；
+   * 若设得更短就会被强行打断、释放 busy、立刻补刀提交下一次，导致 SDK 内部队列
+   * 雪崩并把整条 OCR 链路拖死。
+   *
+   * 真实"低延迟"由状态机的 captureTs 流水线补偿（realWorldSec = ocrSec - lostSec）
+   * 与 _onClockPredictTick 预测时钟共同保证：BLE 推送的总是当前真实时间，而不是
+   * OCR 落地时已经过时的样本。
+   * @param {any} session
+   * @param {number} token
+   * @param {ArrayBuffer} rgbaBuffer
+   * @param {number} frameW
+   * @param {number} frameH
+   * @param {number} captureTs 帧捕获时墙钟，用于流水线补偿
+   * @returns {void}
+   */
+  _runTimeOcrEngine: function (session, token, rgbaBuffer, frameW, frameH, captureTs) {
     if (token !== _ocrSessionToken) return;
-    if (!rgbaBuffer || !rgbaBuffer.byteLength) {
-      if (_ocrAnchorLogSeq < 20) {
-        console.warn('[Collector][OCR] camera frame empty size=%sx%s', frameW, frameH);
-        _ocrAnchorLogSeq += 1;
-      }
-      return;
-    }
-    if (_ocrPumpFrameCount <= 3 || rgbaBuffer.byteLength !== expectedBytes) {
-      console.log('[Collector][OCR] manual frame bytes=%s expected=%s frame=%sx%s', rgbaBuffer.byteLength, expectedBytes, frameW, frameH);
-    }
-
+    if (!rgbaBuffer || !rgbaBuffer.byteLength) return;
     if (typeof session.runOCR !== 'function') {
       console.error('[Collector][OCR] session.runOCR unavailable');
       return;
     }
-
+    var now = Date.now();
     _ocrRunLastTs = now;
     _ocrRunBusy = true;
     _ocrBusySince = now;
     _ocrRunStartedAt = now;
-    var queue = buildOcrQueue(now, this.data.rois);
-    if (!queue.length) {
-      _ocrRunBusy = false;
-      _ocrBusySince = 0;
-      return;
-    }
     _ocrRunState = {
+      type: 'time',
       session: session,
       token: token,
       frameWidth: frameW,
       frameHeight: frameH,
       rgba: new Uint8Array(rgbaBuffer),
       rawTexts: this.data.rois.map(function (roi) { return roi.rawText || ''; }),
-      queue: [queue[0]],
+      queue: [2],
       queuePos: 0,
-      currentIdx: -1
+      currentIdx: -1,
+      captureTs: captureTs
     };
     if (this.data.debugMode) {
-      console.log('[Collector][OCR] queue=%o', _ocrRunState.queue.map(function (idx) { return idx + ':' + ((_ocrRunState.rawTexts[idx] && _ocrRunState.rawTexts[idx].slice(0, 12)) || ''); }));
-      console.log('[Collector][OCR] manual run start frame=%sx%s bytes=%s mode=roi', frameW, frameH, rgbaBuffer.byteLength);
+      console.log('[Collector][OCR] time engine start frame=%sx%s captureTs=%s', frameW, frameH, captureTs);
+    }
+    this._runNextRoiOcr();
+  },
+
+  /**
+   * 比分引擎：在主队分(idx=0)与客队分(idx=1)间 round-robin，单帧只跑一个 ROI。
+   * 比分泵周期较低（800ms），把 VK runOCR 通道大部分时间留给时间引擎。
+   * @param {any} session
+   * @param {number} token
+   * @param {ArrayBuffer} rgbaBuffer
+   * @param {number} frameW
+   * @param {number} frameH
+   * @param {number} captureTs
+   * @returns {void}
+   */
+  _runScoreOcrEngine: function (session, token, rgbaBuffer, frameW, frameH, captureTs) {
+    if (token !== _ocrSessionToken) return;
+    if (!rgbaBuffer || !rgbaBuffer.byteLength) return;
+    if (typeof session.runOCR !== 'function') {
+      console.error('[Collector][OCR] session.runOCR unavailable');
+      return;
+    }
+    var idx = (_scorePumpCursor % 2 === 0) ? 0 : 1;
+    _scorePumpCursor += 1;
+    var now = Date.now();
+    _ocrRunLastTs = now;
+    _ocrRunBusy = true;
+    _ocrBusySince = now;
+    _ocrRunStartedAt = now;
+    _ocrRunState = {
+      type: 'score',
+      session: session,
+      token: token,
+      frameWidth: frameW,
+      frameHeight: frameH,
+      rgba: new Uint8Array(rgbaBuffer),
+      rawTexts: this.data.rois.map(function (roi) { return roi.rawText || ''; }),
+      queue: [idx],
+      queuePos: 0,
+      currentIdx: -1,
+      captureTs: captureTs
+    };
+    if (this.data.debugMode) {
+      console.log('[Collector][OCR] score engine start idx=%s frame=%sx%s', idx, frameW, frameH);
     }
     this._runNextRoiOcr();
   },
@@ -1128,24 +1358,36 @@ Page({
     }
 
     if (this.data.debugMode) {
-      console.log('[Collector][OCR] runOCR idx=%s label=%s variant=%s/%s crop=%sx%s', state.currentIdx, roi.label, state.currentVariantPos + 1, state.currentVariants.length, crop.width, crop.height);
+      console.log('[Collector][OCR] runOCR idx=%s label=%s variant=%s/%s crop=%sx%s type=%s', state.currentIdx, roi.label, state.currentVariantPos + 1, state.currentVariants.length, crop.width, crop.height, state.type || 'legacy');
     }
     _ocrLastRoiRunTs[state.currentIdx] = Date.now();
     _ocrBusySince = _ocrLastRoiRunTs[state.currentIdx];
+    // 超时窗口 = SDK 真实处理时间上界（time=1500ms, score=720ms）。
+    // 设得过短会让 OCR 在 SDK 尚未返回时就被强行放弃 + 释放 busy，
+    // 紧接着下一帧又提交新 runOCR，SDK 内部队列被堆积，单次耗时进一步恶化，
+    // 形成"全部超时 + pending overflow + 状态机收不到样本"的雪崩。
+    var timeoutMs = (state.type === 'time') ? OCR_TIME_RUN_TIMEOUT_MS : OCR_RUN_TIMEOUT_MS;
     _ocrRunTimeout = setTimeout(function () {
-      console.warn('[Collector][OCR] runOCR timeout idx=%s label=%s crop=%sx%s', state.currentIdx, roi.label, crop.width, crop.height);
+      console.warn('[Collector][OCR] runOCR timeout idx=%s label=%s crop=%sx%s type=%s', state.currentIdx, roi.label, crop.width, crop.height, state.type || 'legacy');
       _ocrRunTimeout = 0;
       if (!_ocrRunState) return;
-      _ocrTimeoutSettleUntil = Date.now() + OCR_TIMEOUT_SETTLE_MS;
-      _ocrRoiBackoffUntil[state.currentIdx] = Date.now() + 1500;
       _ocrConsecutiveTimeout += 1;
       _ocrStats.timeout += 1;
+      // 任何超时都让 SDK 喘息 OCR_TIMEOUT_SETTLE_MS，避免连发把 SDK 内部队列打爆。
+      _ocrTimeoutSettleUntil = Date.now() + OCR_TIMEOUT_SETTLE_MS;
+      if (state.type === 'time') {
+        // 时间引擎：放弃整轮（不重试 variant），但通过 settle 窗口避免立刻补刀。
+        self._recordManualOcrFailure('timeout-time');
+        self._finishManualOcrRun(true);
+        return;
+      }
+      _ocrRoiBackoffUntil[state.currentIdx] = Date.now() + 1500;
       if (_ocrConsecutiveTimeout >= 3) {
         OCR_MIN_INTERVAL_MS = 260;
       }
       self._applyPartialOcrPreview(_ocrRunState.rawTexts, -1);
       self._advanceCurrentVariantOrQueue('timeout');
-    }, OCR_RUN_TIMEOUT_MS);
+    }, timeoutMs);
 
     try {
       state.session.runOCR({
@@ -1270,6 +1512,8 @@ Page({
       _clockPauseCandidateUntil = 0;
       _clockResumeCandidateSec = -1;
       _clockResumeCandidateSince = 0;
+      _clockJumpCandidateSec = -1;
+      _clockJumpCandidateSince = 0;
       this._clearClockPredictTimer();
       _lastNotifyWallAt = 0;
       _lastCommittedFrame = null;
@@ -1277,6 +1521,13 @@ Page({
     _timeJumpHoldFrame = null;
     _scoreJumpHold = null;
     _manualScoreEditAt = 0;
+    _lastTimePumpTs = 0;
+    _lastScorePumpTs = 0;
+    _scorePumpCursor = 0;
+    _isFinalMinuteMode = false;
+    TIME_PUMP_INTERVAL = TIME_PUMP_INTERVAL_BASE_MS;
+    SCORE_PUMP_INTERVAL = SCORE_PUMP_INTERVAL_BASE_MS;
+    OCR_CLOCK_PREDICT_TICK_MS = OCR_CLOCK_PREDICT_TICK_BASE_MS;
     if (_vkSession) {
       this._cancelOcrFramePump();
       try {
@@ -1614,27 +1865,34 @@ Page({
   },
 
   /**
-   * 在比分尚待 streak 确认时，仍将「上一已确认主客分 + 新时间」写入 data 并 notify，
-   * 避免整帧 return 导致 BLE 时间停更、下一帧一次性补秒产生跳 2s。
+   * 推送「上一已确认比分 + 新时间」到 BLE 与 data，避免比分待确认时时间停更。
+   *
+   * 默认（force=false）：仅允许时间下降 ≤1 秒；下降 >1 秒走平滑（每次只前进 1 秒）。
+   * 强制（force=true）：状态机在 RESUME / JUMP 确认后调用，跳过所有平滑保护，
+   *                    即时把 realWorldSec 推上蓝牙以消除积压。
+   *
    * @param {{ minutes: number, seconds: number } | null} timeInfo
    * @param {number} wallMs
+   * @param {boolean} [force] 是否绕过平滑保护强制 emit
    * @returns {void}
    */
-  _emitTimeOnlyIfChanged: function (timeInfo, wallMs) {
+  _emitTimeOnlyIfChanged: function (timeInfo, wallMs, force) {
     if (!timeInfo || !_lastCommittedFrame) return;
     var prevT = ocrFrameClockSec(_lastCommittedFrame);
     var newT = (Number(timeInfo.minutes) || 0) * 60 + (Number(timeInfo.seconds) || 0);
     if (newT === prevT) return;
-    if (newT > prevT) return;
-    var drop = prevT - newT;
-    if (drop > 1) {
-      if (drop > OCR_CLOCK_CATCHUP_MAX_DROP_SEC) return;
-      var minEmitMs = drop > 2 ? OCR_CLOCK_CATCHUP_FAST_INTERVAL_MS : OCR_CLOCK_NORMAL_INTERVAL_MS;
-      if (_lastClockPredictEmitWallTs && wallMs - _lastClockPredictEmitWallTs < minEmitMs) return;
-      newT = prevT - 1;
-      timeInfo = clockFromTotalSec(newT);
-      _clockPredictUntil = Math.max(_clockPredictUntil || 0, getClockCatchupUntil(wallMs, drop));
-      this._ensureClockPredictTimer();
+    if (!force) {
+      if (newT > prevT) return;
+      var drop = prevT - newT;
+      if (drop > 1) {
+        if (drop > OCR_CLOCK_CATCHUP_MAX_DROP_SEC) return;
+        var minEmitMs = drop > 2 ? OCR_CLOCK_CATCHUP_FAST_INTERVAL_MS : OCR_CLOCK_NORMAL_INTERVAL_MS;
+        if (_lastClockPredictEmitWallTs && wallMs - _lastClockPredictEmitWallTs < minEmitMs) return;
+        newT = prevT - 1;
+        timeInfo = clockFromTotalSec(newT);
+        _clockPredictUntil = Math.max(_clockPredictUntil || 0, getClockCatchupUntil(wallMs, drop));
+        this._ensureClockPredictTimer();
+      }
     }
     var snap = {
       homeScore: _lastCommittedFrame.homeScore,
@@ -1655,7 +1913,10 @@ Page({
     _lastNotifyWallAt = wallMs;
     _lastClockPredictEmitWallTs = wallMs;
     _lastClockPredictEmitSec = newT;
+    // 与 _parseAndMaybeNotify 路径共享去重 key，避免 force-emit 后下一帧的 commit 又触发同样负载。
+    _lastCommittedFrameKey = buildFrameKey(snap);
     this._notify(snap);
+    this._maybeApplyFinalMinuteMode(timeInfo);
   },
 
   _smoothFrameClockForCommit: function (frame, wallMs, hasTimeInfo) {
@@ -1882,6 +2143,7 @@ Page({
     _lastClockPredictEmitWallTs = wall;
     _lastClockPredictEmitSec = ocrFrameClockSec(frame);
     this._notify(frame);
+    this._maybeApplyFinalMinuteMode({ minutes: frame.minutes, seconds: frame.seconds });
   },
 
   // ─── BLE：启动 / 停止 ────────────────────────────────
@@ -2275,25 +2537,55 @@ function parseScore(raw) {
   return parsed[0].value;
 }
 
-/** 解析 "分:秒" 格式。 */
+/**
+ * 解析记分牌时间文本。
+ *
+ * 增强点（针对 7 段数码管 OCR + 最后一分钟 SS.m 显示）：
+ *   1. 先转大写并按 7 段数码管混淆矩阵硬替换：O/D/U/Q→0, S→5, Z→2, I/L/|→1, B→8, A→4。
+ *   2. 优先匹配常规 MM:SS（秒必须两位），保证 10:00 / 09:58 等正常时段稳定。
+ *   3. 匹配失败时，降级匹配最后一分钟的 SS.m（如 59.8、12.3）：
+ *      - 第一段数字 < 60 即视为剩余秒数，分钟补 0，毫秒丢弃；
+ *      - 解决最后 1 分钟显示由 MM:SS 切换为 SS.m 后断崖式识别失败的问题。
+ *
+ * @param {string} raw OCR 原始文本
+ * @returns {{ minutes: number, seconds: number } | null} 解析失败返回 null
+ */
 function parseTime(raw) {
   if (!raw) return null;
-  var text = String(raw);
-  var exact = text.match(/(\d{1,2})\s*[:：]\s*(\d{2})(?!.*\d\s*[:：]\s*\d{2})/);
-  var m = null;
-  var s = null;
-  if (exact) {
-    m = parseInt(exact[1], 10);
-    s = parseInt(exact[2], 10);
-  } else {
-    var pairs = text.match(/\d{1,2}/g);
-    if (!pairs || pairs.length < 2) return null;
-    m = parseInt(pairs[pairs.length - 2], 10);
-    s = parseInt(pairs[pairs.length - 1], 10);
+  var text = String(raw)
+    .toUpperCase()
+    .replace(/[ODUQ]/g, '0')
+    .replace(/S/g, '5')
+    .replace(/Z/g, '2')
+    .replace(/[IL|]/g, '1')
+    .replace(/B/g, '8')
+    .replace(/A/g, '4');
+
+  var mmss = text.match(/(\d{1,2})\s*[:：]\s*(\d{2})(?!.*\d\s*[:：]\s*\d{2})/);
+  if (mmss) {
+    var m = parseInt(mmss[1], 10);
+    var s = parseInt(mmss[2], 10);
+    if (!isNaN(m) && !isNaN(s) && m >= 0 && m <= 10 && s >= 0 && s <= 59) {
+      if (m === 10 && s !== 0) return null;
+      return { minutes: m, seconds: s };
+    }
   }
-  if (isNaN(m) || isNaN(s) || m < 0 || m > 10 || s < 0 || s > 59) return null;
-  if (m === 10 && s !== 0) return null;
-  return { minutes: m, seconds: s };
+
+  // SS.m 降级：仅当文本中没有任何冒号（避免 MM:SS 读丢冒号变成 MM.SS 时把分钟错当秒），
+  // 且毫秒位之后不再跟随数字（避免把 "9.58" 这类误读匹配成 "9.5" / 0:9）。
+  // 例：59.8 / 5.3 / 0.7 命中；9.58 / 10.58 / 59.85 不命中（保留 null 让上层走预测时钟）。
+  var hasColon = text.indexOf(':') !== -1 || text.indexOf('：') !== -1;
+  if (!hasColon) {
+    var ssDot = text.match(/(?:^|\D)(\d{1,2})\s*[.,．。]\s*(\d)(?!\d)/);
+    if (ssDot) {
+      var sec = parseInt(ssDot[1], 10);
+      if (!isNaN(sec) && sec >= 0 && sec < 60) {
+        return { minutes: 0, seconds: sec };
+      }
+    }
+  }
+
+  return null;
 }
 
 /**
