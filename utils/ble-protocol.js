@@ -3,12 +3,12 @@
  *
  * ┌────────────────────────────────────────────────────────────┐
  * │          7-Byte Packet Layout (ArrayBuffer)                │
- * ├─────┬──────────┬──────────┬────────┬──────┬──────┬────────┤
- * │ idx │  Byte 0  │  Byte 1  │ Byte 2 │ B 3  │ B 4  │ B 5  │ B 6    │
- * ├─────┼──────────┼──────────┼────────┼──────┼──────┼──────┼────────┤
- * │ 含义 │ 主队分   │ 客队分   │ 节次   │ 分钟 │ 秒   │ 24s  │ CRC-8  │
- * │ 范围 │ 0–255   │ 0–255   │ 1–8    │ 0–59 │ 0–59 │ 0–24 │ CRC-8/SMBUS│
- * └─────┴──────────┴──────────┴────────┴──────┴──────┴──────┴────────┘
+ * ├─────┬──────────┬──────────┬────────┬──────┬──────┬──────────┬────────┤
+ * │ idx │  Byte 0  │  Byte 1  │ Byte 2 │ B 3  │ B 4  │  B 5     │ B 6    │
+ * ├─────┼──────────┼──────────┼────────┼──────┼──────┼──────────┼────────┤
+ * │ 含义 │ 主队分   │ 客队分   │ 节次   │ 分钟 │ 秒   │ 24s/OCR  │ CRC-8  │
+ * │ 范围 │ 0–255   │ 0–255   │ 1–8    │ 0–59 │ 0–59 │ 低5位24s │ CRC-8  │
+ * └─────┴──────────┴──────────┴────────┴──────┴──────┴──────────┴────────┘
  *
  * 校验位 (Byte 6) — v2：CRC-8/SMBUS
  *   多项式：0x07（x^8 + x^2 + x + 1），初始值 0x00，无反射。
@@ -22,9 +22,14 @@
  *   1 = 第一节  2 = 第二节  3 = 第三节  4 = 第四节
  *   5 = 上半场  6 = 下半场  7 = 加时1   8 = 加时2
  *
+ * Byte 5 状态位：
+ *   - bit 0-4: 24 秒（0-24）
+ *   - bit 6: OCR 正在切换
+ *   - bit 7: OCR 已启动
+ *
  * UUID 常量命名规则：
  *   - SERVICE_UUID: 主 GATT Service
- *   - CHAR_SCORE_UUID: 比分数据特征值 (notify + read)
+ *   - CHAR_SCORE_UUID: 比分数据特征值 (notify + read + write)
  *   - 使用自定义 128-bit UUID，避免与系统保留 UUID 冲突
  */
 
@@ -39,7 +44,7 @@ var SERVICE_UUID = 'ba5e1ab1-c0de-ca11-ab1e-b1ead5ea1010';
 
 /**
  * 比分数据 Characteristic UUID（完全自定义）。
- * 属性：notify + read。
+ * 属性：notify + read + write。
  * @type {string}
  */
 var CHAR_SCORE_UUID = 'ba5e1ab2-c0de-ca11-ab1e-b1ead5ea1011';
@@ -102,6 +107,8 @@ function computeCrc8(view, start, end) {
  * @param {number} state.minutes     - 当前节剩余/已过分钟 (0–59)
  * @param {number} state.seconds     - 当前节剩余/已过秒 (0–59)
  * @param {number} state.shotClock   - 进攻24秒 (0–24)
+ * @param {boolean} [state.ocrEnabled] - 采集端 OCR 是否已启动
+ * @param {boolean} [state.ocrTransitioning] - 采集端 OCR 是否正在切换
  * @returns {ArrayBuffer} 7字节数据包
  */
 function encodePacket(state) {
@@ -112,7 +119,9 @@ function encodePacket(state) {
   view[2] = clampByte(state.period, 1, 8);
   view[3] = clampByte(state.minutes, 0, 59);
   view[4] = clampByte(state.seconds, 0, 59);
-  view[5] = clampByte(state.shotClock, 0, 24);
+  view[5] = clampByte(state.shotClock, 0, 24) & 0x1F;
+  if (state.ocrTransitioning) view[5] |= 0x40;
+  if (state.ocrEnabled) view[5] |= 0x80;
   view[6] = computeCrc8(view, 0, 6); // CRC-8/SMBUS over Bytes 0-5
   return buf;
 }
@@ -124,7 +133,7 @@ function encodePacket(state) {
  * 校验失败或长度不符则返回 null，调用方应直接丢弃该帧。
  *
  * @param {ArrayBuffer} buf - 接收到的原始字节
- * @returns {{ homeScore:number, awayScore:number, period:number, minutes:number, seconds:number, shotClock:number } | null}
+ * @returns {{ homeScore:number, awayScore:number, period:number, minutes:number, seconds:number, shotClock:number, ocrEnabled:boolean, ocrTransitioning:boolean } | null}
  */
 function decodePacket(buf) {
   if (!buf || buf.byteLength !== PACKET_LENGTH) {
@@ -142,7 +151,9 @@ function decodePacket(buf) {
     period:    view[2],
     minutes:   view[3],
     seconds:   view[4],
-    shotClock: view[5]
+    shotClock: view[5] & 0x1F,
+    ocrTransitioning: !!(view[5] & 0x40),
+    ocrEnabled: !!(view[5] & 0x80)
   };
 }
 

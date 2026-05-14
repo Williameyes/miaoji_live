@@ -16,6 +16,7 @@ const bleManager = require('../../services/bleManager.js');
 const bleProtocol = require('../../utils/ble-protocol.js');
 const liveBleQuick = require('../../utils/live-ble-quick-connect.js');
 const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
+const REMOTE_OCR_WRITE_GUARD_MS = 900;
 
 /**
  * 画质增强内测白名单 OpenID。
@@ -964,6 +965,16 @@ Page({
     bleSeconds: 0,
     /** 采集端蓝牙已连接（与 bleManager 同步，用于角标） */
     liveBleChipConnected: false,
+    /** 采集端蓝牙已连接（远控区 WXML 语义别名） */
+    bleConnected: false,
+    /** 采集端真实 OCR 开关状态，由 BLE notify 回传驱动 */
+    remoteOcrEnabled: false,
+    /** 采集端 OCR 正在启动/停止过渡 */
+    remoteOcrTransitioning: false,
+    /** 直播端远控写入防抖锁 */
+    remoteOcrCommandBusy: false,
+    /** 采集端 OCR 远控状态文案 */
+    remoteOcrStatusText: '采集端 OCR 已关闭',
     /** 是否展开 Live 内蓝牙快连面板 */
     liveBlePanelOpen: false,
     /** 4 位匹配码输入 */
@@ -1782,17 +1793,30 @@ Page({
     this._liveBleQuickScanRunner = null;
     this._liveBleAutoRestoreConsumed = false;
     this._liveBlePersistTimer = null;
+    this._remoteOcrWriteBusyUntil = 0;
+    this._remoteOcrBusyTimer = null;
   },
 
   // 已合并至文件后部 onUnload：此处不再重复定义，避免后项覆盖导致事件未解绑。
 
   _onBleConnectionUpdate: function (res) {
     var connected = !!res.connected;
-    if (this.data.liveBleChipConnected !== connected) {
-      this.setData({ liveBleChipConnected: connected });
+    if (this.data.liveBleChipConnected !== connected || this.data.bleConnected !== connected) {
+      this.setData({ liveBleChipConnected: connected, bleConnected: connected });
     }
 
     if (!connected) {
+      if (this._remoteOcrBusyTimer) {
+        clearTimeout(this._remoteOcrBusyTimer);
+        this._remoteOcrBusyTimer = null;
+      }
+      this._remoteOcrWriteBusyUntil = 0;
+      this.setData({
+        remoteOcrEnabled: false,
+        remoteOcrTransitioning: false,
+        remoteOcrCommandBusy: false,
+        remoteOcrStatusText: '采集端 OCR 已关闭'
+      });
       this._liveBleFlushScorePersist();
       if (this.data.isAutoMode) {
         this._liveBlePreferAutoAfterConnect = true;
@@ -1825,8 +1849,8 @@ Page({
   _liveBleSyncChipConnected: function () {
     if (!this.data.autoSyncWhitelisted) return;
     var c = !!bleManager.isConnected;
-    if (this.data.liveBleChipConnected !== c) {
-      this.setData({ liveBleChipConnected: c });
+    if (this.data.liveBleChipConnected !== c || this.data.bleConnected !== c) {
+      this.setData({ liveBleChipConnected: c, bleConnected: c });
     }
   },
 
@@ -1935,6 +1959,8 @@ Page({
         self._liveBleAutoRestoreConsumed = false;
         var patch = {
           liveBleQuickBusy: false,
+          liveBleChipConnected: true,
+          bleConnected: true,
           liveBlePanelOpen: false,
           liveBleQuickStatusText: ''
         };
@@ -1957,6 +1983,7 @@ Page({
         self.setData({
           liveBleQuickBusy: false,
           liveBleChipConnected: !!bleManager.isConnected,
+          bleConnected: !!bleManager.isConnected,
           liveBleQuickStatusText: ''
         });
         var msg = err && err.message ? String(err.message) : '';
@@ -1976,19 +2003,38 @@ Page({
     var self = this;
     this._liveBleFlushScorePersist();
     if (!bleManager.isConnected) {
-      this.setData({ liveBlePanelOpen: false, liveBleChipConnected: false, liveBleQuickStatusText: '' });
+      this.setData({
+        liveBlePanelOpen: false,
+        liveBleChipConnected: false,
+        bleConnected: false,
+        liveBleQuickStatusText: '',
+        remoteOcrEnabled: false,
+        remoteOcrTransitioning: false,
+        remoteOcrCommandBusy: false,
+        remoteOcrStatusText: '采集端 OCR 已关闭'
+      });
       return;
     }
     this.setData({ liveBleQuickBusy: true });
     Promise.resolve(bleManager.disconnect())
       .then(function () {
         self._liveBlePreferAutoAfterConnect = false;
+        if (self._remoteOcrBusyTimer) {
+          clearTimeout(self._remoteOcrBusyTimer);
+          self._remoteOcrBusyTimer = null;
+        }
+        self._remoteOcrWriteBusyUntil = 0;
         self.setData(
           {
             liveBleQuickBusy: false,
             liveBleChipConnected: false,
+            bleConnected: false,
             liveBlePanelOpen: false,
             liveBleQuickStatusText: '',
+            remoteOcrEnabled: false,
+            remoteOcrTransitioning: false,
+            remoteOcrCommandBusy: false,
+            remoteOcrStatusText: '采集端 OCR 已关闭',
             isAutoMode: false
           },
           function () {
@@ -2000,6 +2046,86 @@ Page({
       .catch(function () {
         self.setData({ liveBleQuickBusy: false });
       });
+  },
+
+  sendRemoteStartOcr: function () {
+    this._sendRemoteOcrCommand(0x01);
+  },
+
+  sendRemoteStopOcr: function () {
+    this._sendRemoteOcrCommand(0x00);
+  },
+
+  _sendRemoteOcrCommand: function (cmd) {
+    var self = this;
+    var now = Date.now();
+    if (!this.data.autoSyncWhitelisted) return;
+    if (!bleManager.isConnected || !bleManager.deviceId || !bleManager.serviceId || !bleManager.characteristicId) {
+      this._liveBleSyncChipConnected();
+      wx.showToast({ title: '请先连接采集端', icon: 'none' });
+      return;
+    }
+    var props = bleManager.characteristicProperties || {};
+    if (props && props.write === false && !props.writeNoResponse) {
+      wx.showToast({ title: '请重启采集端蓝牙后重连', icon: 'none' });
+      return;
+    }
+    if (this.data.remoteOcrCommandBusy || now < (this._remoteOcrWriteBusyUntil || 0)) {
+      return;
+    }
+    this._remoteOcrWriteBusyUntil = now + REMOTE_OCR_WRITE_GUARD_MS;
+    if (this._remoteOcrBusyTimer) {
+      clearTimeout(this._remoteOcrBusyTimer);
+      this._remoteOcrBusyTimer = null;
+    }
+    var isStartCmd = (cmd & 0xFF) === 0x01;
+    var buf = new ArrayBuffer(1);
+    new Uint8Array(buf)[0] = cmd & 0xFF;
+    this.setData({
+      remoteOcrCommandBusy: true,
+      remoteOcrTransitioning: true,
+      remoteOcrEnabled: isStartCmd,
+      remoteOcrStatusText: isStartCmd ? '采集端 OCR 启动中' : '采集端 OCR 释放中'
+    });
+    this._remoteOcrBusyTimer = setTimeout(function () {
+      self._remoteOcrBusyTimer = null;
+      self.setData({
+        remoteOcrCommandBusy: false,
+        remoteOcrTransitioning: false,
+        remoteOcrStatusText: '等待采集端状态回传'
+      });
+    }, 4200);
+    wx.writeBLECharacteristicValue({
+      deviceId: bleManager.deviceId,
+      serviceId: bleManager.serviceId,
+      characteristicId: bleManager.characteristicId,
+      value: buf,
+      writeType: props && props.writeNoResponse && !props.write ? 'writeNoResponse' : 'write',
+      success: function () {
+        if (self.data.remoteOcrCommandBusy) {
+          self.setData({ remoteOcrCommandBusy: false });
+        }
+      },
+      fail: function (err) {
+        self._remoteOcrWriteBusyUntil = 0;
+        if (self._remoteOcrBusyTimer) {
+          clearTimeout(self._remoteOcrBusyTimer);
+          self._remoteOcrBusyTimer = null;
+        }
+        self.setData({
+          remoteOcrCommandBusy: false,
+          remoteOcrTransitioning: false,
+          remoteOcrEnabled: !isStartCmd,
+          remoteOcrStatusText: !isStartCmd ? '采集端 OCR 运行中' : '采集端 OCR 已关闭'
+        });
+        var errCode = err && (err.errCode || err.errno);
+        wx.showToast({
+          title: errCode === 10007 ? '请重启采集端蓝牙后重连' : '远程指令发送失败',
+          icon: 'none'
+        });
+        console.error('[Live][BLE] remote OCR command write fail', err);
+      }
+    });
   },
 
   /**
@@ -2065,10 +2191,55 @@ Page({
     }
   },
 
+  _syncRemoteOcrStateFromBle: function (data) {
+    var hasOcrState = data && (
+      typeof data.ocrEnabled === 'boolean' ||
+      typeof data.ocrTransitioning === 'boolean'
+    );
+    if (!hasOcrState) return false;
+    var nextEnabled = !!data.ocrEnabled;
+    var nextTransitioning = !!data.ocrTransitioning;
+    var patch = {};
+    var changed = false;
+    var nextStatusText = nextTransitioning
+      ? (this.data.remoteOcrStatusText || '采集端 OCR 处理中')
+      : (nextEnabled ? '采集端 OCR 运行中' : '采集端 OCR 已关闭');
+    if (this.data.remoteOcrEnabled !== nextEnabled) {
+      patch.remoteOcrEnabled = nextEnabled;
+      changed = true;
+    }
+    if (this.data.remoteOcrTransitioning !== nextTransitioning) {
+      patch.remoteOcrTransitioning = nextTransitioning;
+      changed = true;
+    }
+    var nextBusy = nextTransitioning || (this.data.remoteOcrCommandBusy && !data.timestamp);
+    if (!nextTransitioning) {
+      nextBusy = false;
+      this._remoteOcrWriteBusyUntil = 0;
+      if (this._remoteOcrBusyTimer) {
+        clearTimeout(this._remoteOcrBusyTimer);
+        this._remoteOcrBusyTimer = null;
+      }
+    }
+    if (this.data.remoteOcrCommandBusy !== nextBusy) {
+      patch.remoteOcrCommandBusy = nextBusy;
+      changed = true;
+    }
+    if (this.data.remoteOcrStatusText !== nextStatusText) {
+      patch.remoteOcrStatusText = nextStatusText;
+      changed = true;
+    }
+    if (changed) {
+      this.setData(patch);
+    }
+    return changed;
+  },
+
   _onBleDataUpdate: function (data) {
     const now = Date.now();
+    const ocrStateChanged = this._syncRemoteOcrStateFromBle(data);
     // 节流：如果是密集数据包，限制更新频率（约 10fps）以防 UI 卡死
-    if (now - this._lastBleUpdateAt < 100) {
+    if (now - this._lastBleUpdateAt < 100 && !ocrStateChanged) {
       return;
     }
     this._lastBleUpdateAt = now;
@@ -5441,6 +5612,10 @@ Page({
     wx.setKeepScreenOn({ keepScreenOn: false });
     this._liveBleAbortQuickScanSilently();
     this._liveBleFlushScorePersist();
+    if (this._remoteOcrBusyTimer) {
+      clearTimeout(this._remoteOcrBusyTimer);
+      this._remoteOcrBusyTimer = null;
+    }
     if (this._vkEnvironmentSampler && typeof this._vkEnvironmentSampler.destroy === 'function') {
       this._vkEnvironmentSampler.destroy();
       this._vkEnvironmentSampler = null;

@@ -305,11 +305,34 @@ page {
   justify-content: space-between;
 }
 
+.live-ble-actions--remote {
+  margin-top: 10rpx;
+}
+
+.live-ble-remote-status {
+  margin-top: 8rpx;
+  font-size: 12rpx;
+  line-height: 1.25;
+  color: rgba(255, 255, 255, 0.64);
+  text-align: center;
+}
+
 .live-ble-btn {
   border-radius: 999rpx;
   font-weight: 600;
   text-align: center;
   box-sizing: border-box;
+}
+
+button.live-ble-btn {
+  margin: 0;
+  line-height: 1.2;
+  max-width: 100%;
+  white-space: normal;
+}
+
+button.live-ble-btn::after {
+  border: 0;
 }
 
 .live-ble-btn--ghost {

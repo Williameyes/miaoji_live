@@ -16,6 +16,7 @@ class BLEManager {
     this.deviceId = '';
     this.serviceId = '';
     this.characteristicId = '';
+    this.characteristicProperties = null;
     this.isConnected = false;
     this.bleState = 'idle'; // idle, scanning, connecting, connected, reconnecting
 
@@ -101,9 +102,11 @@ class BLEManager {
     });
     const chars = resChars.characteristics || [];
     let foundChar = null;
+    let foundCharProperties = null;
     for (const c of chars) {
       if (c.uuid.toLowerCase() === this.targetCharId) {
         foundChar = c.uuid;
+        foundCharProperties = c.properties || null;
         break;
       }
     }
@@ -112,7 +115,8 @@ class BLEManager {
       throw new Error('Target characteristic not found');
     }
     this.characteristicId = foundChar;
-    console.log('[BLEManager] Characteristic found:', this.characteristicId);
+    this.characteristicProperties = foundCharProperties;
+    console.log('[BLEManager] Characteristic found:', this.characteristicId, foundCharProperties);
   }
 
   /**
@@ -182,6 +186,8 @@ class BLEManager {
         minutes: decoded.minutes,
         seconds: decoded.seconds,
         shotClock: decoded.shotClock,
+        ocrEnabled: !!decoded.ocrEnabled,
+        ocrTransitioning: !!decoded.ocrTransitioning,
         rxCount: this._rxPacketCount,
         timestamp: Date.now()
       });
@@ -199,6 +205,9 @@ class BLEManager {
       this.isConnected = false;
       this.bleState = 'idle';
       this.deviceId = '';
+      this.serviceId = '';
+      this.characteristicId = '';
+      this.characteristicProperties = null;
       console.log('[BLEManager] Disconnected manually');
     } catch (err) {
       console.error('[BLEManager] Disconnect failed:', err);
@@ -213,6 +222,7 @@ class BLEManager {
       isConnected: this.isConnected,
       bleState: this.bleState,
       deviceId: this.deviceId,
+      characteristicProperties: this.characteristicProperties,
       rxCount: this._rxPacketCount
     };
   }

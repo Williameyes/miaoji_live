@@ -187,6 +187,21 @@
             catchtap="onLiveBleDisconnectTap"
           >断开</view>
         </view>
+        <view wx:if="{{bleConnected}}" class="live-ble-actions live-ble-actions--compact live-ble-actions--remote">
+          <button
+            wx:if="{{!remoteOcrEnabled}}"
+            class="live-ble-btn live-ble-btn--primary live-ble-btn--sm {{(remoteOcrCommandBusy || remoteOcrTransitioning) ? 'live-ble-btn--disabled' : ''}}"
+            disabled="{{remoteOcrCommandBusy || remoteOcrTransitioning}}"
+            bindtap="sendRemoteStartOcr"
+          >{{(remoteOcrCommandBusy || remoteOcrTransitioning) ? remoteOcrStatusText : '启动采集'}}</button>
+          <button
+            wx:if="{{remoteOcrEnabled}}"
+            class="live-ble-btn live-ble-btn--warn live-ble-btn--sm {{(remoteOcrCommandBusy || remoteOcrTransitioning) ? 'live-ble-btn--disabled' : ''}}"
+            disabled="{{remoteOcrCommandBusy || remoteOcrTransitioning}}"
+            bindtap="sendRemoteStopOcr"
+          >{{(remoteOcrCommandBusy || remoteOcrTransitioning) ? remoteOcrStatusText : '停止并释放资源'}}</button>
+        </view>
+        <view wx:if="{{bleConnected}}" class="live-ble-remote-status">{{remoteOcrStatusText}}</view>
       </view>
     </view>
 

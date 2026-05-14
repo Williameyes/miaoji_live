@@ -386,7 +386,9 @@ function getClockRunUntil(now, clockSec) {
 function filterClockByMode(clock) {
   if (!clock) return null;
   if (_clockMode === 'paused' && _predictedClock) {
-    if (clockToTotalSec(clock) !== clockToTotalSec(_predictedClock)) return null;
+    var nextSec = clockToTotalSec(clock);
+    var predSec = clockToTotalSec(_predictedClock);
+    if (nextSec !== predSec && !isLikelyClockReset(predSec, nextSec, clock)) return null;
   }
   return clock;
 }
@@ -713,6 +715,7 @@ Page({
     this._clearOcrBootTimers();
     console.log('[Collector][OCR] prepare camera for boot token=%s reason=%s bootDelay=%s', token, reason || '', bootDelay);
     this.setData({ ocrTransitioning: true, cameraMounted: true }, function () {
+      self._notify();
       if (!_cameraContext) {
         _cameraContext = wx.createCameraContext(self);
         _cameraReadyAt = Date.now();
@@ -828,7 +831,9 @@ Page({
         } catch (eCreateWithGl) {
           self._stopOcrSession();
           self._restoreCameraPreview(function () {
-            self.setData({ ocrEnabled: false, ocrTransitioning: false });
+            self.setData({ ocrEnabled: false, ocrTransitioning: false }, function () {
+              self._notify();
+            });
           });
           console.error('[Collector] createVKSession fail', eCreateWithGl || eCreateFallback || eCreate);
           wx.showToast({ title: 'OCR 初始化失败', icon: 'none' });
@@ -850,7 +855,9 @@ Page({
         var isSdkInternal = msg.indexOf('node js') !== -1 || msg.indexOf('saaa') !== -1;
         self._stopOcrSession();
         self._restoreCameraPreview(function () {
-          self.setData({ ocrEnabled: false, ocrTransitioning: false });
+          self.setData({ ocrEnabled: false, ocrTransitioning: false }, function () {
+            self._notify();
+          });
         });
         if (!isSdkInternal) {
           wx.showToast({ title: 'OCR 启动失败', icon: 'none' });
@@ -858,7 +865,9 @@ Page({
         console.error('[Collector] VKSession start fail', err);
         return;
       }
-      self.setData({ ocrEnabled: true, ocrTransitioning: false });
+      self.setData({ ocrEnabled: true, ocrTransitioning: false }, function () {
+        self._notify();
+      });
       _ocrSessionBootAt = Date.now();
       self._startOcrHealthTimer();
       console.log('[Collector] VKSession started (manual ROI OCR mode)');
@@ -983,6 +992,29 @@ Page({
     var dropSec = -delta;
 
     // === 2) 大跨度跳变 / 回表确认（JUMP）===
+    if (isLikelyClockReset(prevOcrSec, ocrSec, parsedTime)) {
+      var resetClock = cloneClock(parsedTime) || realClock;
+      var resetSec = clockToTotalSec(resetClock);
+      if (this.data.debugMode) {
+        console.log('[Collector][OCR] CLOCK RESET accepted prev=%s now=%s', prevOcrSec, resetSec);
+      }
+      _clockMode = 'paused';
+      _lastOcrClockSec = resetSec;
+      _lastOcrClockWallTs = now;
+      _sameOcrClockSince = now;
+      _clockPauseCandidateUntil = 0;
+      _clockResumeCandidateSec = -1;
+      _clockResumeCandidateSince = 0;
+      _clockJumpCandidateSec = -1;
+      _clockJumpCandidateSince = 0;
+      updatePredictedClock(resetClock);
+      _lastClockPredictEmitSec = resetSec;
+      this._clearClockPredictTimer();
+      this._maybeApplyFinalMinuteMode(resetClock);
+      this._emitTimeOnlyIfChanged(resetClock, now, true);
+      return;
+    }
+
     if (delta > 0 || dropSec > OCR_CLOCK_JUMP_DROP_THRESHOLD) {
       if (_clockJumpCandidateSec === realWorldSec) {
         if (now - _clockJumpCandidateSince >= OCR_CLOCK_JUMP_HOLD_MS) {
@@ -1462,17 +1494,65 @@ Page({
   },
 
   _stopOcr: function (skipRemount) {
-    ++_ocrSessionToken;
-    if (_ocrBootTimer) {
-      clearTimeout(_ocrBootTimer);
-      _ocrBootTimer = 0;
-    }
-    this._stopOcrSession();
+    var self = this;
+    var token = ++_ocrSessionToken;
+    var releaseAndFinalize = function () {
+      if (token !== _ocrSessionToken) return;
+      if (_ocrBootTimer) {
+        clearTimeout(_ocrBootTimer);
+        _ocrBootTimer = 0;
+      }
+      self._stopOcrSession();
+      if (skipRemount) {
+        self.setData({ ocrEnabled: false, ocrTransitioning: false }, function () {
+          self._notify();
+        });
+        return;
+      }
+      self._remountCameraAfterOcrStop(function () {
+        if (token !== _ocrSessionToken) return;
+        self.setData({ ocrEnabled: false, ocrTransitioning: false }, function () {
+          self._notify();
+        });
+      });
+    };
+
     if (skipRemount) {
-      this.setData({ ocrEnabled: false, ocrTransitioning: false });
+      releaseAndFinalize();
       return;
     }
-    this.setData({ ocrEnabled: false, ocrTransitioning: false, cameraMounted: true });
+
+    this.setData({ ocrEnabled: false, ocrTransitioning: true }, function () {
+      self._notify();
+      setTimeout(releaseAndFinalize, 0);
+    });
+  },
+
+  _remountCameraAfterOcrStop: function (done) {
+    var self = this;
+    var delay = _getCameraRemountDelayMs();
+    console.log('[Collector][OCR] remount camera after stop delay=%s', delay);
+    if (_ocrCameraRemountTimer) {
+      clearTimeout(_ocrCameraRemountTimer);
+      _ocrCameraRemountTimer = 0;
+    }
+    _cameraContext = null;
+    _cameraReadyAt = 0;
+    var mountCamera = function () {
+      _ocrCameraRemountTimer = setTimeout(function () {
+        _ocrCameraRemountTimer = 0;
+        self.setData({ cameraMounted: true }, function () {
+          _cameraContext = wx.createCameraContext(self);
+          _cameraReadyAt = Date.now();
+          if (typeof done === 'function') done();
+        });
+      }, delay);
+    };
+    if (!this.data.cameraMounted) {
+      mountCamera();
+      return;
+    }
+    this.setData({ cameraMounted: false }, mountCamera);
   },
 
   _stopOcrSession: function (preserveClock) {
@@ -1528,15 +1608,16 @@ Page({
     TIME_PUMP_INTERVAL = TIME_PUMP_INTERVAL_BASE_MS;
     SCORE_PUMP_INTERVAL = SCORE_PUMP_INTERVAL_BASE_MS;
     OCR_CLOCK_PREDICT_TICK_MS = OCR_CLOCK_PREDICT_TICK_BASE_MS;
+    this._cancelOcrFramePump();
     if (_vkSession) {
-      this._cancelOcrFramePump();
+      var session = _vkSession;
       try {
-        if (typeof _vkSession.off === 'function') {
-          _vkSession.off('updateAnchors');
+        if (typeof session.off === 'function') {
+          session.off('updateAnchors');
         }
       } catch (eOff) { }
-      try { _vkSession.stop(); } catch (e) { }
-      try { _vkSession.destroy && _vkSession.destroy(); } catch (eDestroy) { }
+      try { session.stop(); } catch (e) { }
+      try { session.destroy && session.destroy(); } catch (eDestroy) { }
       _vkSession = null;
     }
     _lastHandleTs = 0;
@@ -2193,10 +2274,12 @@ Page({
         uuid: BLE.SERVICE_UUID,
         characteristics: [{
           uuid: BLE.CHAR_SCORE_UUID,
-          properties: { read: true, notify: true, indicate: true },
+          properties: { read: true, notify: true, indicate: true, write: true, writeNoResponse: true },
           permission: {
             read: true, readEncrypted: false,
-            write: true, writeEncrypted: false
+            write: true, writeEncrypted: false,
+            readable: true, readEncryptionRequired: false,
+            writeable: true, writeEncryptionRequired: false
           },
           descriptors: [{
             uuid: BLE.CCCD_UUID,
@@ -2216,6 +2299,40 @@ Page({
         console.error('[Collector] addService fail', err);
       }
     });
+  },
+
+  _buildBlePacketValue: function (snapshot) {
+    var d = snapshot || _lastCommittedFrame || this.data;
+    return BLE.encodePacket({
+      homeScore: d.homeScore,
+      awayScore: d.awayScore,
+      period: d.period,
+      minutes: d.minutes,
+      seconds: d.seconds,
+      shotClock: d.shotClock,
+      ocrEnabled: !!this.data.ocrEnabled,
+      ocrTransitioning: !!this.data.ocrTransitioning
+    });
+  },
+
+  _safeServerWriteCharacteristicValue: function (options, label) {
+    if (!_server) return;
+    try {
+      var ret = _server.writeCharacteristicValue(options);
+      if (ret && typeof ret.catch === 'function') {
+        ret.catch(function (err) {
+          if (typeof options.fail !== 'function') {
+            console.warn('[Collector] peripheral write rejected label=%s err=%o', label || '', err);
+          }
+        });
+      }
+    } catch (err) {
+      if (typeof options.fail === 'function') {
+        options.fail(err);
+      } else {
+        console.warn('[Collector] peripheral write throw label=%s err=%o', label || '', err);
+      }
+    }
   },
 
   _bindServerEvents: function () {
@@ -2251,17 +2368,65 @@ Page({
     _server.onCharacteristicReadRequest(function (res) {
       if (!_server) return;
       var d = _lastCommittedFrame || self.data;
-      _server.writeCharacteristicValue({
+      self._safeServerWriteCharacteristicValue({
         serviceId: BLE.SERVICE_UUID,
         characteristicId: BLE.CHAR_SCORE_UUID,
-        value: BLE.encodePacket({
-          homeScore: d.homeScore, awayScore: d.awayScore, period: d.period,
-          minutes: d.minutes, seconds: d.seconds, shotClock: d.shotClock
-        }),
+        value: self._buildBlePacketValue(d),
         needNotify: false,
+        callbackId: res && res.callbackId,
         callbackType: 'read'
-      });
+      }, 'read');
     });
+
+    if (typeof _server.onCharacteristicWriteRequest === 'function') {
+      _server.onCharacteristicWriteRequest(function (res) {
+        var cmd = -1;
+        var validCommand = false;
+        try {
+          var charId = String((res && res.characteristicId) || '').toLowerCase();
+          var isScoreChar = !charId || charId === String(BLE.CHAR_SCORE_UUID).toLowerCase();
+          var value = res && res.value;
+          var view = value ? new Uint8Array(value) : null;
+          if (isScoreChar && view && view.length >= 1) {
+            cmd = view[0] & 0xFF;
+            validCommand = cmd === 0x00 || cmd === 0x01;
+            if (!validCommand) {
+              console.warn('[Collector][BLE] unknown remote command:', cmd);
+            }
+          }
+        } catch (eWrite) {
+          console.error('[Collector][BLE] write request handling fail', eWrite);
+        }
+        try {
+          if (_server) {
+            self._safeServerWriteCharacteristicValue({
+              serviceId: BLE.SERVICE_UUID,
+              characteristicId: BLE.CHAR_SCORE_UUID,
+              value: self._buildBlePacketValue(),
+              needNotify: false,
+              callbackId: res && res.callbackId,
+              callbackType: 'write'
+            }, 'write-ack');
+          }
+        } catch (eAck) {
+          console.warn('[Collector][BLE] write ack fail', eAck);
+        }
+        if (!validCommand) {
+          return;
+        }
+        if (cmd === 0x00) {
+          console.log('[Collector][BLE] remote OCR stop');
+          self._stopOcr(false);
+        } else if (cmd === 0x01) {
+          console.log('[Collector][BLE] remote OCR start');
+          if (!self.data.ocrEnabled && !self.data.ocrTransitioning && !_vkSession && !_ocrBootTimer) {
+            self._startOcr();
+          } else {
+            self._notify();
+          }
+        }
+      });
+    }
   },
 
   _startAdv: function (deviceName) {
@@ -2402,13 +2567,10 @@ Page({
     }
     var d = _lastCommittedFrame;
     if (!d) return;
-    _server.writeCharacteristicValue({
+    this._safeServerWriteCharacteristicValue({
       serviceId: BLE.SERVICE_UUID,
       characteristicId: BLE.CHAR_SCORE_UUID,
-      value: BLE.encodePacket({
-        homeScore: d.homeScore, awayScore: d.awayScore, period: d.period,
-        minutes: d.minutes, seconds: d.seconds, shotClock: d.shotClock
-      }),
+      value: this._buildBlePacketValue(d),
       needNotify: true,
       success: function () {
         _bleNotifyFailStreak = 0;
@@ -2416,6 +2578,18 @@ Page({
         console.log('[Collector] notify ok', d.homeScore, d.awayScore, d.minutes, d.seconds, d.shotClock);
       },
       fail: function (err) {
+        if (isBlePeripheralNotInitError(err)) {
+          if (_bleNotifyRetryTimer) {
+            clearTimeout(_bleNotifyRetryTimer);
+            _bleNotifyRetryTimer = 0;
+          }
+          _connectedDeviceId = '';
+          _bleNotifyFailStreak = 0;
+          _bleNotifyBackoffUntil = 0;
+          self.setData({ bleState: 'advertising', bleStateText: '连接失效，等待重连…' });
+          console.warn('[Collector] notify channel not init, stop retrying until reconnect err=%o', err);
+          return;
+        }
         _bleNotifyFailStreak = Math.min(_bleNotifyFailStreak + 1, 12);
         var pow = Math.min(Math.max(_bleNotifyFailStreak - 1, 0), 8);
         var backoff = Math.min(
@@ -2431,7 +2605,7 @@ Page({
           }, backoff);
         }
       }
-    });
+    }, 'notify');
   },
 
   /**
@@ -2447,7 +2621,9 @@ Page({
         period: Number(snapshot.period) || 1,
         minutes: Number(snapshot.minutes) || 0,
         seconds: Number(snapshot.seconds) || 0,
-        shotClock: Number(snapshot.shotClock) || 0
+        shotClock: Number(snapshot.shotClock) || 0,
+        ocrEnabled: !!this.data.ocrEnabled,
+        ocrTransitioning: !!this.data.ocrTransitioning
       };
     } else {
       _lastCommittedFrame = {
@@ -2456,7 +2632,9 @@ Page({
         period: this.data.period,
         minutes: this.data.minutes,
         seconds: this.data.seconds,
-        shotClock: this.data.shotClock
+        shotClock: this.data.shotClock,
+        ocrEnabled: !!this.data.ocrEnabled,
+        ocrTransitioning: !!this.data.ocrTransitioning
       };
     }
     if (!_server || !_connectedDeviceId) return;
@@ -2595,6 +2773,19 @@ function parseTime(raw) {
  */
 function ocrFrameClockSec(f) {
   return clockToTotalSec(f);
+}
+
+function isLikelyClockReset(prevSec, nextSec, clock) {
+  if (nextSec <= prevSec) return false;
+  var delta = nextSec - prevSec;
+  if (delta >= 20) return true;
+  return delta >= OCR_CLOCK_JUMP_DROP_THRESHOLD && clock && Number(clock.seconds) === 0;
+}
+
+function isBlePeripheralNotInitError(err) {
+  if (!err) return false;
+  var msg = String(err.errMsg || err.message || '').toLowerCase();
+  return Number(err.errCode || err.errno || 0) === 10000 && msg.indexOf('not init') !== -1;
 }
 
 /**
