@@ -493,6 +493,37 @@ Page({
     this._startOcrFramePump(session, token);
   },
 
+  // ─── 屏幕翻转与尺寸变化监听 ─────────────────────────
+  /**
+   * 跟随系统自动旋转：当用户在采集端旋转手机（横竖屏切换）时，
+   * 微信会触发 onResize 并提供新的 windowWidth/windowHeight。
+   * 这里同步更新底层物理预览尺寸缓存与 UI 层 setData，
+   * 并在 OCR 运行中强制软重启 VK 会话以重建 WebGL 缓冲、避免画面畸变与 ROI 坐标错位。
+   * @param {{size:{windowWidth:number,windowHeight:number}}} res 微信 onResize 回调参数
+   * @returns {void}
+   */
+  onResize: function (res) {
+    if (!res || !res.size) return;
+
+    var newW = res.size.windowWidth;
+    var newH = res.size.windowHeight;
+
+    _previewW = newW;
+    _previewH = newH;
+
+    this.setData({
+      previewPxW: newW,
+      previewPxH: newH
+    });
+
+    console.log('[Collector] 屏幕尺寸变化/翻转，新尺寸: %sx%s', newW, newH);
+
+    if (this.data.ocrEnabled && !this.data.ocrTransitioning) {
+      this._softRestartOcrSession('screen-rotated');
+      wx.showToast({ title: '屏幕翻转，引擎自适应中', icon: 'none' });
+    }
+  },
+
   // ─── 访问控制 ────────────────────────────────────────
 
   /**
@@ -695,7 +726,46 @@ Page({
     var token = ++_ocrSessionToken;
     this._clearOcrBootTimers();
     this._stopOcrSession();
+    // 每次启动 OCR 前，彻底清空遗留脏数据，实现完全重新采集（不影响蓝牙连接、不覆盖人工维护的 period / shotClock）。
+    this._wipeOcrDirtyState();
     this._prepareCameraForOcrBoot(token, 'start');
+  },
+
+  /**
+   * 彻底清理 OCR 的残留状态，模拟页面重新加载。
+   * 解决原地重启 OCR（或接收远程重启指令）时，因残留旧比分触发大比分下降防抖（isLargeScoreDrop），
+   * 导致比分卡死、必须完全退出页面重进才能恢复的问题。
+   * 严格约束：不触碰任何 BLE 相关逻辑、不重置 period / shotClock 这两个人工维护字段。
+   * @returns {void}
+   */
+  _wipeOcrDirtyState: function () {
+    console.log('[Collector][OCR] Wiping dirty state for fresh start');
+
+    _lastCommittedFrameKey = '';
+    _lastPreviewFrameKey = '';
+    _lastCommittedFrame = null;
+    _scoreJumpHold = null;
+    _timeJumpHoldFrame = null;
+    _ocrLastRoiRunTs = [0, 0, 0];
+    _ocrRoiTextSeq = [0, 0, 0];
+
+    var rois = (this.data.rois || []).map(function (r) {
+      return Object.assign({}, r, { rawText: '' });
+    });
+
+    this.setData({
+      homeScore: 0,
+      awayScore: 0,
+      minutes: 10,
+      seconds: 0,
+      rois: rois
+    });
+
+    if (typeof bumpManualScoreEditGate === 'function') {
+      bumpManualScoreEditGate();
+    }
+
+    this._notify();
   },
 
   _clearOcrBootTimers: function () {
@@ -1623,6 +1693,7 @@ Page({
     _lastHandleTs = 0;
     _pendingOcrFrame = null;
     _lastCommittedFrameKey = '';
+    _lastPreviewFrameKey = '';
     _lastRejectedStableFrameKey = '';
     _lastRejectedStableFrameCount = 0;
     _ocrPausedForBackground = false;
@@ -1631,7 +1702,6 @@ Page({
     _ocrManualFailTimestamps = [];
     _ocrConsecutiveTimeout = 0;
     _ocrFrameBufferPool = null;
-    _lastPreviewFrameKey = '';
     OCR_MIN_INTERVAL_MS = OCR_MIN_INTERVAL_BASE_MS;
     this._ocrRotatePending = false;
   },

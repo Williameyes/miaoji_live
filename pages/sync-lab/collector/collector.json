@@ -1,5 +1,5 @@
 {
   "navigationStyle": "custom",
-  "pageOrientation": "landscape",
+  "pageOrientation": "auto",
   "backgroundColor": "#000000"
 }
