@@ -20,7 +20,6 @@ class BLEManager {
     this.isConnected = false;
     this.bleState = 'idle'; // idle, scanning, connecting, connected, reconnecting
 
-    this._prevFrame = null;
     this._rxPacketCount = 0;
 
     /**
@@ -187,13 +186,9 @@ class BLEManager {
         return;
       }
 
-      // 逻辑验证
-      if (this._prevFrame && !BLE.isLogicallyValid(this._prevFrame, decoded)) {
-        console.warn('[BLEManager] Logically invalid frame, skipping notify');
-        return;
-      }
-
-      this._prevFrame = decoded;
+      // 跳变防抖职责由采集端承担；接收端不再做「大跳变」拦截，
+      // 避免「采集端已更新但直播端拒收」的双端状态分裂。
+      // 仅保留 CRC + 长度校验作为前置门禁，其余统一进入下方脏检查 + 节流。
       this._rxPacketCount++;
 
       // ── 脏检查：只对比影响视觉的实质性核心字段 ──
@@ -297,7 +292,6 @@ class BLEManager {
     }
     this._lastEmitTime = 0;
     this._lastEmittedData = null;
-    this._prevFrame = null;
   }
 
   /**
