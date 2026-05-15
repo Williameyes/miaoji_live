@@ -209,6 +209,10 @@ var _lastClockPredictEmitSec = -1;
 var _clockMode = 'unknown'; // 'unknown' | 'running' | 'paused'
 var _lastOcrClockSec = -1;
 var _lastOcrClockWallTs = 0;
+/** 饥饿复苏后 running 锚点墙钟（供预测器对齐） */
+var _ocrClockRunAnchorWallTs = 0;
+/** 饥饿复苏后 running 锚点 OCR 秒数 */
+var _ocrClockRunAnchorOcrSec = -1;
 var _sameOcrClockSince = 0;
 var _clockPauseCandidateUntil = 0;
 var _clockResumeCandidateSec = -1;
@@ -1041,7 +1045,6 @@ Page({
   _recordOcrClockSample: function (parsedTime, frameCaptureTs) {
     if (!parsedTime) return;
     var now = Date.now();
-    _ocrLastTimeSuccessTs = now;
 
     // === 1) 流水线延迟补偿：把 OCR 读到的秒数倒推到「现在的真实秒」 ===
     var processDelayMs = frameCaptureTs ? Math.max(0, now - frameCaptureTs) : 0;
@@ -1051,6 +1054,20 @@ Page({
     var lostSec = 0;
     var ocrSec = clockToTotalSec(parsedTime);
     var realWorldSec = Math.max(0, ocrSec - lostSec);
+
+    // 【修复 3：打破遮挡恢复后的“三重死锁”】
+    // 若距离上次成功读取时间超过 2500ms（说明刚从看门狗的饥饿暂停中苏醒），
+    // 此时物理时钟可能已走远。必须强行重置底层状态机的锚点，
+    // 否则正确的新时间会被后续的 20 秒防抖逻辑当做“跳变乱码”无情抛弃。
+    if (now - (_ocrLastTimeSuccessTs || 0) > 2500) {
+      console.log('[Collector][OCR] Time recovered from starvation, force aligning to ' + realWorldSec);
+      _lastOcrClockSec = realWorldSec;
+      _clockMode = 'running'; // 假定比赛在进行，强制唤醒预测器。若实体表真停了，后续稳态逻辑会在 800ms 内自动将其纠正回 paused
+      _ocrClockRunAnchorWallTs = now;
+      _ocrClockRunAnchorOcrSec = realWorldSec;
+    }
+    _ocrLastTimeSuccessTs = now;
+
     var realClock = clockFromTotalSec(realWorldSec);
 
     var prevOcrSec = _lastOcrClockSec;
