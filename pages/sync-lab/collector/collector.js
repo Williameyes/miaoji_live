@@ -1045,7 +1045,10 @@ Page({
 
     // === 1) 流水线延迟补偿：把 OCR 读到的秒数倒推到「现在的真实秒」 ===
     var processDelayMs = frameCaptureTs ? Math.max(0, now - frameCaptureTs) : 0;
-    var lostSec = Math.floor(processDelayMs / 1000);
+    // 【修复 2：根除幽灵抖动，恢复停表检测】
+    // 废除 Math.floor(processDelayMs / 1000) 引入的 1 秒级人工抖动误差。
+    // 确保物理表暂停时，realWorldSec 绝对静止，从而顺利触发 delta === 0 的停表判定。
+    var lostSec = 0;
     var ocrSec = clockToTotalSec(parsedTime);
     var realWorldSec = Math.max(0, ocrSec - lostSec);
     var realClock = clockFromTotalSec(realWorldSec);
@@ -1237,6 +1240,17 @@ Page({
       this._clearClockPredictTimer();
       return;
     }
+
+    // 【修复2：预测器看门狗，切断幽灵倒数】
+    // 若底层 OCR 超过 3 秒未能成功读出并提交有效时间，说明实体表可能处于非正常状态。
+    // 强制挂起预测器，防止在无 OCR 数据支撑的情况下盲目倒数。
+    if (now - (_ocrLastTimeSuccessTs || 0) > 3000) {
+      console.log('[Collector][OCR] Predictor suspended due to OCR starvation');
+      _clockMode = 'paused';
+      this._clearClockPredictTimer();
+      return;
+    }
+
     if (_clockPauseCandidateUntil && now < _clockPauseCandidateUntil) return;
     var predicted = getPredictedClock();
     if (!predicted) return;
@@ -2096,16 +2110,21 @@ Page({
     var newT = (Number(timeInfo.minutes) || 0) * 60 + (Number(timeInfo.seconds) || 0);
     if (newT === prevT) return;
     if (!force) {
-      if (newT > prevT) return;
-      var drop = prevT - newT;
-      if (drop > 1) {
-        if (drop > OCR_CLOCK_CATCHUP_MAX_DROP_SEC) return;
-        var minEmitMs = drop > 2 ? OCR_CLOCK_CATCHUP_FAST_INTERVAL_MS : OCR_CLOCK_NORMAL_INTERVAL_MS;
-        if (_lastClockPredictEmitWallTs && wallMs - _lastClockPredictEmitWallTs < minEmitMs) return;
-        newT = prevT - 1;
-        timeInfo = clockFromTotalSec(newT);
-        _clockPredictUntil = Math.max(_clockPredictUntil || 0, getClockCatchupUntil(wallMs, drop));
-        this._ensureClockPredictTimer();
+      // 【修复1：击穿旁路的 20 秒死锁】
+      // 若新时间获得了底层时间状态机的信任（误差2秒内），完全放行，忽略向下跳变和向上回表的限制
+      var isOcrAligned = (_lastOcrClockSec >= 0 && Math.abs(newT - _lastOcrClockSec) <= 2);
+      if (!isOcrAligned) {
+        if (newT > prevT) return;
+        var drop = prevT - newT;
+        if (drop > 1) {
+          if (drop > OCR_CLOCK_CATCHUP_MAX_DROP_SEC) return;
+          var minEmitMs = drop > 2 ? OCR_CLOCK_CATCHUP_FAST_INTERVAL_MS : OCR_CLOCK_NORMAL_INTERVAL_MS;
+          if (_lastClockPredictEmitWallTs && wallMs - _lastClockPredictEmitWallTs < minEmitMs) return;
+          newT = prevT - 1;
+          timeInfo = clockFromTotalSec(newT);
+          _clockPredictUntil = Math.max(_clockPredictUntil || 0, getClockCatchupUntil(wallMs, drop));
+          this._ensureClockPredictTimer();
+        }
       }
     }
     var snap = {
@@ -2139,6 +2158,14 @@ Page({
     var nextT = ocrFrameClockSec(frame);
     if (nextT >= prevT) return frame;
     var drop = prevT - nextT;
+
+    // 【修复 1：打破 10:00 拦截死锁】
+    // 如果内部时间状态机(_lastOcrClockSec)已经确认并接纳了这个时间（误差2秒内），
+    // 说明这是合法的初次对齐或大跨度跳变，强制放行，无视下方的 20 秒防抖拦截门禁！
+    if (_lastOcrClockSec >= 0 && Math.abs(nextT - _lastOcrClockSec) <= 2) {
+      return frame;
+    }
+
     if (drop <= 1) return frame;
     if (drop > OCR_CLOCK_CATCHUP_MAX_DROP_SEC) {
       var glitchHoldClock = clockFromTotalSec(prevT);
@@ -2198,25 +2225,20 @@ Page({
     } else if (_lastCommittedFrame) {
       var dMax = maxScoreDeltaVsCommitted(_lastCommittedFrame, homeScore, awayScore);
       if (dMax >= OCR_SCORE_JUMP_CONFIRM_THRESHOLD) {
-        if (isLargeScoreDrop(_lastCommittedFrame, homeScore, awayScore)) {
-          _scoreJumpHold = {
-            homeScore: homeScore,
-            awayScore: awayScore,
-            streak: 0,
-            since: wallPre,
-            blockedDrop: true,
-            homeSeq: _ocrRoiTextSeq[0] || 0,
-            awaySeq: _ocrRoiTextSeq[1] || 0
-          };
-          if (this.data.debugMode) {
-            console.log('[Collector][OCR] score drop blocked prev=%o h=%s a=%s seq=%o', _lastCommittedFrame, homeScore, awayScore, _ocrRoiTextSeq);
-          }
-          this._emitTimeOnlyIfChanged(timeInfo, wallPre);
-          return;
-        }
+        var isDrop = isLargeScoreDrop(_lastCommittedFrame, homeScore, awayScore);
         var truncH = isLikelyTruncateGlitch(_lastCommittedFrame.homeScore, homeScore);
         var truncA = isLikelyTruncateGlitch(_lastCommittedFrame.awayScore, awayScore);
-        var needStreak = (truncH || truncA) ? OCR_SCORE_JUMP_STREAK_TRUNC : OCR_SCORE_JUMP_STREAK_NORMAL;
+
+        // 【优化】：取消对分数下降的“一刀切绝对封杀(return)”，改为动态提高“连续稳定帧”的要求
+        var needStreak = OCR_SCORE_JUMP_STREAK_NORMAL;
+        if (isDrop) {
+          // 如果比分刚好是双 0，极大可能是换节重置，要求 4 帧确认（约 3-4 秒响应）
+          // 如果是其他不规则的大幅下降（如 118 掉到 18），误读风险极高，要求 6 帧严格确认
+          var isZeroReset = (homeScore === 0 && awayScore === 0);
+          needStreak = isZeroReset ? 4 : 6;
+        } else if (truncH || truncA) {
+          needStreak = OCR_SCORE_JUMP_STREAK_TRUNC;
+        }
         var changedHome = Math.abs(homeScore - _lastCommittedFrame.homeScore) >= OCR_SCORE_JUMP_CONFIRM_THRESHOLD;
         var changedAway = Math.abs(awayScore - _lastCommittedFrame.awayScore) >= OCR_SCORE_JUMP_CONFIRM_THRESHOLD;
         var homeSeq = _ocrRoiTextSeq[0] || 0;
@@ -2891,8 +2913,8 @@ function parseTime(raw) {
   if (mmss) {
     var m = parseInt(mmss[1], 10);
     var s = parseInt(mmss[2], 10);
-    if (!isNaN(m) && !isNaN(s) && m >= 0 && m <= 10 && s >= 0 && s <= 59) {
-      if (m === 10 && s !== 0) return null;
+    // 【优化】：放宽分钟限制到 99 分钟，移除 10:00 死板拦截，完美兼容 CBA/NBA 的 12 分钟或更长节次
+    if (!isNaN(m) && !isNaN(s) && m >= 0 && m <= 99 && s >= 0 && s <= 59) {
       return { minutes: m, seconds: s };
     }
   }
