@@ -55,32 +55,50 @@
       <view class="col-top-state">{{bleStateText}}</view>
       <view class="col-top-code" wx:if="{{matchCode}}">码 {{matchCode}}</view>
       <view class="col-top-code col-top-code--muted" wx:else>码待生成</view>
-      <view class="col-top-hz" wx:if="{{ocrTransitioning}}">OCR 启动中</view>
+      <view class="col-top-hz" wx:if="{{ocrTransitioning}}">OCR 切换中</view>
       <view class="col-top-hz" wx:elif="{{ocrEnabled}}">OCR 实时</view>
     </view>
 
     <!-- ③ 底部控制条 -->
     <view class="col-bottom-bar">
-      <view class="col-score-strip">
+      <view
+        class="col-score-strip"
+        bindlongpress="onToggleDebug"
+        show-menu-by-longpress="{{false}}"
+      >
         <view class="col-score-home">{{homeScore}}</view>
         <view class="col-score-sep">:</view>
         <view class="col-score-away">{{awayScore}}</view>
-        <view class="col-score-meta">Q{{period}} · {{minutes}}:{{seconds < 10 ? '0' : ''}}{{seconds}} · {{shotClock}}s</view>
-      </view>
-
-      <view class="col-period-strip">
-        <view class="col-p-btn{{period===1?' col-p-btn--on':''}}" bindtap="onSetPeriod" data-p="1">Q1</view>
-        <view class="col-p-btn{{period===2?' col-p-btn--on':''}}" bindtap="onSetPeriod" data-p="2">Q2</view>
-        <view class="col-p-btn{{period===3?' col-p-btn--on':''}}" bindtap="onSetPeriod" data-p="3">Q3</view>
-        <view class="col-p-btn{{period===4?' col-p-btn--on':''}}" bindtap="onSetPeriod" data-p="4">Q4</view>
-        <view class="col-p-btn{{period===5?' col-p-btn--on':''}}" bindtap="onSetPeriod" data-p="5">OT</view>
+        <view class="col-score-remain">
+          <text class="col-score-remain-label">剩余</text>
+          <text class="col-score-remain-val">{{minutes < 10 ? '0' : ''}}{{minutes}}:{{seconds < 10 ? '0' : ''}}{{seconds}}</text>
+        </view>
       </view>
 
       <view class="col-action-strip">
-        <view class="col-act-btn{{ocrEnabled?' col-act-btn--green':' col-act-btn--blue'}}" bindtap="onToggleOcr">{{ocrTransitioning?'OCR切换中':(ocrEnabled?'关OCR':'开OCR')}}</view>
-        <view class="col-act-btn{{debugMode?' col-act-btn--yellow':' col-act-btn--ghost'}}" bindtap="onToggleDebug">调试</view>
-        <view wx:if="{{bleState === 'idle'}}" class="col-act-btn col-act-btn--blue" bindtap="onStartTap">开启采集</view>
-        <view wx:else class="col-act-btn col-act-btn--red" bindtap="onStopTap">停止</view>
+        <view
+          class="col-act-btn col-act-btn--ocr{{ocrEnabled?' col-act-btn--green':' col-act-btn--blue'}}"
+          hover-class="col-act-btn--pressed"
+          hover-stay-time="100"
+          hover-start-time="20"
+          bindtap="onToggleOcr"
+        >{{ocrTransitioning?'OCR切换中':(ocrEnabled?'关OCR':'开OCR')}}</view>
+        <view
+          wx:if="{{bleState === 'idle'}}"
+          class="col-act-btn col-act-btn--ble col-act-btn--blue"
+          hover-class="col-act-btn--pressed"
+          hover-stay-time="100"
+          hover-start-time="20"
+          bindtap="onStartTap"
+        >开启采集</view>
+        <view
+          wx:else
+          class="col-act-btn col-act-btn--ble col-act-btn--red"
+          hover-class="col-act-btn--pressed"
+          hover-stay-time="100"
+          hover-start-time="20"
+          bindtap="onStopTap"
+        >停止</view>
       </view>
     </view>
 

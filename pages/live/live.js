@@ -16,7 +16,6 @@ const bleManager = require('../../services/bleManager.js');
 const bleProtocol = require('../../utils/ble-protocol.js');
 const liveBleQuick = require('../../utils/live-ble-quick-connect.js');
 const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
-const REMOTE_OCR_WRITE_GUARD_MS = 900;
 
 /**
  * 画质增强内测白名单 OpenID。
@@ -2168,7 +2167,7 @@ Page({
     if (this.data.remoteOcrCommandBusy || now < (this._remoteOcrWriteBusyUntil || 0)) {
       return;
     }
-    this._remoteOcrWriteBusyUntil = now + REMOTE_OCR_WRITE_GUARD_MS;
+    this._remoteOcrWriteBusyUntil = now + 2000;
     if (this._remoteOcrBusyTimer) {
       clearTimeout(this._remoteOcrBusyTimer);
       this._remoteOcrBusyTimer = null;
@@ -2189,17 +2188,15 @@ Page({
         remoteOcrTransitioning: false,
         remoteOcrStatusText: '等待采集端状态回传'
       });
-    }, 4200);
+    }, 5000);
     wx.writeBLECharacteristicValue({
       deviceId: bleManager.deviceId,
       serviceId: bleManager.serviceId,
       characteristicId: bleManager.characteristicId,
       value: buf,
-      writeType: props && props.writeNoResponse && !props.write ? 'writeNoResponse' : 'write',
+      writeType: props && props.writeNoResponse ? 'writeNoResponse' : 'write',
       success: function () {
-        if (self.data.remoteOcrCommandBusy) {
-          self.setData({ remoteOcrCommandBusy: false });
-        }
+        console.log('[Live][BLE] remote OCR command write queued');
       },
       fail: function (err) {
         self._remoteOcrWriteBusyUntil = 0;

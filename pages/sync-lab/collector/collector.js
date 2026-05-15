@@ -710,7 +710,11 @@ Page({
   // ─── OCR 开关 ────────────────────────────────────────
 
   onToggleOcr: function () {
-    if (this.data.ocrTransitioning) return;
+    if (this.data.ocrTransitioning) {
+      wx.showToast({ title: '引擎切换中...', icon: 'none', duration: 800 });
+      return;
+    }
+
     if (this.data.ocrEnabled || _vkSession || _ocrBootTimer) {
       this._stopOcr(false);
       return;
@@ -718,6 +722,10 @@ Page({
     this._startOcr();
   },
 
+  /**
+   * 长按比分区切换调试模式（底部不再展示调试按钮）。
+   * @returns {void}
+   */
   onToggleDebug: function () {
     this.setData({ debugMode: !this.data.debugMode });
   },
@@ -1563,39 +1571,94 @@ Page({
     this._applyOcrRoiTexts(state.rawTexts, typeof state.updatedRoiIdx === 'number' ? state.updatedRoiIdx : -1);
   },
 
+  /**
+   * 停止 OCR：先落库 UI，再在 `wx.nextTick` 后 BLE 同步，短延迟后销毁 VK；`ocrTransitioning` 在会话销毁后立即结束，不等待相机 remount（remount 仍异步执行，缩短「切换中」遮挡时间）。
+   * @param {boolean} [skipRemount] 为 true 时立即停会话（如 `onUnload`），避免与 `_stopAll` 竞态。
+   * @returns {void}
+   */
   _stopOcr: function (skipRemount) {
     var self = this;
     var token = ++_ocrSessionToken;
-    var releaseAndFinalize = function () {
-      if (token !== _ocrSessionToken) return;
+
+    this._cancelOcrFramePump();
+    if (_ocrRunTimeout) {
+      clearTimeout(_ocrRunTimeout);
+      _ocrRunTimeout = 0;
+    }
+    _ocrRunBusy = false;
+    _ocrRunState = null;
+
+    if (skipRemount) {
       if (_ocrBootTimer) {
         clearTimeout(_ocrBootTimer);
         _ocrBootTimer = 0;
       }
-      self._stopOcrSession();
-      if (skipRemount) {
-        self.setData({ ocrEnabled: false, ocrTransitioning: false }, function () {
-          self._notify();
-        });
-        return;
-      }
-      self._remountCameraAfterOcrStop(function () {
-        if (token !== _ocrSessionToken) return;
-        self.setData({ ocrEnabled: false, ocrTransitioning: false }, function () {
-          self._notify();
-        });
+      this._stopOcrSession();
+      this.setData({ ocrEnabled: false, ocrTransitioning: false }, function () {
+        self._notify();
       });
-    };
-
-    if (skipRemount) {
-      releaseAndFinalize();
       return;
     }
 
-    this.setData({ ocrEnabled: false, ocrTransitioning: true }, function () {
-      self._notify();
-      setTimeout(releaseAndFinalize, 0);
-    });
+    this.setData(
+      {
+        ocrEnabled: false,
+        ocrTransitioning: true
+      },
+      function () {
+        var notifySnap = {
+          homeScore: self.data.homeScore,
+          awayScore: self.data.awayScore,
+          period: self.data.period,
+          minutes: self.data.minutes,
+          seconds: self.data.seconds,
+          shotClock: self.data.shotClock,
+          ocrEnabled: false,
+          ocrTransitioning: true
+        };
+
+        var runHeavy = function () {
+          if (token !== _ocrSessionToken) return;
+          if (_ocrBootTimer) {
+            clearTimeout(_ocrBootTimer);
+            _ocrBootTimer = 0;
+          }
+          self._stopOcrSession();
+          var finSnap = {
+            homeScore: self.data.homeScore,
+            awayScore: self.data.awayScore,
+            period: self.data.period,
+            minutes: self.data.minutes,
+            seconds: self.data.seconds,
+            shotClock: self.data.shotClock,
+            ocrEnabled: false,
+            ocrTransitioning: false
+          };
+          self.setData({ ocrTransitioning: false }, function () {
+            self._notify(finSnap);
+          });
+          setTimeout(function () {
+            if (token !== _ocrSessionToken) return;
+            self._remountCameraAfterOcrStop(function () {});
+          }, 0);
+        };
+
+        var afterUiNotifyThenHeavy = function () {
+          self._notify(notifySnap);
+          setTimeout(runHeavy, 400);
+        };
+
+        try {
+          if (typeof wx !== 'undefined' && typeof wx.nextTick === 'function') {
+            wx.nextTick(afterUiNotifyThenHeavy);
+          } else {
+            setTimeout(afterUiNotifyThenHeavy, 0);
+          }
+        } catch (eNt) {
+          setTimeout(afterUiNotifyThenHeavy, 0);
+        }
+      }
+    );
   },
 
   _remountCameraAfterOcrStop: function (done) {
@@ -2468,13 +2531,13 @@ Page({
           console.error('[Collector][BLE] write request handling fail', eWrite);
         }
         try {
-          if (_server) {
+          if (_server && res && res.callbackId) {
             self._safeServerWriteCharacteristicValue({
               serviceId: BLE.SERVICE_UUID,
               characteristicId: BLE.CHAR_SCORE_UUID,
-              value: self._buildBlePacketValue(),
+              value: res.value || new ArrayBuffer(1),
               needNotify: false,
-              callbackId: res && res.callbackId,
+              callbackId: res.callbackId,
               callbackType: 'write'
             }, 'write-ack');
           }
@@ -2484,17 +2547,19 @@ Page({
         if (!validCommand) {
           return;
         }
-        if (cmd === 0x00) {
-          console.log('[Collector][BLE] remote OCR stop');
-          self._stopOcr(false);
-        } else if (cmd === 0x01) {
-          console.log('[Collector][BLE] remote OCR start');
-          if (!self.data.ocrEnabled && !self.data.ocrTransitioning && !_vkSession && !_ocrBootTimer) {
-            self._startOcr();
-          } else {
-            self._notify();
+        setTimeout(function () {
+          if (cmd === 0x00) {
+            console.log('[Collector][BLE] remote OCR stop');
+            self._stopOcr(false);
+          } else if (cmd === 0x01) {
+            console.log('[Collector][BLE] remote OCR start');
+            if (!self.data.ocrEnabled && !self.data.ocrTransitioning && !_vkSession && !_ocrBootTimer) {
+              self._startOcr();
+            } else {
+              self._notify();
+            }
           }
-        }
+        }, 100);
       });
     }
   },
@@ -2680,7 +2745,16 @@ Page({
 
   /**
    * 同步「已提交」状态并尝试 BLE notify。
-   * @param {{ homeScore?: number, awayScore?: number, period?: number, minutes?: number, seconds?: number, shotClock?: number } | void} snapshot 若传入则写入 `_lastCommittedFrame` 并用于后续 encode；否则用当前 `this.data`（仅适合未与 setData 交叉的调用）。
+   * @param {{
+   *   homeScore?: number,
+   *   awayScore?: number,
+   *   period?: number,
+   *   minutes?: number,
+   *   seconds?: number,
+   *   shotClock?: number,
+   *   ocrEnabled?: boolean,
+   *   ocrTransitioning?: boolean
+   * } | void} snapshot 若传入则写入 `_lastCommittedFrame`；`ocrEnabled` / `ocrTransitioning` 可显式传入，避免与 `setData` 异步落库交叉时读到旧 `this.data`。
    * @returns {void}
    */
   _notify: function (snapshot) {
@@ -2692,8 +2766,12 @@ Page({
         minutes: Number(snapshot.minutes) || 0,
         seconds: Number(snapshot.seconds) || 0,
         shotClock: Number(snapshot.shotClock) || 0,
-        ocrEnabled: !!this.data.ocrEnabled,
-        ocrTransitioning: !!this.data.ocrTransitioning
+        ocrEnabled:
+          typeof snapshot.ocrEnabled === 'boolean' ? snapshot.ocrEnabled : !!this.data.ocrEnabled,
+        ocrTransitioning:
+          typeof snapshot.ocrTransitioning === 'boolean'
+            ? snapshot.ocrTransitioning
+            : !!this.data.ocrTransitioning
       };
     } else {
       _lastCommittedFrame = {

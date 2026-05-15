@@ -169,7 +169,7 @@ page { background: #000; }
   padding: 6rpx 12rpx calc(6rpx + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: row;
-  align-items: center;
+  align-items: stretch;
   gap: 10rpx;
   z-index: 40;
 }
@@ -185,36 +185,41 @@ page { background: #000; }
 .col-score-home { font-size: 36rpx; font-weight: 900; color: #60a5fa; }
 .col-score-sep  { font-size: 24rpx; color: #fff; padding: 0 6rpx; }
 .col-score-away { font-size: 36rpx; font-weight: 900; color: #f87171; }
-.col-score-meta {
-  font-size: 16rpx;
-  color: rgba(255,255,255,0.75);
-  padding-left: 10rpx;
-  white-space: nowrap;
-}
 
-/* 节次 */
-.col-period-strip {
+/* 全场剩余时间（便于对照 OCR / 推流；不含 24 秒与节次） */
+.col-score-remain {
   display: flex;
-  flex-direction: row;
-  gap: 6rpx;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  margin-left: 14rpx;
+  padding-left: 14rpx;
+  border-left: 2rpx solid rgba(255,255,255,0.22);
   flex-shrink: 0;
 }
-.col-p-btn {
-  font-size: 18rpx;
-  color: rgba(255,255,255,0.70);
-  background: rgba(255,255,255,0.12);
-  padding: 4rpx 10rpx;
-  border-radius: 999rpx;
+.col-score-remain-label {
+  font-size: 16rpx;
+  color: rgba(255,255,255,0.52);
+  line-height: 1.1;
 }
-.col-p-btn--on { background: #3b82f6; color: #fff; }
+.col-score-remain-val {
+  font-size: 26rpx;
+  font-weight: 700;
+  color: rgba(255,255,255,0.92);
+  letter-spacing: 1rpx;
+  line-height: 1.2;
+  font-family: ui-monospace, monospace;
+}
 
-/* 操作按钮 */
+/* 操作按钮：OCR / 采集 双主按钮撑满剩余宽度，加大触控热区 */
 .col-action-strip {
   display: flex;
   flex-direction: row;
-  gap: 6rpx;
-  margin-left: auto;
-  flex-shrink: 0;
+  align-items: stretch;
+  flex: 1;
+  min-width: 0;
+  gap: 16rpx;
+  margin-left: 16rpx;
 }
 .col-act-btn {
   font-size: 18rpx;
@@ -223,11 +228,31 @@ page { background: #000; }
   color: #fff;
   line-height: 1.2;
 }
+.col-action-strip .col-act-btn--ocr,
+.col-action-strip .col-act-btn--ble {
+  flex: 1;
+  min-height: 100rpx;
+  font-size: 36rpx;
+  font-weight: 700;
+  padding: 24rpx 12rpx;
+  border-radius: 16rpx;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
 .col-act-btn--blue   { background: rgba(59,130,246,0.80); }
 .col-act-btn--green  { background: rgba(34,197,94,0.80); }
 .col-act-btn--yellow { background: rgba(245,158,11,0.80); }
 .col-act-btn--red    { background: rgba(239,68,68,0.75); }
 .col-act-btn--ghost  { background: rgba(255,255,255,0.15); }
+
+/* 主按钮按压态（支架场景以视觉反馈为主，替代轻震动） */
+.col-action-strip .col-act-btn--pressed {
+  opacity: 0.88;
+  box-shadow: inset 0 6rpx 18rpx rgba(0, 0, 0, 0.38);
+}
 
 /* ── 调试面板 ── */
 .col-debug-panel {
