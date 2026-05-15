@@ -1018,10 +1018,20 @@ Page({
     }
     const latestConfig = this.normalizeMatchConfig(sourceConfig);
     const wSide = this.computeTeamGroupWidthPx();
-    this.setData({
+    const payload = {
       matchConfig: latestConfig,
       teamGroupWidthPxA: wSide,
       teamGroupWidthPxB: wSide
+    };
+    if (latestConfig.mode === 'manual' && this.data.autoSyncWhitelisted) {
+      payload.isAutoMode = false;
+    }
+    const selfSyncMc = this;
+    this.setData(payload, function () {
+      if (latestConfig.mode === 'manual' && selfSyncMc.data.autoSyncWhitelisted) {
+        selfSyncMc.updateTeamGroupWidth(true);
+        selfSyncMc._liveBleTeardownForManualMode();
+      }
     });
     app.globalData.matchConfig = latestConfig;
     wx.setStorageSync('matchConfig', latestConfig);
@@ -1580,11 +1590,12 @@ Page({
     /** 相机 bindinitdone 完成前禁止 startRecord，否则部分机型预览一直黑屏 */
     this._cameraInitDone = false;
 
-    // 自动模式数据监听
+    // BLE EventBus 仅在「自动记分」开启期间绑定，见 _liveBleEnsureBleEventBusBound。
     this._onBleDataUpdate = this._onBleDataUpdate.bind(this);
-    eventBus.on('BLE_DATA_UPDATE', this._onBleDataUpdate);
     this._onBleConnectionUpdate = this._onBleConnectionUpdate.bind(this);
-    eventBus.on('BLE_CONNECTION_UPDATE', this._onBleConnectionUpdate);
+    this._liveBleEventBusBound = false;
+    /** 手动记分态下正在执行 BLE 全量 teardown，用于吞掉 shutdown 触发的重复断开事件 */
+    this._liveBleTeardownRunning = false;
 
     /** 自动记分更新节流戳 */
     this._lastBleUpdateAt = 0;
@@ -1788,6 +1799,18 @@ Page({
       this._liveBleSyncChipConnected();
     } catch (eBle0) {}
 
+    // 进入直播默认手动记分：清理可能遗留的全局 BLE（含适配器），避免非自动记分仍占资源。
+    try {
+      var selfBleBoot = this;
+      setTimeout(function () {
+        try {
+          if (!selfBleBoot.data.isAutoMode) {
+            selfBleBoot._liveBleTeardownForManualMode();
+          }
+        } catch (eBootBle) {}
+      }, 0);
+    } catch (eBootT) {}
+
     // 直播核心拉起统一放在 onShow，避免 onLoad + onShow 并发触发 camera 重建。
     this._liveBlePreferAutoAfterConnect = false;
     this._liveBleQuickScanRunner = null;
@@ -1799,10 +1822,108 @@ Page({
 
   // 已合并至文件后部 onUnload：此处不再重复定义，避免后项覆盖导致事件未解绑。
 
+  /**
+   * 是否为「手动记分」语义：页面 `isAutoMode===false`，或持久化 `matchConfig.mode==='manual'`。
+   * （当前主路径为 `isAutoMode`；`matchConfig.mode` 供后续配置对齐预留。）
+   * @returns {boolean}
+   */
+  _liveBleIsManualScoringMode: function () {
+    var mc = this.data.matchConfig;
+    if (mc && mc.mode === 'manual') return true;
+    if (mc && mc.mode === 'auto') return false;
+    return !this.data.isAutoMode;
+  },
+
+  /**
+   * 绑定 BLE 相关 EventBus（仅在进入自动记分 / 快连流程时调用，避免手动记分仍收包）。
+   * @returns {void}
+   */
+  _liveBleEnsureBleEventBusBound: function () {
+    if (this._liveBleEventBusBound) return;
+    eventBus.on('BLE_DATA_UPDATE', this._onBleDataUpdate);
+    eventBus.on('BLE_CONNECTION_UPDATE', this._onBleConnectionUpdate);
+    this._liveBleEventBusBound = true;
+  },
+
+  /**
+   * 解绑 BLE EventBus。
+   * @returns {void}
+   */
+  _liveBleUnbindBleEventBusIfBound: function () {
+    if (!this._liveBleEventBusBound) return;
+    try {
+      eventBus.off('BLE_DATA_UPDATE', this._onBleDataUpdate);
+      eventBus.off('BLE_CONNECTION_UPDATE', this._onBleConnectionUpdate);
+    } catch (eOff) {}
+    this._liveBleEventBusBound = false;
+  },
+
+  /**
+   * 将直播端 BLE 相关 UI 复位为未连接态（不修改 `isAutoMode`，由调用方负责）。
+   * @returns {void}
+   */
+  _liveBleApplyDisconnectedBleUiPatch: function () {
+    this.setData({
+      liveBleChipConnected: false,
+      bleConnected: false,
+      liveBlePanelOpen: false,
+      liveBleQuickBusy: false,
+      liveBleQuickStatusText: '',
+      remoteOcrEnabled: false,
+      remoteOcrTransitioning: false,
+      remoteOcrCommandBusy: false,
+      remoteOcrStatusText: '采集端 OCR 已关闭',
+      bleMinutes: 0,
+      bleSeconds: 0
+    });
+  },
+
+  /**
+   * 手动记分态：中止快扫、解绑 EventBus、`bleManager.shutdownCentralStack`、复位 UI。
+   * @param {{ emitDisconnected?: boolean }} [opt] 为 false 时不在 EventBus 上再次广播断开（如 page unload）
+   * @returns {Promise<void>}
+   */
+  _liveBleTeardownForManualMode: function (opt) {
+    var self = this;
+    var emitDisc = !(opt && opt.emitDisconnected === false);
+    if (this._liveBleTeardownRunning) {
+      return Promise.resolve();
+    }
+    this._liveBleTeardownRunning = true;
+    this._liveBleAbortQuickScanSilently();
+    try {
+      if (this._remoteOcrBusyTimer) {
+        clearTimeout(this._remoteOcrBusyTimer);
+        this._remoteOcrBusyTimer = null;
+      }
+      this._remoteOcrWriteBusyUntil = 0;
+    } catch (eT0) {}
+    try {
+      this._liveBleFlushScorePersist();
+    } catch (eF) {}
+    this._liveBleUnbindBleEventBusIfBound();
+    return bleManager
+      .shutdownCentralStack({ emitDisconnected: emitDisc })
+      .then(function () {
+        self._liveBleTeardownRunning = false;
+        self._liveBleApplyDisconnectedBleUiPatch();
+      })
+      .catch(function () {
+        self._liveBleTeardownRunning = false;
+        self._liveBleApplyDisconnectedBleUiPatch();
+      });
+  },
+
   _onBleConnectionUpdate: function (res) {
     var connected = !!res.connected;
-    if (this.data.liveBleChipConnected !== connected || this.data.bleConnected !== connected) {
-      this.setData({ liveBleChipConnected: connected, bleConnected: connected });
+    if (!connected && this._liveBleTeardownRunning) {
+      return;
+    }
+
+    if (connected) {
+      if (this.data.liveBleChipConnected !== connected || this.data.bleConnected !== connected) {
+        this.setData({ liveBleChipConnected: connected, bleConnected: connected });
+      }
     }
 
     if (!connected) {
@@ -1818,7 +1939,8 @@ Page({
         remoteOcrStatusText: '采集端 OCR 已关闭'
       });
       this._liveBleFlushScorePersist();
-      if (this.data.isAutoMode) {
+      var wasAuto = this.data.isAutoMode;
+      if (wasAuto) {
         this._liveBlePreferAutoAfterConnect = true;
         console.warn('[Live] BLE disconnected in AutoMode, switching back to manual');
         this.setData({ isAutoMode: false }, () => {
@@ -1830,10 +1952,16 @@ Page({
           duration: 2800
         });
       }
+      if (this.data.autoSyncWhitelisted) {
+        this._liveBleTeardownForManualMode();
+      } else if (this.data.liveBleChipConnected !== connected || this.data.bleConnected !== connected) {
+        this.setData({ liveBleChipConnected: connected, bleConnected: connected });
+      }
       return;
     }
 
     if (connected && this._liveBlePreferAutoAfterConnect && this.data.autoSyncWhitelisted) {
+      this._liveBleEnsureBleEventBusBound();
       this._liveBlePreferAutoAfterConnect = false;
       this._liveBleAutoRestoreConsumed = true;
       this.setData({ isAutoMode: true }, () => {
@@ -1848,6 +1976,7 @@ Page({
    */
   _liveBleSyncChipConnected: function () {
     if (!this.data.autoSyncWhitelisted) return;
+    if (this._liveBleIsManualScoringMode()) return;
     var c = !!bleManager.isConnected;
     if (this.data.liveBleChipConnected !== c || this.data.bleConnected !== c) {
       this.setData({ liveBleChipConnected: c, bleConnected: c });
@@ -1927,6 +2056,7 @@ Page({
       wx.showToast({ title: '请输入 4 位匹配码', icon: 'none' });
       return;
     }
+    this._liveBleEnsureBleEventBusBound();
     if (this._liveBleQuickScanRunner) {
       try {
         this._liveBleQuickScanRunner.cancel();
@@ -2001,51 +2131,16 @@ Page({
    */
   onLiveBleDisconnectTap: function () {
     var self = this;
+    if (!this.data.autoSyncWhitelisted) return;
     this._liveBleFlushScorePersist();
-    if (!bleManager.isConnected) {
-      this.setData({
-        liveBlePanelOpen: false,
-        liveBleChipConnected: false,
-        bleConnected: false,
-        liveBleQuickStatusText: '',
-        remoteOcrEnabled: false,
-        remoteOcrTransitioning: false,
-        remoteOcrCommandBusy: false,
-        remoteOcrStatusText: '采集端 OCR 已关闭'
-      });
-      return;
-    }
-    this.setData({ liveBleQuickBusy: true });
-    Promise.resolve(bleManager.disconnect())
-      .then(function () {
-        self._liveBlePreferAutoAfterConnect = false;
-        if (self._remoteOcrBusyTimer) {
-          clearTimeout(self._remoteOcrBusyTimer);
-          self._remoteOcrBusyTimer = null;
-        }
-        self._remoteOcrWriteBusyUntil = 0;
-        self.setData(
-          {
-            liveBleQuickBusy: false,
-            liveBleChipConnected: false,
-            bleConnected: false,
-            liveBlePanelOpen: false,
-            liveBleQuickStatusText: '',
-            remoteOcrEnabled: false,
-            remoteOcrTransitioning: false,
-            remoteOcrCommandBusy: false,
-            remoteOcrStatusText: '采集端 OCR 已关闭',
-            isAutoMode: false
-          },
-          function () {
-            self.updateTeamGroupWidth(true);
-          }
-        );
-        wx.showToast({ title: '已断开蓝牙', icon: 'none' });
-      })
-      .catch(function () {
-        self.setData({ liveBleQuickBusy: false });
-      });
+    this._liveBlePreferAutoAfterConnect = false;
+    this.setData({ liveBleQuickBusy: true, isAutoMode: false }, function () {
+      self.updateTeamGroupWidth(true);
+    });
+    this._liveBleTeardownForManualMode().finally(function () {
+      self.setData({ liveBleQuickBusy: false });
+      wx.showToast({ title: '已断开蓝牙', icon: 'none' });
+    });
   },
 
   sendRemoteStartOcr: function () {
@@ -2303,7 +2398,11 @@ Page({
       success: (res) => {
         if (res.tapIndex === 0) {
           const nextMode = !self.data.isAutoMode;
-          
+
+          if (nextMode) {
+            self._liveBleEnsureBleEventBusBound();
+          }
+
           if (nextMode && !bleManager.isConnected) {
             self._liveBleOpenQuickPanelPrefilled();
             return;
@@ -2316,6 +2415,9 @@ Page({
 
           self.setData({ isAutoMode: nextMode }, () => {
             self.updateTeamGroupWidth(true);
+            if (!nextMode) {
+              self._liveBleTeardownForManualMode();
+            }
           });
           wx.showToast({
             title: nextMode ? '已切换至自动模式' : '已恢复手动模式',
@@ -4898,6 +5000,7 @@ Page({
       this.setData(patch, function () {
         if (patch.isAutoMode === false) {
           self.updateTeamGroupWidth(true);
+          self._liveBleTeardownForManualMode();
         }
       });
     }
@@ -5606,12 +5709,13 @@ Page({
 
   onUnload: function () {
     try {
-      eventBus.off('BLE_DATA_UPDATE', this._onBleDataUpdate);
-      eventBus.off('BLE_CONNECTION_UPDATE', this._onBleConnectionUpdate);
-    } catch (eBleOff) {}
+      this._liveBleAbortQuickScanSilently();
+      this._liveBleFlushScorePersist();
+    } catch (eBleU0) {}
+    try {
+      this._liveBleTeardownForManualMode({ emitDisconnected: false });
+    } catch (eBleU2) {}
     wx.setKeepScreenOn({ keepScreenOn: false });
-    this._liveBleAbortQuickScanSilently();
-    this._liveBleFlushScorePersist();
     if (this._remoteOcrBusyTimer) {
       clearTimeout(this._remoteOcrBusyTimer);
       this._remoteOcrBusyTimer = null;

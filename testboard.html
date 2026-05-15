@@ -140,25 +140,33 @@
         /* 控制按钮 */
         .controls {
             position: absolute;
-            bottom: -80px;
+            bottom: -100px;
             left: 50%;
             transform: translateX(-50%);
             display: flex;
-            gap: 20px;
+            gap: 15px;
+            width: 100%;
+            justify-content: center;
         }
 
         button {
-            padding: 10px 25px;
-            font-size: 1rem;
+            padding: 10px 20px;
+            font-size: 0.9rem;
             cursor: pointer;
             background: #333;
             color: #fff;
-            border: none;
+            border: 1px solid #444;
             border-radius: 5px;
+            transition: background 0.2s;
         }
 
         button:hover {
-            background: #444;
+            background: #555;
+        }
+
+        .btn-reset {
+            border-color: #ffcc00;
+            color: #ffcc00;
         }
     </style>
 </head>
@@ -173,12 +181,12 @@
         </div>
 
         <div class="main-display">
-            <div id="homeScore" class="score led-red">109</div>
+            <div id="homeScore" class="score led-red">99</div>
             <div class="center-info">
                 <div id="period" class="period led-yellow">第 3 节</div>
                 <div id="timer" class="timer led-green">10:00</div>
             </div>
-            <div id="guestScore" class="score led-red">135</div>
+            <div id="guestScore" class="score led-red">103</div>
         </div>
 
         <div class="footer">
@@ -198,13 +206,15 @@
         <div class="controls">
             <button onclick="startSimulation()">开始模拟</button>
             <button onclick="pauseSimulation()">暂停</button>
-            <button onclick="resetSimulation()">重置</button>
+            <button class="btn-reset" onclick="resetTimer()">重置时间</button>
+            <button class="btn-reset" onclick="resetScores()">重置比分</button>
         </div>
     </div>
 
     <script>
-        let homeScore = 109;
-        let guestScore = 135;
+        // 初始数据设置为要求的重置值
+        let homeScore = 99;
+        let guestScore = 103;
         let shotClock = 24;
         let minutes = 10;
         let seconds = 0;
@@ -238,10 +248,10 @@
                 if (shotClock > 0) {
                     shotClock--;
                 } else {
-                    shotClock = 24; // 模拟复位
+                    shotClock = 24; 
                 }
 
-                // 随机模拟比分增加 (进球概率)
+                // 随机模拟进球
                 if (Math.random() > 0.98) {
                     homeScore += Math.floor(Math.random() * 3) + 1;
                 }
@@ -258,13 +268,19 @@
             interval = null;
         }
 
-        function resetSimulation() {
+        // 功能 1: 重置时间为 10:00，并重置24秒
+        function resetTimer() {
             pauseSimulation();
-            homeScore = 109;
-            guestScore = 135;
-            shotClock = 24;
             minutes = 10;
             seconds = 0;
+            shotClock = 24;
+            updateDisplay();
+        }
+
+        // 功能 2: 重置比分为 99:103
+        function resetScores() {
+            homeScore = 99;
+            guestScore = 103;
             updateDisplay();
         }
     </script>

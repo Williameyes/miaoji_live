@@ -39,53 +39,159 @@ class BLEManager {
      */
     this._emitTimer = null;
 
+    this._onWxBleConnectionStateChangeBound = this._onWxBleConnectionStateChange.bind(this);
+    this._onWxBleCharacteristicValueChangeBound = this._onWxBleCharacteristicValueChange.bind(this);
+
     BLEManager.instance = this;
   }
 
   /**
+   * 微信底层：连接状态回调（需固定引用以便 off）。
+   * @param {WechatMiniprogram.OnBLEConnectionStateChangeListenerResult} res
+   * @returns {void}
+   */
+  _onWxBleConnectionStateChange(res) {
+    if (res.deviceId === this.deviceId && !res.connected) {
+      console.log('[BLEManager] BLE Disconnected');
+      this.isConnected = false;
+      this.bleState = 'idle';
+      this._resetEmitThrottleState();
+      eventBus.emit('BLE_CONNECTION_UPDATE', { connected: false });
+    }
+  }
+
+  /**
+   * 微信底层：特征值 notify 回调（需固定引用以便 off）。
+   * @param {WechatMiniprogram.OnBLECharacteristicValueChangeListenerResult} res
+   * @returns {void}
+   */
+  _onWxBleCharacteristicValueChange(res) {
+    if (res.deviceId !== this.deviceId) return;
+    if (res.characteristicId !== this.characteristicId) return;
+
+    const buffer = res.value;
+    if (!buffer || buffer.byteLength !== BLE.PACKET_LENGTH) {
+      return;
+    }
+
+    const decoded = BLE.decodePacket(buffer);
+    if (!decoded) {
+      console.warn('[BLEManager] CRC Checksum failed, dropping frame');
+      return;
+    }
+
+    this._rxPacketCount++;
+
+    const last = this._lastEmittedData;
+    const isDirty = !last
+      || decoded.homeScore !== last.homeScore
+      || decoded.awayScore !== last.awayScore
+      || decoded.minutes !== last.minutes
+      || decoded.seconds !== last.seconds
+      || decoded.period !== last.period
+      || decoded.shotClock !== last.shotClock
+      || decoded.ocrEnabled !== last.ocrEnabled;
+
+    if (!isDirty) {
+      return;
+    }
+
+    const payload = {
+      homeScore: decoded.homeScore,
+      awayScore: decoded.awayScore,
+      period: decoded.period,
+      minutes: decoded.minutes,
+      seconds: decoded.seconds,
+      shotClock: decoded.shotClock,
+      ocrEnabled: !!decoded.ocrEnabled,
+      ocrTransitioning: !!decoded.ocrTransitioning,
+      rxCount: this._rxPacketCount,
+      timestamp: Date.now()
+    };
+
+    const now = Date.now();
+    const since = now - this._lastEmitTime;
+    const THROTTLE_MS = 250;
+    if (since < THROTTLE_MS) {
+      if (this._emitTimer) {
+        clearTimeout(this._emitTimer);
+        this._emitTimer = null;
+      }
+      const trailingDecoded = decoded;
+      const trailingPayload = payload;
+      this._emitTimer = setTimeout(() => {
+        this._emitTimer = null;
+        this._lastEmitTime = Date.now();
+        this._lastEmittedData = trailingDecoded;
+        trailingPayload.timestamp = this._lastEmitTime;
+        eventBus.emit('BLE_DATA_UPDATE', trailingPayload);
+      }, THROTTLE_MS - since);
+      return;
+    }
+
+    if (this._emitTimer) {
+      clearTimeout(this._emitTimer);
+      this._emitTimer = null;
+    }
+    this._lastEmitTime = now;
+    this._lastEmittedData = decoded;
+    eventBus.emit('BLE_DATA_UPDATE', payload);
+  }
+
+  /**
+   * 移除本管理器注册的微信 BLE 监听，避免断开后仍触发回调。
+   * @returns {void}
+   */
+  _removeWxBleListeners() {
+    try {
+      wx.offBLECharacteristicValueChange(this._onWxBleCharacteristicValueChangeBound);
+    } catch (e0) { }
+    try {
+      wx.offBLEConnectionStateChange(this._onWxBleConnectionStateChangeBound);
+    } catch (e1) { }
+  }
+
+  /**
    * 初始化并开始连接
-   * @param {string} targetDeviceId 
-   * @param {string} targetServiceId 
-   * @param {string} targetCharId 
+   * @param {string} targetDeviceId
+   * @param {string} targetServiceId
+   * @param {string} targetCharId
    */
   async connect(targetDeviceId, targetServiceId, targetCharId) {
     this.deviceId = targetDeviceId;
     this.targetServiceId = targetServiceId.toLowerCase();
     this.targetCharId = targetCharId.toLowerCase();
-    
+
     console.log('[BLEManager] Connecting to device:', targetDeviceId);
-    
+
     try {
-      // 1. 建立连接
+      wx.offBLEConnectionStateChange(this._onWxBleConnectionStateChangeBound);
+      wx.onBLEConnectionStateChange(this._onWxBleConnectionStateChangeBound);
+
       await wx.createBLEConnection({ deviceId: targetDeviceId });
       this.isConnected = true;
       this.bleState = 'connected';
       console.log('[BLEManager] Connection success');
 
-      // 监听断开
-      wx.onBLEConnectionStateChange((res) => {
-        if (res.deviceId === this.deviceId && !res.connected) {
-          console.log('[BLEManager] BLE Disconnected');
-          this.isConnected = false;
-          this.bleState = 'idle';
-          this._resetEmitThrottleState();
-          eventBus.emit('BLE_CONNECTION_UPDATE', { connected: false });
-        }
-      });
-
-      // 2. 发现服务 (必须步骤，否则无法后续操作)
       await this._discoverServices();
 
-      // 3. 订阅通知
       await this._subscribeNotify();
-      
+
       eventBus.emit('BLE_CONNECTION_UPDATE', { connected: true, deviceId: targetDeviceId });
       return true;
     } catch (err) {
       console.error('[BLEManager] Connection flow failed:', err);
       this.bleState = 'idle';
-      // 出错时尝试断开，清理状态
-      try { wx.closeBLEConnection({ deviceId: targetDeviceId }); } catch (e) {}
+      this.isConnected = false;
+      try {
+        await wx.closeBLEConnection({ deviceId: targetDeviceId });
+      } catch (e) { }
+      this._removeWxBleListeners();
+      this.deviceId = '';
+      this.serviceId = '';
+      this.characteristicId = '';
+      this.characteristicProperties = null;
+      this._resetEmitThrottleState();
       throw err;
     }
   }
@@ -97,7 +203,7 @@ class BLEManager {
     console.log('[BLEManager] Discovering services...');
     const res = await wx.getBLEDeviceServices({ deviceId: this.deviceId });
     const services = res.services || [];
-    
+
     let foundService = null;
     for (const s of services) {
       if (s.uuid.toLowerCase() === this.targetServiceId) {
@@ -112,7 +218,6 @@ class BLEManager {
     this.serviceId = foundService;
     console.log('[BLEManager] Service found:', this.serviceId);
 
-    // 发现特征值
     const resChars = await wx.getBLEDeviceCharacteristics({
       deviceId: this.deviceId,
       serviceId: this.serviceId
@@ -141,7 +246,7 @@ class BLEManager {
    */
   async _subscribeNotify() {
     console.log('[BLEManager] Subscribing to notify:', this.characteristicId);
-    
+
     try {
       await wx.notifyBLECharacteristicValueChange({
         deviceId: this.deviceId,
@@ -152,8 +257,7 @@ class BLEManager {
 
       console.log('[BLEManager] Notify subscription SUCCESS');
       this._startListening();
-      
-      // 订阅后读一次初始值
+
       wx.readBLECharacteristicValue({
         deviceId: this.deviceId,
         serviceId: this.serviceId,
@@ -170,110 +274,76 @@ class BLEManager {
    */
   _startListening() {
     console.log('[BLEManager] Starting value change listener');
-    wx.offBLECharacteristicValueChange();
-    wx.onBLECharacteristicValueChange((res) => {
-      if (res.deviceId !== this.deviceId) return;
-      if (res.characteristicId !== this.characteristicId) return;
-
-      const buffer = res.value;
-      if (!buffer || buffer.byteLength !== BLE.PACKET_LENGTH) {
-        return;
-      }
-
-      const decoded = BLE.decodePacket(buffer);
-      if (!decoded) {
-        console.warn('[BLEManager] CRC Checksum failed, dropping frame');
-        return;
-      }
-
-      // 跳变防抖职责由采集端承担；接收端不再做「大跳变」拦截，
-      // 避免「采集端已更新但直播端拒收」的双端状态分裂。
-      // 仅保留 CRC + 长度校验作为前置门禁，其余统一进入下方脏检查 + 节流。
-      this._rxPacketCount++;
-
-      // ── 脏检查：只对比影响视觉的实质性核心字段 ──
-      // 坚决不把 rxCount / timestamp 纳入对比，避免「内容未变但因时间戳变更触发 setData」。
-      const last = this._lastEmittedData;
-      const isDirty = !last
-        || decoded.homeScore !== last.homeScore
-        || decoded.awayScore !== last.awayScore
-        || decoded.minutes !== last.minutes
-        || decoded.seconds !== last.seconds
-        || decoded.period !== last.period
-        || decoded.shotClock !== last.shotClock
-        || decoded.ocrEnabled !== last.ocrEnabled;
-
-      if (!isDirty) {
-        // 视觉无变化，静默丢弃，保护下游 UI 主线程与 live-pusher 编码资源。
-        return;
-      }
-
-      // ── 组装 payload（保留 rxCount/timestamp 给调试页使用，UI 层不应写入 setData）──
-      const payload = {
-        homeScore: decoded.homeScore,
-        awayScore: decoded.awayScore,
-        period: decoded.period,
-        minutes: decoded.minutes,
-        seconds: decoded.seconds,
-        shotClock: decoded.shotClock,
-        ocrEnabled: !!decoded.ocrEnabled,
-        ocrTransitioning: !!decoded.ocrTransitioning,
-        rxCount: this._rxPacketCount,
-        timestamp: Date.now()
-      };
-
-      // ── 节流：最高 250ms 一次；停流瞬间通过 trailing setTimeout 兜底最后一帧 ──
-      const now = Date.now();
-      const since = now - this._lastEmitTime;
-      const THROTTLE_MS = 250;
-      if (since < THROTTLE_MS) {
-        if (this._emitTimer) {
-          clearTimeout(this._emitTimer);
-          this._emitTimer = null;
-        }
-        // 闭包内捕获本次 decoded / payload；定时器触发时若期间已被新帧顶替，新帧会再次进入该分支并替换定时器。
-        const trailingDecoded = decoded;
-        const trailingPayload = payload;
-        this._emitTimer = setTimeout(() => {
-          this._emitTimer = null;
-          this._lastEmitTime = Date.now();
-          this._lastEmittedData = trailingDecoded;
-          // trailing 触发时刷新 timestamp，避免下游基于该字段做过期判断时误判。
-          trailingPayload.timestamp = this._lastEmitTime;
-          eventBus.emit('BLE_DATA_UPDATE', trailingPayload);
-        }, THROTTLE_MS - since);
-        return;
-      }
-
-      if (this._emitTimer) {
-        clearTimeout(this._emitTimer);
-        this._emitTimer = null;
-      }
-      this._lastEmitTime = now;
-      this._lastEmittedData = decoded;
-      eventBus.emit('BLE_DATA_UPDATE', payload);
-    });
+    wx.offBLECharacteristicValueChange(this._onWxBleCharacteristicValueChangeBound);
+    wx.onBLECharacteristicValueChange(this._onWxBleCharacteristicValueChangeBound);
   }
 
   /**
-   * 断开连接并清理
+   * 断开 GATT 连接并清理本端连接态（不关闭系统蓝牙适配器，供快连「断旧连新」等场景复用）。
+   * @returns {Promise<void>}
    */
   async disconnect() {
     if (!this.deviceId) return;
-    
+
     try {
       await wx.closeBLEConnection({ deviceId: this.deviceId });
-      this.isConnected = false;
-      this.bleState = 'idle';
-      this.deviceId = '';
-      this.serviceId = '';
-      this.characteristicId = '';
-      this.characteristicProperties = null;
-      this._resetEmitThrottleState();
-      console.log('[BLEManager] Disconnected manually');
     } catch (err) {
       console.error('[BLEManager] Disconnect failed:', err);
     }
+    this.isConnected = false;
+    this.bleState = 'idle';
+    this._removeWxBleListeners();
+    this.deviceId = '';
+    this.serviceId = '';
+    this.characteristicId = '';
+    this.characteristicProperties = null;
+    this._resetEmitThrottleState();
+    console.log('[BLEManager] Disconnected manually');
+  }
+
+  /**
+   * 彻底释放 Central 侧蓝牙资源：停扫、断连、移除 notify/连接监听、`closeBluetoothAdapter`。
+   * 直播页在手动记分模式下调用，避免后台扫描与 notify 回调占用。
+   *
+   * @param {{ emitDisconnected?: boolean }} [opts] emitDisconnected 默认 true，向 EventBus 广播断开
+   * @returns {Promise<void>}
+   */
+  shutdownCentralStack(opts) {
+    const self = this;
+    const emitDisconnected = !(opts && opts.emitDisconnected === false);
+    this._resetEmitThrottleState();
+
+    try {
+      wx.stopBluetoothDevicesDiscovery();
+    } catch (e0) { }
+
+    const did = this.deviceId;
+    const closeConn = did
+      ? wx.closeBLEConnection({ deviceId: did }).catch(function () { })
+      : Promise.resolve();
+
+    return closeConn.then(function () {
+      self._removeWxBleListeners();
+      self.deviceId = '';
+      self.serviceId = '';
+      self.characteristicId = '';
+      self.characteristicProperties = null;
+      self.isConnected = false;
+      self.bleState = 'idle';
+
+      return new Promise(function (resolve) {
+        wx.closeBluetoothAdapter({
+          complete: function () {
+            if (emitDisconnected) {
+              try {
+                eventBus.emit('BLE_CONNECTION_UPDATE', { connected: false });
+              } catch (eE) { }
+            }
+            resolve();
+          }
+        });
+      });
+    });
   }
 
   /**
