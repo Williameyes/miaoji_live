@@ -426,7 +426,11 @@ Page({
     previewPxH: 0,
     selectedRoiIdx: -1,
     debugText: '',
-    ocrTransitioning: false
+    ocrTransitioning: false,
+    /** 相机画面缩放倍数，默认 1.0 */
+    cameraZoom: 1,
+    /** 缩放倍数展示文案（一位小数） */
+    cameraZoomDisplay: '1.0'
   },
 
   // ─── 生命周期 ────────────────────────────────────────
@@ -465,6 +469,38 @@ Page({
   onCameraError: function (e) {
     console.error('[Collector] camera error', e.detail);
     wx.showToast({ title: '相机启动失败', icon: 'none' });
+  },
+
+  /**
+   * 处理相机缩放倍数改变（仅在滑块松手时触发，避免拖动中频繁变焦导致 OCR 震荡）
+   * @param {WechatMiniprogram.SliderChange} e
+   */
+  onCameraZoomChange: function (e) {
+    var val = Math.round(Number(e.detail.value) * 10) / 10;
+    if (val < 1) val = 1;
+    if (val > 4) val = 4;
+
+    this.setData({
+      cameraZoom: val,
+      cameraZoomDisplay: val.toFixed(1)
+    });
+
+    // 【修复】：对于挂载了 VKSession 的原生 camera 组件，
+    // 纯 WXML 属性绑定往往无法动态生效，必须直接调用底层的 setZoom API 强行驱动硬件变焦。
+    var ctx = wx.createCameraContext();
+    if (ctx && typeof ctx.setZoom === 'function') {
+      ctx.setZoom({
+        zoom: val,
+        success: function () {
+          console.log('[Collector][Camera] Hardware setZoom success: ' + val);
+        },
+        fail: function (err) {
+          console.error('[Collector][Camera] Hardware setZoom fail', err);
+        }
+      });
+    } else {
+      console.warn('[Collector][Camera] setZoom API not supported on this WeChat version');
+    }
   },
 
   onUnload: function () {

@@ -161,18 +161,56 @@ page { background: #000; }
   flex-shrink: 0;
 }
 
-/* ── 底部控制条 ── */
-.col-bottom-bar {
+/* ── 底部停靠区：缩放条在工具栏外上方，宽度与 OCR/采集 列对齐 ── */
+.col-bottom-dock {
   position: absolute;
-  bottom: 0; left: 0; right: 0;
-  background: rgba(0,0,0,0.38);
-  padding: 6rpx 12rpx calc(6rpx + env(safe-area-inset-bottom));
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  padding: 0 12rpx calc(6rpx + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+}
+.col-bottom-inner {
   display: flex;
   flex-direction: row;
-  align-items: stretch;
+  align-items: flex-end;
   gap: 10rpx;
-  z-index: 40;
 }
+.col-tools-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+}
+.col-zoom-strip {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0 8rpx;
+  box-sizing: border-box;
+}
+.col-zoom-label {
+  font-size: 16rpx;
+  color: rgba(255, 255, 255, 0.62);
+  line-height: 1.2;
+  text-align: center;
+}
+.col-zoom-slider {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+.col-toolbar {
+  background: rgba(0, 0, 0, 0.38);
+  padding: 6rpx 12rpx;
+  border-radius: 12rpx;
+  box-sizing: border-box;
+}
+
+/* ── 底部控制条（比分 + 工具按钮，工具栏保留背景） ── */
 
 /* 比分 */
 .col-score-strip {
@@ -211,15 +249,13 @@ page { background: #000; }
   font-family: ui-monospace, monospace;
 }
 
-/* 操作按钮：OCR / 采集 双主按钮撑满剩余宽度，加大触控热区 */
+/* 操作按钮：OCR / 采集 双主按钮撑满工具栏宽度 */
 .col-action-strip {
   display: flex;
   flex-direction: row;
   align-items: stretch;
-  flex: 1;
   min-width: 0;
   gap: 16rpx;
-  margin-left: 16rpx;
 }
 .col-act-btn {
   font-size: 18rpx;
