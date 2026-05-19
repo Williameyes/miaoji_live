@@ -79,19 +79,32 @@
 
         <view class="col-tools-col">
           <view class="col-zoom-strip">
-            <text class="col-zoom-label">缩放 {{cameraZoomDisplay}}x</text>
-            <slider
-              class="col-zoom-slider"
-              min="1"
-              max="4"
-              step="0.1"
-              value="{{cameraZoom}}"
-              bindchange="onCameraZoomChange"
-              show-value="{{false}}"
-              backgroundColor="rgba(255,255,255,0.28)"
-              activeColor="rgba(134,239,172,0.95)"
-              block-size="20"
-            />
+            <view class="col-zoom-row">
+              <view class="col-zoom-slider-wrap">
+                <text class="col-zoom-label">缩放 {{cameraZoomDisplay}}x</text>
+                <slider
+                  class="col-zoom-slider"
+                  min="1"
+                  max="4"
+                  step="0.1"
+                  value="{{cameraZoom}}"
+                  bindchange="onCameraZoomChange"
+                  show-value="{{false}}"
+                  backgroundColor="rgba(255,255,255,0.28)"
+                  activeColor="rgba(134,239,172,0.95)"
+                  block-size="18"
+                />
+              </view>
+              <view
+                class="col-zoom-restore{{canRestoreLastZoom ? ' col-zoom-restore--active' : ' col-zoom-restore--disabled'}}"
+                hover-class="{{canRestoreLastZoom ? 'col-zoom-restore--pressed' : ''}}"
+                hover-stay-time="80"
+                bindtap="onRestoreLastZoom"
+              >
+                <text class="col-zoom-restore-icon">↺</text>
+                <text class="col-zoom-restore-text">{{lastCameraZoomDisplay}}x</text>
+              </view>
+            </view>
           </view>
           <view class="col-toolbar">
             <view class="col-action-strip">

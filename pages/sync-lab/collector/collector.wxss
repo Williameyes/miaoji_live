@@ -182,32 +182,95 @@ page { background: #000; }
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 6rpx;
+  gap: 0;
 }
 .col-zoom-strip {
   display: flex;
   flex-direction: column;
   justify-content: center;
   flex-shrink: 0;
-  padding: 0 8rpx;
+  padding: 0 8rpx 20rpx;
+  margin-bottom: 4rpx;
   box-sizing: border-box;
+}
+.col-zoom-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12rpx;
+}
+.col-zoom-slider-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2rpx;
 }
 .col-zoom-label {
   font-size: 16rpx;
   color: rgba(255, 255, 255, 0.62);
   line-height: 1.2;
-  text-align: center;
+  text-align: left;
+  padding-left: 4rpx;
 }
 .col-zoom-slider {
   width: 100%;
   margin: 0;
   padding: 0;
 }
+.col-zoom-restore {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 72rpx;
+  height: 72rpx;
+  padding: 6rpx 10rpx;
+  border-radius: 12rpx;
+  box-sizing: border-box;
+  border: 2rpx solid transparent;
+}
+.col-zoom-restore--active {
+  background: rgba(134, 239, 172, 0.22);
+  border-color: rgba(134, 239, 172, 0.72);
+}
+.col-zoom-restore--active .col-zoom-restore-icon,
+.col-zoom-restore--active .col-zoom-restore-text {
+  color: rgba(187, 247, 208, 0.98);
+}
+.col-zoom-restore--disabled {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.1);
+  opacity: 0.42;
+}
+.col-zoom-restore--disabled .col-zoom-restore-icon,
+.col-zoom-restore--disabled .col-zoom-restore-text {
+  color: rgba(255, 255, 255, 0.38);
+}
+.col-zoom-restore--pressed {
+  opacity: 0.78;
+  transform: scale(0.96);
+}
+.col-zoom-restore-icon {
+  font-size: 22rpx;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.55);
+}
+.col-zoom-restore-text {
+  font-size: 18rpx;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-top: 2rpx;
+  color: rgba(255, 255, 255, 0.55);
+  font-family: ui-monospace, monospace;
+}
 .col-toolbar {
   background: rgba(0, 0, 0, 0.38);
   padding: 6rpx 12rpx;
   border-radius: 12rpx;
   box-sizing: border-box;
+  margin-top: 2rpx;
 }
 
 /* ── 底部控制条（比分 + 工具按钮，工具栏保留背景） ── */

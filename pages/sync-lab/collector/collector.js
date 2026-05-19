@@ -430,7 +430,13 @@ Page({
     /** 相机画面缩放倍数，默认 1.0 */
     cameraZoom: 1,
     /** 缩放倍数展示文案（一位小数） */
-    cameraZoomDisplay: '1.0'
+    cameraZoomDisplay: '1.0',
+    /** 用户满意并记忆的上次缩放倍数 */
+    lastCameraZoom: 1,
+    /** 记忆倍数展示文案（一位小数） */
+    lastCameraZoomDisplay: '1.0',
+    /** 当前可一键恢复记忆倍数（相机回弹 1.0x 且记忆值 > 1） */
+    canRestoreLastZoom: false
   },
 
   // ─── 生命周期 ────────────────────────────────────────
@@ -464,11 +470,58 @@ Page({
     _cameraContext = wx.createCameraContext(this);
     _cameraReadyAt = Date.now();
     console.log('[Collector][OCR] camera init, context refreshed');
+    // 相机重建后硬件倍数常回弹 1.0x，同步 UI 以点亮「恢复倍数」
+    if (this.data.lastCameraZoom > 1.05 && this.data.cameraZoom > 1.05) {
+      var self = this;
+      this.setData({
+        cameraZoom: 1,
+        cameraZoomDisplay: '1.0'
+      }, function () {
+        self._syncZoomRestoreUi();
+      });
+    } else {
+      this._syncZoomRestoreUi();
+    }
   },
 
   onCameraError: function (e) {
     console.error('[Collector] camera error', e.detail);
     wx.showToast({ title: '相机启动失败', icon: 'none' });
+  },
+
+  /**
+   * 根据当前倍数与记忆倍数，刷新「恢复倍数」按钮可用态。
+   * @returns {void}
+   */
+  _syncZoomRestoreUi: function () {
+    var cur = this.data.cameraZoom;
+    var last = this.data.lastCameraZoom;
+    var can = last > 1.05 && cur < 1.05;
+    if (this.data.canRestoreLastZoom !== can) {
+      this.setData({ canRestoreLastZoom: can });
+    }
+  },
+
+  /**
+   * 调用硬件 setZoom 对齐镜头倍数。
+   * @param {number} zoom
+   * @returns {void}
+   */
+  _applyHardwareCameraZoom: function (zoom) {
+    var ctx = wx.createCameraContext();
+    if (ctx && typeof ctx.setZoom === 'function') {
+      ctx.setZoom({
+        zoom: zoom,
+        success: function () {
+          console.log('[Collector][Camera] Hardware setZoom success: ' + zoom);
+        },
+        fail: function (err) {
+          console.error('[Collector][Camera] Hardware setZoom fail', err);
+        }
+      });
+    } else {
+      console.warn('[Collector][Camera] setZoom API not supported on this WeChat version');
+    }
   },
 
   /**
@@ -480,27 +533,41 @@ Page({
     if (val < 1) val = 1;
     if (val > 4) val = 4;
 
+    var self = this;
     this.setData({
       cameraZoom: val,
-      cameraZoomDisplay: val.toFixed(1)
+      cameraZoomDisplay: val.toFixed(1),
+      lastCameraZoom: val,
+      lastCameraZoomDisplay: val.toFixed(1)
+    }, function () {
+      self._syncZoomRestoreUi();
     });
 
     // 【修复】：对于挂载了 VKSession 的原生 camera 组件，
     // 纯 WXML 属性绑定往往无法动态生效，必须直接调用底层的 setZoom API 强行驱动硬件变焦。
-    var ctx = wx.createCameraContext();
-    if (ctx && typeof ctx.setZoom === 'function') {
-      ctx.setZoom({
-        zoom: val,
-        success: function () {
-          console.log('[Collector][Camera] Hardware setZoom success: ' + val);
-        },
-        fail: function (err) {
-          console.error('[Collector][Camera] Hardware setZoom fail', err);
-        }
-      });
-    } else {
-      console.warn('[Collector][Camera] setZoom API not supported on this WeChat version');
-    }
+    this._applyHardwareCameraZoom(val);
+  },
+
+  /**
+   * 一键恢复上次满意的镜头倍数。
+   * @returns {void}
+   */
+  onRestoreLastZoom: function () {
+    if (!this.data.canRestoreLastZoom) return;
+    var targetZoom = this.data.lastCameraZoom;
+    var curZoom = this.data.cameraZoom;
+    if (typeof targetZoom !== 'number' || targetZoom < 1) return;
+    if (Math.abs(curZoom - targetZoom) < 0.05) return;
+
+    this._zoomBlurGuardedUntil = Date.now() + 350;
+    var self = this;
+    this.setData({
+      cameraZoom: targetZoom,
+      cameraZoomDisplay: targetZoom.toFixed(1)
+    }, function () {
+      self._syncZoomRestoreUi();
+    });
+    this._applyHardwareCameraZoom(targetZoom);
   },
 
   onUnload: function () {
@@ -1347,6 +1414,9 @@ Page({
     console.log('[Collector][OCR] dual-pump start time=%s score=%s', TIME_PUMP_INTERVAL, SCORE_PUMP_INTERVAL);
     try {
       _cameraFrameListener = _cameraContext.onCameraFrame(function (frame) {
+        if (Date.now() < (self._zoomBlurGuardedUntil || 0)) {
+          return;
+        }
         if (_vkSession !== session || token !== _ocrSessionToken) return;
         _ocrPumpFrameCount += 1;
         var frameW = frame && frame.width ? frame.width : 0;
