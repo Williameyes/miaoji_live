@@ -1364,12 +1364,12 @@ Page({
      */
     this.maybeToastFileStoragePressureFromGlobal();
     this.resetViewModeToNormal();
-    this.rollingActive = true;
-    this.rollingSessionId += 1;
-    const sessionIdForRolling = this.rollingSessionId;
+
+    // 提前重置健康标记，避免清理期间状态灯闪烁
     this.lastSegmentAt = Date.now();
     this.lastRecordStartAt = 0;
     this.startRecordFailStreak = 0;
+    this.segmentStartFailStormCycles = 0;
     this.startHealthMonitor();
 
     const hasReadGuide = wx.getStorageSync('hasReadGuide');
@@ -1405,36 +1405,39 @@ Page({
       wx.setPageOrientation({ orientation: 'landscape' });
     }
 
-    const kickoffRolling = () => {
-      if (!this.rollingActive || sessionIdForRolling !== this.rollingSessionId) {
-        return;
-      }
-      if (this._rollingKickoffTimer) {
-        clearTimeout(this._rollingKickoffTimer);
-        this._rollingKickoffTimer = null;
-      }
-      if (this._cameraInitDone) {
-        this.tryStartRollingWhenCameraReady();
-        return;
-      }
-      this._rollingKickoffTimer = setTimeout(() => {
-        this._rollingKickoffTimer = null;
-        if (!this.rollingActive || sessionIdForRolling !== this.rollingSessionId) {
-          return;
-        }
-        this.tryStartRollingWhenCameraReady();
-      }, 1800);
-    };
     this.stopRollingRecording(() => {
       this.ensureRollingDir()
-        /**
-         * 必须先于 clearStaleRollingFiles 探测：否则入场即清空 _rolling 缓冲，
-         * 沙盒总占用被低估，severe 弹窗与水位逻辑可能永远不触发。
-         */
         .then(() => this.probeLiveSandboxStorage('kickoff', true))
         .then(() => this.clearStaleRollingFiles())
         .finally(() => {
-          kickoffRolling();
+          try {
+            this.pruneHighlightClipsWithInvalidFiles('on_show_kickoff');
+          } catch (ePrune) { }
+          // 必须在入场清理完全结束后，再赋予录制活跃状态与标记就绪
+          this.rollingActive = true;
+          this.rollingSessionId += 1;
+          const sessionIdForRolling = this.rollingSessionId;
+
+          if (this._recorderCore) {
+            // 显式通知状态机脱离 idle 死锁，进入 ready
+            this._recorderCore.markReady('on_show_kickoff');
+          }
+
+          if (this._rollingKickoffTimer) {
+            clearTimeout(this._rollingKickoffTimer);
+            this._rollingKickoffTimer = null;
+          }
+          if (this._cameraInitDone) {
+            this.tryStartRollingWhenCameraReady();
+            return;
+          }
+          this._rollingKickoffTimer = setTimeout(() => {
+            this._rollingKickoffTimer = null;
+            if (!this.rollingActive || sessionIdForRolling !== this.rollingSessionId) {
+              return;
+            }
+            this.tryStartRollingWhenCameraReady();
+          }, 1800);
         });
     });
     if (this.data.drawerMode === 1) {
@@ -1557,6 +1560,8 @@ Page({
   segmentPersistFailStreak: 0,
   /** 高光异步固化任务队列。 */
   highlightMaterializeQueue: [],
+  /** onHide 时优先冲刷未固化高光，降低 tmp 被系统回收后索引悬空 */
+  _highlightMaterializeUrgentOnHide: false,
   /** 高光异步固化执行中标记。 */
   highlightMaterializeRunning: false,
   /** 存储水位级别：0/70/85/95。 */
@@ -5792,6 +5797,7 @@ Page({
     this.segmentBuffer = [];
     this.highlightMaterializeQueue = [];
     this.highlightMaterializeRunning = false;
+    this._highlightMaterializeUrgentOnHide = false;
     this.highlightMissStreak = 0;
     this.rollingFsBusy = false;
     this._rollingPersistInFlight = 0;
@@ -5860,6 +5866,19 @@ Page({
       this.setData({ showStoragePressureModal: false });
     }
     this._livePageVisible = false;
+
+    // 尽力将排队中的 temp 高光固化落盘（无法阻塞 onHide，但可抢在系统回收 tmp 前发起 saveFile）
+    this._kickHighlightMaterializeOnHide();
+
+    // 切后台时彻底挂起录制管线，让出相机给外置 App，并阻断看门狗在后台自愈死循环
+    this.rollingActive = false;
+    this.clearSegmentStartRetryTimer();
+    if (this.rollingWatchdogTimer) {
+      clearInterval(this.rollingWatchdogTimer);
+      this.rollingWatchdogTimer = null;
+    }
+    this.stopRollingRecording();
+
     this._liveBleAbortQuickScanSilently();
     this._liveBleFlushScorePersist();
     this.setData({ liveBlePanelOpen: false, liveBleQuickStatusText: '' });
@@ -6747,6 +6766,9 @@ Page({
   },
 
   _startOneSegmentImpl: function (sessionId, retryCount = 0) {
+    // 页面不可见时禁止调起相机，杜绝切后台后的 startRecord fail storm
+    if (!this._livePageVisible) return;
+
     if (!this.rollingActive || sessionId !== this.rollingSessionId) return;
     if (!this.data.cameraContext) return;
     if (this.data.storageSevereLock) {
@@ -7066,6 +7088,9 @@ Page({
   },
 
   _stopRollingRecordingImpl: function (onStopped) {
+    /** 停录回调可能晚于 onShow，须固定本段所属 session，避免落盘被新 session 误拒 */
+    const salvageSessionId = this.rollingSessionId;
+    const salvageRecordStartMs = this._currentRollingSegmentRecordStartMs;
     this.clearSegmentStartRetryTimer();
     this._startOneSegmentInFlight = false;
     this._segmentStartRecoveringFromIsRecording = false;
@@ -7120,7 +7145,18 @@ Page({
       };
       try {
         this.data.cameraContext.stopRecord({
-          success: finishFromStop,
+          success: (res) => {
+            // 抢救切后台瞬间被打断的最后一段，避免去外置 App 开播前的高光 temp 丢失
+            if (res && res.tempVideoPath && salvageRecordStartMs) {
+              this.onSegmentRecorded(
+                res.tempVideoPath,
+                this.segmentCounter + 1,
+                salvageSessionId,
+                salvageRecordStartMs
+              ).catch(() => {});
+            }
+            finishFromStop();
+          },
           fail: finishFromStop
         });
       } catch (e) {
@@ -7142,7 +7178,14 @@ Page({
    */
   onSegmentRecorded: function (tempPath, segNo, recordSessionId, recordStartWallMs) {
     // MOD: rolling buffer 只保留 temp 素材和墙钟时间，不再 copyFile/saveFile 到 _rolling。
-    if (recordSessionId !== this.rollingSessionId) {
+    const sessionMatch =
+      recordSessionId === this.rollingSessionId
+      || (
+        typeof recordSessionId === 'number'
+        && recordSessionId > 0
+        && recordSessionId === this.rollingSessionId - 1
+      );
+    if (!sessionMatch) {
       return Promise.resolve();
     }
     const recordStart = typeof recordStartWallMs === 'number' && recordStartWallMs > 0
@@ -7288,8 +7331,95 @@ Page({
    */
   canMaterializeHighlightNow: function () {
     if (this.data.isRecovering || this._needManualRelaunch) return false;
+    if (this._highlightMaterializeUrgentOnHide) return true;
     if (this.data.pipelineHealth === 'warn') return false;
     return true;
+  },
+
+  /**
+   * 收集高光条目内所有可回放视频路径。
+   * @param {Record<string, unknown>} item
+   * @returns {string[]}
+   */
+  _collectHighlightPlaybackPaths: function (item) {
+    if (!item || typeof item !== 'object') return [];
+    /** @type {string[]} */
+    const paths = [];
+    const segs = item.segments;
+    if (Array.isArray(segs)) {
+      segs.forEach((seg) => {
+        if (seg && typeof seg === 'string') paths.push(seg);
+      });
+    }
+    const rp = item.replaySegment;
+    if (rp && typeof rp === 'string' && paths.indexOf(rp) < 0) paths.push(rp);
+    return paths;
+  },
+
+  /**
+   * 同步探测路径是否可播放（存在且体积合理）。
+   * @param {string} p
+   * @returns {boolean}
+   */
+  _isHighlightPathPlayable: function (p) {
+    if (!p || typeof p !== 'string') return false;
+    const fs = wx.getFileSystemManager();
+    try {
+      const st = fs.statSync(p);
+      const sz = st && typeof st.size === 'number' ? st.size : 0;
+      return sz >= 64;
+    } catch (eStat) {
+      return false;
+    }
+  },
+
+  /**
+   * 高光条目是否具备可回放物理文件。
+   * @param {Record<string, unknown>} item
+   * @returns {boolean}
+   */
+  _isHighlightItemPlayable: function (item) {
+    const paths = this._collectHighlightPlaybackPaths(item);
+    if (!paths.length) return false;
+    return paths.every((p) => this._isHighlightPathPlayable(p));
+  },
+
+  /**
+   * 回放前发现文件丢失：清理索引并温和提示（不弹系统级 Modal）。
+   * @param {Record<string, unknown>} item
+   * @returns {void}
+   */
+  _rejectHighlightReplayMissingFiles: function (item) {
+    if (!item || item.id == null) return;
+    try {
+      this.appendHealthLog('highlight_replay_file_missing', {
+        id: String(item.id),
+        status: item.status || ''
+      });
+    } catch (eLog) { }
+    this.doDeleteHighlight(item.id);
+    wx.showToast({
+      title: '片段未缓存成功',
+      icon: 'none',
+      duration: 2000
+    });
+  },
+
+  /**
+   * onHide 时尽力将排队中的 temp 高光固化落盘。
+   * @returns {void}
+   */
+  _kickHighlightMaterializeOnHide: function () {
+    if (!Array.isArray(this.highlightMaterializeQueue) || !this.highlightMaterializeQueue.length) {
+      return;
+    }
+    this._highlightMaterializeUrgentOnHide = true;
+    try {
+      this.appendHealthLog('highlight_materialize_urgent_on_hide', {
+        queueLen: this.highlightMaterializeQueue.length
+      });
+    } catch (eLog) { }
+    this.processHighlightMaterializeQueue();
   },
 
   /**
@@ -7750,7 +7880,8 @@ Page({
     if (this.highlightMaterializeRunning) return;
     if (!this.highlightMaterializeQueue.length) return;
     const watermark = this.evaluateStorageWatermark();
-    if (!this.canMaterializeHighlightNow() || watermark >= 85) {
+    const urgentHide = !!this._highlightMaterializeUrgentOnHide;
+    if ((!this.canMaterializeHighlightNow() || watermark >= 85) && !urgentHide) {
       setTimeout(() => this.processHighlightMaterializeQueue(), 1200);
       return;
     }
@@ -7761,6 +7892,9 @@ Page({
       .catch(() => Promise.resolve())
       .finally(() => {
         this.highlightMaterializeRunning = false;
+        if (!this.highlightMaterializeQueue.length) {
+          this._highlightMaterializeUrgentOnHide = false;
+        }
         let gap = 0;
         if (this.data.isRecording) gap = Math.max(gap, 650);
         if (this.data.isRecording && (this.segmentCounter || 0) > 32) {
@@ -9471,7 +9605,7 @@ Page({
   refreshDrawerHighlights: function () {
     const currentMatchId = wx.getStorageSync('currentMatchId') || app.globalData.currentMatchId || '';
     const fullList = (this.getHighlightList(currentMatchId) || []).filter(
-      (it) => it && !it.exportedToAlbum
+      (it) => it && !it.exportedToAlbum && this._isHighlightItemPlayable(it)
     );
     const total = fullList.length;
     const list = fullList.slice(0, 50);
@@ -9757,6 +9891,10 @@ Page({
         ? item.segments[item.segments.length - 1]
         : '');
     if (!target) return;
+    if (!this._isHighlightItemPlayable(item)) {
+      this._rejectHighlightReplayMissingFiles(item);
+      return;
+    }
     this.pauseRollingForReplay(() => {
       this.startReplayContinue(item);
     });
@@ -9797,23 +9935,9 @@ Page({
         ? item.segments[item.segments.length - 1]
         : '');
     if (!target) return;
-
-    const fs = wx.getFileSystemManager();
-    const toCheck = useChain ? paths : [target];
-    for (let i = 0; i < toCheck.length; i += 1) {
-      try {
-        fs.accessSync(toCheck[i]);
-      } catch (e) {
-        wx.showModal({
-          title: '文件已移除',
-          content: '该视频文件已不存在，系统将自动清理无效记录。',
-          showCancel: false,
-          success: () => {
-            this.doDeleteHighlight(item.id);
-          }
-        });
-        return;
-      }
+    if (!this._isHighlightItemPlayable(item)) {
+      this._rejectHighlightReplayMissingFiles(item);
+      return;
     }
 
     if (wx.setPageOrientation) {
