@@ -1076,6 +1076,7 @@ Page({
     this._cameraShowInitWatchTimer = setTimeout(() => {
       selfWatch._cameraShowInitWatchTimer = null;
       if (!selfWatch._livePageVisible || !selfWatch.data.liveStreamAllowed) return;
+      if (selfWatch.data.showGuide) return;
       if (!selfWatch.data.cameraMounted || selfWatch.data.isRecovering) return;
       if (selfWatch._cameraInitDone) return;
       selfWatch.appendHealthLog('camera_init_watchdog_rebuild', {});
@@ -3592,6 +3593,10 @@ Page({
   },
 
   _tryStartRollingWhenCameraReadyImpl: function () {
+    if (this.data.showGuide) {
+      this.appendHealthLog('rolling_start_deferred_by_guide', {});
+      return;
+    }
     const now = Date.now();
     if (this._fileQuotaCircuitUntil && now < this._fileQuotaCircuitUntil) {
       this.appendHealthLog('rolling_start_blocked_by_file_quota_circuit', {
@@ -4666,6 +4671,13 @@ Page({
       clipsStorage.mergeDefaultClipBucketIfTargetEmpty(String(cid || '').trim());
     } catch (eMerge) { }
     this.appendHealthLog('page_show', {});
+
+    /**
+     * 须在权益拉起 camera 之前置位，避免引导毛玻璃层盖住原生 camera 时仍 startRecord（部分机型关闭引导后预览永久黑屏）。
+     */
+    if (!wx.getStorageSync('hasReadGuide') && !this.data.showGuide) {
+      this.setData({ showGuide: true, guideSubStep: 0 });
+    }
 
     wx.setKeepScreenOn({
       keepScreenOn: true,
@@ -9331,11 +9343,55 @@ Page({
 
   /**
    * 关闭引导并写入已读；两步均视为完成。
+   * 引导层含 backdrop-filter，盖住原生 camera 时易导致预览黑屏：关闭后须重建 camera 再拉起 rolling。
    * @returns {void}
    */
   dismissGuide: function () {
-    this.setData({ showGuide: false, guideSubStep: 0 });
-    wx.setStorageSync('hasReadGuide', true);
+    const self = this;
+    this.setData({ showGuide: false, guideSubStep: 0 }, () => {
+      wx.setStorageSync('hasReadGuide', true);
+      if (wx.nextTick) {
+        wx.nextTick(() => self._refreshCameraAfterGuideDismiss());
+      } else {
+        setTimeout(() => self._refreshCameraAfterGuideDismiss(), 0);
+      }
+    });
+  },
+
+  /**
+   * 首次引导关闭后刷新相机预览并恢复滚动分段（避免遮罩下 startRecord 导致永久黑屏）。
+   * @returns {void}
+   */
+  _refreshCameraAfterGuideDismiss: function () {
+    if (!this._livePageVisible || !this.data.liveStreamAllowed) return;
+    this.appendHealthLog('guide_dismiss_camera_refresh', {
+      cameraInitDone: !!this._cameraInitDone,
+      cameraMounted: !!this.data.cameraMounted
+    });
+    try {
+      this._updateLiveStageLayout();
+    } catch (eLayout) { }
+    if (this._cameraShowInitWatchTimer) {
+      clearTimeout(this._cameraShowInitWatchTimer);
+      this._cameraShowInitWatchTimer = null;
+    }
+    if (this._rollingKickoffTimer) {
+      clearTimeout(this._rollingKickoffTimer);
+      this._rollingKickoffTimer = null;
+    }
+    this.armNativeEnhanceModeRestoreAfterCameraRebuild('guide_dismiss');
+    const self = this;
+    this.rebuildCameraComponent((generation) => {
+      if (!self._livePageVisible || !self.data.liveStreamAllowed) return;
+      self.remountCameraComponent({
+        generation,
+        onMounted: () => {
+          if (self.rollingActive) {
+            self.tryStartRollingWhenCameraReady('guide_dismiss');
+          }
+        }
+      });
+    }, 'guide_dismiss');
   },
 
   /**
@@ -10146,6 +10202,11 @@ Page({
           ? replayPlan[1].stopAtSec
           : null;
     }
+    const coldReplay = !isVk && useChain && Number(item.viewCount || 0) <= 1;
+    this._replayPrimeHoldMs = useChain && !isVk ? (coldReplay ? 320 : 180) : 120;
+    this._replaySwitchFallbackMs = useChain && !isVk ? (coldReplay ? 320 : 240) : 420;
+    this._replayIntroGuardActive = coldReplay && initialSec > 0.04;
+    this._replayIntroGuardTargetSec = this._replayIntroGuardActive ? initialSec : 0;
     this.appendHealthLog('replay_source_selected', {
       id: item && item.id ? String(item.id) : '',
       fromManifest: !!replaySource.fromManifest,
@@ -10155,7 +10216,12 @@ Page({
       initialSec,
       firstStopAtSec: this._replayStopAtMediaSec,
       secondInitialSec,
-      secondStopAtSec: this._replayChainPart2StopAt
+      secondStopAtSec: this._replayChainPart2StopAt,
+      coldReplay,
+      primeHoldMs: this._replayPrimeHoldMs,
+      switchFallbackMs: this._replaySwitchFallbackMs,
+      introGuard: !!this._replayIntroGuardActive,
+      introGuardTargetSec: this._replayIntroGuardTargetSec
     });
 
     this._cancelReplayZoomAnim();
@@ -10220,8 +10286,35 @@ Page({
 
     this._replayMaskHideTimer = setTimeout(() => {
       this._replayMaskHideTimer = null;
-      this.setData({ showReplayMask: false });
+      if (this._replayIntroGuardActive) {
+        this._replayMaskHideTimer = setTimeout(() => {
+          this._replayMaskHideTimer = null;
+          this._releaseReplayIntroMask('guard_timeout', -1);
+        }, 900);
+        return;
+      }
+      this._releaseReplayIntroMask('timer', -1);
     }, introMs);
+  },
+
+  /**
+   * 冷启动首段 initial-time seek 完成前保留 REPLAY 遮罩，避免用户看到起播跳动。
+   * @param {string} reason
+   * @param {number} currentTime
+   * @returns {void}
+   */
+  _releaseReplayIntroMask: function (reason, currentTime) {
+    if (!this.data.showReplayMask || this.data.replayMaskKind !== 'replay') {
+      this._replayIntroGuardActive = false;
+      return;
+    }
+    this._replayIntroGuardActive = false;
+    this._replayIntroGuardTargetSec = 0;
+    this.appendHealthLog('replay_intro_mask_release', {
+      reason: reason || '',
+      currentTime: typeof currentTime === 'number' ? currentTime : -1
+    });
+    this.setData({ showReplayMask: false });
   },
 
   /**
@@ -10245,6 +10338,10 @@ Page({
     }
     this._replayStopAtMediaSec = null;
     this._replayChainPart2StopAt = null;
+    this._replayPrimeHoldMs = 0;
+    this._replaySwitchFallbackMs = 0;
+    this._replayIntroGuardActive = false;
+    this._replayIntroGuardTargetSec = 0;
     this._replayPendingActiveSlot = null;
     if (this._replayStartTimer) {
       clearTimeout(this._replayStartTimer);
@@ -10394,17 +10491,23 @@ Page({
           if (ctx && ctx.playbackRate) ctx.playbackRate(rate);
         } catch (e) { }
       });
+      const fallbackMs = this._replaySwitchFallbackMs || 300;
       this._replayPendingFallbackTimer = setTimeout(() => {
         if (this._replayPendingActiveSlot !== nextSlot) return;
         this._replayPendingActiveSlot = null;
         this._replayPendingFallbackTimer = null;
+        this.appendHealthLog('replay_chain_slot_switch_fallback', {
+          nextIdx,
+          nextSlot,
+          fallbackMs
+        });
         this.setData({ replayActiveSlot: nextSlot });
         try {
           const oldId = slotIdx === 0 ? 'replayVideoA' : 'replayVideoB';
           const oldCtx = wx.createVideoContext(oldId, this);
           if (oldCtx && oldCtx.pause) oldCtx.pause();
         } catch (e2) { }
-      }, 420);
+      }, fallbackMs);
     });
   },
 
@@ -10428,9 +10531,12 @@ Page({
     const srcIdx = paths.indexOf(src);
     const entry = srcIdx >= 0 ? plan[srcIdx] : null;
     const initialSec = entry && typeof entry.initialTimeSec === 'number' ? entry.initialTimeSec : 0;
+    const holdMs = this._replayPrimeHoldMs || 180;
     wx.nextTick(() => {
       try {
         const ctx = wx.createVideoContext(id, this);
+        const rate = this.data.replayPlaybackRate || 0.75;
+        if (ctx && ctx.playbackRate) ctx.playbackRate(rate);
         if (ctx && ctx.play) ctx.play();
         const key = slotIdx === 0 ? '_replayPrimeTimerA' : '_replayPrimeTimerB';
         if (this[key]) {
@@ -10442,9 +10548,15 @@ Page({
           try {
             const c2 = wx.createVideoContext(id, this);
             if (c2 && c2.pause) c2.pause();
-            if (c2 && c2.seek && initialSec > 0.04) c2.seek(initialSec);
+            if (c2 && c2.seek) c2.seek(initialSec);
+            this.appendHealthLog('replay_hidden_slot_primed', {
+              slotIdx,
+              srcIdx,
+              initialSec,
+              holdMs
+            });
           } catch (e2) { }
-        }, 120);
+        }, holdMs);
       } catch (e) { }
     });
   },
@@ -10456,8 +10568,19 @@ Page({
    * @returns {void}
    */
   _onReplaySlotTimeUpdate: function (slotIdx, e) {
-    if (this._replayPendingActiveSlot !== slotIdx) return;
     const t = e && e.detail && typeof e.detail.currentTime === 'number' ? e.detail.currentTime : 0;
+    if (
+      slotIdx === 0
+      && this._replayIntroGuardActive
+      && t >= Math.max(0, (this._replayIntroGuardTargetSec || 0) - 0.08)
+    ) {
+      if (this._replayMaskHideTimer) {
+        clearTimeout(this._replayMaskHideTimer);
+        this._replayMaskHideTimer = null;
+      }
+      this._releaseReplayIntroMask('first_frame_ready', t);
+    }
+    if (this._replayPendingActiveSlot !== slotIdx) return;
 
     // 如果物理长度太短或算算无需跳转，在此立刻解开遮罩
     if (this._vkDelayedSeekTarget === 0 && this.data.replayFastForwarding) {
@@ -10485,6 +10608,10 @@ Page({
       this._replayPendingFallbackTimer = null;
     }
     const oldSlot = slotIdx === 0 ? 1 : 0;
+    this.appendHealthLog('replay_active_slot_confirmed', {
+      slotIdx,
+      currentTime: t
+    });
     this.setData({ replayActiveSlot: slotIdx }, () => {
       try {
         const oldId = oldSlot === 0 ? 'replayVideoA' : 'replayVideoB';
