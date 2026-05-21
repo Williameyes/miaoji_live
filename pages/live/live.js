@@ -5,6 +5,7 @@ const { API_PATH_CLIENT_DIAGNOSTIC_LOG } = require('../../config/api.js');
 const { parseExpireAtToMs } = require('../../utils/referral.js');
 const storageEst = require('../../utils/file-storage-estimate.js');
 const clipsStorage = require('../../utils/miaoxie-clips-storage.js');
+const replayBufferMod = require('../../utils/replay-buffer/index.js');
 const renderPipelineMod = require('../../utils/render/render-pipeline.js');
 const vkCanvasRecorderMod = require('../../utils/render/vk-canvas-recorder.js');
 const vkPresetManagerMod = require('./vk-preset-manager.js');
@@ -114,404 +115,13 @@ const ENHANCE_SWITCH_GUARD_MS = 1000;
  */
 const LIVE_STORAGE_SEVERE_MODAL_DELAY_MS = 560;
 const HIGHLIGHT_LOCK_TIMEOUT = 3000;
-const HIGHLIGHT_LOCK_TIMEOUT_MAX_MS = 11000;
-const MIN_RECOVER_INTERVAL = 15000;
+const REPLAY_BUFFER_WINDOW_MS = 45000;
+const REPLAY_BUFFER_MIN_READY_BYTES = 1024;
 const SEGMENT_WATCHDOG_CHECK_INTERVAL_MS = 5000;
 const SEGMENT_WATCHDOG_TIMEOUT_MIN_MS = 15000;
 const SEGMENT_WATCHDOG_RECOVER_COOLDOWN_MS = 15000;
 const SEGMENT_WATCHDOG_RESTART_DELAY_MS = 800;
 const RECORDER_SAFE_RESTART_DELAY_MIN_MS = 120;
-const RECORDER_SAFE_RESTART_DELAY_MAX_MS = 180;
-const RECORDER_STATE = {
-  IDLE: 'idle',
-  FLUSHING: 'flushing',
-  READY: 'ready',
-  STARTING: 'starting',
-  RECORDING: 'recording',
-  STOPPING: 'stopping',
-  RECOVERING: 'recovering'
-};
-
-class RecorderCore {
-  constructor(page) {
-    this.page = page;
-    this.state = RECORDER_STATE.IDLE;
-    this.isRecovering = false;
-    this.lastRecoverAt = 0;
-    this.recoverFailCount = 0;
-    this.pendingHighlight = null;
-    this.recordSessionId = 0;
-    this.lastStopAt = 0;
-    this._recentFlushLagMs = 1800;
-    this._ownerDepth = 0;
-    this._highlightTimeoutTimer = null;
-  }
-
-  _log(eventName, detail) {
-    if (!this.page || typeof this.page.appendHealthLog !== 'function') return;
-    this.page.appendHealthLog(eventName, detail || {});
-  }
-
-  _mirrorPendingHighlight(pending) {
-    this.pendingHighlight = pending || null;
-    this.page.pendingHighlight = this.pendingHighlight;
-  }
-
-  syncSession(sessionId) {
-    this.recordSessionId = Number(sessionId || 0);
-  }
-
-  isOwnerActive() {
-    return this._ownerDepth > 0;
-  }
-
-  withOwner(source, action, fn) {
-    this._ownerDepth += 1;
-    this._log('recorder_owner_request', {
-      triggerSource: source || 'unknown',
-      action: action || '',
-      stateBefore: this.state,
-      stateAfter: this.state
-    });
-    try {
-      return typeof fn === 'function' ? fn() : undefined;
-    } finally {
-      this._ownerDepth = Math.max(0, this._ownerDepth - 1);
-    }
-  }
-
-  setState(nextState, source) {
-    const next = nextState || RECORDER_STATE.IDLE;
-    const prev = this.state;
-    if (prev === next) return;
-    this.state = next;
-    this.isRecovering = next === RECORDER_STATE.RECOVERING;
-    this._log('recorder_state_change', {
-      triggerSource: source || 'unknown',
-      stateBefore: prev,
-      stateAfter: next
-    });
-  }
-
-  enterDegradedMode(source) {
-    if (this.page.data.recorderDegradedMode) return;
-    this.page.setData({ recorderDegradedMode: true });
-    this._log('recover_enter_degraded_mode', {
-      triggerSource: source || 'unknown',
-      stateBefore: this.state,
-      stateAfter: this.state
-    });
-  }
-
-  leaveDegradedMode() {
-    if (!this.page.data.recorderDegradedMode) return;
-    this.page.setData({ recorderDegradedMode: false });
-  }
-
-  setPendingHighlight(meta) {
-    const page = this.page;
-    const now = Date.now();
-    const clickTimeRaw =
-      meta && typeof meta.clickTime === 'number' && isFinite(meta.clickTime)
-        ? Number(meta.clickTime)
-        : now;
-    const clickTime = Math.min(now, Math.max(0, clickTimeRaw));
-    const pending = {
-      clickTime: clickTime,
-      startTime: clickTime - (page.highlightLeadMs || 8000),
-      endTime: clickTime,
-      id: meta.id || String(now),
-      createdAt: clickTime,
-      matchName: meta.matchName || (page.data.matchConfig && page.data.matchConfig.matchName) || '未命名比赛',
-      matchId: meta.matchId || page.resolveMatchIdForHighlightStorage(),
-      cover: meta.cover || page.data.defaultCover
-    };
-    if (this._highlightTimeoutTimer) {
-      clearTimeout(this._highlightTimeoutTimer);
-      this._highlightTimeoutTimer = null;
-    }
-    this._mirrorPendingHighlight(pending);
-    /**
-     * 稳定性优先：
-     * - 3s 仅适合作为“最短锁释放时间”，不适合作为统一超时。
-     * - 过去 8s 高光不再等待未来段，只需要等“包含 clickTime 的当前段”安全 stop+flush。
-     * - 因此超时应覆盖“当前段剩余录制时长 + flush 裕量”，而不是固定 3s。
-     * - 仍保留上限，避免真断流时永久占锁。
-     */
-    let timeoutMs = HIGHLIGHT_LOCK_TIMEOUT;
-    const segmentDurationMs = Number(page.segmentDurationMs || 0);
-    const recordStartAt = Number(page.lastRecordStartAt || 0);
-    const flushLagBudgetMs = this._recentFlushLagMs || 1800;
-    if (
-      segmentDurationMs > 0
-      && recordStartAt > 0
-      && recordStartAt <= now
-    ) {
-      const elapsedMs = clickTime - recordStartAt;
-      const remainMs = Math.max(0, segmentDurationMs - elapsedMs);
-      const waitBudgetMs = remainMs + flushLagBudgetMs + 500;
-      timeoutMs = Math.max(
-        HIGHLIGHT_LOCK_TIMEOUT,
-        Math.min(HIGHLIGHT_LOCK_TIMEOUT_MAX_MS, waitBudgetMs)
-      );
-    }
-    this._highlightTimeoutTimer = setTimeout(() => {
-      this._highlightTimeoutTimer = null;
-      if (!this.pendingHighlight || this.pendingHighlight.id !== pending.id) return;
-      const clickCoveredByBufferedSegment = (Array.isArray(page.rollingSegments) ? page.rollingSegments : [])
-        .some((seg) =>
-          seg
-          && typeof seg.startTime === 'number'
-          && typeof seg.endTime === 'number'
-          && seg.startTime <= pending.clickTime
-          && seg.endTime >= pending.clickTime
-        );
-      if (clickCoveredByBufferedSegment) {
-        this._log('highlight_timeout_promoted_to_generate', {
-          triggerSource: 'highlight_timeout',
-          stateBefore: this.state,
-          stateAfter: this.state,
-          clickTime: pending.clickTime
-        });
-        this.clearPendingHighlight();
-        page._generateHighlight(pending.startTime, pending.endTime, pending);
-        return;
-      }
-      if (this.state === RECORDER_STATE.STOPPING || this.state === RECORDER_STATE.FLUSHING) {
-        const extendMs = Math.max(1200, Math.min(2600, flushLagBudgetMs));
-        this._log('highlight_timeout_extended_for_flush', {
-          triggerSource: 'highlight_timeout',
-          stateBefore: this.state,
-          stateAfter: this.state,
-          clickTime: pending.clickTime,
-          extendMs: extendMs
-        });
-        this._highlightTimeoutTimer = setTimeout(() => {
-          this._highlightTimeoutTimer = null;
-          if (!this.pendingHighlight || this.pendingHighlight.id !== pending.id) return;
-          this._log('highlight_soft_timeout_release', {
-            triggerSource: 'highlight_timeout_after_extend',
-            stateBefore: this.state,
-            stateAfter: this.state,
-            clickTime: pending.clickTime,
-            timeoutMs: timeoutMs + extendMs
-          });
-          this.clearPendingHighlight();
-          page.endHighlightSaving();
-        }, extendMs);
-        return;
-      }
-      this._log('highlight_soft_timeout_release', {
-        triggerSource: 'highlight_timeout',
-        stateBefore: this.state,
-        stateAfter: this.state,
-        clickTime: pending.clickTime,
-        timeoutMs: timeoutMs
-      });
-      this.clearPendingHighlight();
-      page.endHighlightSaving();
-    }, timeoutMs);
-    return pending;
-  }
-
-  clearPendingHighlight() {
-    if (this._highlightTimeoutTimer) {
-      clearTimeout(this._highlightTimeoutTimer);
-      this._highlightTimeoutTimer = null;
-    }
-    this._mirrorPendingHighlight(null);
-  }
-
-  noteTimelineGap(source, gapMs) {
-    this._log('timeline_gap_detected', {
-      triggerSource: source || 'unknown',
-      stateBefore: this.state,
-      stateAfter: this.state,
-      gapMs: gapMs || 0
-    });
-  }
-
-  maybeGenerateHighlight() {
-    const pending = this.pendingHighlight;
-    if (!pending) return false;
-    const segments = Array.isArray(this.page.rollingSegments) ? this.page.rollingSegments : [];
-    const covered = segments.some((seg) =>
-      seg
-      && typeof seg.startTime === 'number'
-      && typeof seg.endTime === 'number'
-      && seg.startTime <= pending.clickTime
-      && seg.endTime >= pending.clickTime
-    );
-    if (!covered) return false;
-    this.clearPendingHighlight();
-    this.page._generateHighlight(pending.startTime, pending.endTime, pending);
-    return true;
-  }
-
-  canStart() {
-    return this.state === RECORDER_STATE.READY;
-  }
-
-  markReady(source) {
-    if (this.state === RECORDER_STATE.RECOVERING) return;
-    this.setState(RECORDER_STATE.READY, source || 'ready');
-  }
-
-  markIdle(source) {
-    if (this.state === RECORDER_STATE.RECOVERING) return;
-    this.setState(RECORDER_STATE.IDLE, source || 'idle');
-  }
-
-  noteStopTimestamp() {
-    this.lastStopAt = Date.now();
-  }
-
-  noteFlushLag(flushLagMs) {
-    const lag = Number(flushLagMs || 0);
-    if (!isFinite(lag) || lag <= 0) return;
-    const clamped = Math.max(600, Math.min(3200, Math.round(lag)));
-    this._recentFlushLagMs = Math.max(
-      600,
-      Math.min(3200, Math.round(this._recentFlushLagMs * 0.65 + clamped * 0.35))
-    );
-  }
-
-  waitForFlushComplete(source, flushPromise, onReady) {
-    this.setState(RECORDER_STATE.FLUSHING, source || 'flush_begin');
-    const done = () => {
-      this.markReady(source || 'flush_done');
-      if (typeof onReady === 'function') onReady();
-    };
-    Promise.resolve(flushPromise)
-      .catch(() => Promise.resolve())
-      .then(() => {
-        const poll = () => {
-          if (this.page.rollingFsBusy || this.page._rollingPersistInFlight > 0) {
-            setTimeout(poll, 50);
-            return;
-          }
-          done();
-        };
-        poll();
-      });
-  }
-
-  requestTryStartWhenReady(source) {
-    return this.withOwner(source, 'tryStartWhenReady', () => {
-      if (this.isRecovering) return;
-      if (this.state !== RECORDER_STATE.READY) return;
-      this.page._tryStartRollingWhenCameraReadyImpl();
-    });
-  }
-
-  requestStartRolling(source) {
-    return this.withOwner(source, 'startRolling', () => {
-      if (this.isRecovering) return;
-      if (!this.canStart()) return;
-      this.page._startRollingRecordingImpl();
-    });
-  }
-
-  requestStartSegment(source, sessionId, retryCount) {
-    return this.withOwner(source, 'startSegment', () => {
-      if (this.isRecovering) return;
-      const now = Date.now();
-      if (!this.canStart()) return;
-      if (now - this.lastStopAt < this.getSafeRestartDelayMs()) return;
-      this.setState(RECORDER_STATE.STARTING, source);
-      this.page._startOneSegmentImpl(sessionId, retryCount);
-    });
-  }
-
-  requestStopSegment(source, sessionId) {
-    return this.withOwner(source, 'stopSegment', () => {
-      if (this.isRecovering) return;
-      this.setState(RECORDER_STATE.STOPPING, source);
-      this.page._stopOneSegmentImpl(sessionId);
-    });
-  }
-
-  requestStopRolling(source, onStopped) {
-    return this.withOwner(source, 'stopRolling', () => {
-      this.setState(RECORDER_STATE.STOPPING, source);
-      this.page._stopRollingRecordingImpl(() => {
-        this.markIdle(source);
-        if (typeof onStopped === 'function') onStopped();
-      });
-    });
-  }
-
-  requestReplayPause(source, onPaused) {
-    return this.withOwner(source, 'replayPause', () => {
-      if (typeof onPaused === 'function') {
-        if (wx.nextTick) wx.nextTick(onPaused);
-        else setTimeout(onPaused, 0);
-      }
-    });
-  }
-
-  requestReplayResume(source) {
-    return this.withOwner(source, 'replayResume', () => {});
-  }
-
-  requestRecover(source) {
-    const now = Date.now();
-    if (this.isRecovering || this.state === RECORDER_STATE.RECOVERING) {
-      return false;
-    }
-    if (now - this.lastRecoverAt < MIN_RECOVER_INTERVAL) {
-      this._log('recover_rejected_by_cooldown', {
-        triggerSource: source || 'unknown',
-        stateBefore: this.state,
-        stateAfter: this.state,
-        remainMs: MIN_RECOVER_INTERVAL - (now - this.lastRecoverAt)
-      });
-      return false;
-    }
-    this.lastRecoverAt = now;
-    this.setState(RECORDER_STATE.RECOVERING, source);
-    return this.withOwner(source, 'recover', () => this.page._hardRecoverLivePipelineImpl(source));
-  }
-
-  onRecoverSuccess(source) {
-    this.recoverFailCount = 0;
-    this.leaveDegradedMode();
-    this.markReady(source || 'recover_success');
-  }
-
-  onRecoverFail(source) {
-    this.recoverFailCount += 1;
-    if (this.recoverFailCount >= 3) {
-      this.enterDegradedMode(source);
-    }
-    this.markIdle(source || 'recover_fail');
-  }
-
-  onSegmentStartSuccess(source, sessionId) {
-    this.syncSession(sessionId);
-    this.setState(RECORDER_STATE.RECORDING, source || 'segment_start_ok');
-  }
-
-  onSegmentStartFail(source) {
-    if (this.state === RECORDER_STATE.STARTING) {
-      this.markReady(source || 'segment_start_fail');
-    }
-  }
-
-  onSegmentStopSuccess(source, flushPromise, onReady) {
-    this.noteStopTimestamp();
-    this.waitForFlushComplete(source || 'segment_stop_ok', flushPromise, onReady);
-  }
-
-  getSafeRestartDelayMs() {
-    const base = isLiveHostIos() ? 150 : 120;
-    return Math.max(
-      RECORDER_SAFE_RESTART_DELAY_MIN_MS,
-      Math.min(RECORDER_SAFE_RESTART_DELAY_MAX_MS, base)
-    );
-  }
-}
-
 /**
  * 本地存储键：是否已展示「超频模式无机位切换」提示（仅首次）。
  */
@@ -819,6 +429,8 @@ Page({
     replayHighlightChain: false,
     /** 链式回放路径列表（与 segments 顺序一致） */
     replayHighlightPaths: [],
+    /** ReplayBuffer v2 每段回放计划：path + initialTimeSec + stopAtSec */
+    replayHighlightPlan: [],
     /** 链式回放当前索引 */
     replayHighlightIndex: 0,
 
@@ -1487,7 +1099,7 @@ Page({
   segmentDurationMs: 8000,
   /** 用户点击保存后，回放时希望覆盖的精彩窗口长度（毫秒），可与物理切片时长解耦 */
   highlightPlaybackWindowMs: 8000,
-  /** 时间驱动高光窗口：严格保存点击前过去 8s，不再等待未来片段。 */
+  /** 时间驱动高光窗口：保存点击前过去 8s，不等待未来片段。 */
   highlightLeadMs: 8000,
   highlightTailMs: 0,
   /**
@@ -1538,8 +1150,9 @@ Page({
   lastSegmentAt: 0,
   lastRecordStartAt: 0,
   startRecordFailStreak: 0,
-  /** rolling 热层最多保留 3 段，超过后只 shift 索引，不主动删除 temp 文件。 */
-  rollingBufferMax: 3,
+  /** ReplayBuffer 热层按时间保留最近 45s；此数量仅作兼容兜底。 */
+  rollingBufferMax: 15,
+  replayBufferWindowMs: REPLAY_BUFFER_WINDOW_MS,
   /** 兼容旧看门狗字段；时间驱动 rolling 不再做热层落盘。 */
   rollingFsBusy: false,
   /**
@@ -1597,7 +1210,20 @@ Page({
   _lastSegmentWatchdogRecoverAt: 0,
 
   onLoad: function () {
-    this._recorderCore = new RecorderCore(this);
+    this._recorderCore = new replayBufferMod.RecorderCore(this);
+    this._replayBuffer = replayBufferMod.createReplayBuffer({
+      windowMs: this.replayBufferWindowMs || REPLAY_BUFFER_WINDOW_MS,
+      minBytes: REPLAY_BUFFER_MIN_READY_BYTES,
+      logger: (eventName, detail) => {
+        if (typeof this.appendHealthLog === 'function') {
+          this.appendHealthLog(eventName, detail || {});
+        }
+      }
+    });
+    this._highlightManager = new replayBufferMod.HighlightManager({
+      beforeMs: this.highlightLeadMs || 8000,
+      afterMs: this.highlightTailMs || 0
+    });
     this._initVkPresetSystem();
     this._initVkEnvironmentSampler();
     /** 相机 bindinitdone 完成前禁止 startRecord，否则部分机型预览一直黑屏 */
@@ -5804,6 +5430,9 @@ Page({
       this.pendingHighlight = null;
     }
     this.clearHighlightSavePipelineState();
+    if (this._replayBuffer && typeof this._replayBuffer.clear === 'function') {
+      this._replayBuffer.clear();
+    }
     this.rollingSegments = [];
     this.segmentBuffer = [];
     this.highlightMaterializeQueue = [];
@@ -6448,6 +6077,9 @@ Page({
     this.stopRollingRecording(() => {
       this.rollingSegments = [];
       this.segmentBuffer = [];
+      if (this._replayBuffer && typeof this._replayBuffer.clear === 'function') {
+        this._replayBuffer.clear();
+      }
       this.lastSegmentAt = Date.now();
       if (!allowCameraRebuild) {
         this.appendHealthLog('hard_recover_recorder_restart_only', { trigger: source });
@@ -7345,39 +6977,56 @@ Page({
     const segment = {
       path: tempPath || '',
       startTime: recordStart,
-      endTime: Date.now()
+      endTime: Date.now(),
+      sessionId: recordSessionId,
+      segNo: segNo,
+      source: 'camera'
     };
     if (!segment.path) {
       this.abortHighlightAfterStopIfNeeded(recordSessionId, 'empty_temp_path');
       return Promise.resolve();
     }
-    if (!Array.isArray(this.rollingSegments)) this.rollingSegments = [];
-    const prev = this.rollingSegments.length
-      ? this.rollingSegments[this.rollingSegments.length - 1]
+    const currentChunks = this._replayBuffer && typeof this._replayBuffer.getChunks === 'function'
+      ? this._replayBuffer.getChunks()
+      : (Array.isArray(this.rollingSegments) ? this.rollingSegments : []);
+    const prev = currentChunks.length
+      ? currentChunks[currentChunks.length - 1]
       : null;
     if (prev && typeof prev.endTime === 'number' && segment.startTime > prev.endTime + 240) {
       if (this._recorderCore) {
         this._recorderCore.noteTimelineGap('segment_recorded', segment.startTime - prev.endTime);
       }
     }
-    this.rollingSegments.push(segment);
-    while (this.rollingSegments.length > (this.rollingBufferMax || 3)) {
-      this.rollingSegments.shift();
-    }
-    // 兼容旧诊断/清理函数字段；高光判断不再读取 segNo。
-    this.segmentBuffer = this.rollingSegments;
-    this._rollingTempMissingStreak = 0;
-    this._rollingTempTerminalFailStreak = 0;
-    this.segmentPersistFailStreak = 0;
-    this.appendHealthLog('rolling_segment_indexed_by_time', {
-      segNo,
-      startTime: segment.startTime,
-      endTime: segment.endTime,
-      durationMs: segment.endTime - segment.startTime,
-      bufferSize: this.rollingSegments.length
+    const addPromise = this._replayBuffer && typeof this._replayBuffer.addChunk === 'function'
+      ? this._replayBuffer.addChunk(segment)
+      : Promise.resolve(Object.assign({}, segment, { ready: true, refCount: 0 }));
+    return Promise.resolve(addPromise).then((chunk) => {
+      if (!chunk) {
+        this.abortHighlightAfterStopIfNeeded(recordSessionId, 'segment_not_ready');
+        return;
+      }
+      const chunks = this._replayBuffer && typeof this._replayBuffer.getChunks === 'function'
+        ? this._replayBuffer.getChunks()
+        : [chunk];
+      this.rollingSegments = chunks;
+      while (!this._replayBuffer && this.rollingSegments.length > (this.rollingBufferMax || 15)) {
+        this.rollingSegments.shift();
+      }
+      // 兼容旧诊断/清理函数字段；高光判断不再读取 segNo。
+      this.segmentBuffer = this.rollingSegments;
+      this._rollingTempMissingStreak = 0;
+      this._rollingTempTerminalFailStreak = 0;
+      this.segmentPersistFailStreak = 0;
+      this.appendHealthLog('rolling_segment_indexed_by_time', {
+        segNo,
+        startTime: chunk.startTime,
+        endTime: chunk.endTime,
+        durationMs: chunk.endTime - chunk.startTime,
+        sizeBytes: chunk.sizeBytes || 0,
+        bufferSize: this.rollingSegments.length
+      });
+      this._tryGenerateHighlight();
     });
-    this._tryGenerateHighlight();
-    return Promise.resolve();
   },
 
   /**
@@ -7464,6 +7113,11 @@ Page({
    * @returns {void}
    */
   retainRollingSegmentsByPaths: function (paths) {
+    if (this._replayBuffer && typeof this._replayBuffer.retainByPaths === 'function') {
+      this._replayBuffer.retainByPaths(paths);
+      this.rollingSegments = this._replayBuffer.getChunks();
+      this.segmentBuffer = this.rollingSegments;
+    }
     return;
   },
 
@@ -7473,6 +7127,11 @@ Page({
    * @returns {void}
    */
   releaseRollingSegmentsByPaths: function (paths) {
+    if (this._replayBuffer && typeof this._replayBuffer.releaseByPaths === 'function') {
+      this._replayBuffer.releaseByPaths(paths);
+      this.rollingSegments = this._replayBuffer.getChunks();
+      this.segmentBuffer = this.rollingSegments;
+    }
     return;
   },
 
@@ -7508,6 +7167,149 @@ Page({
   },
 
   /**
+   * 从 manifest 生成逐段播放计划。计划只描述播放窗口，不做物理合成。
+   * @param {Record<string, unknown>} item
+   * @returns {{path:string,initialTimeSec:number,stopAtSec:number|null,index:number}[]}
+   */
+  _collectManifestReplayPlan: function (item) {
+    if (!item || typeof item !== 'object') return [];
+    const manifest = item.replayManifest;
+    if (!manifest || typeof manifest !== 'object') return [];
+    const chunks = Array.isArray(manifest.chunks) ? manifest.chunks : [];
+    const windowStart = typeof manifest.startTime === 'number' ? manifest.startTime : null;
+    const windowEnd = typeof manifest.endTime === 'number' ? manifest.endTime : null;
+    return chunks
+      .map((chunk, idx) => {
+        const path = chunk && typeof chunk.path === 'string' ? chunk.path : '';
+        if (!path) return null;
+        const chunkStart = typeof chunk.startTime === 'number' ? chunk.startTime : 0;
+        const chunkEnd = typeof chunk.endTime === 'number' ? chunk.endTime : 0;
+        const durationMs =
+          typeof chunk.durationMs === 'number' && chunk.durationMs > 0
+            ? chunk.durationMs
+            : Math.max(0, chunkEnd - chunkStart);
+        const startMs =
+          typeof chunk.playStartMs === 'number'
+            ? chunk.playStartMs
+            : (windowStart !== null ? Math.max(0, windowStart - chunkStart) : 0);
+        const endMs =
+          typeof chunk.playEndMs === 'number'
+            ? chunk.playEndMs
+            : (windowEnd !== null ? Math.max(startMs, windowEnd - chunkStart) : durationMs);
+        const boundedStartMs =
+          durationMs > 0 ? Math.min(durationMs, Math.max(0, startMs)) : Math.max(0, startMs);
+        const boundedEndMs =
+          durationMs > 0
+            ? Math.min(durationMs, Math.max(boundedStartMs, endMs))
+            : Math.max(boundedStartMs, endMs);
+        return {
+          path,
+          initialTimeSec: boundedStartMs / 1000,
+          stopAtSec: boundedEndMs > 0 ? Math.max(0.08, boundedEndMs / 1000) : null,
+          durationSec: durationMs > 0 ? durationMs / 1000 : null,
+          index: idx
+        };
+      })
+      .filter(Boolean);
+  },
+
+  /**
+   * 从高光条目自身读取播放计划；用于 materialized 后 manifest 失效时的稳定回退。
+   * @param {Record<string, unknown>} item
+   * @returns {{path:string,initialTimeSec:number,stopAtSec:number|null,index:number}[]}
+   */
+  _collectIndexedReplayPlan: function (item) {
+    if (!item || typeof item !== 'object') return [];
+    const plan = Array.isArray(item.replayPlan) ? item.replayPlan : [];
+    return plan
+      .map((entry, idx) => {
+        const path = entry && typeof entry.path === 'string' ? entry.path : '';
+        if (!path) return null;
+        const initialTimeSec =
+          entry && typeof entry.initialTimeSec === 'number'
+            ? Math.max(0, entry.initialTimeSec)
+            : 0;
+        const stopAtSec =
+          entry && typeof entry.stopAtSec === 'number' && entry.stopAtSec > 0
+            ? Math.max(0.08, entry.stopAtSec)
+            : null;
+        return {
+          path,
+          initialTimeSec,
+          stopAtSec,
+          durationSec: entry && typeof entry.durationSec === 'number' ? entry.durationSec : null,
+          index: idx
+        };
+      })
+      .filter(Boolean);
+  },
+
+  /**
+   * 选择高光回放路径。manifest-first，但只有 manifest 内所有文件仍可读时才使用，
+   * 避免固化后 temp manifest 失效反而误伤回放。
+   * @param {Record<string, unknown>} item
+   * @returns {{ paths: string[], plan: Array<Record<string, unknown>>, useChain: boolean, target: string, fromManifest: boolean }}
+   */
+  _resolveHighlightReplaySource: function (item) {
+    const manifestPlan = this._collectManifestReplayPlan(item);
+    const manifestPaths = manifestPlan.map((entry) => entry.path).filter(Boolean);
+    if (manifestPaths.length && manifestPaths.every((p) => this._isHighlightPathPlayable(p))) {
+      return {
+        paths: manifestPaths.slice(),
+        plan: manifestPlan,
+        useChain: manifestPlan.length >= 2,
+        target: manifestPaths[manifestPaths.length - 1] || manifestPaths[0] || '',
+        fromManifest: true
+      };
+    }
+    const indexedPlan = this._collectIndexedReplayPlan(item);
+    const indexedPaths = indexedPlan.map((entry) => entry.path).filter(Boolean);
+    if (indexedPaths.length && indexedPaths.every((p) => this._isHighlightPathPlayable(p))) {
+      return {
+        paths: indexedPaths.slice(),
+        plan: indexedPlan,
+        useChain: indexedPlan.length >= 2,
+        target: indexedPaths[indexedPaths.length - 1] || indexedPaths[0] || '',
+        fromManifest: false
+      };
+    }
+    const useChain = !!(item && item.replayUseChain && item.segments && item.segments.length >= 2);
+    const paths = useChain && Array.isArray(item.segments) ? item.segments.slice() : [];
+    const target =
+      (item && item.replaySegment)
+      || ((item && Array.isArray(item.segments) && item.segments[item.segments.length - 1])
+        ? item.segments[item.segments.length - 1]
+        : '');
+    const fallbackPaths = useChain ? paths : (target ? [target] : []);
+    const fallbackPlan = fallbackPaths.map((path, idx) => {
+      const isFirst = idx === 0;
+      const isLast = idx === fallbackPaths.length - 1;
+      let stopAtSec = null;
+      if (isLast) {
+        stopAtSec = idx === 0
+          ? (typeof item.replayMediaStopAtSec === 'number' ? item.replayMediaStopAtSec : null)
+          : (typeof item.replayChainPart2StopAtSec === 'number' ? item.replayChainPart2StopAtSec : null);
+      }
+      return {
+        path,
+        initialTimeSec: isFirst && typeof item.replayInitialTimeSec === 'number'
+          ? Math.max(0, item.replayInitialTimeSec)
+          : 0,
+        stopAtSec,
+        durationSec: null,
+        index: idx
+      };
+    });
+    return {
+      paths,
+      plan: fallbackPlan,
+      useChain,
+      target,
+      fromManifest: false
+    };
+  },
+
+  /**
    * 同步探测路径是否可播放（存在且体积合理）。
    * @param {string} p
    * @returns {boolean}
@@ -7530,7 +7332,8 @@ Page({
    * @returns {boolean}
    */
   _isHighlightItemPlayable: function (item) {
-    const paths = this._collectHighlightPlaybackPaths(item);
+    const source = this._resolveHighlightReplaySource(item);
+    const paths = source.useChain ? source.paths : (source.target ? [source.target] : []);
     if (!paths.length) return false;
     return paths.every((p) => this._isHighlightPathPlayable(p));
   },
@@ -8003,9 +7806,16 @@ Page({
         typeof pending.replayChainPart2StopAtSec === 'number'
           ? pending.replayChainPart2StopAtSec
           : null,
+      replayManifest: pending.replayManifest || null,
+      replayPlan: Array.isArray(pending.replayPlan) ? pending.replayPlan.slice() : [],
+      replayWindowStartTime:
+        typeof pending.replayWindowStartTime === 'number' ? pending.replayWindowStartTime : null,
+      replayWindowEndTime:
+        typeof pending.replayWindowEndTime === 'number' ? pending.replayWindowEndTime : null,
       status: 'indexed',
       scoreA,
       scoreB,
+      nameA,
       nameB,
       colorA,
       colorB,
@@ -8174,8 +7984,19 @@ Page({
         fail: checkSrc
       });
     });
+    const copyAllSerial = () => {
+      const saved = [];
+      const run = (idx) => {
+        if (idx >= segments.length) return Promise.resolve(saved);
+        return copyOne(segments[idx], idx).then((savedPath) => {
+          saved.push(savedPath);
+          return run(idx + 1);
+        });
+      };
+      return run(0);
+    };
     return this.ensureHighlightDir()
-      .then(() => Promise.all(segments.map((p, i) => copyOne(p, i))))
+      .then(copyAllSerial)
       .then((saved) => {
         const savedPaths = saved.filter(Boolean);
         const matchId = clipsStorage.normalizeMatchIdKey(task.matchId);
@@ -8187,6 +8008,22 @@ Page({
         }
         const list = Array.isArray(clipsMap[matchId]) ? clipsMap[matchId] : [];
         const idx = list.findIndex((it) => it && String(it.id) === String(task.id));
+        const remapReplayPlanPaths = (plan, nextPaths) => {
+          if (!Array.isArray(plan)) return [];
+          return plan.map((entry, planIdx) => Object.assign({}, entry || {}, {
+            path: nextPaths[planIdx] || (entry && entry.path) || '',
+            index: planIdx
+          }));
+        };
+        const remapReplayManifestPaths = (manifest, nextPaths) => {
+          if (!manifest || typeof manifest !== 'object') return null;
+          const chunks = Array.isArray(manifest.chunks) ? manifest.chunks : [];
+          return Object.assign({}, manifest, {
+            chunks: chunks.map((chunk, chunkIdx) => Object.assign({}, chunk || {}, {
+              path: nextPaths[chunkIdx] || (chunk && chunk.path) || ''
+            }))
+          });
+        };
         /**
          * VK 等场景封面为临时 jpg，与视频一并拷入高光目录，避免 temp 回收后首页缩略图失效。
          * @param {string} coverDest
@@ -8198,6 +8035,10 @@ Page({
             const replaySegment = savedPaths[savedPaths.length - 1] || savedPaths[0] || '';
             list[idx].segments = savedPaths;
             list[idx].replaySegment = replaySegment;
+            list[idx].replayPlan = remapReplayPlanPaths(list[idx].replayPlan, savedPaths);
+            if (list[idx].replayManifest) {
+              list[idx].replayManifest = remapReplayManifestPaths(list[idx].replayManifest, savedPaths);
+            }
             list[idx].status = 'materialized';
             if (coverDest) {
               list[idx].cover = coverDest;
@@ -8206,6 +8047,15 @@ Page({
             list[idx].status = 'failed';
           }
           clipsMap[matchId] = list;
+          this.appendHealthLog('highlight_materialize_done', {
+            id: String(task.id || ''),
+            matchId,
+            savedCount: savedPaths.length,
+            sourceCount: segments.length,
+            status: list[idx] && list[idx].status ? list[idx].status : '',
+            hasManifest: !!(list[idx] && list[idx].replayManifest),
+            planCount: list[idx] && Array.isArray(list[idx].replayPlan) ? list[idx].replayPlan.length : 0
+          });
           if (!clipsStorage.writeClipsMapSafe(clipsMap)) {
             this.appendHealthLog('highlight_materialize_clips_write_fail', { id: task.id });
           }
@@ -8563,16 +8413,22 @@ Page({
       return this._recorderCore.setPendingHighlight(m);
     }
     const now = Date.now();
-    this.pendingHighlight = {
-      clickTime: now,
-      startTime: now - (this.highlightLeadMs || 8000),
-      endTime: now,
-      id: m.id || String(now),
-      createdAt: now,
-      matchName: m.matchName || (this.data.matchConfig && this.data.matchConfig.matchName) || '未命名比赛',
-      matchId: m.matchId || this.resolveMatchIdForHighlightStorage(),
-      cover: m.cover || this.data.defaultCover
-    };
+    const clickTime = typeof m.clickTime === 'number' ? m.clickTime : now;
+    this.pendingHighlight = this._highlightManager
+      ? this._highlightManager.createRequest(Object.assign({}, m, { clickTime }))
+      : {
+        clickTime: clickTime,
+        startTime: clickTime - (this.highlightLeadMs || 8000),
+        endTime: clickTime + (this.highlightTailMs || 0),
+        id: m.id || String(now),
+        createdAt: clickTime,
+        matchName: m.matchName || (this.data.matchConfig && this.data.matchConfig.matchName) || '未命名比赛',
+        matchId: m.matchId || this.resolveMatchIdForHighlightStorage(),
+        cover: m.cover || this.data.defaultCover
+      };
+    this.pendingHighlight.matchName = m.matchName || (this.data.matchConfig && this.data.matchConfig.matchName) || this.pendingHighlight.matchName;
+    this.pendingHighlight.matchId = m.matchId || this.resolveMatchIdForHighlightStorage() || this.pendingHighlight.matchId;
+    this.pendingHighlight.cover = m.cover || this.data.defaultCover || this.pendingHighlight.cover;
   },
 
   /**
@@ -8604,10 +8460,17 @@ Page({
    * @returns {void}
    */
   _generateHighlight: function (startTime, endTime, pending) {
-    const segments = (this.rollingSegments || []).filter((seg) =>
-      seg && seg.path && seg.endTime > startTime && seg.startTime < endTime
-    );
-    const parts = segments.map((seg) => {
+    const chunks = this._replayBuffer && typeof this._replayBuffer.snapshotWindow === 'function'
+      ? this._replayBuffer.snapshotWindow(startTime, endTime)
+      : (this.rollingSegments || []).filter((seg) =>
+        seg && seg.path && seg.endTime > startTime && seg.startTime < endTime
+      );
+    const coverage = this._validateHighlightChunkCoverage(chunks, startTime, endTime);
+    if (!coverage.ok) {
+      this._abortHighlightForInsufficientBuffer(pending, coverage);
+      return;
+    }
+    const parts = chunks.map((seg) => {
       const clipStart = Math.max(startTime, seg.startTime);
       const clipEnd = Math.min(endTime, seg.endTime);
       return {
@@ -8616,18 +8479,107 @@ Page({
         offsetEnd: clipEnd - seg.startTime
       };
     });
-    this._composeClip(parts, pending);
+    const nextPending = pending || {};
+    if (this._highlightManager && typeof this._highlightManager.buildManifest === 'function') {
+      nextPending.replayManifest = this._highlightManager.buildManifest(nextPending, chunks, parts);
+    }
+    const gapStats = chunks.reduce((acc, seg, idx) => {
+      if (idx > 0) {
+        const prev = chunks[idx - 1];
+        const gapMs = Math.max(0, seg.startTime - prev.endTime);
+        acc.totalGapMs += gapMs;
+        acc.maxGapMs = Math.max(acc.maxGapMs, gapMs);
+      }
+      return acc;
+    }, { totalGapMs: 0, maxGapMs: 0 });
+    this.appendHealthLog('highlight_snapshot_ready', {
+      id: nextPending.id || '',
+      startTime,
+      endTime,
+      chunkCount: chunks.length,
+      firstStartTime: chunks[0] ? chunks[0].startTime : 0,
+      lastEndTime: chunks[chunks.length - 1] ? chunks[chunks.length - 1].endTime : 0,
+      totalGapMs: gapStats.totalGapMs,
+      maxGapMs: gapStats.maxGapMs
+    });
+    const paths = parts.map((p) => p && p.path).filter(Boolean);
+    this._saveHighlight(paths, nextPending, parts);
   },
 
   /**
-   * MOD: 第一阶段稳定策略：不做精确裁剪，直接按时间命中的源文件组成回放链。
-   * @param {{path:string,offsetStart:number,offsetEnd:number}[]} parts
-   * @param {Record<string, unknown>} [pending]
+   * ReplayBuffer 高光必须覆盖完整时间窗；允许小幅 stop/start 接缝，但不保存明显缺头/断续的半截片段。
+   * @param {Array<Record<string, unknown>>} chunks
+   * @param {number} startTime
+   * @param {number} endTime
+   * @returns {{ok:boolean, reason:string, missingStartMs?:number, missingEndMs?:number, gapMs?:number, chunkCount?:number}}
+   */
+  _validateHighlightChunkCoverage: function (chunks, startTime, endTime) {
+    const list = Array.isArray(chunks)
+      ? chunks
+        .filter((seg) => seg && seg.path && typeof seg.startTime === 'number' && typeof seg.endTime === 'number')
+        .sort((a, b) => a.startTime - b.startTime)
+      : [];
+    if (!list.length) {
+      return { ok: false, reason: 'no_chunks', chunkCount: 0 };
+    }
+    const edgeToleranceMs = 1500;
+    const maxGapMs = 1800;
+    const first = list[0];
+    const last = list[list.length - 1];
+    if (first.startTime > startTime + edgeToleranceMs) {
+      return {
+        ok: false,
+        reason: 'missing_window_start',
+        missingStartMs: first.startTime - startTime,
+        chunkCount: list.length
+      };
+    }
+    if (last.endTime < endTime - edgeToleranceMs) {
+      return {
+        ok: false,
+        reason: 'missing_window_end',
+        missingEndMs: endTime - last.endTime,
+        chunkCount: list.length
+      };
+    }
+    for (let i = 1; i < list.length; i += 1) {
+      const prev = list[i - 1];
+      const cur = list[i];
+      const gapMs = cur.startTime - prev.endTime;
+      if (gapMs > maxGapMs) {
+        return {
+          ok: false,
+          reason: 'timeline_gap',
+          gapMs,
+          chunkCount: list.length
+        };
+      }
+    }
+    return { ok: true, reason: 'ok', chunkCount: list.length };
+  },
+
+  /**
+   * 素材不足时不保存半截高光，避免用户误以为系统丢画面。
+   * @param {Record<string, unknown>} pending
+   * @param {Record<string, unknown>} detail
    * @returns {void}
    */
-  _composeClip: function (parts, pending) {
-    const paths = (Array.isArray(parts) ? parts : []).map((p) => p && p.path).filter(Boolean);
-    this._saveHighlight(paths, pending, parts);
+  _abortHighlightForInsufficientBuffer: function (pending, detail) {
+    const d = detail || {};
+    this.appendHealthLog('highlight_buffer_insufficient', {
+      id: pending && pending.id ? String(pending.id) : '',
+      reason: d.reason || '',
+      missingStartMs: d.missingStartMs || 0,
+      missingEndMs: d.missingEndMs || 0,
+      gapMs: d.gapMs || 0,
+      chunkCount: d.chunkCount || 0
+    });
+    this.pendingHighlight = null;
+    if (this._recorderCore) {
+      this._recorderCore.clearPendingHighlight();
+    }
+    this._showLightHint('素材未满8秒');
+    this.endHighlightSaving();
   },
 
   /**
@@ -8647,6 +8599,13 @@ Page({
     }
     const firstPart = Array.isArray(parts) && parts.length ? parts[0] : null;
     const lastPart = Array.isArray(parts) && parts.length ? parts[parts.length - 1] : null;
+    const replayPlan = (Array.isArray(parts) ? parts : []).map((part, idx) => ({
+      path: part.path,
+      initialTimeSec: Math.max(0, Number(part.offsetStart || 0) / 1000),
+      stopAtSec: Math.max(0.08, Number(part.offsetEnd || 0) / 1000),
+      durationSec: null,
+      index: idx
+    }));
     const replayInitialTimeSec = firstPart ? Math.max(0, firstPart.offsetStart / 1000) : 0;
     const replayMediaStopAtSec = paths.length === 1 && lastPart
       ? Math.max(0.08, lastPart.offsetEnd / 1000)
@@ -8654,6 +8613,15 @@ Page({
     const replayChainPart2StopAtSec = paths.length >= 2 && lastPart
       ? Math.max(0.08, lastPart.offsetEnd / 1000)
       : null;
+    this.appendHealthLog('highlight_index_ready', {
+      id: p.id || '',
+      segmentCount: paths.length,
+      planCount: replayPlan.length,
+      replayInitialTimeSec,
+      replayMediaStopAtSec,
+      replayChainPart2StopAtSec,
+      hasManifest: !!p.replayManifest
+    });
     this.finalizeHighlight({
       id: p.id || String(Date.now()),
       createdAt: typeof p.createdAt === 'number' ? p.createdAt : (p.clickTime || Date.now()),
@@ -8666,7 +8634,11 @@ Page({
       replayInitialTimeSec,
       replayUseChain: paths.length >= 2,
       replayMediaStopAtSec,
-      replayChainPart2StopAtSec
+      replayChainPart2StopAtSec,
+      replayManifest: p.replayManifest || null,
+      replayPlan,
+      replayWindowStartTime: typeof p.startTime === 'number' ? p.startTime : null,
+      replayWindowEndTime: typeof p.endTime === 'number' ? p.endTime : null
     });
   },
 
@@ -8752,17 +8724,25 @@ Page({
       matchName,
       matchId: currentMatchId,
       cover: this.data.defaultCover,
-      clickTime: anchorClickTime
+      clickTime: anchorClickTime,
+      afterMs: 0
     });
     this.tryStartRollingWhenCameraReady('highlight_request');
     this.vibrate('heavy');
     this.lastHighlightRequestAt = this.pendingHighlight.clickTime;
     const recordStartAt = Number(this.lastRecordStartAt || 0);
+    const requiredEndTime =
+      this.pendingHighlight && typeof this.pendingHighlight.endTime === 'number'
+        ? this.pendingHighlight.endTime
+        : anchorClickTime;
+    const segMs = this.segmentDurationMs || 8000;
+    const elapsedToEnd = recordStartAt > 0 ? Math.max(0, requiredEndTime - recordStartAt) : 0;
+    const cycles = recordStartAt > 0 ? Math.max(1, Math.ceil(elapsedToEnd / segMs)) : 1;
     const expectedFlushAt =
       recordStartAt > 0
         ? Math.max(
           this.pendingHighlight.clickTime + 120,
-          recordStartAt + (this.segmentDurationMs || 8000)
+          recordStartAt + cycles * segMs
         )
         : this.pendingHighlight.clickTime + HIGHLIGHT_LOCK_TIMEOUT;
     this.startHighlightSaveProgressAnim(
@@ -8859,6 +8839,14 @@ Page({
     const list = this.getHighlightList();
     list.unshift(item);
     wx.setStorageSync('highlight_list', list);
+    this.appendHealthLog('highlight_finalize_indexed', {
+      id: String(item.id || ''),
+      matchId,
+      segmentCount: segments.length,
+      planCount: Array.isArray(item.replayPlan) ? item.replayPlan.length : 0,
+      hasManifest: !!item.replayManifest,
+      status: item.status || ''
+    });
     this.retainRollingSegmentsByPaths(segments);
     const dcFin = this.data.defaultCover;
     const coverRaw = typeof pending.cover === 'string' ? pending.cover : dcFin;
@@ -8869,6 +8857,7 @@ Page({
       matchId,
       segments: segments.slice(),
       coverTempPath: coverTempPath,
+      isVkTimeshift: !!pending.isVkTimeshift,
       retryCount: 0
     });
     this.highlightMissStreak = 0;
@@ -10036,12 +10025,8 @@ Page({
       });
       return;
     }
-    const target =
-      (item && item.replaySegment)
-      || ((item && Array.isArray(item.segments) && item.segments[item.segments.length - 1])
-        ? item.segments[item.segments.length - 1]
-        : '');
-    if (!target) return;
+    const replaySource = this._resolveHighlightReplaySource(item);
+    if (!replaySource.target) return;
     if (!this._isHighlightItemPlayable(item)) {
       this._rejectHighlightReplayMissingFiles(item);
       return;
@@ -10078,15 +10063,14 @@ Page({
       });
       this.setData({ highlights: updatedHighlights });
     }
-    const useChain = !!(item.replayUseChain && item.segments && item.segments.length >= 2);
-    const paths = useChain ? item.segments.slice() : [];
-    const target =
-      (item.replaySegment)
-      || ((Array.isArray(item.segments) && item.segments[item.segments.length - 1])
-        ? item.segments[item.segments.length - 1]
-        : '');
+    const replaySource = this._resolveHighlightReplaySource(item);
+    const useChain = replaySource.useChain;
+    const paths = replaySource.paths;
+    const replayPlan = Array.isArray(replaySource.plan) ? replaySource.plan : [];
+    const target = replaySource.target;
     if (!target) return;
-    if (!this._isHighlightItemPlayable(item)) {
+    const sourcePaths = useChain ? paths : [target];
+    if (!sourcePaths.every((p) => this._isHighlightPathPlayable(p))) {
       this._rejectHighlightReplayMissingFiles(item);
       return;
     }
@@ -10098,7 +10082,9 @@ Page({
     /** 缩短全黑 REPLAY 叠层，首帧略早露出（与 replayIntroDurationMs 可再对齐 WXSS） */
     const introMs = 520;
     const peakMs = 140;
-    let initialSec = typeof item.replayInitialTimeSec === 'number' ? item.replayInitialTimeSec : 0;
+    let initialSec = replayPlan[0] && typeof replayPlan[0].initialTimeSec === 'number'
+      ? replayPlan[0].initialTimeSec
+      : (typeof item.replayInitialTimeSec === 'number' ? item.replayInitialTimeSec : 0);
 
     // VK 模式特殊处理：废弃底层的 initial-time 属性（会因无关键帧导致黑屏报错）
     // 改为从 0 开始播，由业务层在 loadedmetadata/bindplay 中强行 seek 过去，并辅以 UI 遮罩
@@ -10123,6 +10109,10 @@ Page({
     /** 第一段路径与第二段路径（链式时预加载，单段为空） */
     const firstPath = useChain ? paths[0] : target;
     const secondPath = useChain && paths.length >= 2 ? paths[1] : '';
+    const secondInitialSec =
+      useChain && replayPlan[1] && typeof replayPlan[1].initialTimeSec === 'number'
+        ? replayPlan[1].initialTimeSec
+        : 0;
 
     const segLenSec = this.segmentDurationMs / 1000;
     const winSec = (this.highlightPlaybackWindowMs || 8000) / 1000;
@@ -10145,6 +10135,28 @@ Page({
     } else {
       this._replayChainPart2StopAt = null;
     }
+    if (replayPlan.length) {
+      const firstStop =
+        replayPlan[0] && typeof replayPlan[0].stopAtSec === 'number'
+          ? replayPlan[0].stopAtSec
+          : null;
+      this._replayStopAtMediaSec = firstStop;
+      this._replayChainPart2StopAt =
+        replayPlan[1] && typeof replayPlan[1].stopAtSec === 'number'
+          ? replayPlan[1].stopAtSec
+          : null;
+    }
+    this.appendHealthLog('replay_source_selected', {
+      id: item && item.id ? String(item.id) : '',
+      fromManifest: !!replaySource.fromManifest,
+      useChain,
+      pathCount: paths.length,
+      planCount: replayPlan.length,
+      initialSec,
+      firstStopAtSec: this._replayStopAtMediaSec,
+      secondInitialSec,
+      secondStopAtSec: this._replayChainPart2StopAt
+    });
 
     this._cancelReplayZoomAnim();
     this._replayDoubleTapLast = null;
@@ -10174,6 +10186,7 @@ Page({
       replayInitialTime: 0,
       replayHighlightChain: false,
       replayHighlightPaths: paths,
+      replayHighlightPlan: replayPlan,
       replayHighlightIndex: 0,
       replayActiveSlot: 0,
       replaySlotASrc: '',
@@ -10188,12 +10201,13 @@ Page({
         isReplaying: true,
         replayHighlightChain: useChain,
         replayHighlightPaths: paths,
+        replayHighlightPlan: replayPlan,
         replayHighlightIndex: 0,
         replayActiveSlot: 0,
         replaySlotASrc: firstPath,
         replaySlotAInitialTime: initialSec,
         replaySlotBSrc: secondPath,
-        replaySlotBInitialTime: 0
+        replaySlotBInitialTime: secondInitialSec
       }, () => {
         wx.nextTick(() => {
           try {
@@ -10294,6 +10308,7 @@ Page({
       replayInitialTime: 0,
       replayHighlightChain: false,
       replayHighlightPaths: [],
+      replayHighlightPlan: [],
       replayHighlightIndex: 0,
       replayActiveSlot: 0,
       replaySlotASrc: '',
@@ -10324,6 +10339,7 @@ Page({
       return;
     }
     const paths = this.data.replayHighlightPaths || [];
+    const plan = Array.isArray(this.data.replayHighlightPlan) ? this.data.replayHighlightPlan : [];
     const currentIdx = this.data.replayHighlightIndex || 0;
     const nextIdx = currentIdx + 1;
     if (nextIdx >= paths.length) {
@@ -10334,19 +10350,35 @@ Page({
     /** 切换 slot：另一个 slot 已在 src 写入阶段完成预加载，直接翻到最前 */
     const nextSlot = slotIdx === 0 ? 1 : 0;
     const nextNextPath = paths[nextIdx + 1] || '';
+    const nextEntry = plan[nextIdx] || {};
+    const nextNextEntry = plan[nextIdx + 1] || {};
     const updates = { replayHighlightIndex: nextIdx };
     /** 仅在有下一段时才改「旧槽」src，避免与切层同一帧把 src 置空导致闪一下 */
     if (nextNextPath) {
       if (slotIdx === 0) {
         updates.replaySlotASrc = nextNextPath;
-        updates.replaySlotAInitialTime = 0;
+        updates.replaySlotAInitialTime =
+          typeof nextNextEntry.initialTimeSec === 'number' ? nextNextEntry.initialTimeSec : 0;
       } else {
         updates.replaySlotBSrc = nextNextPath;
-        updates.replaySlotBInitialTime = 0;
+        updates.replaySlotBInitialTime =
+          typeof nextNextEntry.initialTimeSec === 'number' ? nextNextEntry.initialTimeSec : 0;
       }
       this._replayPrimedSlot0 = false;
       this._replayPrimedSlot1 = false;
     }
+    this._replayStopAtMediaSec =
+      typeof nextEntry.stopAtSec === 'number' ? nextEntry.stopAtSec : null;
+    this._replayChainPart2StopAt =
+      typeof nextEntry.stopAtSec === 'number' ? nextEntry.stopAtSec : null;
+    this.appendHealthLog('replay_chain_slot_switch', {
+      currentIdx,
+      nextIdx,
+      nextSlot,
+      nextInitialSec: typeof nextEntry.initialTimeSec === 'number' ? nextEntry.initialTimeSec : 0,
+      nextStopAtSec: this._replayStopAtMediaSec,
+      preloadNext: !!nextNextPath
+    });
     this._replayPendingActiveSlot = nextSlot;
     if (this._replayPendingFallbackTimer) {
       clearTimeout(this._replayPendingFallbackTimer);
@@ -10358,7 +10390,6 @@ Page({
         try {
           const ctx = wx.createVideoContext(nextId, this);
           const rate = this.data.replayPlaybackRate || 0.75;
-          if (ctx && ctx.seek) ctx.seek(0);
           if (ctx && ctx.play) ctx.play();
           if (ctx && ctx.playbackRate) ctx.playbackRate(rate);
         } catch (e) { }
@@ -10378,7 +10409,7 @@ Page({
   },
 
   /**
-   * 链式回放：在后台 slot 上做一次轻量 play→pause→seek(0)，促使解码器先出首帧，切换时少黑场。
+   * 链式回放：后台 slot 轻量预热到 manifest 计划起点，促使解码器先出首帧，切换时少黑场。
    * @param {number} slotIdx 0=A, 1=B
    * @returns {void}
    */
@@ -10392,6 +10423,11 @@ Page({
     if (slotIdx === 0) this._replayPrimedSlot0 = true;
     else this._replayPrimedSlot1 = true;
     const id = slotIdx === 0 ? 'replayVideoA' : 'replayVideoB';
+    const paths = this.data.replayHighlightPaths || [];
+    const plan = Array.isArray(this.data.replayHighlightPlan) ? this.data.replayHighlightPlan : [];
+    const srcIdx = paths.indexOf(src);
+    const entry = srcIdx >= 0 ? plan[srcIdx] : null;
+    const initialSec = entry && typeof entry.initialTimeSec === 'number' ? entry.initialTimeSec : 0;
     wx.nextTick(() => {
       try {
         const ctx = wx.createVideoContext(id, this);
@@ -10406,7 +10442,7 @@ Page({
           try {
             const c2 = wx.createVideoContext(id, this);
             if (c2 && c2.pause) c2.pause();
-            if (c2 && c2.seek) c2.seek(0);
+            if (c2 && c2.seek && initialSec > 0.04) c2.seek(initialSec);
           } catch (e2) { }
         }, 120);
       } catch (e) { }
@@ -10498,10 +10534,42 @@ Page({
     const t = e && e.detail && typeof e.detail.currentTime === 'number' ? e.detail.currentTime : 0;
     const chain = this.data.replayHighlightChain;
     const idx = this.data.replayHighlightIndex || 0;
-    if (chain && idx === 1) {
-      const lim = this._replayChainPart2StopAt;
-      if (typeof lim === 'number' && lim > 0.04 && t >= lim - 0.12) {
-        this.finishReplayToLive(false);
+    if (chain) {
+      const paths = this.data.replayHighlightPaths || [];
+      const plan = Array.isArray(this.data.replayHighlightPlan) ? this.data.replayHighlightPlan : [];
+      const entry = plan[idx] || {};
+      const lim =
+        typeof entry.stopAtSec === 'number'
+          ? entry.stopAtSec
+          : (idx === 1 ? this._replayChainPart2StopAt : null);
+      const isLastChainPart = idx >= paths.length - 1;
+      const durationSec = typeof entry.durationSec === 'number' ? entry.durationSec : null;
+      const reachesNaturalEnd =
+        !isLastChainPart && durationSec !== null && lim >= durationSec - 0.18;
+      const guardSec = isLastChainPart ? 0.12 : 0.04;
+      if (
+        typeof lim === 'number'
+        && lim > 0.04
+        && !reachesNaturalEnd
+        && t >= lim - guardSec
+      ) {
+        if (isLastChainPart) {
+          this.appendHealthLog('replay_plan_stop', {
+            idx,
+            slotIdx,
+            currentTime: t,
+            stopAtSec: lim
+          });
+          this.finishReplayToLive(false);
+        } else {
+          this.appendHealthLog('replay_chain_plan_advance', {
+            idx,
+            slotIdx,
+            currentTime: t,
+            stopAtSec: lim
+          });
+          this.onReplaySlotEnded(slotIdx);
+        }
       }
       return;
     }
