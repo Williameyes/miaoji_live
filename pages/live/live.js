@@ -116,6 +116,10 @@ const LIVE_STORAGE_SEVERE_MODAL_DELAY_MS = 560;
 const HIGHLIGHT_LOCK_TIMEOUT = 3000;
 const HIGHLIGHT_LOCK_TIMEOUT_MAX_MS = 11000;
 const MIN_RECOVER_INTERVAL = 15000;
+const SEGMENT_WATCHDOG_CHECK_INTERVAL_MS = 5000;
+const SEGMENT_WATCHDOG_TIMEOUT_MIN_MS = 15000;
+const SEGMENT_WATCHDOG_RECOVER_COOLDOWN_MS = 15000;
+const SEGMENT_WATCHDOG_RESTART_DELAY_MS = 800;
 const RECORDER_SAFE_RESTART_DELAY_MIN_MS = 120;
 const RECORDER_SAFE_RESTART_DELAY_MAX_MS = 180;
 const RECORDER_STATE = {
@@ -1495,6 +1499,7 @@ Page({
   minRecordMsBeforeHighlightStop: 1300,
   segmentStopTimer: null,
   rollingWatchdogTimer: null,
+  segmentWatchdogTimer: null,
   segmentCounter: 0,
   pendingHighlight: null,
   /** 为 true 时 UI 锁需等待 finalize 与下一段 startRecord 成功两道闸门 */
@@ -1586,6 +1591,10 @@ Page({
   _rollingTempTerminalFailStreak: 0,
   /** 最近一次 startRecord operate fail 的时间戳；与 temp 丢失联合判定 camera 真故障。 */
   _lastSegmentOperateFailAt: 0,
+  /** Segment Watchdog 软恢复单飞锁，避免长时间无段时重复 stop/start。 */
+  _segmentWatchdogRecovering: false,
+  /** Segment Watchdog 最近一次软恢复时间戳，用于恢复冷却。 */
+  _lastSegmentWatchdogRecoverAt: 0,
 
   onLoad: function () {
     this._recorderCore = new RecorderCore(this);
@@ -1707,6 +1716,8 @@ Page({
     this._rollingTempMissingStreak = 0;
     this._rollingTempTerminalFailStreak = 0;
     this._lastSegmentOperateFailAt = 0;
+    this._segmentWatchdogRecovering = false;
+    this._lastSegmentWatchdogRecoverAt = 0;
     this.segmentPersistFailStreak = 0;
     this.segmentStartFailStormCycles = 0;
     /** 当前是否进入“仅允许长按重启”故障态。 */
@@ -6053,6 +6064,7 @@ Page({
     this.stopHealthMonitor();
     this.updatePipelineHealth();
     this._healthTimer = setInterval(() => this.updatePipelineHealth(), 1200);
+    this.startSegmentWatchdog();
     this.startLiveSandboxStorageWatch();
   },
 
@@ -6061,10 +6073,149 @@ Page({
    * @returns {void}
    */
   stopHealthMonitor: function () {
-    if (!this._healthTimer) return;
-    clearInterval(this._healthTimer);
-    this._healthTimer = null;
+    if (this._healthTimer) {
+      clearInterval(this._healthTimer);
+      this._healthTimer = null;
+    }
+    this.stopSegmentWatchdog();
     this.stopLiveSandboxStorageWatch();
+  },
+
+  /**
+   * 启动片段心跳看门狗：只检测“前台录制态长期没有新 segment”的假录制。
+   * @returns {void}
+   */
+  startSegmentWatchdog: function () {
+    this.stopSegmentWatchdog();
+    this.segmentWatchdogTimer = setInterval(
+      () => this.checkSegmentHeartbeat(),
+      SEGMENT_WATCHDOG_CHECK_INTERVAL_MS
+    );
+  },
+
+  /**
+   * 停止片段心跳看门狗。
+   * @returns {void}
+   */
+  stopSegmentWatchdog: function () {
+    if (this.segmentWatchdogTimer) {
+      clearInterval(this.segmentWatchdogTimer);
+      this.segmentWatchdogTimer = null;
+    }
+    this._segmentWatchdogRecovering = false;
+  },
+
+  /**
+   * Segment Watchdog 超时阈值。默认至少 15s，并随分段时长轻微放大。
+   * @returns {number}
+   */
+  getSegmentWatchdogTimeoutMs: function () {
+    const segmentMs = Number(this.segmentDurationMs || 0);
+    const scaled = segmentMs > 0 ? Math.floor(segmentMs * 1.8) : 0;
+    return Math.max(SEGMENT_WATCHDOG_TIMEOUT_MIN_MS, scaled);
+  },
+
+  /**
+   * 检查 rolling segment 心跳，覆盖 isRecording 假活但长期无新段的场景。
+   * @returns {void}
+   */
+  checkSegmentHeartbeat: function () {
+    if (!this._livePageVisible) return;
+    if (!this.data.liveStreamAllowed) return;
+    if (!this.data.isRecording) return;
+    if (this.data.isRecovering || this._recoveryLock) return;
+    if (this._segmentWatchdogRecovering) return;
+    if (this._needManualRelaunch) return;
+    if (this.data.storageSevereLock) return;
+    if (this.pendingHighlight || this.data.isSavingHighlight) return;
+    if (this.data.enhanceMode === 'vk' || this.data.enhanceVkTransitioning) return;
+    if (this.rollingFsBusy || this._rollingPersistInFlight > 0) return;
+    if (!this.data.cameraContext) return;
+    if (this._storageSevereRecoveryUntil && Date.now() < this._storageSevereRecoveryUntil) return;
+
+    const now = Date.now();
+    const lastSegmentAt = Number(this.lastSegmentAt || 0);
+    if (lastSegmentAt <= 0) return;
+    const timeoutMs = this.getSegmentWatchdogTimeoutMs();
+    const segmentGapMs = now - lastSegmentAt;
+    if (segmentGapMs < timeoutMs) return;
+
+    const recordStartAt = Number(this.lastRecordStartAt || 0);
+    const recordAgeMs = recordStartAt > 0 ? now - recordStartAt : segmentGapMs;
+    if (recordAgeMs < timeoutMs) return;
+
+    if (now - (this._lastSegmentWatchdogRecoverAt || 0) < SEGMENT_WATCHDOG_RECOVER_COOLDOWN_MS) {
+      return;
+    }
+
+    this.appendHealthLog('segment_watchdog_timeout', {
+      gapMs: segmentGapMs,
+      recordAgeMs,
+      timeoutMs,
+      diag: this.getLiveRollingDiagSnapshot({})
+    });
+    this.requestSegmentWatchdogRollingRecover('segment_watchdog');
+  },
+
+  /**
+   * Segment Watchdog 触发的低侵入 rolling-only 恢复：不重建 camera，不进入 hard recover。
+   * @param {string} source 触发来源
+   * @returns {boolean}
+   */
+  requestSegmentWatchdogRollingRecover: function (source) {
+    const now = Date.now();
+    if (this._segmentWatchdogRecovering) return false;
+    if (this.data.isRecovering || this._recoveryLock) return false;
+    if (!this._livePageVisible) return false;
+    if (this.data.enhanceMode === 'vk' || this.data.enhanceVkTransitioning) return false;
+    if (now - (this._lastSegmentWatchdogRecoverAt || 0) < SEGMENT_WATCHDOG_RECOVER_COOLDOWN_MS) {
+      return false;
+    }
+
+    const triggerSource = source || 'segment_watchdog';
+    const prevSessionId = this.rollingSessionId;
+    this._segmentWatchdogRecovering = true;
+    this._lastSegmentWatchdogRecoverAt = now;
+    this.appendHealthLog('segment_watchdog_soft_recover_start', {
+      triggerSource,
+      diag: this.getLiveRollingDiagSnapshot({})
+    });
+
+    this.rollingActive = false;
+    this.stopRollingRecording(() => {
+      setTimeout(() => {
+        this._segmentWatchdogRecovering = false;
+        if (!this._livePageVisible) return;
+        if (this.data.isRecovering || this._recoveryLock) return;
+        if (this._needManualRelaunch || this.data.storageSevereLock) return;
+        if (this.data.enhanceMode === 'vk' || this.data.enhanceVkTransitioning) return;
+        if (!this._cameraInitDone || !this.data.cameraContext) {
+          this.appendHealthLog('segment_watchdog_soft_recover_skip_camera_not_ready', {
+            triggerSource,
+            diag: this.getLiveRollingDiagSnapshot({})
+          });
+          this.updatePipelineHealth();
+          return;
+        }
+
+        this.lastSegmentAt = Date.now();
+        this.lastRecordStartAt = 0;
+        this.startRecordFailStreak = 0;
+        this.segmentStartFailStormCycles = 0;
+        this.rollingActive = true;
+        this.rollingSessionId += 1;
+        if (this._recorderCore) {
+          this._recorderCore.markReady(triggerSource);
+        }
+        this.appendHealthLog('segment_watchdog_soft_recover_kick', {
+          triggerSource,
+          prevSessionId,
+          rollingSessionId: this.rollingSessionId
+        });
+        this.tryStartRollingWhenCameraReady(triggerSource);
+      }, SEGMENT_WATCHDOG_RESTART_DELAY_MS);
+    }, triggerSource);
+    return true;
   },
 
   /**
