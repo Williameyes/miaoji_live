@@ -1,0 +1,43 @@
+<view class="rl-root">
+
+  <view class="rl-header">
+    <view class="rl-title">{{isEdit ? '编辑场次' : '新增场次'}}</view>
+    <view class="rl-sub">选择赛事、队名与开赛时间，无需填写 ID</view>
+  </view>
+
+  <view class="rl-card">
+    <view class="rl-card-inner">
+      <view class="rl-field" wx:if="{{tournaments.length}}">
+        <text class="rl-label">所属赛事</text>
+        <picker mode="selector" range="{{tournaments}}" range-key="name" value="{{tournamentIndex}}" bindchange="onTournamentChange">
+          <view class="rl-input rl-picker-display">{{tournaments[tournamentIndex].name}}</view>
+        </picker>
+      </view>
+      <view class="rl-notice" wx:else style="margin-bottom:24rpx;">
+        <text class="rl-notice-text">请先创建赛事后再新增场次</text>
+      </view>
+      <view class="rl-field">
+        <text class="rl-label">队伍 A</text>
+        <input class="rl-input" placeholder="主队名称" value="{{teamA}}" bindinput="onTeamAInput" />
+      </view>
+      <view class="rl-field">
+        <text class="rl-label">队伍 B</text>
+        <input class="rl-input" placeholder="客队名称" value="{{teamB}}" bindinput="onTeamBInput" />
+      </view>
+      <view class="rl-field">
+        <text class="rl-label">比赛时间</text>
+        <view class="rl-datetime-row">
+          <picker mode="date" value="{{startDate}}" start="2020-01-01" end="2035-12-31" bindchange="onStartDateChange">
+            <view class="rl-input rl-picker-display">{{startDate}}</view>
+          </picker>
+          <picker mode="time" value="{{startTime}}" bindchange="onStartTimeChange">
+            <view class="rl-input rl-picker-display">{{startTime}}</view>
+          </picker>
+        </view>
+      </view>
+      <button class="rl-btn rl-btn-primary" disabled="{{submitting || !tournaments.length}}" bindtap="onSave">保存场次</button>
+      <button class="rl-btn rl-btn-secondary" style="margin-top:16rpx;" disabled="{{submitting || !tournaments.length}}" bindtap="onSaveAndMonitor">保存并进入监控</button>
+    </view>
+  </view>
+
+</view>

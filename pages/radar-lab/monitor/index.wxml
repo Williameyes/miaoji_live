@@ -1,0 +1,37 @@
+<view class="rl-root">
+
+  <view class="rl-header">
+    <view class="rl-kicker">直播雷达</view>
+    <view class="rl-title">实时监控</view>
+    <view class="rl-sub">
+      正在监控的场次
+      <text wx:if="{{polling}}" style="margin-left:12rpx;color:#94a3b8;">· 每20秒刷新</text>
+    </view>
+  </view>
+
+  <view class="rl-card" wx:if="{{matchRows.length}}">
+    <block wx:for="{{matchRows}}" wx:key="id">
+      <view class="rt-item" bindtap="onOpenDetail" data-id="{{item.id}}" hover-class="rl-list-item-hover">
+        <view class="rt-item-main">
+          <view class="rl-list-title">{{item.teamA}} vs {{item.teamB}}</view>
+          <view class="rl-list-desc">{{item.startTimeText}} · {{item.tournamentName}}</view>
+        </view>
+        <view class="rt-item-right">
+          <text class="rt-online">{{item.currentOnline}}</text>
+          <text class="rt-status">{{item.statusLabel}}</text>
+        </view>
+        <text class="rl-list-arrow">›</text>
+      </view>
+    </block>
+  </view>
+
+  <view class="rl-empty" wx:elif="{{!loading}}">
+    <text>暂无进行中的监控</text>
+    <text class="rl-empty-sub">请在场次列表中进入某场并绑定直播雷达</text>
+  </view>
+
+  <view class="rl-empty" wx:else>
+    <text>加载中…</text>
+  </view>
+
+</view>

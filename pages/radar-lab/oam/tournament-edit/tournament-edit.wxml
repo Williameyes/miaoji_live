@@ -1,0 +1,43 @@
+<view class="rl-root">
+
+  <view class="rl-header">
+    <view class="rl-title">管理赛事</view>
+    <view class="rl-sub">选择已有赛事编辑，或新建一届大赛事</view>
+  </view>
+
+  <view class="rl-card" wx:if="{{tournaments.length && !isCreatingNew}}">
+    <view class="rl-card-inner">
+      <view class="rl-field">
+        <text class="rl-label">选择赛事</text>
+        <picker mode="selector" range="{{tournaments}}" range-key="name" value="{{pickerIndex}}" bindchange="onTournamentPick">
+          <view class="rl-input rl-picker-display">{{tournaments[pickerIndex].name}}</view>
+        </picker>
+      </view>
+      <button class="rl-btn rl-btn-secondary" bindtap="onCreateNew">＋ 新建赛事</button>
+    </view>
+  </view>
+
+  <view class="rl-card">
+    <view class="rl-card-inner">
+      <view class="rl-section-title">{{isCreatingNew ? '新建赛事' : '编辑赛事'}}</view>
+      <view class="rl-field">
+        <text class="rl-label">赛事名称</text>
+        <input class="rl-input" placeholder="如：2026 春季联赛" value="{{tournamentName}}" bindinput="onNameInput" />
+      </view>
+      <view class="rl-field">
+        <text class="rl-label">开始日期</text>
+        <picker mode="date" value="{{startDate}}" start="2020-01-01" end="2035-12-31" bindchange="onStartDateChange">
+          <view class="rl-input rl-picker-display">{{startDate}}</view>
+        </picker>
+      </view>
+      <view class="rl-field">
+        <text class="rl-label">结束日期</text>
+        <picker mode="date" value="{{endDate}}" start="2020-01-01" end="2035-12-31" bindchange="onEndDateChange">
+          <view class="rl-input rl-picker-display">{{endDate}}</view>
+        </picker>
+      </view>
+      <button class="rl-btn rl-btn-primary" disabled="{{submitting}}" bindtap="onSave">保存赛事</button>
+    </view>
+  </view>
+
+</view>

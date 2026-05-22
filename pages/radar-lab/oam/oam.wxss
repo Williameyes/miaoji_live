@@ -1,1 +1,154 @@
 @import '../common/common.wxss';
+
+.oam-root {
+  padding-bottom: calc(160rpx + env(safe-area-inset-bottom));
+}
+
+.oam-toolbar-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  margin-bottom: 24rpx;
+}
+
+.oam-filter-picker {
+  flex: 1;
+  min-width: 0;
+}
+
+.oam-filter-pill {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8rpx;
+  background: #ffffff;
+  border-radius: 999rpx;
+  padding: 14rpx 28rpx;
+  font-size: 26rpx;
+  color: #334155;
+  box-shadow: 0 2rpx 12rpx rgba(0, 0, 0, 0.04);
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.oam-filter-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oam-filter-arrow {
+  font-size: 20rpx;
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+
+.oam-plus-btn {
+  width: 72rpx;
+  height: 72rpx;
+  border-radius: 20rpx;
+  background: #ffffff;
+  box-shadow: 0 4rpx 16rpx rgba(0, 0, 0, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.oam-plus-btn-hover {
+  background: #f1f5f9;
+}
+
+.oam-plus-icon {
+  font-size: 40rpx;
+  color: #334155;
+  line-height: 1;
+  font-weight: 300;
+}
+
+.oam-match-item {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 28rpx 32rpx;
+  border-bottom: 1rpx solid #f1f5f9;
+}
+
+.oam-match-item:last-child {
+  border-bottom: none;
+}
+
+.oam-match-main {
+  flex: 1;
+  min-width: 0;
+  padding-right: 16rpx;
+}
+
+.oam-match-actions {
+  display: flex;
+  flex-direction: row;
+  gap: 12rpx;
+  flex-shrink: 0;
+}
+
+.oam-action-btn {
+  margin: 0;
+  padding: 0 22rpx;
+  height: 60rpx;
+  line-height: 60rpx;
+  font-size: 24rpx;
+  font-weight: 600;
+  border-radius: 14rpx;
+  border: none;
+}
+
+.oam-action-btn::after {
+  border: none;
+}
+
+.oam-action-btn--ghost {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.oam-action-btn--primary {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.rl-empty-sub {
+  display: block;
+  margin-top: 12rpx;
+  font-size: 24rpx;
+  color: #cbd5e1;
+  line-height: 1.5;
+  padding: 0 16rpx;
+}
+
+.oam-fab {
+  position: fixed;
+  left: 40rpx;
+  right: 40rpx;
+  bottom: calc(40rpx + env(safe-area-inset-bottom));
+  height: 96rpx;
+  border-radius: 24rpx;
+  background: #2563eb;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8rpx 28rpx rgba(37, 99, 235, 0.35);
+}
+
+.oam-fab-hover {
+  opacity: 0.92;
+}
+
+.oam-fab-text {
+  color: #ffffff;
+  font-size: 32rpx;
+  font-weight: 700;
+}

@@ -9,7 +9,10 @@
     "pages/sync-lab/broadcaster/broadcaster",
     "pages/radar-lab/index/index",
     "pages/radar-lab/oam/oam",
-    "pages/radar-lab/monitor/monitor",
+    "pages/radar-lab/oam/match-edit/match-edit",
+    "pages/radar-lab/oam/tournament-edit/tournament-edit",
+    "pages/radar-lab/monitor/index",
+    "pages/radar-lab/monitor/detail",
     "pages/radar-lab/poster/poster"
   ],
   "window": {

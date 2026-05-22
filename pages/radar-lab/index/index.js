@@ -25,12 +25,12 @@ Page({
   },
 
   /**
-   * 跳转监控现场页。
+   * 跳转实时监控列表页。
    * @returns {void}
    */
   onGoMonitor: function () {
     if (!ensureRadarLabAccess()) return;
-    wx.navigateTo({ url: '/pages/radar-lab/monitor/monitor' });
+    wx.navigateTo({ url: '/pages/radar-lab/monitor/index' });
   },
 
   /**

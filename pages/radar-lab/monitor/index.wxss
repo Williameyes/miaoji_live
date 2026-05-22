@@ -1,0 +1,49 @@
+@import '../common/common.wxss';
+
+.rt-item {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 28rpx 32rpx;
+  border-bottom: 1rpx solid #f1f5f9;
+}
+
+.rt-item:last-child {
+  border-bottom: none;
+}
+
+.rt-item-main {
+  flex: 1;
+  min-width: 0;
+  padding-right: 16rpx;
+}
+
+.rt-item-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  margin-right: 8rpx;
+  flex-shrink: 0;
+}
+
+.rt-online {
+  font-size: 32rpx;
+  font-weight: 800;
+  color: #2563eb;
+  line-height: 1.2;
+}
+
+.rt-status {
+  font-size: 22rpx;
+  color: #64748b;
+  margin-top: 4rpx;
+}
+
+.rl-empty-sub {
+  display: block;
+  margin-top: 12rpx;
+  font-size: 24rpx;
+  color: #cbd5e1;
+  line-height: 1.5;
+  padding: 0 16rpx;
+}

@@ -3,6 +3,11 @@
  */
 
 const { post, get, request } = require('../utils/request.js');
+const {
+  parseMatchList,
+  parseTournamentList,
+  parseMatchDetail
+} = require('../utils/radar-model.js');
 
 /**
  * @typedef {Object} RadarAppSuccessBody
@@ -42,6 +47,48 @@ function parseRadarAppResponse(body) {
  */
 function oamUpsert(payload) {
   return post('/api/app/oam/upsert', payload).then(parseRadarAppResponse);
+}
+
+/**
+ * 拉取赛事列表。
+ * @returns {Promise<import('../utils/radar-model.js').RadarTournamentView[]>}
+ */
+function fetchTournamentList() {
+  return get('/api/app/tournament/list')
+    .then(parseRadarAppResponse)
+    .then(parseTournamentList);
+}
+
+/**
+ * 拉取场次列表。
+ * @param {Object} [query]
+ * @param {string} [query.tournamentId] - 赛事 ID，不传则全部
+ * @param {string} [query.status] - 如 `monitoring,waiting_radar`
+ * @returns {Promise<import('../utils/radar-model.js').RadarMatchView[]>}
+ */
+function fetchMatchList(query) {
+  const q = query || {};
+  const params = {};
+  if (q.tournamentId && q.tournamentId !== 'all') {
+    params.tournament_id = q.tournamentId;
+  }
+  if (q.status) {
+    params.status = q.status;
+  }
+  return get('/api/app/match/list', params)
+    .then(parseRadarAppResponse)
+    .then(parseMatchList);
+}
+
+/**
+ * 拉取单场详情。
+ * @param {number|string} matchId
+ * @returns {Promise<import('../utils/radar-model.js').RadarMatchView | null>}
+ */
+function fetchMatchDetail(matchId) {
+  return get('/api/app/match/detail', { match_id: matchId })
+    .then(parseRadarAppResponse)
+    .then(parseMatchDetail);
 }
 
 /**
@@ -105,6 +152,9 @@ function fetchTournamentInfluence(tournamentId) {
 module.exports = {
   parseRadarAppResponse,
   oamUpsert,
+  fetchTournamentList,
+  fetchMatchList,
+  fetchMatchDetail,
   addMatchTask,
   stopMatchMonitoring,
   fetchMatchStreamData,

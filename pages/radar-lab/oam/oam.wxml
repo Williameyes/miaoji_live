@@ -1,137 +1,56 @@
-<view class="rl-root">
+<view class="rl-root oam-root">
 
   <view class="rl-header">
-    <view class="rl-kicker">OAM · 资产维护</view>
-    <view class="rl-title">赛事与场次</view>
-    <view class="rl-sub">单条增改同步云端；Excel 固定三列模板批量排程</view>
+    <view class="rl-kicker">OAM · 数据维护</view>
+    <view class="rl-title">场次列表</view>
+    <view class="rl-sub">挂载监控时后端会自动识别并入库主播，无需单独维护</view>
   </view>
 
-  <view class="rl-tabs">
-    <view
-      class="rl-tab {{activeTab === 'tournament' ? 'rl-tab-active' : ''}}"
-      data-tab="tournament"
-      bindtap="onTabTap"
-    >赛事</view>
-    <view
-      class="rl-tab {{activeTab === 'match' ? 'rl-tab-active' : ''}}"
-      data-tab="match"
-      bindtap="onTabTap"
-    >场次</view>
-    <view
-      class="rl-tab {{activeTab === 'anchor' ? 'rl-tab-active' : ''}}"
-      data-tab="anchor"
-      bindtap="onTabTap"
-    >主播</view>
-    <view
-      class="rl-tab {{activeTab === 'batch' ? 'rl-tab-active' : ''}}"
-      data-tab="batch"
-      bindtap="onTabTap"
-    >批量</view>
-  </view>
-
-  <!-- 赛事 -->
-  <view class="rl-card" wx:if="{{activeTab === 'tournament'}}">
-    <view class="rl-card-inner">
-      <view class="rl-field">
-        <text class="rl-label">赛事 ID（更新时填写）</text>
-        <input class="rl-input" placeholder="新建留空" value="{{tournamentForm.tournament_id}}" data-form="tournament" data-field="tournament_id" bindinput="onFormInput" />
+  <view class="oam-toolbar-row">
+    <picker
+      class="oam-filter-picker"
+      mode="selector"
+      range="{{filterOptions}}"
+      range-key="name"
+      value="{{filterIndex}}"
+      bindchange="onFilterChange"
+    >
+      <view class="oam-filter-pill">
+        <text class="oam-filter-text">{{filterOptions[filterIndex].name}}</text>
+        <text class="oam-filter-arrow">▾</text>
       </view>
-      <view class="rl-field">
-        <text class="rl-label">赛事名称</text>
-        <input class="rl-input" placeholder="如：2026 春季联赛" value="{{tournamentForm.tournament_name}}" data-form="tournament" data-field="tournament_name" bindinput="onFormInput" />
-      </view>
-      <view class="rl-field">
-        <text class="rl-label">开始日期</text>
-        <input class="rl-input" placeholder="2026-05-01" value="{{tournamentForm.start_date}}" data-form="tournament" data-field="start_date" bindinput="onFormInput" />
-      </view>
-      <view class="rl-field">
-        <text class="rl-label">结束日期</text>
-        <input class="rl-input" placeholder="2026-06-30" value="{{tournamentForm.end_date}}" data-form="tournament" data-field="end_date" bindinput="onFormInput" />
-      </view>
-      <button class="rl-btn rl-btn-primary" disabled="{{submitting}}" bindtap="onSubmitTournament">同步赛事</button>
+    </picker>
+    <view class="oam-plus-btn" bindtap="onPlusTap" hover-class="oam-plus-btn-hover">
+      <text class="oam-plus-icon">＋</text>
     </view>
   </view>
 
-  <!-- 场次 -->
-  <view class="rl-card" wx:if="{{activeTab === 'match'}}">
-    <view class="rl-card-inner">
-      <view class="rl-field" wx:if="{{tournaments.length}}">
-        <text class="rl-label">所属赛事</text>
-        <picker mode="selector" range="{{tournaments}}" range-key="name" bindchange="onTournamentPicker">
-          <view class="rl-input">{{selectedTournamentId ? '已选赛事 #' + selectedTournamentId : '请选择赛事'}}</view>
-        </picker>
-      </view>
-      <view class="rl-field">
-        <text class="rl-label">场次 ID（更新时填写）</text>
-        <input class="rl-input" placeholder="新建留空" value="{{matchForm.match_id}}" data-form="match" data-field="match_id" bindinput="onFormInput" />
-      </view>
-      <view class="rl-field">
-        <text class="rl-label">队伍 A</text>
-        <input class="rl-input" value="{{matchForm.team_a}}" data-form="match" data-field="team_a" bindinput="onFormInput" />
-      </view>
-      <view class="rl-field">
-        <text class="rl-label">队伍 B</text>
-        <input class="rl-input" value="{{matchForm.team_b}}" data-form="match" data-field="team_b" bindinput="onFormInput" />
-      </view>
-      <view class="rl-field">
-        <text class="rl-label">比赛时间</text>
-        <input class="rl-input" placeholder="2026-05-22 19:00:00" value="{{matchForm.start_time}}" data-form="match" data-field="start_time" bindinput="onFormInput" />
-      </view>
-      <button class="rl-btn rl-btn-primary" disabled="{{submitting}}" bindtap="onSubmitMatch">同步场次</button>
-    </view>
+  <view class="rl-empty" wx:if="{{loading}}">
+    <text>加载中…</text>
   </view>
 
-  <!-- 主播 -->
-  <view class="rl-card" wx:if="{{activeTab === 'anchor'}}">
-    <view class="rl-card-inner">
-      <view class="rl-field">
-        <text class="rl-label">sec_user_id</text>
-        <input class="rl-input" value="{{anchorForm.sec_user_id}}" data-form="anchor" data-field="sec_user_id" bindinput="onFormInput" />
-      </view>
-      <view class="rl-field">
-        <text class="rl-label">主播名称</text>
-        <input class="rl-input" value="{{anchorForm.anchor_name}}" data-form="anchor" data-field="anchor_name" bindinput="onFormInput" />
-      </view>
-      <view class="rl-field">
-        <text class="rl-label">直播链接（可选）</text>
-        <input class="rl-input" value="{{anchorForm.live_url}}" data-form="anchor" data-field="live_url" bindinput="onFormInput" />
-      </view>
-      <button class="rl-btn rl-btn-primary" disabled="{{submitting}}" bindtap="onSubmitAnchor">同步主播</button>
-    </view>
-  </view>
-
-  <!-- 批量 -->
-  <view class="rl-card" wx:if="{{activeTab === 'batch'}}">
-    <view class="rl-card-inner">
-      <view class="rl-field" wx:if="{{tournaments.length}}">
-        <text class="rl-label">导入到赛事</text>
-        <picker mode="selector" range="{{tournaments}}" range-key="name" bindchange="onTournamentPicker">
-          <view class="rl-input">赛事 #{{batchTournamentId || '请选择'}}</view>
-        </picker>
-      </view>
-      <view class="rl-notice" style="margin-bottom:24rpx;">
-        <text class="rl-notice-text">从微信聊天记录选择 Excel，表头须含：队伍A、队伍B、比赛时间</text>
-      </view>
-      <button class="rl-btn rl-btn-primary" disabled="{{submitting}}" bindtap="onChooseExcel">选择 Excel 并导入</button>
-    </view>
-  </view>
-
-  <!-- 场次列表 -->
-  <view class="rl-card" wx:if="{{matches.length}}">
-    <view class="rl-card-inner">
-      <view class="rl-section-title">近期场次</view>
-      <block wx:for="{{matches}}" wx:key="id">
-        <view class="rl-list-item" hover-class="rl-list-item-hover">
-          <view class="rl-list-main" bindtap="onOpenMonitor" data-id="{{item.id}}">
-            <view class="rl-list-title">{{item.teamA}} vs {{item.teamB}}</view>
-            <view class="rl-list-desc">ID {{item.id}} · {{item.startTime}}</view>
-          </view>
-          <button class="rl-btn rl-btn-secondary" style="width:140rpx;height:64rpx;line-height:64rpx;font-size:24rpx;" bindtap="onOpenMonitor" data-id="{{item.id}}">监控</button>
+  <view class="rl-card" wx:elif="{{matchRows.length}}">
+    <block wx:for="{{matchRows}}" wx:key="id">
+      <view class="oam-match-item" hover-class="rl-list-item-hover">
+        <view class="oam-match-main" bindtap="onEditMatch" data-id="{{item.id}}">
+          <view class="rl-list-title">{{item.teamA}} vs {{item.teamB}}</view>
+          <view class="rl-list-desc">{{item.startTimeText}} · {{item.tournamentName}}</view>
         </view>
-      </block>
-    </view>
+        <view class="oam-match-actions">
+          <button class="oam-action-btn oam-action-btn--ghost" bindtap="onEditMatch" data-id="{{item.id}}">编辑</button>
+          <button class="oam-action-btn oam-action-btn--primary" bindtap="onOpenMonitor" data-id="{{item.id}}">监控</button>
+        </view>
+      </view>
+    </block>
   </view>
 
-  <view class="rl-empty" wx:if="{{!matches.length && activeTab !== 'batch'}}">暂无本地场次，请先同步或导入</view>
+  <view class="rl-empty" wx:else>
+    <text>暂无场次</text>
+    <text class="rl-empty-sub">先选择赛事，再新增或批量导入；导入后列表会自动刷新</text>
+  </view>
+
+  <view class="oam-fab" bindtap="onNewMatch" hover-class="oam-fab-hover">
+    <text class="oam-fab-text">新增场次</text>
+  </view>
 
 </view>

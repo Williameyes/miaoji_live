@@ -184,6 +184,28 @@ function findTournament(tournamentId) {
   return found || null;
 }
 
+/**
+ * 列出全部或按赛事筛选的场次（按比赛时间倒序）。
+ * @param {string} [tournamentId] - 空或 `all` 表示全部
+ * @returns {RadarLocalMatch[]}
+ */
+function listAllMatchesSorted(tournamentId) {
+  const assets = readAssets();
+  let list = assets.matches.slice();
+  const tid = tournamentId ? String(tournamentId) : '';
+  if (tid && tid !== 'all') {
+    list = list.filter(function (m) {
+      return String(m.tournamentId) === tid;
+    });
+  }
+  list.sort(function (a, b) {
+    const ta = Date.parse(String(a.startTime).replace(' ', 'T')) || a.updatedAt || 0;
+    const tb = Date.parse(String(b.startTime).replace(' ', 'T')) || b.updatedAt || 0;
+    return tb - ta;
+  });
+  return list;
+}
+
 module.exports = {
   readAssets,
   writeAssets,
@@ -192,6 +214,7 @@ module.exports = {
   upsertAnchor,
   appendMatches,
   listMatchesByTournament,
+  listAllMatchesSorted,
   findMatch,
   findTournament
 };

@@ -1,10 +1,12 @@
 /**
- * @fileoverview 赛事影响力战报海报：离屏 Canvas 2D 绘制并保存相册。
+ * @fileoverview 赛事影响力战报海报（赛事列表来自服务端）。
  */
 
 const { ensureRadarLabAccess } = require('../../../utils/radar-access.js');
-const { fetchTournamentInfluence } = require('../../../services/radar-api.js');
-const { readAssets, findTournament } = require('../../../utils/radar-local-store.js');
+const {
+  fetchTournamentInfluence,
+  fetchTournamentList
+} = require('../../../services/radar-api.js');
 const { drawInfluencePoster } = require('../../../utils/radar-poster.js');
 
 /** 海报画布逻辑尺寸 */
@@ -21,26 +23,27 @@ Page({
     influence: null
   },
 
-  /** @type {WechatMiniprogram.Canvas | null} */
-  _offscreenCanvas: null,
-
   /**
-   * 页面加载。
    * @returns {void}
    */
   onLoad: function () {
     if (!ensureRadarLabAccess({ redirectBack: true })) return;
-    const assets = readAssets();
-    const first = assets.tournaments[0];
-    this.setData({
-      tournaments: assets.tournaments,
-      tournamentId: first ? String(first.id) : '',
-      tournamentName: first ? first.name : ''
-    });
+    const self = this;
+    fetchTournamentList()
+      .then(function (list) {
+        const first = list[0];
+        self.setData({
+          tournaments: list,
+          tournamentId: first ? first.id : '',
+          tournamentName: first ? first.name : ''
+        });
+      })
+      .catch(function (err) {
+        wx.showToast({ title: err.message || '加载赛事失败', icon: 'none' });
+      });
   },
 
   /**
-   * 选择赛事。
    * @param {WechatMiniprogram.PickerChange} e
    * @returns {void}
    */
@@ -49,40 +52,29 @@ Page({
     const item = this.data.tournaments[idx];
     if (!item) return;
     this.setData({
-      tournamentId: String(item.id),
+      tournamentId: item.id,
       tournamentName: item.name,
       previewPath: ''
     });
   },
 
   /**
-   * 手动输入赛事 ID。
-   * @param {WechatMiniprogram.Input} e
-   * @returns {void}
-   */
-  onTournamentIdInput: function (e) {
-    this.setData({ tournamentId: e.detail.value.trim(), previewPath: '' });
-  },
-
-  /**
-   * 拉取影响力并生成海报。
    * @returns {void}
    */
   onGeneratePoster: function () {
     const self = this;
     const tournamentId = this.data.tournamentId;
     if (!tournamentId) {
-      wx.showToast({ title: '请选择或输入赛事 ID', icon: 'none' });
+      wx.showToast({ title: '请先创建并选择赛事', icon: 'none' });
       return;
     }
     this.setData({ loading: true });
     fetchTournamentInfluence(tournamentId)
       .then(function (res) {
-        const local = findTournament(tournamentId);
         const posterData = {
           tournamentName:
             (typeof res.tournament_name === 'string' && res.tournament_name) ||
-            (local && local.name) ||
+            self.data.tournamentName ||
             '精彩赛事',
           totalViewersRecap: res.total_viewers_recap || res.totalViewersRecap || '—',
           peakUserCount: res.peak_user_count || res.peakUserCount || '—',
@@ -105,12 +97,10 @@ Page({
   },
 
   /**
-   * 离屏 Canvas 绘制并导出临时文件。
    * @param {Object} posterData
    * @returns {Promise<string>}
    */
   _renderPosterToFile: function (posterData) {
-    const self = this;
     return new Promise(function (resolve, reject) {
       const query = wx.createSelectorQuery();
       query
@@ -145,7 +135,6 @@ Page({
   },
 
   /**
-   * 保存海报到相册。
    * @returns {void}
    */
   onSavePoster: function () {

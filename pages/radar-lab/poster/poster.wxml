@@ -11,13 +11,10 @@
       <view class="rl-field" wx:if="{{tournaments.length}}">
         <text class="rl-label">选择赛事</text>
         <picker mode="selector" range="{{tournaments}}" range-key="name" bindchange="onTournamentPicker">
-          <view class="rl-input">{{tournamentName || '请选择赛事'}}</view>
+          <view class="rl-input rl-picker-display">{{tournamentName || '请选择赛事'}}</view>
         </picker>
       </view>
-      <view class="rl-field">
-        <text class="rl-label">赛事 ID</text>
-        <input class="rl-input" placeholder="101" value="{{tournamentId}}" bindinput="onTournamentIdInput" />
-      </view>
+      <view class="rl-empty" wx:else>暂无赛事，请先在数据维护中创建赛事</view>
       <button class="rl-btn rl-btn-primary" disabled="{{loading}}" bindtap="onGeneratePoster">生成战报海报</button>
     </view>
   </view>

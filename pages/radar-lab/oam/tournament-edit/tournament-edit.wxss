@@ -1,0 +1,6 @@
+@import '../../common/common.wxss';
+
+.rl-picker-display {
+  display: flex;
+  align-items: center;
+}

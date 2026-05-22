@@ -275,3 +275,22 @@
 .rl-modal-actions .rl-btn {
   flex: 1;
 }
+
+.rl-datetime-row {
+  display: flex;
+  flex-direction: row;
+  gap: 16rpx;
+}
+
+.rl-datetime-row picker {
+  flex: 1;
+  min-width: 0;
+}
+
+.rl-picker-display {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

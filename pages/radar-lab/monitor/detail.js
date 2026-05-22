@@ -1,14 +1,14 @@
 /**
- * @fileoverview 雷达监控现场：多路合流热度曲线、挂载口令、关闭监控。
+ * @fileoverview 单场监控详情：曲线、挂载口令、关闭监控（无场次选择）。
  */
 
 const { ensureRadarLabAccess } = require('../../../utils/radar-access.js');
 const {
   addMatchTask,
   stopMatchMonitoring,
-  fetchMatchStreamData
+  fetchMatchStreamData,
+  fetchMatchDetail
 } = require('../../../services/radar-api.js');
-const { findMatch, readAssets } = require('../../../utils/radar-local-store.js');
 const {
   normalizeTimeline,
   drawTimelineChart,
@@ -39,6 +39,7 @@ Page({
   data: {
     matchId: '',
     matchTitle: '',
+    tournamentName: '',
     matchStatus: '',
     statusLabel: '',
     statusBadgeClass: 'rl-badge-muted',
@@ -50,8 +51,8 @@ Page({
     bindRawText: '',
     submitting: false,
     canStop: false,
-    matches: [],
-    canvasReady: false
+    canvasReady: false,
+    loading: true
   },
 
   /** @type {number | null} */
@@ -66,19 +67,24 @@ Page({
   _timelinePoints: [],
 
   /**
-   * 页面加载。
    * @param {Record<string, string>} query
    * @returns {void}
    */
   onLoad: function (query) {
     if (!ensureRadarLabAccess({ redirectBack: true })) return;
     const matchId = query && query.match_id ? String(query.match_id) : '';
-    this._initMatchContext(matchId);
-    this._loadMatchList();
+    if (!matchId) {
+      wx.showToast({ title: '缺少场次信息', icon: 'none' });
+      setTimeout(function () {
+        wx.navigateBack();
+      }, 600);
+      return;
+    }
+    this.setData({ matchId: matchId });
+    this._loadMatchMeta(matchId);
   },
 
   /**
-   * 页面显示：恢复轮询。
    * @returns {void}
    */
   onShow: function () {
@@ -89,7 +95,6 @@ Page({
   },
 
   /**
-   * 页面隐藏：暂停轮询。
    * @returns {void}
    */
   onHide: function () {
@@ -97,7 +102,6 @@ Page({
   },
 
   /**
-   * 页面卸载。
    * @returns {void}
    */
   onUnload: function () {
@@ -105,86 +109,41 @@ Page({
   },
 
   /**
-   * 初始化场次上下文。
-   * @param {string} matchId
-   * @returns {void}
-   */
-  _initMatchContext: function (matchId) {
-    const local = matchId ? findMatch(matchId) : null;
-    const title = local
-      ? local.teamA + ' vs ' + local.teamB
-      : matchId
-        ? '场次 #' + matchId
-        : '请选择或输入场次';
-    this.setData({
-      matchId: matchId,
-      matchTitle: title
-    });
-    if (matchId) {
-      const self = this;
-      setTimeout(function () {
-        self._initCanvas();
-      }, 80);
-    }
-  },
-
-  /**
-   * 加载本地场次供快速选择。
-   * @returns {void}
-   */
-  _loadMatchList: function () {
-    const assets = readAssets();
-    this.setData({ matches: assets.matches.slice(0, 20) });
-  },
-
-  /**
-   * 手动输入场次 ID。
-   * @param {WechatMiniprogram.Input} e
-   * @returns {void}
-   */
-  onMatchIdInput: function (e) {
-    this.setData({ matchId: e.detail.value.trim() });
-  },
-
-  /**
-   * 确认加载场次。
-   * @returns {void}
-   */
-  onLoadMatch: function () {
-    const matchId = this.data.matchId;
-    if (!matchId) {
-      wx.showToast({ title: '请输入场次 ID', icon: 'none' });
-      return;
-    }
-    this._initMatchContext(matchId);
-    this._fetchStreamOnce();
-    this._startPolling();
-  },
-
-  /**
-   * 从列表选择场次。
-   * @param {WechatMiniprogram.BaseEvent} e
-   * @returns {void}
-   */
-  onPickMatch: function (e) {
-    const matchId = e.currentTarget.dataset.id;
-    if (!matchId) return;
-    this._initMatchContext(String(matchId));
-    this.setData({ matchId: String(matchId) });
-    this._fetchStreamOnce();
-    this._startPolling();
-  },
-
-  /**
-   * 页面就绪：初始化 Canvas 2D。
    * @returns {void}
    */
   onReady: function () {
-    this._initCanvas();
+    if (this.data.matchId) {
+      this._initCanvas();
+    }
   },
 
   /**
-   * 初始化 Canvas 2D 上下文。
+   * 拉取场次元信息（队名、赛事名）。
+   * @param {string} matchId
+   * @returns {void}
+   */
+  _loadMatchMeta: function (matchId) {
+    const self = this;
+    fetchMatchDetail(matchId)
+      .then(function (detail) {
+        const title = detail
+          ? detail.teamA + ' vs ' + detail.teamB
+          : '场次 #' + matchId;
+        self.setData({
+          matchTitle: title,
+          tournamentName: detail ? detail.tournamentName : '',
+          loading: false
+        });
+      })
+      .catch(function () {
+        self.setData({
+          matchTitle: '场次 #' + matchId,
+          loading: false
+        });
+      });
+  },
+
+  /**
    * @returns {void}
    */
   _initCanvas: function () {
@@ -213,7 +172,6 @@ Page({
   },
 
   /**
-   * 重绘曲线。
    * @returns {void}
    */
   _redrawChart: function () {
@@ -227,7 +185,6 @@ Page({
   },
 
   /**
-   * 启动轮询。
    * @returns {void}
    */
   _startPolling: function () {
@@ -241,7 +198,6 @@ Page({
   },
 
   /**
-   * 停止轮询。
    * @returns {void}
    */
   _stopPolling: function () {
@@ -253,14 +209,35 @@ Page({
   },
 
   /**
-   * 拉取一次 stream_data。
+   * 下拉刷新曲线与状态。
    * @returns {void}
+   */
+  onPullDownRefresh: function () {
+    const self = this;
+    Promise.all([
+      fetchMatchDetail(this.data.matchId).then(function (detail) {
+        if (detail) {
+          self.setData({
+            matchTitle: detail.teamA + ' vs ' + detail.teamB,
+            tournamentName: detail.tournamentName
+          });
+        }
+      }),
+      this._fetchStreamOnce()
+    ]).finally(function () {
+      wx.stopPullDownRefresh();
+    });
+  },
+
+  /**
+   * 拉取一次 stream_data。
+   * @returns {Promise<void>}
    */
   _fetchStreamOnce: function () {
     const self = this;
     const matchId = this.data.matchId;
-    if (!matchId) return;
-    fetchMatchStreamData(matchId)
+    if (!matchId) return Promise.resolve();
+    return fetchMatchStreamData(matchId)
       .then(function (res) {
         const status =
           typeof res.match_status === 'string' ? res.match_status : '';
@@ -268,39 +245,31 @@ Page({
           /** @type {unknown[]} */ (res.timeline_data || [])
         );
         self._timelinePoints = timeline;
-        const currentRaw = res.current_online_count;
-        const peakRaw = res.peak_user_count;
         const canStop = status === 'monitoring' || status === 'waiting_radar';
         self.setData({
           matchStatus: status,
           statusLabel: STATUS_LABELS[status] || status || '未知',
           statusBadgeClass: STATUS_BADGE[status] || 'rl-badge-muted',
-          currentOnline: formatCompactCount(parseUserCount(currentRaw)),
-          peakOnline: formatCompactCount(parseUserCount(peakRaw)),
+          currentOnline: formatCompactCount(parseUserCount(res.current_online_count)),
+          peakOnline: formatCompactCount(parseUserCount(res.peak_user_count)),
           timelineEmpty: !timeline.length,
           canStop: canStop
         });
         self._redrawChart();
       })
       .catch(function (err) {
-        console.warn('[RadarMonitor] stream_data fail', err);
+        console.warn('[RadarDetail] stream_data fail', err);
       });
   },
 
   /**
-   * 打开绑定雷达弹窗。
    * @returns {void}
    */
   onOpenBindModal: function () {
-    if (!this.data.matchId) {
-      wx.showToast({ title: '请先加载场次', icon: 'none' });
-      return;
-    }
     this.setData({ showBindModal: true, bindRawText: '' });
   },
 
   /**
-   * 关闭绑定弹窗。
    * @returns {void}
    */
   onCloseBindModal: function () {
@@ -308,7 +277,6 @@ Page({
   },
 
   /**
-   * 口令输入。
    * @param {WechatMiniprogram.Input} e
    * @returns {void}
    */
@@ -317,7 +285,6 @@ Page({
   },
 
   /**
-   * 提交挂载雷达任务。
    * @returns {void}
    */
   onSubmitBind: function () {
@@ -356,13 +323,11 @@ Page({
   },
 
   /**
-   * 关闭监控：二次确认后调用 stop_monitoring。
    * @returns {void}
    */
   onStopMonitoring: function () {
     const self = this;
     const matchId = this.data.matchId;
-    if (!matchId) return;
     wx.showModal({
       title: '关闭监控',
       content: '将结束该场次全部直播雷达任务，雷达端会在下次上报时自动退出。确定继续？',
@@ -376,7 +341,6 @@ Page({
   },
 
   /**
-   * 执行 stop_monitoring 请求。
    * @param {string} matchId
    * @returns {void}
    */
@@ -384,18 +348,8 @@ Page({
     const self = this;
     this.setData({ submitting: true });
     stopMatchMonitoring(matchId)
-      .then(function (res) {
-        const released = Array.isArray(res.workers_released) ? res.workers_released.length : 0;
-        const removed = res.queue_tasks_removed || 0;
-        wx.showToast({
-          title: '已关闭 · 释放' + released + '路',
-          icon: 'none',
-          duration: 2500
-        });
-        console.log('[RadarMonitor] stop_monitoring ok', {
-          removed: removed,
-          released: released
-        });
+      .then(function () {
+        wx.showToast({ title: '监控已关闭', icon: 'success' });
         self._fetchStreamOnce();
       })
       .catch(function (err) {
@@ -412,7 +366,6 @@ Page({
   },
 
   /**
-   * 阻止弹窗冒泡。
    * @returns {void}
    */
   stopModalBubble: function () {}
