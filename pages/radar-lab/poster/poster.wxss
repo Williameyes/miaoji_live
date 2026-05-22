@@ -1,0 +1,15 @@
+@import '../common/common.wxss';
+
+.poster-preview {
+  width: 100%;
+  border-radius: 16rpx;
+  display: block;
+}
+
+.poster-canvas-offscreen {
+  position: fixed;
+  left: -9999px;
+  top: 0;
+  width: 750px;
+  height: 1200px;
+}

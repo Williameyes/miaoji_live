@@ -1,0 +1,38 @@
+<!-- 直播雷达实验室入口 -->
+<view class="rl-root">
+
+  <view class="rl-header">
+    <view class="rl-kicker">实验功能 · 内测</view>
+    <view class="rl-title">直播雷达控制台</view>
+    <view class="rl-sub">赛事资产维护、多路直播监控合流、完赛影响力战报宣发</view>
+  </view>
+
+  <view class="rl-card">
+    <view class="rl-list-item" bindtap="onGoOam" hover-class="rl-list-item-hover">
+      <view class="rl-list-main">
+        <view class="rl-list-title">📋 数据维护</view>
+        <view class="rl-list-desc">赛事 / 场次 / 主播录入与 Excel 批量排程</view>
+      </view>
+      <text class="rl-list-arrow">›</text>
+    </view>
+    <view class="rl-list-item" bindtap="onGoMonitor" hover-class="rl-list-item-hover">
+      <view class="rl-list-main">
+        <view class="rl-list-title">📡 监控现场</view>
+        <view class="rl-list-desc">挂载雷达口令、实时热度曲线、关闭监控</view>
+      </view>
+      <text class="rl-list-arrow">›</text>
+    </view>
+    <view class="rl-list-item" bindtap="onGoPoster" hover-class="rl-list-item-hover">
+      <view class="rl-list-main">
+        <view class="rl-list-title">🎨 战报宣发</view>
+        <view class="rl-list-desc">整届赛事影响力海报生成与保存相册</view>
+      </view>
+      <text class="rl-list-arrow">›</text>
+    </view>
+  </view>
+
+  <view class="rl-notice">
+    <text class="rl-notice-text">本功能仅对白名单运营开放；关闭监控将同时结束该场次全部雷达任务。</text>
+  </view>
+
+</view>

@@ -1,0 +1,36 @@
+<view class="rl-root">
+
+  <view class="rl-header">
+    <view class="rl-kicker">完赛宣发</view>
+    <view class="rl-title">影响力战报海报</view>
+    <view class="rl-sub">聚合整届赛事场观、峰值与影响力得分，生成卡通风海报</view>
+  </view>
+
+  <view class="rl-card">
+    <view class="rl-card-inner">
+      <view class="rl-field" wx:if="{{tournaments.length}}">
+        <text class="rl-label">选择赛事</text>
+        <picker mode="selector" range="{{tournaments}}" range-key="name" bindchange="onTournamentPicker">
+          <view class="rl-input">{{tournamentName || '请选择赛事'}}</view>
+        </picker>
+      </view>
+      <view class="rl-field">
+        <text class="rl-label">赛事 ID</text>
+        <input class="rl-input" placeholder="101" value="{{tournamentId}}" bindinput="onTournamentIdInput" />
+      </view>
+      <button class="rl-btn rl-btn-primary" disabled="{{loading}}" bindtap="onGeneratePoster">生成战报海报</button>
+    </view>
+  </view>
+
+  <view class="rl-card" wx:if="{{previewPath}}">
+    <view class="rl-card-inner">
+      <view class="rl-section-title">预览</view>
+      <image class="poster-preview" src="{{previewPath}}" mode="widthFix" show-menu-by-longpress="{{true}}" />
+      <button class="rl-btn rl-btn-secondary" style="margin-top:24rpx;" bindtap="onSavePoster">保存到相册</button>
+    </view>
+  </view>
+
+  <!-- 离屏 Canvas（不可见） -->
+  <canvas type="2d" id="posterCanvas" class="poster-canvas-offscreen"></canvas>
+
+</view>

@@ -62,6 +62,11 @@
         <text class="list-arrow">›</text>
       </view>
       <view class="list-divider"></view>
+      <view class="list-item" hover-class="list-item-hover" bindtap="onRadarLabTap">
+        <text class="list-label">直播雷达 <text class="list-label-badge">实验</text></text>
+        <text class="list-arrow">›</text>
+      </view>
+      <view class="list-divider"></view>
     </block>
     <view class="list-item" hover-class="list-item-hover" bindtap="onHelpTap">
       <text class="list-label">使用帮助</text>

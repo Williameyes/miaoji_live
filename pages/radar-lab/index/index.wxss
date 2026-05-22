@@ -1,0 +1,3 @@
+@import '../common/common.wxss';
+
+/* 入口页复用公共卡片列表，无额外样式 */

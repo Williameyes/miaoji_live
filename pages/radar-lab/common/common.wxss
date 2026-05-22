@@ -1,0 +1,277 @@
+/* radar-lab 公共样式 — 对齐 sync-lab / mine 浅色卡片 */
+
+.rl-root {
+  min-height: 100vh;
+  background: #f8fafc;
+  padding: 48rpx 40rpx calc(80rpx + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+}
+
+.rl-header {
+  margin-bottom: 40rpx;
+}
+
+.rl-kicker {
+  font-size: 20rpx;
+  letter-spacing: 0.14em;
+  color: #f59e0b;
+  font-weight: 600;
+  margin-bottom: 12rpx;
+}
+
+.rl-title {
+  font-size: 44rpx;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.5rpx;
+  margin-bottom: 16rpx;
+}
+
+.rl-sub {
+  font-size: 26rpx;
+  color: #64748b;
+  line-height: 1.6;
+}
+
+.rl-card {
+  background: #ffffff;
+  border-radius: 24rpx;
+  overflow: hidden;
+  box-shadow: 0 4rpx 20rpx rgba(0, 0, 0, 0.05);
+  margin-bottom: 28rpx;
+}
+
+.rl-card-inner {
+  padding: 32rpx 36rpx;
+}
+
+.rl-section-title {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #1e293b;
+  margin-bottom: 20rpx;
+}
+
+.rl-field {
+  margin-bottom: 24rpx;
+}
+
+.rl-label {
+  display: block;
+  font-size: 24rpx;
+  color: #64748b;
+  margin-bottom: 10rpx;
+}
+
+.rl-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 80rpx;
+  padding: 0 24rpx;
+  border-radius: 16rpx;
+  background: #f1f5f9;
+  font-size: 28rpx;
+  color: #0f172a;
+}
+
+.rl-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 180rpx;
+  padding: 20rpx 24rpx;
+  border-radius: 16rpx;
+  background: #f1f5f9;
+  font-size: 26rpx;
+  color: #0f172a;
+  line-height: 1.5;
+}
+
+.rl-btn {
+  height: 88rpx;
+  line-height: 88rpx;
+  border-radius: 20rpx;
+  font-size: 30rpx;
+  font-weight: 700;
+  border: none;
+  margin: 0;
+  padding: 0;
+}
+
+.rl-btn::after {
+  border: none;
+}
+
+.rl-btn-primary {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.rl-btn-danger {
+  background: #ef4444;
+  color: #ffffff;
+}
+
+.rl-btn-secondary {
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.rl-btn[disabled] {
+  opacity: 0.55;
+}
+
+.rl-tabs {
+  display: flex;
+  flex-direction: row;
+  background: #ffffff;
+  border-radius: 20rpx;
+  padding: 8rpx;
+  margin-bottom: 28rpx;
+  box-shadow: 0 4rpx 20rpx rgba(0, 0, 0, 0.04);
+}
+
+.rl-tab {
+  flex: 1;
+  text-align: center;
+  padding: 18rpx 0;
+  font-size: 26rpx;
+  color: #64748b;
+  border-radius: 14rpx;
+}
+
+.rl-tab-active {
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
+.rl-list-item {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 28rpx 36rpx;
+  border-bottom: 1rpx solid #f1f5f9;
+}
+
+.rl-list-item:last-child {
+  border-bottom: none;
+}
+
+.rl-list-item-hover {
+  background: #f8fafc;
+}
+
+.rl-list-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.rl-list-title {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: #1e293b;
+  margin-bottom: 6rpx;
+}
+
+.rl-list-desc {
+  font-size: 24rpx;
+  color: #94a3b8;
+}
+
+.rl-list-arrow {
+  font-size: 40rpx;
+  color: #cbd5e1;
+  margin-left: 12rpx;
+}
+
+.rl-badge {
+  display: inline-block;
+  font-size: 20rpx;
+  padding: 4rpx 12rpx;
+  border-radius: 999rpx;
+  margin-left: 8rpx;
+  vertical-align: middle;
+}
+
+.rl-badge-warn {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.rl-badge-ok {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.rl-badge-muted {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.rl-notice {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10rpx;
+  background: #fffbeb;
+  border: 1rpx solid #fde68a;
+  border-radius: 16rpx;
+  padding: 22rpx 28rpx;
+  margin-top: 8rpx;
+}
+
+.rl-notice-text {
+  font-size: 24rpx;
+  color: #92400e;
+  line-height: 1.5;
+  flex: 1;
+}
+
+.rl-empty {
+  text-align: center;
+  padding: 48rpx 24rpx;
+  color: #94a3b8;
+  font-size: 26rpx;
+}
+
+.rl-modal-mask {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(15, 23, 42, 0.45);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40rpx;
+  box-sizing: border-box;
+}
+
+.rl-modal {
+  width: 100%;
+  max-width: 640rpx;
+  background: #ffffff;
+  border-radius: 24rpx;
+  padding: 36rpx;
+  box-sizing: border-box;
+}
+
+.rl-modal-title {
+  font-size: 32rpx;
+  font-weight: 800;
+  color: #0f172a;
+  margin-bottom: 24rpx;
+}
+
+.rl-modal-actions {
+  display: flex;
+  flex-direction: row;
+  gap: 16rpx;
+  margin-top: 28rpx;
+}
+
+.rl-modal-actions .rl-btn {
+  flex: 1;
+}

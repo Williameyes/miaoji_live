@@ -6,7 +6,7 @@ const { STORAGE_USER_INFO_KEY } = require('./request.js');
 
 /**
  * 自动同步实验功能白名单 OpenID。
- * 与「我的」页 sync-lab 入口、直播节次长按自动记分能力位对齐。
+ * 与「我的」页 sync-lab / 直播雷达入口、直播节次长按自动记分能力位对齐。
  */
 const SYNC_LAB_OPENID_WHITELIST = [
   'owImn7cUbBnTEk2Mx9IyZDnbVR1I',

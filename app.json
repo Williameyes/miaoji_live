@@ -6,7 +6,11 @@
     "pages/help/help",
     "pages/sync-lab/index/index",
     "pages/sync-lab/collector/collector",
-    "pages/sync-lab/broadcaster/broadcaster"
+    "pages/sync-lab/broadcaster/broadcaster",
+    "pages/radar-lab/index/index",
+    "pages/radar-lab/oam/oam",
+    "pages/radar-lab/monitor/monitor",
+    "pages/radar-lab/poster/poster"
   ],
   "window": {
     "backgroundTextStyle": "light",
@@ -43,6 +47,9 @@
   "permission": {
     "scope.camera": {
       "desc": "用于扫描篮球记分牌，实现自动 OCR 识别比分"
+    },
+    "scope.writePhotosAlbum": {
+      "desc": "用于保存赛事影响力战报海报到相册"
     }
   }
 }
