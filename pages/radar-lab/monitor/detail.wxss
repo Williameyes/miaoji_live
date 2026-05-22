@@ -43,13 +43,17 @@
   display: block;
 }
 
-.mon-canvas-wrap .rl-empty {
+.mon-canvas-wrap .rl-empty,
+.mon-canvas-wrap .mon-chart-empty {
   position: absolute;
   left: 0;
   right: 0;
   top: 50%;
   transform: translateY(-50%);
   pointer-events: none;
+  background: transparent;
+  padding: 0 24rpx;
+  z-index: 1;
 }
 
 .mon-actions {

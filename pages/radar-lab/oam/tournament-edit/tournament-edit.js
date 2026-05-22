@@ -26,9 +26,15 @@ Page({
   onLoad: function (query) {
     if (!ensureRadarLabAccess({ redirectBack: true })) return;
     const editId = query && query.id ? String(query.id) : '';
+    const forceNew = query && query.mode === 'new';
     const self = this;
     fetchTournamentList()
       .then(function (tournaments) {
+        if (forceNew) {
+          self._loadForm(tournaments, '', true);
+          self.setData({ loading: false });
+          return;
+        }
         let isNew = !editId && !tournaments.length;
         let loadId = editId;
         if (!editId && tournaments.length) {

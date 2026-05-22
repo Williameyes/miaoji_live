@@ -180,7 +180,8 @@ Page({
       this._chartCtx,
       this._canvasWidth,
       this._canvasHeight,
-      this._timelinePoints
+      this._timelinePoints,
+      { showEmptyLabel: false }
     );
   },
 

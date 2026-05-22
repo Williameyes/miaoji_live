@@ -1,0 +1,39 @@
+<view class="rl-root tour-root">
+
+  <view class="rl-header">
+    <view class="rl-kicker">OAM · 赛事维护</view>
+    <view class="rl-title">赛事列表</view>
+    <view class="rl-sub">创建或编辑赛事，场次需归属到具体赛事</view>
+  </view>
+
+  <view class="rl-empty" wx:if="{{loading}}">
+    <text>加载中…</text>
+  </view>
+
+  <view class="rl-card" wx:elif="{{tournamentRows.length}}">
+    <block wx:for="{{tournamentRows}}" wx:key="id">
+      <view class="tour-item" hover-class="rl-list-item-hover">
+        <view class="tour-item-main" bindtap="onEditTournament" data-id="{{item.id}}">
+          <view class="rl-list-title">{{item.name}}</view>
+          <view class="rl-list-desc">{{item.dateRange}}</view>
+          <view class="tour-item-meta">
+            <text class="tour-meta-tag">排期 {{item.scheduledCount}} 场</text>
+            <text class="tour-meta-tag">已监控 {{item.monitoredCount}} 场</text>
+            <text class="tour-meta-tag" wx:if="{{item.influenceScore !== '—'}}">影响力 {{item.influenceScore}}</text>
+          </view>
+        </view>
+        <button class="tour-edit-btn" bindtap="onEditTournament" data-id="{{item.id}}">编辑</button>
+      </view>
+    </block>
+  </view>
+
+  <view class="rl-empty" wx:else>
+    <text>暂无赛事</text>
+    <text class="rl-empty-sub">点击下方按钮创建第一届赛事，再前往场次维护排期</text>
+  </view>
+
+  <view class="tour-fab" bindtap="onNewTournament" hover-class="tour-fab-hover">
+    <text class="tour-fab-text">新增赛事</text>
+  </view>
+
+</view>

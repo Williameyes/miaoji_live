@@ -4,7 +4,7 @@
     <view class="rl-kicker">直播雷达</view>
     <view class="rl-title">实时监控</view>
     <view class="rl-sub">
-      正在监控的场次
+      正在采集中的场次
       <text wx:if="{{polling}}" style="margin-left:12rpx;color:#94a3b8;">· 每20秒刷新</text>
     </view>
   </view>
@@ -26,8 +26,8 @@
   </view>
 
   <view class="rl-empty" wx:elif="{{!loading}}">
-    <text>暂无进行中的监控</text>
-    <text class="rl-empty-sub">请在场次列表中进入某场并绑定直播雷达</text>
+    <text>暂无采集中的场次</text>
+    <text class="rl-empty-sub">请在场次维护中绑定直播雷达，采集启动后将自动出现在此列表</text>
   </view>
 
   <view class="rl-empty" wx:else>

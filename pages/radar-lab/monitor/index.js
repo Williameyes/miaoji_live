@@ -18,8 +18,8 @@ const STATUS_LABELS = {
   interrupted: '已中断'
 };
 
-/** 进行中的监控状态 */
-const ACTIVE_STATUS = 'monitoring,waiting_radar';
+/** 仅展示正在采集（monitoring）的场次 */
+const ACTIVE_STATUS = 'monitoring';
 
 Page({
   data: {

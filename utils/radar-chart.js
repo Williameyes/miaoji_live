@@ -61,12 +61,14 @@ function normalizeTimeline(list) {
  * @param {Object} [opts]
  * @param {string} [opts.lineColor]
  * @param {string} [opts.fillColor]
+ * @param {boolean} [opts.showEmptyLabel] - 无数据时是否在 Canvas 内绘制提示（默认 true）
  * @returns {void}
  */
 function drawTimelineChart(ctx, width, height, points, opts) {
   const options = opts || {};
   const lineColor = options.lineColor || '#2563eb';
   const fillColor = options.fillColor || 'rgba(37, 99, 235, 0.12)';
+  const showEmptyLabel = options.showEmptyLabel !== false;
   const padL = 44;
   const padR = 16;
   const padT = 20;
@@ -79,10 +81,12 @@ function drawTimelineChart(ctx, width, height, points, opts) {
   ctx.fillRect(0, 0, width, height);
 
   if (!points.length) {
-    ctx.fillStyle = '#94a3b8';
-    ctx.font = '13px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('暂无监控数据', width / 2, height / 2);
+    if (showEmptyLabel) {
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '13px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('暂无监控数据', width / 2, height / 2);
+    }
     return;
   }
 

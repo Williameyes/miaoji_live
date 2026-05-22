@@ -104,11 +104,10 @@ Page({
   onPlusTap: function () {
     const self = this;
     wx.showActionSheet({
-      itemList: ['新增场次', 'Excel 批量导入', '管理赛事'],
+      itemList: ['新增场次', 'Excel 批量导入'],
       success: function (res) {
         if (res.tapIndex === 0) self.onNewMatch();
         else if (res.tapIndex === 1) self.onBatchImport();
-        else if (res.tapIndex === 2) self.onGoTournament();
       }
     });
   },
@@ -146,7 +145,9 @@ Page({
         confirmText: '去创建',
         success: function (res) {
           if (res.confirm) {
-            wx.navigateTo({ url: '/pages/radar-lab/oam/tournament-edit/tournament-edit' });
+            wx.navigateTo({
+              url: '/pages/radar-lab/oam/tournament-list/tournament-list'
+            });
           }
         }
       });
@@ -185,14 +186,6 @@ Page({
     wx.navigateTo({
       url: '/pages/radar-lab/monitor/detail?match_id=' + encodeURIComponent(id)
     });
-  },
-
-  /**
-   * @returns {void}
-   */
-  onGoTournament: function () {
-    if (!ensureRadarLabAccess()) return;
-    wx.navigateTo({ url: '/pages/radar-lab/oam/tournament-edit/tournament-edit' });
   },
 
   /**

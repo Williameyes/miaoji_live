@@ -1,7 +1,7 @@
 <view class="rl-root oam-root">
 
   <view class="rl-header">
-    <view class="rl-kicker">OAM · 数据维护</view>
+    <view class="rl-kicker">OAM · 场次维护</view>
     <view class="rl-title">场次列表</view>
     <view class="rl-sub">挂载监控时后端会自动识别并入库主播，无需单独维护</view>
   </view>

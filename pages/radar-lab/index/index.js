@@ -1,5 +1,5 @@
 /**
- * @fileoverview 直播雷达实验室入口：OAM / 监控 / 战报三大模块。
+ * @fileoverview 直播雷达实验室入口：赛事 / 场次维护、监控、战报。
  */
 
 const { ensureRadarLabAccess } = require('../../../utils/radar-access.js');
@@ -16,12 +16,21 @@ Page({
   },
 
   /**
-   * 跳转 OAM 维护页。
+   * 跳转场次维护页。
    * @returns {void}
    */
   onGoOam: function () {
     if (!ensureRadarLabAccess()) return;
     wx.navigateTo({ url: '/pages/radar-lab/oam/oam' });
+  },
+
+  /**
+   * 跳转赛事维护页。
+   * @returns {void}
+   */
+  onGoTournament: function () {
+    if (!ensureRadarLabAccess()) return;
+    wx.navigateTo({ url: '/pages/radar-lab/oam/tournament-list/tournament-list' });
   },
 
   /**

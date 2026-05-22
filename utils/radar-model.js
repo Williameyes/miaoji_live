@@ -21,6 +21,9 @@
  * @property {string} name
  * @property {string} startDate
  * @property {string} endDate
+ * @property {number} [influenceScore]
+ * @property {number} [totalScheduledMatches]
+ * @property {number} [totalMonitoredMatches]
  */
 
 /**
@@ -87,7 +90,12 @@ function normalizeTournament(raw) {
     id: String(id),
     name: String(o.tournament_name || o.tournamentName || o.name || ''),
     startDate: String(o.start_date || o.startDate || ''),
-    endDate: String(o.end_date || o.endDate || '')
+    endDate: String(o.end_date || o.endDate || ''),
+    influenceScore: Number(o.influence_score ?? o.influenceScore ?? 0) || 0,
+    totalScheduledMatches:
+      Number(o.total_scheduled_matches ?? o.totalScheduledMatches ?? 0) || 0,
+    totalMonitoredMatches:
+      Number(o.total_monitored_matches ?? o.totalMonitoredMatches ?? 0) || 0
   };
 }
 

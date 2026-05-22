@@ -30,7 +30,7 @@
       <view class="rl-section-title">全网合流热度</view>
       <view class="mon-canvas-wrap">
         <canvas type="2d" id="heatCanvas" class="mon-canvas"></canvas>
-        <view class="rl-empty" wx:if="{{timelineEmpty && canvasReady}}">等待雷达上报数据…</view>
+        <view class="rl-empty mon-chart-empty" wx:if="{{timelineEmpty && canvasReady}}">等待雷达上报数据…</view>
       </view>
     </view>
   </view>
