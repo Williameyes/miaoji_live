@@ -1203,6 +1203,8 @@ Page({
   _rollingTempMissingStreak: 0,
   /** 连续出现“temp 终态丢失”计数，超过阈值触发硬恢复。 */
   _rollingTempTerminalFailStreak: 0,
+  /** 最近一次 chunk 成功入 ReplayBuffer 的墙钟时间（ms）。 */
+  _lastSuccessfulChunkAt: 0,
   /** 最近一次 startRecord operate fail 的时间戳；与 temp 丢失联合判定 camera 真故障。 */
   _lastSegmentOperateFailAt: 0,
   /** Segment Watchdog 软恢复单飞锁，避免长时间无段时重复 stop/start。 */
@@ -1342,6 +1344,7 @@ Page({
     this._segmentStartRecoveringFromOperateFail = false;
     this._rollingTempMissingStreak = 0;
     this._rollingTempTerminalFailStreak = 0;
+    this._lastSuccessfulChunkAt = 0;
     this._lastSegmentOperateFailAt = 0;
     this._segmentWatchdogRecovering = false;
     this._lastSegmentWatchdogRecoverAt = 0;
@@ -2132,6 +2135,10 @@ Page({
       || ev === 'highlight_finalize_no_segments'
       || ev === 'highlight_abort_no_fresh_rolling'
       || ev === 'highlight_hard_timeout_unlock'
+      || ev === 'replay_buffer_chunk_reject'
+      || ev === 'temp_missing_storm_hard_recover'
+      || ev === 'temp_missing_storm_observed'
+      || ev === 'match_switch_rolling_reset'
     ) {
       this.scheduleRemoteHealthLogUpload(ev);
     }
@@ -2184,6 +2191,9 @@ Page({
       segmentStartFailStormCycles: this.segmentStartFailStormCycles || 0,
       lastSegmentAgeMs:
         this.lastSegmentAt > 0 ? Date.now() - this.lastSegmentAt : -1,
+      lastSuccessfulChunkAgeMs:
+        this._lastSuccessfulChunkAt > 0 ? Date.now() - this._lastSuccessfulChunkAt : -1,
+      rollingTempTerminalFailStreak: this._rollingTempTerminalFailStreak || 0,
       postUserLocalPersistCooldownMs: this._postUserLocalPersistCooldownMs || 0,
       hasPendingHighlight: !!this.pendingHighlight,
       isSavingHighlight: !!this.data.isSavingHighlight,
@@ -5661,9 +5671,13 @@ Page({
       && !this.rollingFsBusy
       && !inStorageRecoveryWindow
       && !this.data.storageSevereLock;
+    const chunkStarved =
+      this.rollingActive
+      && (this._rollingTempTerminalFailStreak || 0) >= 2;
     const captureLikelyBlocked =
       this.highlightMissStreak > 0
       || this.startRecordFailStreak >= 3
+      || chunkStarved
       || (this.pendingHighlight && pendingAgeMs > this.segmentDurationMs * 2.2)
       || idleTooLong;
     if (this.data.isRecovering) {
@@ -6056,6 +6070,8 @@ Page({
     this.segmentPersistFailStreak = 0;
     this.segmentStartFailStormCycles = 0;
     this._rollingTempTerminalFailStreak = 0;
+    this._rollingTempMissingStreak = 0;
+    this._lastSuccessfulChunkAt = 0;
     this._lastSegmentOperateFailAt = 0;
     this.setData({
       isRecovering: true,
@@ -6083,8 +6099,10 @@ Page({
     }, recoverUiFailsafeMs);
     this.startRecoveryProgressAnim();
     this.armNativeEnhanceModeRestoreAfterCameraRebuild('hard_recover');
+    const triggerText = String(source || '');
     const allowCameraRebuild = !!(
-      this._recorderCore && this._recorderCore.recoverFailCount >= 2
+      (this._recorderCore && this._recorderCore.recoverFailCount >= 2)
+      || triggerText.indexOf('temp_missing_storm') >= 0
     );
     this.stopRollingRecording(() => {
       this.rollingSegments = [];
@@ -7005,8 +7023,13 @@ Page({
       ? currentChunks[currentChunks.length - 1]
       : null;
     if (prev && typeof prev.endTime === 'number' && segment.startTime > prev.endTime + 240) {
+      const gapMs = segment.startTime - prev.endTime;
       if (this._recorderCore) {
-        this._recorderCore.noteTimelineGap('segment_recorded', segment.startTime - prev.endTime);
+        this._recorderCore.noteTimelineGap('segment_recorded', gapMs);
+      }
+      /** 长时间无有效段后旧 chunk 与当前墙钟脱节，清空避免高光误匹配 */
+      if (gapMs > 60000) {
+        this._clearStaleReplayBufferForTimelineGap(gapMs);
       }
     }
     const addPromise = this._replayBuffer && typeof this._replayBuffer.addChunk === 'function'
@@ -7014,6 +7037,9 @@ Page({
       : Promise.resolve(Object.assign({}, segment, { ready: true, refCount: 0 }));
     return Promise.resolve(addPromise).then((chunk) => {
       if (!chunk) {
+        this._rollingTempMissingStreak = (this._rollingTempMissingStreak || 0) + 1;
+        this._rollingTempTerminalFailStreak = (this._rollingTempTerminalFailStreak || 0) + 1;
+        this.maybeHardRecoverForTempMissingStorm(this._rollingTempTerminalFailStreak, segNo);
         this.abortHighlightAfterStopIfNeeded(recordSessionId, 'segment_not_ready');
         return;
       }
@@ -7028,6 +7054,7 @@ Page({
       this.segmentBuffer = this.rollingSegments;
       this._rollingTempMissingStreak = 0;
       this._rollingTempTerminalFailStreak = 0;
+      this._lastSuccessfulChunkAt = Date.now();
       this.segmentPersistFailStreak = 0;
       this.appendHealthLog('rolling_segment_indexed_by_time', {
         segNo,
@@ -7099,24 +7126,91 @@ Page({
     });
     const recentOperateFail =
       this._lastSegmentOperateFailAt > 0 && operateFailAgoMs >= 0 && operateFailAgoMs <= 15000;
-    if (
-      recentOperateFail
+    /** 连续 0 字节 / missing temp 本身即 camera 会话退化信号，不必等待 operate fail */
+    const streakAloneTrigger = n >= 3;
+    const shouldHardRecover =
+      (recentOperateFail || streakAloneTrigger)
       && this.data.enhanceMode !== 'vk'
       && now - (this._lastTempMissingStormRecoverAt || 0) >= 18000
       && this._livePageVisible
       && !this.data.isRecovering
-      && !this._recoveryLock
-    ) {
+      && !this._recoveryLock;
+    if (shouldHardRecover) {
       this._lastTempMissingStormRecoverAt = now;
       this.appendHealthLog('temp_missing_storm_hard_recover', {
         streak: n,
         segNo,
-        operateFailAgoMs: operateFailAgoMs
+        operateFailAgoMs: operateFailAgoMs,
+        trigger: streakAloneTrigger ? 'streak_alone' : 'operate_fail_cluster'
       });
-      this.hardRecoverLivePipeline('auto:temp_missing_storm_operate_fail');
-      return;
+      this.hardRecoverLivePipeline(
+        streakAloneTrigger ? 'auto:temp_missing_storm' : 'auto:temp_missing_storm_operate_fail'
+      );
+      this._rollingTempTerminalFailStreak = 0;
+      this._rollingTempMissingStreak = 0;
     }
+  },
+
+  /**
+   * 时间轴出现大缺口时清空 ReplayBuffer，避免旧场次/旧会话 chunk 误导高光匹配。
+   * @param {number} gapMs 与上一有效 chunk 的间隔（毫秒）
+   * @returns {void}
+   */
+  _clearStaleReplayBufferForTimelineGap: function (gapMs) {
+    if (this._replayBuffer && typeof this._replayBuffer.clear === 'function') {
+      this._replayBuffer.clear();
+    }
+    this.rollingSegments = [];
+    this.segmentBuffer = [];
+    this.appendHealthLog('replay_buffer_cleared_timeline_gap', {
+      gapMs: typeof gapMs === 'number' ? gapMs : 0
+    });
+  },
+
+  /**
+   * 切换场次时隔离 rolling 缓冲与会话，避免上一场素材污染新高光时间窗。
+   * @param {string} [source] 触发来源
+   * @returns {void}
+   */
+  _resetRollingPipelineForMatchSwitch: function (source) {
+    const prevSessionId = this.rollingSessionId;
+    this.rollingSessionId += 1;
+    this._rollingTempMissingStreak = 0;
     this._rollingTempTerminalFailStreak = 0;
+    this._lastSuccessfulChunkAt = 0;
+    if (this._replayBuffer && typeof this._replayBuffer.clear === 'function') {
+      this._replayBuffer.clear();
+    }
+    this.rollingSegments = [];
+    this.segmentBuffer = [];
+    if (this.pendingHighlight) {
+      if (this._recorderCore) {
+        this._recorderCore.clearPendingHighlight();
+      } else {
+        this.pendingHighlight = null;
+      }
+      this.endHighlightSaving();
+    }
+    this.appendHealthLog('match_switch_rolling_reset', {
+      source: source || 'switch_match',
+      prevSessionId,
+      rollingSessionId: this.rollingSessionId,
+      rollingActive: !!this.rollingActive,
+      segmentCounter: this.segmentCounter || 0
+    });
+    /**
+     * 若 rolling 仍在跑但缓冲已被清空，软重启分段录制以绑定新 sessionId，
+     * 降低「旧 session 异步落盘 + 新 session 空缓冲」竞态。
+     */
+    if (
+      this.rollingActive
+      && this._livePageVisible
+      && this.data.liveStreamAllowed
+      && !this.data.isRecovering
+      && !this._recoveryLock
+    ) {
+      this.requestSegmentWatchdogRollingRecover('match_switch');
+    }
   },
 
   /**
@@ -9715,6 +9809,7 @@ Page({
     wx.setStorageSync('matchConfig', normalizedConfig);
     this.setData({ matchConfig: normalizedConfig });
     this.updateTeamGroupWidth(true);
+    this._resetRollingPipelineForMatchSwitch('switch_match_from_modal');
     this.closeColorModal();
     this.loadMatchList();
     this.refreshDrawerHighlights(); // 切换后立即刷新高光列表
@@ -9792,6 +9887,7 @@ Page({
     wx.setStorageSync('matchConfig', normalizedConfig);
     this.setData({ matchConfig: normalizedConfig });
     this.updateTeamGroupWidth(true);
+    this._resetRollingPipelineForMatchSwitch('switch_match');
     this.closeAllDrawers();
     this.refreshDrawerHighlights(); // 切换后立即刷新高光列表
     this.vibrate('medium');

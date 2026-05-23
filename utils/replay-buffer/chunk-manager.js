@@ -52,6 +52,8 @@ class ChunkManager {
           startTime,
           endTime
         });
+        /** 拒绝入缓冲时也 prune，避免长时间无有效段时旧 chunk 占满时间轴 */
+        this.prune(endTime);
         return null;
       }
       const chunk = {
