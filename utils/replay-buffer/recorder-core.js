@@ -401,6 +401,10 @@ class RecorderCore {
   }
 
   getSafeRestartDelayMs() {
+    const page = this.page;
+    if (page && typeof page.getSegmentStopToStartDelayMs === 'function') {
+      return page.getSegmentStopToStartDelayMs();
+    }
     const base = isHostIos() ? 150 : 120;
     return Math.max(
       RECORDER_SAFE_RESTART_DELAY_MIN_MS,

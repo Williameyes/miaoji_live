@@ -78,9 +78,43 @@ function checkFileReady(filePath, opts) {
     });
 }
 
+/**
+ * Poll until a recorder temp file becomes readable, or timeout.
+ *
+ * @param {string} filePath
+ * @param {{ minBytes?: number, maxWaitMs?: number, pollMs?: number }} [opts]
+ * @returns {Promise<{ ready: boolean, size: number, reason: string }>}
+ */
+function waitForFileReady(filePath, opts) {
+  const options = opts || {};
+  const maxWaitMs =
+    typeof options.maxWaitMs === 'number' && options.maxWaitMs > 0
+      ? options.maxWaitMs
+      : 0;
+  const pollMs =
+    typeof options.pollMs === 'number' && options.pollMs > 0
+      ? options.pollMs
+      : 80;
+  if (!maxWaitMs) {
+    return checkFileReady(filePath, options);
+  }
+  const startedAt = Date.now();
+  const poll = () => checkFileReady(filePath, options).then((result) => {
+    if (result.ready) return result;
+    if (Date.now() - startedAt >= maxWaitMs) return result;
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        poll().then(resolve);
+      }, pollMs);
+    });
+  });
+  return poll();
+}
+
 module.exports = {
   DEFAULT_MIN_BYTES,
   checkFileReady,
+  waitForFileReady,
   getFileInfo,
   accessFile
 };

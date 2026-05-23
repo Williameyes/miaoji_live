@@ -43,7 +43,18 @@ class ChunkManager {
       });
       return Promise.resolve(null);
     }
-    return fsReady.checkFileReady(path, { minBytes: this.minBytes }).then((readyInfo) => {
+    const waitMs =
+      typeof raw.fileReadyWaitMs === 'number' && raw.fileReadyWaitMs > 0
+        ? raw.fileReadyWaitMs
+        : 0;
+    const readyPromise = waitMs > 0
+      ? fsReady.waitForFileReady(path, {
+        minBytes: this.minBytes,
+        maxWaitMs: waitMs,
+        pollMs: 80
+      })
+      : fsReady.checkFileReady(path, { minBytes: this.minBytes });
+    return readyPromise.then((readyInfo) => {
       if (!readyInfo.ready) {
         this._log('replay_buffer_chunk_reject', {
           reason: readyInfo.reason,
