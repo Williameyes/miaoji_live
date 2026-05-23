@@ -34,6 +34,20 @@ var MOTION_LUMA_PATCH = 8;
 var VK_MOTION_BENCH_MS = 100;
 /** motion EMA 系数：new 权重 0.2，与历史 0.8 融合。 */
 var MOTION_SMOOTH_ALPHA = 0.2;
+
+/**
+ * VK 稳定模式：固定 shader 参数，禁用自适应曲线 / 帧间 motion / 热缩 uniform（仅 VK 帧路径）。
+ * 原生家族 off/lite/standard/strong 不受此开关影响。
+ */
+var VK_STABLE_MODE = true;
+
+/** @type {{ tone: number, amount: number, motion: number }} */
+var VK_STABLE_PROFILE = {
+  tone: 0.88,
+  amount: 0.52,
+  motion: 0.70
+};
+
 // [VK Adaptive Curve]
 var debugConfig = {
   enable: false,
@@ -229,6 +243,7 @@ function createRenderPipeline() {
 
   // [VK Adaptive Curve]
   function _updateVkAdaptiveCurve(totalCost, cycleDelta) {
+    if (VK_STABLE_MODE) return;
     if (mode !== 'vk' || !renderer || typeof renderer.setVkAdaptiveCurveState !== 'function') return;
     var snap = monitor ? monitor.snapshot() : null;
     var fps = snap && snap.avgFps ? snap.avgFps : 30;
@@ -298,6 +313,7 @@ function createRenderPipeline() {
     };
 
     if (frame && frame.vkFrame) {
+      if (VK_STABLE_MODE) return;
       var t = _now();
       var rawVk;
       if (_vkLastFrameWallTime == null) {
@@ -336,6 +352,19 @@ function createRenderPipeline() {
         renderer.setMotionLevel(0);
       }
     } catch (e1) {}
+  }
+
+  /**
+   * VK 稳定模式：一次性写入固定 motion uniform，不做帧间递推。
+   * @returns {void}
+   */
+  function _applyVkStableUniforms() {
+    if (!VK_STABLE_MODE || mode !== 'vk' || !renderer) return;
+    try {
+      if (typeof renderer.setMotionLevel === 'function') {
+        renderer.setMotionLevel(VK_STABLE_PROFILE.motion);
+      }
+    } catch (e) {}
   }
 
   /**
@@ -564,6 +593,9 @@ function createRenderPipeline() {
       if (page && page.setData) {
         page.setData({ enhanceCanvasVisible: !toOff, enhanceMode: mode });
       }
+      if (mode === 'vk' && VK_STABLE_MODE) {
+        _applyVkStableUniforms();
+      }
       /**
        * WXML 用 wx:if 挂载 canvas；档位 off 时若仅 stop 帧源而不销毁管线，节点被卸掉后 GL 上下文失效，
        * 再切 standard/strong 会永久黑屏。由页面下一 tick 走 _teardownEnhanceRender 完整释放。
@@ -635,12 +667,14 @@ function createRenderPipeline() {
       var stalled = monitor.isStalled(2);
       
       if (snapVk && snapVk.samples >= 3 && renderer && typeof renderer.setThermalLevel === 'function') {
-        if (snapVk.avgFps < 25) {
-          renderer.setThermalLevel(2); // 重度发热：大幅砍细节并关闭运动增强
-        } else if (snapVk.avgFps < 28) {
-          renderer.setThermalLevel(1); // 轻度发热：轻微减弱锐化
-        } else {
-          renderer.setThermalLevel(0); // 满血恢复
+        if (!VK_STABLE_MODE) {
+          if (snapVk.avgFps < 25) {
+            renderer.setThermalLevel(2); // 重度发热：大幅砍细节并关闭运动增强
+          } else if (snapVk.avgFps < 28) {
+            renderer.setThermalLevel(1); // 轻度发热：轻微减弱锐化
+          } else {
+            renderer.setThermalLevel(0); // 满血恢复
+          }
         }
       }
 
@@ -813,6 +847,7 @@ function createRenderPipeline() {
 
   // [VK Adaptive Curve]
   function setVkAdaptiveDebugConfig(patch) {
+    if (VK_STABLE_MODE) return;
     if (!patch) return;
     if (Object.prototype.hasOwnProperty.call(patch, 'enable')) debugConfig.enable = !!patch.enable;
     if (Object.prototype.hasOwnProperty.call(patch, 'overrideAmount')) debugConfig.overrideAmount = patch.overrideAmount;
@@ -822,6 +857,7 @@ function createRenderPipeline() {
   }
 
   function sampleVkEnvironmentFrameStats(options) {
+    if (VK_STABLE_MODE) return null;
     if (mode !== 'vk' || !renderer || typeof renderer.sampleVkEnvironmentFrameStats !== 'function') return null;
     return renderer.sampleVkEnvironmentFrameStats(options || null);
   }
@@ -843,6 +879,8 @@ function createRenderPipeline() {
     getVkAdaptiveDebugConfig: getVkAdaptiveDebugConfig,
     setVkAdaptiveDebugConfig: setVkAdaptiveDebugConfig,
     sampleVkEnvironmentFrameStats: sampleVkEnvironmentFrameStats,
+    applyVkStableProfile: _applyVkStableUniforms,
+    isVkStableMode: function() { return VK_STABLE_MODE; },
     snapshot: function() { return monitor ? monitor.snapshot() : null; },
     /**
      * 诊断快照：工具条用；不依赖 perf 窗口，首帧也能读到。
@@ -872,5 +910,7 @@ function createRenderPipeline() {
 
 module.exports = {
   createRenderPipeline: createRenderPipeline,
-  debugConfig: debugConfig
+  debugConfig: debugConfig,
+  VK_STABLE_MODE: VK_STABLE_MODE,
+  VK_STABLE_PROFILE: VK_STABLE_PROFILE
 };

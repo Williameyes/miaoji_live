@@ -127,6 +127,15 @@ const RECORDER_SAFE_RESTART_DELAY_MIN_MS = 120;
  */
 const STORAGE_VK_VIEW_MODE_HINT = 'miaoji_live_vk_view_mode_hint_v1';
 
+/** VK 稳定模式：与 render-pipeline 同源开关，页面侧不再启 preset / 采样 / 动态插值。 */
+const VK_STABLE_MODE = !!renderPipelineMod.VK_STABLE_MODE;
+/** @type {{ tone: number, amount: number, motion: number }} */
+const VK_STABLE_PROFILE = renderPipelineMod.VK_STABLE_PROFILE || {
+  tone: 0.88,
+  amount: 0.52,
+  motion: 0.70
+};
+
 /**
  * 直播机位：广角 / 标准 / 特写；与回放 REPLAY_ZOOM_LEVELS 无耦合。
  * @readonly
@@ -547,8 +556,9 @@ Page({
      */
     enhanceFpsText: '— fps',
     vkDebugPanelVisible: false,
-    vkPresetCurrent: 'OUTDOOR_NORMAL',
-    vkPresetCurrentLabel: '户外标准',
+    vkStableMode: VK_STABLE_MODE,
+    vkPresetCurrent: 'STABLE',
+    vkPresetCurrentLabel: '稳定增强',
     vkPresetOptions: vkPresetManagerMod.VK_PRESET_OPTIONS,
     vkEnvSamplingState: 'IDLE',
     vkEnvSamplingButtonText: '检测画质',
@@ -562,14 +572,14 @@ Page({
     vkEnvRecommendedLabel: '',
     vkEnvRecommendedConfidencePct: 0,
     vkEnvAutoAdjustSummary: '',
-    vkDebugAmount: 0.50,
-    vkDebugAmountPct: 50,
+    vkDebugAmount: VK_STABLE_PROFILE.amount,
+    vkDebugAmountPct: Math.round(VK_STABLE_PROFILE.amount * 100),
     vkDebugAmountOffsetPct: 0,
-    vkDebugTone: 0.88,
-    vkDebugTonePct: 88,
+    vkDebugTone: VK_STABLE_PROFILE.tone,
+    vkDebugTonePct: Math.round(VK_STABLE_PROFILE.tone * 100),
     vkDebugToneOffsetPct: 0,
-    vkDebugMotion: 0.72,
-    vkDebugMotionPct: 72,
+    vkDebugMotion: VK_STABLE_PROFILE.motion,
+    vkDebugMotionPct: Math.round(VK_STABLE_PROFILE.motion * 100),
     vkDebugMotionOffsetPct: 0,
     vkDebugFreezeAuto: true,
     isVkTimeshift: false,
@@ -1227,8 +1237,10 @@ Page({
       beforeMs: this.highlightLeadMs || 8000,
       afterMs: this.highlightTailMs || 0
     });
-    this._initVkPresetSystem();
-    this._initVkEnvironmentSampler();
+    if (!VK_STABLE_MODE) {
+      this._initVkPresetSystem();
+      this._initVkEnvironmentSampler();
+    }
     /** 相机 bindinitdone 完成前禁止 startRecord，否则部分机型预览一直黑屏 */
     this._cameraInitDone = false;
 
@@ -2920,7 +2932,7 @@ Page({
         if (self._renderPipeline !== pipeline) return;
         pipeline.setMode('vk', { reason: 'user', force: true });
         pipeline.start();
-        self._syncVkAdaptiveDebugConfigToPipeline();
+        self._applyVkStableConfigToPipeline();
         try {
           if (typeof pipeline.setVkZoom === 'function') {
             pipeline.setVkZoom(1);
@@ -9005,7 +9017,24 @@ Page({
     this.openDrawerMode1();
   },
 
+  _applyVkStableConfigToPipeline: function () {
+    if (!this._renderPipeline) return;
+    if (VK_STABLE_MODE) {
+      if (typeof this._renderPipeline.applyVkStableProfile === 'function') {
+        try {
+          this._renderPipeline.applyVkStableProfile();
+        } catch (e0) { }
+      }
+      return;
+    }
+    this._syncVkAdaptiveDebugConfigToPipeline();
+  },
+
   _syncVkAdaptiveDebugConfigToPipeline: function () {
+    if (VK_STABLE_MODE) {
+      this._applyVkStableConfigToPipeline();
+      return;
+    }
     var runtimeConfig = this._vkPresetManager && typeof this._vkPresetManager.getSnapshot === 'function'
       ? this._vkPresetManager.getSnapshot().runtimeConfig
       : null;
@@ -9032,6 +9061,16 @@ Page({
   },
 
   _toggleVkDebugPanel: function () {
+    if (VK_STABLE_MODE) {
+      try {
+        wx.showToast({
+          title: '稳定模式参数已锁定',
+          icon: 'none',
+          duration: 1600
+        });
+      } catch (eToast) { }
+      return;
+    }
     var nextVisible = !this.data.vkDebugPanelVisible;
     this.setData({ vkDebugPanelVisible: nextVisible });
     if (nextVisible) {
@@ -9068,6 +9107,7 @@ Page({
   },
 
   _initVkPresetSystem: function () {
+    if (VK_STABLE_MODE) return;
     var self = this;
     if (this._vkPresetManager && typeof this._vkPresetManager.destroy === 'function') {
       this._vkPresetManager.destroy();
@@ -9082,6 +9122,7 @@ Page({
   },
 
   _initVkEnvironmentSampler: function () {
+    if (VK_STABLE_MODE) return;
     var self = this;
     if (this._vkEnvironmentSampler && typeof this._vkEnvironmentSampler.destroy === 'function') {
       this._vkEnvironmentSampler.destroy();
@@ -9135,6 +9176,7 @@ Page({
   },
 
   onVkEnvironmentSampleTap: function () {
+    if (VK_STABLE_MODE) return;
     if (this.data.enhanceMode !== 'vk') return;
     if (!this._vkEnvironmentSampler) this._initVkEnvironmentSampler();
     if (!this._renderPipeline || typeof this._renderPipeline.sampleVkEnvironmentFrameStats !== 'function') {
@@ -9202,7 +9244,7 @@ Page({
   },
 
   _applyVkPresetSnapshot: function (snapshot) {
-    if (!snapshot) return;
+    if (VK_STABLE_MODE || !snapshot) return;
     var finalConfig = snapshot.finalConfig || {};
     var autoAdjustOffset = snapshot.autoAdjustOffset || {};
     var manualOffset = snapshot.manualOffset || {};
@@ -9228,6 +9270,7 @@ Page({
   },
 
   onVkPresetPick: function (e) {
+    if (VK_STABLE_MODE) return;
     var name = e && e.currentTarget && e.currentTarget.dataset
       ? e.currentTarget.dataset.preset
       : '';
@@ -9236,6 +9279,7 @@ Page({
   },
 
   onVkPresetRestore: function () {
+    if (VK_STABLE_MODE) return;
     if (!this._vkPresetManager) return;
     var recommendedPreset = this.data.vkEnvRecommendedApplyPreset || '';
     var recommendedOffset = this._vkEnvAnalysisResult && this._vkEnvAnalysisResult.autoAdjustOffset
@@ -9249,6 +9293,7 @@ Page({
   },
 
   onVkDebugAmountChanging: function (e) {
+    if (VK_STABLE_MODE) return;
     var v = Number(e && e.detail ? e.detail.value : 50);
     if (!isFinite(v)) v = 50;
     var amount = Math.max(45, Math.min(65, v)) / 100;
@@ -9257,6 +9302,7 @@ Page({
   },
 
   onVkDebugToneChanging: function (e) {
+    if (VK_STABLE_MODE) return;
     var v = Number(e && e.detail ? e.detail.value : 80);
     if (!isFinite(v)) v = 80;
     var tone = Math.max(80, Math.min(95, v)) / 100;
@@ -9265,6 +9311,7 @@ Page({
   },
 
   onVkDebugMotionChanging: function (e) {
+    if (VK_STABLE_MODE) return;
     var v = Number(e && e.detail ? e.detail.value : 60);
     if (!isFinite(v)) v = 60;
     var motion = Math.max(60, Math.min(82, v)) / 100;
@@ -9273,6 +9320,7 @@ Page({
   },
 
   onVkDebugFreezeAutoChange: function (e) {
+    if (VK_STABLE_MODE) return;
     var checked = !!(e && e.detail ? e.detail.value : false);
     this.setData({ vkDebugFreezeAuto: checked });
     this._syncVkAdaptiveDebugConfigToPipeline();

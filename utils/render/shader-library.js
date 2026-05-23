@@ -209,7 +209,7 @@ module.exports = {
   VK: {
     fragment: FRAGMENT_VK,
     uniforms: {
-      uAmount: 0.70,
+      uAmount: 0.52,
       uContrast: 0.12,
       uGamma: 0.85,
       uSaturation: 1.25,

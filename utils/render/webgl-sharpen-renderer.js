@@ -17,6 +17,24 @@
 var shaderLib = require('./shader-library.js');
 
 /**
+ * VK 稳定模式：固定 shader 参数，禁用 GPU readback 与运行时自适应（仅 drawVkCameraFrame 路径）。
+ * 原生 onCameraFrame 路径（drawFrame）不受此开关影响。
+ */
+var VK_STABLE_MODE = true;
+
+/**
+ * tone=0.88 / amount=0.52 / motion=0.70 烘焙后的固定 uniform（VK 基准 contrast/gamma/sat 上折合 tone）。
+ * @type {{ amount: number, motion: number, contrast: number, gamma: number, saturation: number }}
+ */
+var VK_STABLE_UNIFORMS = {
+  amount: 0.52,
+  motion: 0.70,
+  contrast: 0.143,
+  gamma: 0.841,
+  saturation: 1.257
+};
+
+/**
  * @typedef {'lite'|'standard'|'strong'|'vk'} ShaderLevel
  */
 
@@ -877,8 +895,10 @@ function createWebglSharpenRenderer() {
       gl.enableVertexAttribArray(yuvLocs.aUv);
       gl.vertexAttribPointer(yuvLocs.aUv, 2, gl.FLOAT, false, 16, 8);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-      sampleVkSceneStats();
-      updateVkSceneAdaptiveProfile();
+      if (!VK_STABLE_MODE) {
+        sampleVkSceneStats();
+        updateVkSceneAdaptiveProfile();
+      }
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, 0, w, h);
       gl.clearColor(0.0, 0.0, 0.0, 1.0);
@@ -890,22 +910,35 @@ function createWebglSharpenRenderer() {
       if (uniformLocs.uTexel) {
         gl.uniform2f(uniformLocs.uTexel, 1 / w, 1 / h);
       }
-      currentThermalScale += (targetThermalScale - currentThermalScale) * 0.05;
-      currentMotionScale += (targetMotionScale - currentMotionScale) * 0.1;
 
       var activeZoomVk = vkZoomVal;
-      var activeAmountVk = sceneAdaptiveProfile.currentAmount;
-      // [VK Adaptive Curve]
-      if (vkAdaptiveCurveState.amount != null) {
-        activeAmountVk = vkAdaptiveCurveState.amount;
+      var activeAmountVk;
+      var activeMotionVk;
+      var activeContrastVk;
+      var activeGammaVk;
+      var activeSaturationVk;
+      if (VK_STABLE_MODE) {
+        activeAmountVk = VK_STABLE_UNIFORMS.amount;
+        activeMotionVk = VK_STABLE_UNIFORMS.motion;
+        activeContrastVk = VK_STABLE_UNIFORMS.contrast;
+        activeGammaVk = VK_STABLE_UNIFORMS.gamma;
+        activeSaturationVk = VK_STABLE_UNIFORMS.saturation;
+      } else {
+        currentThermalScale += (targetThermalScale - currentThermalScale) * 0.05;
+        currentMotionScale += (targetMotionScale - currentMotionScale) * 0.1;
+        activeAmountVk = sceneAdaptiveProfile.currentAmount;
+        // [VK Adaptive Curve]
+        if (vkAdaptiveCurveState.amount != null) {
+          activeAmountVk = vkAdaptiveCurveState.amount;
+        }
+        if (activeAmountVk) activeAmountVk *= currentThermalScale;
+        activeMotionVk = motionUniform * currentMotionScale * vkAdaptiveCurveState.motion;
+        // [VK Adaptive Curve]
+        var toneFactorVk = vkAdaptiveCurveState.tone;
+        activeContrastVk = sceneAdaptiveProfile.currentContrast * (0.75 + toneFactorVk * 0.5);
+        activeGammaVk = 1.0 - (1.0 - sceneAdaptiveProfile.currentGamma) * (0.75 + toneFactorVk * 0.35);
+        activeSaturationVk = sceneAdaptiveProfile.currentSaturation * (0.9 + toneFactorVk * 0.12);
       }
-      if (activeAmountVk) activeAmountVk *= currentThermalScale;
-      var activeMotionVk = motionUniform * currentMotionScale * vkAdaptiveCurveState.motion;
-      // [VK Adaptive Curve]
-      var toneFactorVk = vkAdaptiveCurveState.tone;
-      var activeContrastVk = sceneAdaptiveProfile.currentContrast * (0.75 + toneFactorVk * 0.5);
-      var activeGammaVk = 1.0 - (1.0 - sceneAdaptiveProfile.currentGamma) * (0.75 + toneFactorVk * 0.35);
-      var activeSaturationVk = sceneAdaptiveProfile.currentSaturation * (0.9 + toneFactorVk * 0.12);
       if (activeZoomVk > 1.5) {
         if (activeAmountVk) activeAmountVk *= 0.6;
         activeMotionVk *= 0.5;
@@ -1066,6 +1099,9 @@ function createWebglSharpenRenderer() {
     bindProgramLocations();
     currentUniforms = cfg.uniforms;
     resetSceneAdaptiveProfile();
+    if (level === 'vk') {
+      sceneAdaptiveProfile.enabled = !VK_STABLE_MODE;
+    }
     currentLevel = level;
   }
 
@@ -1150,7 +1186,8 @@ function createWebglSharpenRenderer() {
         targetMotionScale = 1.0;
       }
     },
-    destroy: destroy
+    destroy: destroy,
+    isVkStableMode: function() { return VK_STABLE_MODE; }
   };
 }
 

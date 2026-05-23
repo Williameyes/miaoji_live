@@ -607,7 +607,7 @@
   </view>
 
   <view
-    wx:if="{{vkDebugPanelVisible && enhanceMode === 'vk'}}"
+    wx:if="{{vkDebugPanelVisible && enhanceMode === 'vk' && !vkStableMode}}"
     class="vk-debug-panel"
     catchtap="stopEnhanceToolbarBubble"
   >
