@@ -7612,15 +7612,26 @@ Page({
 
   /**
    * 已裁剪固化的高光条目：回放 seek 须从 0 起，不可沿用母片内偏移。
+   * 若固化时裁剪失败（整段母片拷贝），不可误判为已裁剪。
    * @param {Record<string, unknown>} item
    * @returns {Record<string, unknown>}
    */
   _normalizeMaterializedReplaySeek: function (item) {
     if (!item || item.replayPreTrimmed) return item;
     if (item.status !== 'materialized') return item;
+    if (item.trimVerified === false) return item;
     const target = item.replaySegment
       || (Array.isArray(item.segments) ? item.segments[item.segments.length - 1] : '');
     if (!target || typeof target !== 'string' || target.indexOf('_rolling/') >= 0) return item;
+    let replayFileSizeBytes = 0;
+    try {
+      const st = wx.getFileSystemManager().statSync(target);
+      replayFileSizeBytes = st && typeof st.size === 'number' ? st.size : 0;
+    } catch (eStat) { }
+    /** 8s 高光正常 < ~1.8MB；接近母片体积说明裁剪未生效。 */
+    if (replayFileSizeBytes > 1.8 * 1024 * 1024 && item.trimVerified !== true) {
+      return item;
+    }
     const init = typeof item.replayInitialTimeSec === 'number' ? item.replayInitialTimeSec : 0;
     const stop = typeof item.replayMediaStopAtSec === 'number' ? item.replayMediaStopAtSec : 0;
     if (init <= 0.05) return item;
@@ -8616,7 +8627,58 @@ Page({
                   .then((tailResult) => {
                     applyTailTrimResult(tailResult, 'long_seg_tail', {});
                   })
-                  .catch((tailErr) => runFullCopyFallback(formatWxErr(tailErr) || 'long_seg_tail_fail'));
+                  .catch((tailErr) => {
+                    if (canClickWallMap && probedDurationMs > 500 && trimMod.mapWallWindowToFileMs) {
+                      logMaterializeDiag('trim_retry', {
+                        trimStrategy: 'click_wall_after_long_tail_fail',
+                        priorErr: formatWxErr(tailErr)
+                      });
+                      const mapped = trimMod.mapWallWindowToFileMs(
+                        windowStartInSegMs,
+                        windowEndInSegMs,
+                        fallbackWallDurationMs,
+                        probedDurationMs
+                      );
+                      return trimMod.trimVideoSegment(srcPath, mapped.trimStartMs, mapped.trimEndMs, {
+                        sourceSizeBytes: srcSizeBytes,
+                        maxAttempts: 3
+                      })
+                        .then((trimResult) => {
+                          if (!trimResult || !trimResult.path) {
+                            return runTailTrimFallback('long_seg_wall_empty', 'long_seg_tail');
+                          }
+                          logMaterializeDiag('after_trim', {
+                            probedDurationMs,
+                            durationSource,
+                            mapRatio: mapped.mapRatio,
+                            encodeStartOffsetMs: mapped.encodeStartOffsetMs,
+                            appliedTrimStartMs: mapped.trimStartMs,
+                            appliedTrimEndMs: mapped.trimEndMs,
+                            outputDurationMs: trimResult.outputDurationMs,
+                            outputSizeBytes: trimResult.outputSizeBytes,
+                            srcSizeBytes,
+                            trimStrategy: 'long_seg_then_wall'
+                          });
+                          this.appendHealthLog('highlight_media_container_trim_ok', {
+                            id: String(task.id || ''),
+                            trimStartMs: mapped.trimStartMs,
+                            trimEndMs: mapped.trimEndMs,
+                            durationMs: probedDurationMs,
+                            outputDurationMs: trimResult.outputDurationMs,
+                            outputSizeBytes: trimResult.outputSizeBytes,
+                            srcSizeBytes,
+                            trimStrategy: 'long_seg_then_wall'
+                          });
+                          task.trimVerified = true;
+                          task.trimOutputSizeBytes = trimResult.outputSizeBytes;
+                          task.trimOutputDurationMs = trimResult.outputDurationMs;
+                          task.srcSizeBytes = srcSizeBytes;
+                          doMove(trimResult.path);
+                        })
+                        .catch((wallErr) => runTailTrimFallback(wallErr, 'long_seg_tail'));
+                    }
+                    return runTailTrimFallback(tailErr, 'long_seg_tail');
+                  });
               }
               if (canClickWallMap && probedDurationMs > 500 && trimMod.mapWallWindowToFileMs) {
                 const mapped = trimMod.mapWallWindowToFileMs(
@@ -8815,6 +8877,7 @@ Page({
                 : null;
             list[idx].segments = savedPaths;
             list[idx].replaySegment = replaySegment;
+            list[idx].trimVerified = wasTrimmed;
             if (wasTrimmed && trimDurationSec) {
               list[idx].replayInitialTimeSec = 0;
               list[idx].replayMediaStopAtSec = trimDurationSec;
@@ -8828,6 +8891,7 @@ Page({
                 index: planIdx
               }));
             } else {
+              list[idx].trimVerified = false;
               list[idx].replayPlan = remapReplayPlanPaths(list[idx].replayPlan, savedPaths);
             }
             if (list[idx].replayManifest) {

@@ -2,6 +2,21 @@
  * 利用 wx.createMediaContainer 从长滚动母片中无重编码裁剪高光片段。
  */
 
+/** @type {Promise<void>} MediaContainer 全局串行锁，避免与录制并发触发 601。 */
+let mediaContainerLock = Promise.resolve();
+
+/**
+ * 串行执行 MediaContainer 操作。
+ * @template T
+ * @param {() => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+function withMediaContainerLock(fn) {
+  const run = mediaContainerLock.then(() => fn());
+  mediaContainerLock = run.then(() => undefined, () => undefined);
+  return run;
+}
+
 /**
  * @returns {boolean}
  */
@@ -100,8 +115,8 @@ function probeVideoDurationMs(sourcePath) {
   return probeVideoDurationViaGetVideoInfo(src).then((viaInfo) => {
     if (viaInfo > 500) return { durationMs: viaInfo, source: 'getVideoInfo' };
     if (!isMediaContainerSupported()) return { durationMs: 0, source: 'unsupported' };
-    const container = wx.createMediaContainer();
-    return new Promise((resolve) => {
+    return withMediaContainerLock(() => new Promise((resolve) => {
+      const container = wx.createMediaContainer();
       let finished = false;
       const done = (ms) => {
         if (finished) return;
@@ -135,7 +150,7 @@ function probeVideoDurationMs(sourcePath) {
       } catch (e) {
         done(0);
       }
-    });
+    }));
   });
 }
 
@@ -147,7 +162,9 @@ function isMediaTrack601(err) {
   const text = String(err && (err.errMsg || err.message) || err || '');
   return text.indexOf('601') >= 0
     || text.indexOf('track not found') >= 0
-    || text.indexOf('track not set') >= 0;
+    || text.indexOf('track not set') >= 0
+    || text.indexOf('trackinfo not found') >= 0
+    || text.indexOf('EditorExport') >= 0;
 }
 
 /**
@@ -192,6 +209,7 @@ function validateTrimOutput(outputPath, expectedDurationMs, sourceSizeBytes) {
 
 /**
  * 单次 MediaContainer 裁剪（仅视频轨，iOS 上音频 slice 易触发 601）。
+ * 官方顺序：同一容器 extract → addTrack → slice → export。
  * @param {string} sourcePath
  * @param {number} startMs
  * @param {number} endMs
@@ -207,12 +225,11 @@ function trimVideoSegmentOnce(sourcePath, startMs, endMs) {
   if (!isMediaContainerSupported()) {
     return Promise.reject(new Error('MediaContainer unsupported'));
   }
-  const extractContainer = wx.createMediaContainer();
-  const exportContainer = wx.createMediaContainer();
-  return new Promise((resolve, reject) => {
+  return withMediaContainerLock(() => new Promise((resolve, reject) => {
+    const container = wx.createMediaContainer();
     let finished = false;
     /**
-     * @param {Error|unknown} err
+     * @param {Error|unknown} [err]
      * @param {string} [path]
      * @returns {void}
      */
@@ -220,20 +237,15 @@ function trimVideoSegmentOnce(sourcePath, startMs, endMs) {
       if (finished) return;
       finished = true;
       try {
-        if (extractContainer && typeof extractContainer.destroy === 'function') {
-          extractContainer.destroy();
+        if (container && typeof container.destroy === 'function') {
+          container.destroy();
         }
-      } catch (eExtractDestroy) { }
-      try {
-        if (exportContainer && typeof exportContainer.destroy === 'function') {
-          exportContainer.destroy();
-        }
-      } catch (eExportDestroy) { }
+      } catch (eDestroy) { }
       if (err) reject(err);
       else resolve(path || '');
     };
     try {
-      extractContainer.extractDataSource({
+      container.extractDataSource({
         source: src,
         success: (res) => {
           const picked = pickAvTracks(res && res.tracks);
@@ -251,18 +263,22 @@ function trimVideoSegmentOnce(sourcePath, startMs, endMs) {
             done(new Error('trim_range_invalid'));
             return;
           }
-          try {
-            if (typeof picked.video.slice !== 'function') {
-              done(new Error('trim video slice unsupported'));
-              return;
-            }
-            picked.video.slice(safeStart, safeEnd);
-            exportContainer.addTrack(picked.video);
-          } catch (eSlice) {
-            done(eSlice);
+          if (typeof picked.video.slice !== 'function') {
+            done(new Error('trim video slice unsupported'));
             return;
           }
-          exportContainer.export({
+          if (typeof container.addTrack !== 'function') {
+            done(new Error('trim addTrack unsupported'));
+            return;
+          }
+          try {
+            container.addTrack(picked.video);
+            picked.video.slice(safeStart, safeEnd);
+          } catch (eTrack) {
+            done(eTrack);
+            return;
+          }
+          container.export({
             success: (exportRes) => {
               const out = exportRes && exportRes.tempFilePath ? exportRes.tempFilePath : '';
               if (!out) {
@@ -283,7 +299,7 @@ function trimVideoSegmentOnce(sourcePath, startMs, endMs) {
     } catch (e) {
       done(e);
     }
-  });
+  }));
 }
 
 /**
@@ -407,10 +423,77 @@ function mapWallWindowToFileMs(windowStartInSegMs, windowEndInSegMs, wallDuratio
   return { trimStartMs, trimEndMs, mapRatio, encodeStartOffsetMs };
 }
 
+/** 8s 高光正常体积上限（字节），超出视为未裁剪母片。 */
+const EXPORT_TRIM_SIZE_THRESHOLD_BYTES = Math.floor(1.8 * 1024 * 1024);
+
+/**
+ * 判断导出相册前是否需补裁剪。
+ * @param {Record<string, unknown>} clip
+ * @param {number} fileSizeBytes
+ * @returns {boolean}
+ */
+function clipNeedsExportTrim(clip, fileSizeBytes) {
+  if (!clip || clip.trimVerified === true) return false;
+  if (!(fileSizeBytes > EXPORT_TRIM_SIZE_THRESHOLD_BYTES)) return false;
+  const winStart = typeof clip.windowStartInSegMs === 'number' ? clip.windowStartInSegMs : -1;
+  const winEnd = typeof clip.windowEndInSegMs === 'number' ? clip.windowEndInSegMs : -1;
+  const wallDur = typeof clip.segmentWallDurationMs === 'number' ? clip.segmentWallDurationMs : 0;
+  return winStart >= 0 && winEnd > winStart + 400 && wallDur > 500;
+}
+
+/**
+ * 导出相册前补裁剪：优先墙钟映射，失败则裁尾窗。
+ * @param {string} sourcePath
+ * @param {Record<string, unknown>} clip
+ * @returns {Promise<string>}
+ */
+function trimClipForExport(sourcePath, clip) {
+  const src = typeof sourcePath === 'string' ? sourcePath : '';
+  const meta = clip && typeof clip === 'object' ? clip : {};
+  if (!src || !isMediaContainerSupported()) {
+    return Promise.resolve(src);
+  }
+  const tailLeadMs = typeof meta.replayTailTrim === 'boolean' && !meta.replayTailTrim
+    ? 0
+    : 8000;
+  const leadMs = tailLeadMs > 0
+    ? tailLeadMs
+    : (typeof meta.replayMediaStopAtSec === 'number' && typeof meta.replayInitialTimeSec === 'number'
+      ? Math.max(500, Math.floor((meta.replayMediaStopAtSec - meta.replayInitialTimeSec) * 1000))
+      : 8000);
+  const wallDur = typeof meta.segmentWallDurationMs === 'number' ? meta.segmentWallDurationMs : 0;
+  const winStart = typeof meta.windowStartInSegMs === 'number' ? meta.windowStartInSegMs : -1;
+  const winEnd = typeof meta.windowEndInSegMs === 'number' ? meta.windowEndInSegMs : -1;
+  return getFileSizeBytes(src).then((srcSizeBytes) => {
+    if (!clipNeedsExportTrim(meta, srcSizeBytes)) return src;
+    return probeVideoDurationMs(src).then((probe) => {
+      const probedDurationMs = probe && probe.durationMs ? probe.durationMs : 0;
+      if (winStart >= 0 && winEnd > winStart + 400 && wallDur > 500 && probedDurationMs > 500) {
+        const mapped = mapWallWindowToFileMs(winStart, winEnd, wallDur, probedDurationMs);
+        return trimVideoSegment(src, mapped.trimStartMs, mapped.trimEndMs, {
+          sourceSizeBytes: srcSizeBytes,
+          maxAttempts: 3
+        })
+          .then((result) => (result && result.path ? result.path : src))
+          .catch(() => trimVideoTail(src, leadMs, wallDur || probedDurationMs, {
+            sourceSizeBytes: srcSizeBytes,
+            maxAttempts: 2
+          }).then((tail) => (tail && tail.path ? tail.path : src)).catch(() => src));
+      }
+      return trimVideoTail(src, leadMs, wallDur || probedDurationMs, {
+        sourceSizeBytes: srcSizeBytes,
+        maxAttempts: 2
+      }).then((tail) => (tail && tail.path ? tail.path : src)).catch(() => src);
+    });
+  });
+}
+
 module.exports = {
   isMediaContainerSupported,
   probeVideoDurationMs,
   mapWallWindowToFileMs,
   trimVideoTail,
-  trimVideoSegment
+  trimVideoSegment,
+  clipNeedsExportTrim,
+  trimClipForExport
 };

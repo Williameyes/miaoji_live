@@ -10,6 +10,7 @@ const {
   writeFileStorageEstimateSnapshot
 } = require('../../utils/file-storage-estimate.js');
 const clipsStorage = require('../../utils/miaoxie-clips-storage.js');
+const mediaContainerTrim = require('../../utils/replay-buffer/media-container-trim.js');
 
 /**
  * 根据编辑草稿中的队服色生成球衣剪影 data URL，供浮层内 `<image>` 绑定。
@@ -881,6 +882,68 @@ Page({
   },
 
   /**
+   * 导出相册前补裁剪，返回可用于 saveVideoToPhotosAlbum 的路径列表。
+   * @param {Record<string, unknown>[]} clips
+   * @returns {Promise<string[]>}
+   */
+  prepareClipExportPaths(clips) {
+    const list = Array.isArray(clips) ? clips.filter(Boolean) : [];
+    if (!list.length) return Promise.resolve([]);
+    if (!mediaContainerTrim || typeof mediaContainerTrim.trimClipForExport !== 'function') {
+      const paths = [];
+      list.forEach((clip) => {
+        const segs = Array.isArray(clip.segments) ? clip.segments : [];
+        segs.forEach((p) => { if (p) paths.push(p); });
+      });
+      return Promise.resolve(paths);
+    }
+    let chain = Promise.resolve(/** @type {string[]} */ ([]));
+    list.forEach((clip) => {
+      chain = chain.then((acc) => {
+        const segs = Array.isArray(clip.segments) ? clip.segments.filter(Boolean) : [];
+        if (!segs.length) return acc;
+        let inner = Promise.resolve(acc);
+        segs.forEach((segPath) => {
+          inner = inner.then((paths) => mediaContainerTrim.trimClipForExport(segPath, clip)
+            .then((outPath) => paths.concat(outPath || segPath)));
+        });
+        return inner;
+      });
+    });
+    return chain;
+  },
+
+  /**
+   * 将高光条目批量存入相册（必要时先补裁剪）。
+   * @param {Record<string, unknown>[]} clips
+   * @param {Function} [onComplete]
+   * @returns {void}
+   */
+  saveClipsToAlbum(clips, onComplete) {
+    const validClips = (Array.isArray(clips) ? clips : []).filter(
+      (c) => c && Array.isArray(c.segments) && c.segments.length
+    );
+    if (!validClips.length) {
+      wx.showToast({ title: '无有效视频文件', icon: 'none' });
+      return;
+    }
+    wx.showLoading({ title: '处理视频中', mask: true });
+    this.prepareClipExportPaths(validClips)
+      .then((paths) => {
+        wx.hideLoading();
+        this.doSaveToAlbum(paths, onComplete);
+      })
+      .catch(() => {
+        wx.hideLoading();
+        const fallback = [];
+        validClips.forEach((clip) => {
+          (clip.segments || []).forEach((p) => { if (p) fallback.push(p); });
+        });
+        this.doSaveToAlbum(fallback, onComplete);
+      });
+  },
+
+  /**
    * 将视频文件列表批量存入相册（含权限处理）
    * @param {string[]} segments
    * @param {Function} [onComplete]
@@ -1089,14 +1152,16 @@ Page({
   playerDownload() {
     const item = this.data.playerList[this.data.playerIndex];
     if (!item) return;
-    this.doSaveToAlbum(item.segments);
+    const clip = this.findClipById(item.id) || item;
+    this.saveClipsToAlbum([clip]);
   },
 
   /** 播放器内下载并删除当前片段 */
   playerDownloadAndDelete() {
     const item = this.data.playerList[this.data.playerIndex];
     if (!item) return;
-    this.doSaveToAlbum(item.segments, () => {
+    const clip = this.findClipById(item.id) || item;
+    this.saveClipsToAlbum([clip], () => {
       this.doDeleteHighlight(item.id, true);
       const newList = this.data.playerList.filter((x) => x.id !== item.id);
       if (newList.length === 0) {
@@ -1192,15 +1257,15 @@ Page({
       wx.showToast({ title: '请先选择片段', icon: 'none' });
       return;
     }
-    const allSegments = [];
+    const clips = [];
     ids.forEach((id) => {
       const item = this.findClipById(id);
       if (item && item.exportedToAlbum) return;
       if (item && Array.isArray(item.segments)) {
-        allSegments.push(...item.segments);
+        clips.push(item);
       }
     });
-    this.doSaveToAlbum(allSegments, () => {
+    this.saveClipsToAlbum(clips, () => {
       this.setData({ batchMode: false, selectedIdsMap: {}, selectedCount: 0 });
     });
   },
@@ -1298,6 +1363,6 @@ Page({
       wx.showToast({ title: '无可下载文件', icon: 'none' });
       return;
     }
-    this.doSaveToAlbum(item.segments);
+    this.saveClipsToAlbum([item]);
   }
 });
