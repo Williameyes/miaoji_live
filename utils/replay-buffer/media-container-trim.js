@@ -1,0 +1,416 @@
+/**
+ * 利用 wx.createMediaContainer 从长滚动母片中无重编码裁剪高光片段。
+ */
+
+/**
+ * @returns {boolean}
+ */
+function isMediaContainerSupported() {
+  return typeof wx !== 'undefined' && typeof wx.createMediaContainer === 'function';
+}
+
+/**
+ * @param {Array<{ kind?: string }>} tracks
+ * @returns {{ video: Object|null, audio: Object|null }}
+ */
+function pickAvTracks(tracks) {
+  const list = Array.isArray(tracks) ? tracks : [];
+  let video = null;
+  let audio = null;
+  list.forEach((t) => {
+    if (!t) return;
+    const kind = String(t.kind || '').toLowerCase();
+    if (kind === 'video' && !video) video = t;
+    if (kind === 'audio' && !audio) audio = t;
+  });
+  if (!video && list.length > 0) {
+    video = list.find((t) => String(t.kind || '').toLowerCase() !== 'audio') || list[0];
+  }
+  if (!audio && list.length > 1) {
+    audio = list.find((t) => String(t.kind || '').toLowerCase() === 'audio') || null;
+  }
+  return { video, audio };
+}
+
+/**
+ * 将 API 返回的 duration 规范为毫秒。
+ * @param {number} raw
+ * @returns {number}
+ */
+function normalizeDurationToMs(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  /** 小于 2h 且带小数或绝对值较小时，多为秒。 */
+  if (n < 7200 && (n < 1200 || !Number.isInteger(n))) {
+    return Math.floor(n * 1000);
+  }
+  return Math.floor(n);
+}
+
+/**
+ * @param {string} filePath
+ * @returns {Promise<number>}
+ */
+function getFileSizeBytes(filePath) {
+  const path = typeof filePath === 'string' ? filePath : '';
+  if (!path || typeof wx === 'undefined' || typeof wx.getFileSystemManager !== 'function') {
+    return Promise.resolve(0);
+  }
+  return new Promise((resolve) => {
+    try {
+      wx.getFileSystemManager().getFileInfo({
+        filePath: path,
+        success: (res) => resolve(res && res.size ? res.size : 0),
+        fail: () => resolve(0)
+      });
+    } catch (e) {
+      resolve(0);
+    }
+  });
+}
+
+/**
+ * @param {string} sourcePath
+ * @returns {Promise<number>}
+ */
+function probeVideoDurationViaGetVideoInfo(sourcePath) {
+  const src = typeof sourcePath === 'string' ? sourcePath : '';
+  if (!src || typeof wx === 'undefined' || typeof wx.getVideoInfo !== 'function') {
+    return Promise.resolve(0);
+  }
+  return new Promise((resolve) => {
+    wx.getVideoInfo({
+      src,
+      success: (res) => {
+        resolve(normalizeDurationToMs(res && res.duration));
+      },
+      fail: () => resolve(0)
+    });
+  });
+}
+
+/**
+ * 探测本地 mp4 实际时长（毫秒）。
+ * @param {string} sourcePath
+ * @returns {Promise<{ durationMs: number, source: string }>}
+ */
+function probeVideoDurationMs(sourcePath) {
+  const src = typeof sourcePath === 'string' ? sourcePath : '';
+  if (!src) return Promise.resolve({ durationMs: 0, source: 'empty' });
+  return probeVideoDurationViaGetVideoInfo(src).then((viaInfo) => {
+    if (viaInfo > 500) return { durationMs: viaInfo, source: 'getVideoInfo' };
+    if (!isMediaContainerSupported()) return { durationMs: 0, source: 'unsupported' };
+    const container = wx.createMediaContainer();
+    return new Promise((resolve) => {
+      let finished = false;
+      const done = (ms) => {
+        if (finished) return;
+        finished = true;
+        try {
+          if (container && typeof container.destroy === 'function') {
+            container.destroy();
+          }
+        } catch (eDestroy) { }
+        const durationMs = Math.max(0, Math.floor(Number(ms) || 0));
+        if (durationMs > 500) {
+          resolve({ durationMs, source: 'mediaContainer' });
+          return;
+        }
+        resolve({ durationMs: 0, source: 'probe_failed' });
+      };
+      try {
+        container.extractDataSource({
+          source: src,
+          success: (res) => {
+            const picked = pickAvTracks(res && res.tracks);
+            const video = picked.video;
+            let durationMs = 0;
+            if (video && typeof video.duration === 'number' && video.duration > 0) {
+              durationMs = normalizeDurationToMs(video.duration);
+            }
+            done(durationMs);
+          },
+          fail: () => done(0)
+        });
+      } catch (e) {
+        done(0);
+      }
+    });
+  });
+}
+
+/**
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+function isMediaTrack601(err) {
+  const text = String(err && (err.errMsg || err.message) || err || '');
+  return text.indexOf('601') >= 0
+    || text.indexOf('track not found') >= 0
+    || text.indexOf('track not set') >= 0;
+}
+
+/**
+ * @param {number} delayMs
+ * @returns {Promise<void>}
+ */
+function delayMs(delayMs) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, delayMs || 0)));
+}
+
+/**
+ * 校验裁剪产物：拒绝「日志成功但实际仍是整段母片」的假裁剪。
+ * @param {string} outputPath
+ * @param {number} expectedDurationMs
+ * @param {number} sourceSizeBytes
+ * @returns {Promise<{ durationMs: number, sizeBytes: number }>}
+ */
+function validateTrimOutput(outputPath, expectedDurationMs, sourceSizeBytes) {
+  const expected = Math.max(500, Math.floor(Number(expectedDurationMs) || 0));
+  const srcSize = Math.max(0, Math.floor(Number(sourceSizeBytes) || 0));
+  return Promise.all([
+    probeVideoDurationMs(outputPath),
+    getFileSizeBytes(outputPath)
+  ]).then(([probe, sizeBytes]) => {
+    const durationMs = probe && probe.durationMs ? probe.durationMs : 0;
+    const maxAllowedDurationMs = expected + 2500;
+    const maxAllowedSizeBytes = srcSize > 0
+      ? Math.max(256 * 1024, Math.floor(srcSize * 0.42))
+      : 0;
+    if (durationMs > maxAllowedDurationMs) {
+      return Promise.reject(new Error(`trim_output_too_long:${durationMs}/${expected}`));
+    }
+    if (srcSize > 0 && sizeBytes > maxAllowedSizeBytes) {
+      return Promise.reject(new Error(`trim_output_too_large:${sizeBytes}/${srcSize}`));
+    }
+    if (durationMs < Math.floor(expected * 0.45)) {
+      return Promise.reject(new Error(`trim_output_too_short:${durationMs}/${expected}`));
+    }
+    return { durationMs, sizeBytes };
+  });
+}
+
+/**
+ * 单次 MediaContainer 裁剪（仅视频轨，iOS 上音频 slice 易触发 601）。
+ * @param {string} sourcePath
+ * @param {number} startMs
+ * @param {number} endMs
+ * @returns {Promise<string>}
+ */
+function trimVideoSegmentOnce(sourcePath, startMs, endMs) {
+  const src = typeof sourcePath === 'string' ? sourcePath : '';
+  const start = Math.max(0, Math.floor(Number(startMs) || 0));
+  const end = Math.max(start + 500, Math.floor(Number(endMs) || 0));
+  if (!src) {
+    return Promise.reject(new Error('trim source missing'));
+  }
+  if (!isMediaContainerSupported()) {
+    return Promise.reject(new Error('MediaContainer unsupported'));
+  }
+  const extractContainer = wx.createMediaContainer();
+  const exportContainer = wx.createMediaContainer();
+  return new Promise((resolve, reject) => {
+    let finished = false;
+    /**
+     * @param {Error|unknown} err
+     * @param {string} [path]
+     * @returns {void}
+     */
+    const done = (err, path) => {
+      if (finished) return;
+      finished = true;
+      try {
+        if (extractContainer && typeof extractContainer.destroy === 'function') {
+          extractContainer.destroy();
+        }
+      } catch (eExtractDestroy) { }
+      try {
+        if (exportContainer && typeof exportContainer.destroy === 'function') {
+          exportContainer.destroy();
+        }
+      } catch (eExportDestroy) { }
+      if (err) reject(err);
+      else resolve(path || '');
+    };
+    try {
+      extractContainer.extractDataSource({
+        source: src,
+        success: (res) => {
+          const picked = pickAvTracks(res && res.tracks);
+          if (!picked.video) {
+            done(new Error('trim video track missing'));
+            return;
+          }
+          let trackDurationMs = 0;
+          if (typeof picked.video.duration === 'number' && picked.video.duration > 0) {
+            trackDurationMs = normalizeDurationToMs(picked.video.duration);
+          }
+          const safeEnd = trackDurationMs > 500 ? Math.min(end, trackDurationMs) : end;
+          const safeStart = Math.max(0, Math.min(start, safeEnd - 500));
+          if (safeEnd <= safeStart + 400) {
+            done(new Error('trim_range_invalid'));
+            return;
+          }
+          try {
+            if (typeof picked.video.slice !== 'function') {
+              done(new Error('trim video slice unsupported'));
+              return;
+            }
+            picked.video.slice(safeStart, safeEnd);
+            exportContainer.addTrack(picked.video);
+          } catch (eSlice) {
+            done(eSlice);
+            return;
+          }
+          exportContainer.export({
+            success: (exportRes) => {
+              const out = exportRes && exportRes.tempFilePath ? exportRes.tempFilePath : '';
+              if (!out) {
+                done(new Error('trim export empty'));
+                return;
+              }
+              done(null, out);
+            },
+            fail: (exportErr) => {
+              done(exportErr || new Error('trim export fail'));
+            }
+          });
+        },
+        fail: (extractErr) => {
+          done(extractErr || new Error('trim extract fail'));
+        }
+      });
+    } catch (e) {
+      done(e);
+    }
+  });
+}
+
+/**
+ * 从本地 mp4 裁剪 [startMs, endMs) 区间（毫秒），带 601 重试与输出校验。
+ * @param {string} sourcePath
+ * @param {number} startMs
+ * @param {number} endMs
+ * @param {{ sourceSizeBytes?: number, maxAttempts?: number }} [options]
+ * @returns {Promise<{ path: string, trimStartMs: number, trimEndMs: number, outputDurationMs: number, outputSizeBytes: number, videoOnly: boolean }>}
+ */
+function trimVideoSegment(sourcePath, startMs, endMs, options) {
+  const opts = options && typeof options === 'object' ? options : {};
+  const start = Math.max(0, Math.floor(Number(startMs) || 0));
+  const end = Math.max(start + 500, Math.floor(Number(endMs) || 0));
+  const expectedDurationMs = end - start;
+  const sourceSizeBytes = Math.max(0, Math.floor(Number(opts.sourceSizeBytes) || 0));
+  const maxAttempts = Math.max(1, Math.floor(Number(opts.maxAttempts) || 3));
+
+  /**
+   * @param {number} attempt
+   * @returns {Promise<{ path: string, trimStartMs: number, trimEndMs: number, outputDurationMs: number, outputSizeBytes: number, videoOnly: boolean }>}
+   */
+  const runAttempt = (attempt) => {
+    const prep = attempt > 0 ? delayMs(280 * attempt) : Promise.resolve();
+    return prep.then(() => trimVideoSegmentOnce(sourcePath, start, end))
+      .then((outPath) => {
+        const sizePromise = sourceSizeBytes > 0
+          ? Promise.resolve(sourceSizeBytes)
+          : getFileSizeBytes(sourcePath);
+        return sizePromise.then((srcSize) => validateTrimOutput(outPath, expectedDurationMs, srcSize)
+          .then((validated) => ({
+            path: outPath,
+            trimStartMs: start,
+            trimEndMs: end,
+            outputDurationMs: validated.durationMs,
+            outputSizeBytes: validated.sizeBytes,
+            videoOnly: true
+          })));
+      })
+      .catch((err) => {
+        if (attempt + 1 < maxAttempts && isMediaTrack601(err)) {
+          return delayMs(520 + 380 * attempt).then(() => runAttempt(attempt + 1));
+        }
+        return Promise.reject(err);
+      });
+  };
+
+  return runAttempt(0);
+}
+
+/**
+ * 裁剪母片末尾 tailMs 毫秒。
+ * @param {string} sourcePath
+ * @param {number} tailMs
+ * @param {number} [fallbackDurationMs] 探测失败时用墙钟 segment 时长估算
+ * @param {{ sourceSizeBytes?: number }} [options]
+ * @returns {Promise<{ path: string, trimStartMs: number, trimEndMs: number, durationMs: number, durationSource: string, outputSizeBytes: number }>}
+ */
+function trimVideoTail(sourcePath, tailMs, fallbackDurationMs, options) {
+  const tail = Math.max(500, Math.floor(Number(tailMs) || 8000));
+  const fallback = Math.max(0, Math.floor(Number(fallbackDurationMs) || 0));
+  const opts = options && typeof options === 'object' ? options : {};
+  return probeVideoDurationMs(sourcePath).then((probe) => {
+    let dur = probe && probe.durationMs > 500 ? probe.durationMs : 0;
+    let durationSource = probe && probe.source ? probe.source : 'unknown';
+    if (!dur && fallback > 500) {
+      dur = fallback;
+      durationSource = 'wall_fallback';
+    }
+    if (!dur) {
+      return Promise.reject(new Error('tail_trim_duration_unknown'));
+    }
+    const start = Math.max(0, dur - tail);
+    return trimVideoSegment(sourcePath, start, dur, {
+      sourceSizeBytes: opts.sourceSizeBytes,
+      maxAttempts: opts.maxAttempts
+    }).then((result) => {
+      if (!result || !result.path) {
+        return Promise.reject(new Error('tail_trim_export_empty'));
+      }
+      return {
+        path: result.path,
+        trimStartMs: result.trimStartMs,
+        trimEndMs: result.trimEndMs,
+        durationMs: dur,
+        durationSource,
+        outputDurationMs: result.outputDurationMs,
+        outputSizeBytes: result.outputSizeBytes
+      };
+    });
+  });
+}
+
+/**
+ * 将 segment 内墙钟点击窗映射到文件时间轴。
+ * iOS MediaRecorder 常见「墙钟比文件长 ~14s」= 起录延迟，非全程线性压缩；
+ * 因此用 encodeStartOffset（wallDur - fileDur）做平移，而非从 0 线性缩放。
+ * @param {number} windowStartInSegMs
+ * @param {number} windowEndInSegMs
+ * @param {number} wallDurationMs
+ * @param {number} fileDurationMs
+ * @returns {{ trimStartMs: number, trimEndMs: number, mapRatio: number, encodeStartOffsetMs: number }}
+ */
+function mapWallWindowToFileMs(windowStartInSegMs, windowEndInSegMs, wallDurationMs, fileDurationMs) {
+  const wallDur = Math.max(1, Math.floor(Number(wallDurationMs) || 0));
+  const fileDur = Math.max(500, Math.floor(Number(fileDurationMs) || 0));
+  const winStart = Math.max(0, Math.floor(Number(windowStartInSegMs) || 0));
+  const winEnd = Math.max(winStart + 500, Math.floor(Number(windowEndInSegMs) || 0));
+  const encodeStartOffsetMs = Math.max(0, wallDur - fileDur);
+  const mapRatio = fileDur / wallDur;
+  let trimStartMs = winStart - encodeStartOffsetMs;
+  let trimEndMs = winEnd - encodeStartOffsetMs;
+  if (trimStartMs < 0) {
+    const encodedWallSpan = Math.max(500, wallDur - encodeStartOffsetMs);
+    const wallWinLen = Math.max(500, winEnd - winStart);
+    trimStartMs = 0;
+    trimEndMs = Math.min(fileDur, Math.max(500, Math.floor(wallWinLen * (fileDur / encodedWallSpan))));
+  }
+  trimEndMs = Math.min(fileDur, Math.max(trimStartMs + 500, trimEndMs));
+  trimStartMs = Math.max(0, Math.min(trimStartMs, trimEndMs - 500));
+  return { trimStartMs, trimEndMs, mapRatio, encodeStartOffsetMs };
+}
+
+module.exports = {
+  isMediaContainerSupported,
+  probeVideoDurationMs,
+  mapWallWindowToFileMs,
+  trimVideoTail,
+  trimVideoSegment
+};

@@ -6,6 +6,8 @@ const { RecorderCore, RECORDER_STATE } = require('./recorder-core.js');
 const fsReady = require('./fs-ready.js');
 const { PingPongRecorder } = require('./ping-pong-recorder.js');
 const { createPreviewRecordPipeline } = require('./preview-record-pipeline.js');
+const mediaContainerTrim = require('./media-container-trim.js');
+const { formatWxErr } = require('./wx-err.js');
 
 module.exports = {
   createReplayBuffer,
@@ -17,5 +19,7 @@ module.exports = {
   RECORDER_STATE,
   fsReady,
   PingPongRecorder,
-  createPreviewRecordPipeline
+  createPreviewRecordPipeline,
+  mediaContainerTrim,
+  formatWxErr
 };

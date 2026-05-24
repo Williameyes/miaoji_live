@@ -832,6 +832,7 @@ Page({
             vipGateRetryVisible: false
           }, () => {
             this._entitlementEverAllowedInSession = true;
+            if (app.globalData) app.globalData.liveEntitlementPassed = true;
             if (typeof onAllowed === 'function') onAllowed();
             const queued = this._entitlementOnAllowedQueue.splice(0, this._entitlementOnAllowedQueue.length);
             queued.forEach((fn) => {
@@ -856,6 +857,7 @@ Page({
             },
             onMounted: () => {
               this._entitlementEverAllowedInSession = true;
+              if (app.globalData) app.globalData.liveEntitlementPassed = true;
               if (typeof onAllowed === 'function') {
                 onAllowed();
               }
@@ -1010,6 +1012,60 @@ Page({
   },
 
   /**
+   * 权益已通过但页面重进时，确保 camera 已挂载（避免跳过 refresh 导致永久黑屏）。
+   * @param {function(): void} [onReady]
+   * @returns {void}
+   */
+  _ensureLiveCameraReady: function (onReady) {
+    const done = typeof onReady === 'function' ? onReady : function () { };
+    if (!this._entitlementEverAllowedInSession && !this.data.liveStreamAllowed) {
+      this.refreshLiveEntitlementAndResume(done);
+      return;
+    }
+    const patch = {
+      liveStreamAllowed: true,
+      liveEntitlementChecking: false,
+      showVipGate: false,
+      vipGateTitle: '',
+      vipGateSubtext: '',
+      vipGateMinor: '',
+      vipGateRetryVisible: false
+    };
+    const cameraOk = this.data.cameraMounted && !!this.data.cameraContext;
+    if (cameraOk) {
+      this.setData(patch, done);
+      return;
+    }
+    if (this._cameraMountInFlight || this._cameraRebuildLock) {
+      this.setData(patch, () => {
+        const waitMount = () => {
+          if (!this._livePageVisible) return;
+          if (this._cameraMountInFlight || this._cameraRebuildLock) {
+            setTimeout(waitMount, 220);
+            return;
+          }
+          if (this.data.cameraMounted && this.data.cameraContext) {
+            done();
+            return;
+          }
+          this._ensureLiveCameraReady(onReady);
+        };
+        waitMount();
+      });
+      return;
+    }
+    this.setData(patch, () => {
+      this.rebuildCameraComponent((generation) => {
+        if (!this._livePageVisible) return;
+        this.remountCameraComponent({
+          generation,
+          onMounted: () => done()
+        });
+      });
+    });
+  },
+
+  /**
    * onShow 中在权益通过后执行的相机与滚动分段恢复逻辑。
    * @returns {void}
    */
@@ -1042,15 +1098,16 @@ Page({
       this.setData(patch);
     }
 
+    /** 权限仅在用户主动导出等操作时申请；onShow 不再 wx.authorize，避免反复弹系统授权框。 */
     wx.getSetting({
       success: (res) => {
-        const hasRecord = !!res.authSetting['scope.record'];
-        const albumScope = res.authSetting['scope.writePhotosAlbum'];
-        if (!hasRecord) {
-          wx.authorize({ scope: 'scope.record', fail: () => { } });
-        }
-        if (albumScope !== true && albumScope === undefined) {
-          wx.authorize({ scope: 'scope.writePhotosAlbum', fail: () => { } });
+        const hasRecord = !!(res.authSetting && res.authSetting['scope.record']);
+        const albumGranted = !!(res.authSetting && res.authSetting['scope.writePhotosAlbum']);
+        if (!hasRecord || !albumGranted) {
+          this.appendHealthLog('live_scope_pending', {
+            hasRecord: hasRecord,
+            albumGranted: albumGranted
+          });
         }
       }
     });
@@ -1118,21 +1175,37 @@ Page({
       this._cameraShowInitWatchTimer = null;
     }
     const selfWatch = this;
-    this._cameraShowInitWatchTimer = setTimeout(() => {
-      selfWatch._cameraShowInitWatchTimer = null;
-      if (!selfWatch._livePageVisible || !selfWatch.data.liveStreamAllowed) return;
-      if (selfWatch.data.showGuide) return;
-      if (!selfWatch.data.cameraMounted || selfWatch.data.isRecovering) return;
-      if (selfWatch._cameraInitDone) return;
-      selfWatch.appendHealthLog('camera_init_watchdog_rebuild', {});
-      selfWatch.armNativeEnhanceModeRestoreAfterCameraRebuild('camera_init_watchdog');
-      selfWatch.rebuildCameraComponent((generation) => {
+    const scheduleCameraInitWatchdog = (delayMs) => {
+      if (selfWatch._cameraShowInitWatchTimer) {
+        clearTimeout(selfWatch._cameraShowInitWatchTimer);
+        selfWatch._cameraShowInitWatchTimer = null;
+      }
+      selfWatch._cameraShowInitWatchTimer = setTimeout(() => {
+        selfWatch._cameraShowInitWatchTimer = null;
         if (!selfWatch._livePageVisible || !selfWatch.data.liveStreamAllowed) return;
-        selfWatch.remountCameraComponent({
-          generation
+        if (selfWatch.data.showGuide) return;
+        if (!selfWatch.data.cameraMounted || selfWatch.data.isRecovering) return;
+        if (selfWatch._cameraInitDone) return;
+        if (selfWatch._cameraMountInFlight || selfWatch._cameraRebuildLock) {
+          scheduleCameraInitWatchdog(2000);
+          return;
+        }
+        const remountAgo = Date.now() - (selfWatch._lastCameraRemountAt || 0);
+        if (remountAgo >= 0 && remountAgo < 6500) {
+          scheduleCameraInitWatchdog(6500 - remountAgo);
+          return;
+        }
+        selfWatch.appendHealthLog('camera_init_watchdog_rebuild', {});
+        selfWatch.armNativeEnhanceModeRestoreAfterCameraRebuild('camera_init_watchdog');
+        selfWatch.rebuildCameraComponent((generation) => {
+          if (!selfWatch._livePageVisible || !selfWatch.data.liveStreamAllowed) return;
+          selfWatch.remountCameraComponent({
+            generation
+          });
         });
-      });
-    }, 2600);
+      }, delayMs);
+    };
+    scheduleCameraInitWatchdog(4500);
   },
 
   // 辅助变量
@@ -1142,13 +1215,17 @@ Page({
    * 滚动录制单段时长（毫秒）。8s 单段体积更小，在约 200MB 本机文件配额下可保留更多段/更多次高光；
    * 高光「体感窗口」仍由 {@link highlightPlaybackWindowMs} 控制（默认 8s）。
    */
-  /** 乒乓录制单段时长（毫秒）。 */
-  pingPongChunkDurationMs: 16000,
-  /** 乒乓错峰（毫秒），须 ≤ highlightLeadMs。 */
+  /** 乒乓录制单段时长（毫秒）：3 分钟母片，降低 start/stop 频率避免 iOS 601。 */
+  pingPongChunkDurationMs: 180000,
+  /** 双轨重叠（毫秒）：B 在 A 结束前 8s 启动；并发编码占比约 4.4%。 */
   pingPongStaggerMs: 8000,
   /** 后台 MediaRecorder 目标帧率。 */
   pingPongRecordFps: 12,
-  segmentDurationMs: 16000,
+  /** 滚动目录最多保留母片数量（约 3×15MB≈45MB）。 */
+  pingPongRollingMaxFiles: 3,
+  /** 高光强制 flush 最小间隔（毫秒），抑制连按引发 iOS 601。 */
+  pingPongHighlightFlushMinIntervalMs: 15000,
+  segmentDurationMs: 180000,
   /** 用户点击保存后，回放时希望覆盖的精彩窗口长度（毫秒），可与物理切片时长解耦 */
   highlightPlaybackWindowMs: 8000,
   /** 时间驱动高光窗口：保存点击前过去 8s，不等待未来片段。 */
@@ -1363,8 +1440,8 @@ Page({
     /** 权益校验串行锁，避免 onLoad/onShow/重试并发导致重复挂载 camera。 */
     this._entitlementChecking = false;
     this._entitlementOnAllowedQueue = [];
-    /** 进入 live 后首次权益通过即置 true；本次会话内 onShow 不再复检，避免直播中断网触发 teardown。 */
-    this._entitlementEverAllowedInSession = false;
+    /** 进入 live 后首次权益通过即置 true；同 App 会话内再次进入 live 跳过 camera 重建。 */
+    this._entitlementEverAllowedInSession = !!(app.globalData && app.globalData.liveEntitlementPassed);
     /** severe 解除后的 rolling 恢复保护窗口（截止时间戳）；窗口内不应将短暂无段误判为 ERR。 */
     this._storageSevereRecoveryUntil = 0;
     /** 最近一次 manual relaunch 原因（用于按故障类型精准解锁）。 */
@@ -2336,19 +2413,49 @@ Page({
    * @returns {void}
    */
   onExportHealthLogs: function () {
-    const logs = (this._healthLogs || []).slice(-100);
+    const compactDetail = (detail) => {
+      if (!detail || typeof detail !== 'object') return detail;
+      const out = {};
+      Object.keys(detail).slice(0, 28).forEach((key) => {
+        let val = detail[key];
+        if (typeof val === 'string' && val.indexOf('wxfile://') === 0) {
+          val = val.slice(-80);
+        }
+        out[key] = val;
+      });
+      return out;
+    };
+    const logs = (this._healthLogs || []).slice(-60).map((it) => ({
+      t: it.t,
+      e: it.e,
+      d: compactDetail(it.d)
+    }));
     const payload = {
       at: Date.now(),
       device: this._healthLogDevice || {},
       logs
     };
-    const text = JSON.stringify(payload);
+    let text = '';
+    try {
+      text = JSON.stringify(payload);
+      if (text.length > 900000) {
+        payload.logs = payload.logs.slice(-25);
+        text = JSON.stringify(payload);
+      }
+    } catch (eJson) {
+      wx.showToast({ title: '日志序列化失败', icon: 'none' });
+      return;
+    }
+    if (!text) {
+      wx.showToast({ title: '暂无健康日志', icon: 'none' });
+      return;
+    }
     wx.setClipboardData({
       data: text,
       success: () => {
         wx.showModal({
           title: '诊断日志已复制',
-          content: '已复制最近健康日志。请把内容发给我用于定位现场问题。',
+          content: `已复制 ${payload.logs.length} 条健康日志。\n请搜索 highlight_trim_diagnostic 并把该高光 id 相关条目发给我。`,
           showCancel: false
         });
       },
@@ -3300,6 +3407,7 @@ Page({
         }
         const nextCameraContext = wx.createCameraContext(this);
         this.setData({ cameraContext: nextCameraContext, isRecording: false }, () => {
+          this._lastCameraRemountAt = Date.now();
           finalize();
           if (typeof options.onMounted === 'function') {
             try {
@@ -4674,7 +4782,7 @@ Page({
     } catch (eSnap) { }
 
     if (this._entitlementEverAllowedInSession) {
-      this._liveCoreOnShowAfterEntitlement();
+      this._ensureLiveCameraReady(() => this._liveCoreOnShowAfterEntitlement());
       return;
     }
     this.refreshLiveEntitlementAndResume(() => {
@@ -4986,7 +5094,8 @@ Page({
     }
     const segs = Array.isArray(item.segments) ? item.segments.filter((p) => p && typeof p === 'string') : [];
     const extra = item.replaySegment && typeof item.replaySegment === 'string' ? [item.replaySegment] : [];
-    const paths = [...new Set([...segs, ...extra])];
+    const exportPaths = this._collectHighlightExportPaths(item);
+    const paths = exportPaths.length ? exportPaths : [...new Set([...segs, ...extra])];
     if (paths.length === 0) {
       done('paths');
       return;
@@ -5728,6 +5837,11 @@ Page({
    * @returns {number}
    */
   getSegmentWatchdogTimeoutMs: function () {
+    if (this._previewRecordPipeline && this._previewRecordPipeline.isActive()) {
+      const chunkMs = this.pingPongChunkDurationMs || 180000;
+      const staggerMs = this.pingPongStaggerMs || 8000;
+      return Math.max(120000, chunkMs + staggerMs + 30000);
+    }
     const segmentMs = Number(
       (this.getEffectiveSegmentDurationMs && this.getEffectiveSegmentDurationMs())
       || this.segmentDurationMs
@@ -5756,7 +5870,19 @@ Page({
     if (this._storageSevereRecoveryUntil && Date.now() < this._storageSevereRecoveryUntil) return;
 
     const now = Date.now();
-    const lastSegmentAt = Number(this.lastSegmentAt || 0);
+    const previewActive = !!(this._previewRecordPipeline && this._previewRecordPipeline.isActive());
+    const lastSegmentAt = Number(
+      previewActive
+        ? Math.max(
+          this._previewRecordLastHeartbeatAt || 0,
+          this._lastSuccessfulChunkAt || 0,
+          this.lastSegmentAt || 0,
+          (typeof this._previewRecordPipeline.getLastHeartbeatAt === 'function'
+            ? this._previewRecordPipeline.getLastHeartbeatAt()
+            : 0)
+        )
+        : (this.lastSegmentAt || 0)
+    );
     if (lastSegmentAt <= 0) return;
     const timeoutMs = this.getSegmentWatchdogTimeoutMs();
     const segmentGapMs = now - lastSegmentAt;
@@ -5774,9 +5900,53 @@ Page({
       gapMs: segmentGapMs,
       recordAgeMs,
       timeoutMs,
+      previewActive,
       diag: this.getLiveRollingDiagSnapshot({})
     });
+    if (previewActive) {
+      this.requestPreviewRecordWatchdogRecover('segment_watchdog');
+      return;
+    }
     this.requestSegmentWatchdogRollingRecover('segment_watchdog');
+  },
+
+  /**
+   * 视录分离模式：仅重启乒乓管线，不 bump rollingSessionId、不重建 camera。
+   * @param {string} source
+   * @returns {boolean}
+   */
+  requestPreviewRecordWatchdogRecover: function (source) {
+    const now = Date.now();
+    if (this._segmentWatchdogRecovering) return false;
+    if (this.data.isRecovering || this._recoveryLock) return false;
+    if (!this._livePageVisible) return false;
+    if (now - (this._lastSegmentWatchdogRecoverAt || 0) < SEGMENT_WATCHDOG_RECOVER_COOLDOWN_MS) {
+      return false;
+    }
+    const pipeline = this._previewRecordPipeline;
+    if (!pipeline) return false;
+
+    this._segmentWatchdogRecovering = true;
+    this._lastSegmentWatchdogRecoverAt = now;
+    const triggerSource = source || 'preview_watchdog';
+    this.appendHealthLog('preview_record_watchdog_recover_start', {
+      triggerSource,
+      diag: this.getLiveRollingDiagSnapshot({})
+    });
+
+    const restart = () => {
+      this._segmentWatchdogRecovering = false;
+      if (!this._livePageVisible || !this.rollingActive) return;
+      if (!this._cameraInitDone || !this.data.cameraContext) return;
+      this.tryStartRollingWhenCameraReady(triggerSource);
+    };
+
+    if (pipeline.isActive()) {
+      pipeline.stop().then(restart).catch(restart);
+    } else {
+      restart();
+    }
+    return true;
   },
 
   /**
@@ -6564,9 +6734,12 @@ Page({
       if (!self.rollingActive) return;
       return self._previewRecordPipeline.start({
         cameraContext: self.data.cameraContext,
-        chunkDurationMs: self.pingPongChunkDurationMs || 16000,
+        chunkDurationMs: self.pingPongChunkDurationMs || 180000,
         staggerMs: self.pingPongStaggerMs || 8000,
-        fps: self.pingPongRecordFps || 12
+        highlightFlushMinIntervalMs: self.pingPongHighlightFlushMinIntervalMs || 15000,
+        recycleIntervalMs: 25 * 60 * 1000,
+        fps: self.pingPongRecordFps || 12,
+        maxFiles: self.pingPongRollingMaxFiles || 3
       });
     }).then(() => {
       self.appendHealthLog('preview_record_started', { source: source || 'startRollingRecording' });
@@ -7266,14 +7439,77 @@ Page({
   },
 
   /**
+   * 高光已固化到 highlights 目录后，释放对应 rolling 母片并 unpin，避免配额被母片占满。
+   * @param {string[]} sourcePaths materialize 前的 rolling 路径
+   * @param {string[]} savedPaths 已写入 highlights 的路径
+   * @returns {void}
+   */
+  _releaseMaterializedRollingSources: function (sourcePaths, savedPaths) {
+    const saved = Array.isArray(savedPaths) ? savedPaths.filter(Boolean) : [];
+    if (!saved.length) return;
+    const sources = Array.isArray(sourcePaths) ? sourcePaths : [];
+    const pipeline = this._previewRecordPipeline;
+    const fs = wx.getFileSystemManager();
+    let removed = 0;
+    /** @type {string[]} */
+    const released = [];
+    sources.forEach((src) => {
+      if (!src || typeof src !== 'string') return;
+      if (src.indexOf('_rolling/') < 0) return;
+      if (saved.indexOf(src) >= 0) return;
+      try {
+        fs.unlinkSync(src);
+        removed += 1;
+        released.push(src);
+      } catch (eUn) { }
+      if (pipeline && typeof pipeline.unpinPaths === 'function') {
+        pipeline.unpinPaths([src]);
+      }
+    });
+    if (pipeline && typeof pipeline.releaseSegmentPaths === 'function') {
+      pipeline.releaseSegmentPaths(released);
+    }
+    if (removed > 0) {
+      this.appendHealthLog('highlight_rolling_source_released', { removed });
+    }
+  },
+
+  /**
+   * 写入高光裁剪诊断日志（长按比赛名导出 health log 后可检索 highlight_trim_diagnostic）。
+   * @param {string} phase 阶段：click|seek|materialize|replay
+   * @param {Record<string, unknown>} detail
+   * @returns {void}
+   */
+  _logHighlightTrimDiagnostic: function (phase, detail) {
+    try {
+      this.appendHealthLog('highlight_trim_diagnostic', Object.assign({
+        phase: phase || 'unknown'
+      }, detail && typeof detail === 'object' ? detail : {}));
+    } catch (eLog) { }
+  },
+
+  /**
    * 是否允许执行高光实体固化（degraded/recovering/故障态时暂停重 IO）。
    * @returns {boolean}
    */
   canMaterializeHighlightNow: function () {
     if (this.data.isRecovering || this._needManualRelaunch) return false;
     if (this._highlightMaterializeUrgentOnHide) return true;
+    if ((this.highlightMaterializeQueue || []).some((t) => t && t.tailTrim)) return true;
     if (this.data.pipelineHealth === 'warn') return false;
     return true;
+  },
+
+  /**
+   * 导出/相册保存时只取一条可播放路径，避免把未裁剪 rolling 母片一并导出。
+   * @param {Record<string, unknown>} item
+   * @returns {string[]}
+   */
+  _collectHighlightExportPaths: function (item) {
+    const source = this._resolveHighlightReplaySource(item);
+    const target = source.target || (source.paths && source.paths.length ? source.paths[0] : '');
+    if (target && this._isHighlightPathPlayable(target)) return [target];
+    return [];
   },
 
   /**
@@ -7375,13 +7611,85 @@ Page({
   },
 
   /**
+   * 已裁剪固化的高光条目：回放 seek 须从 0 起，不可沿用母片内偏移。
+   * @param {Record<string, unknown>} item
+   * @returns {Record<string, unknown>}
+   */
+  _normalizeMaterializedReplaySeek: function (item) {
+    if (!item || item.replayPreTrimmed) return item;
+    if (item.status !== 'materialized') return item;
+    const target = item.replaySegment
+      || (Array.isArray(item.segments) ? item.segments[item.segments.length - 1] : '');
+    if (!target || typeof target !== 'string' || target.indexOf('_rolling/') >= 0) return item;
+    const init = typeof item.replayInitialTimeSec === 'number' ? item.replayInitialTimeSec : 0;
+    const stop = typeof item.replayMediaStopAtSec === 'number' ? item.replayMediaStopAtSec : 0;
+    if (init <= 0.05) return item;
+    const windowSec = stop > init ? stop - init : 0;
+    if (windowSec <= 0 || windowSec > 15) return item;
+    return Object.assign({}, item, {
+      replayPreTrimmed: true,
+      replayInitialTimeSec: 0,
+      replayMediaStopAtSec: windowSec,
+      replayChainPart2StopAtSec: null,
+      replayPlan: [{
+        path: target,
+        initialTimeSec: 0,
+        stopAtSec: windowSec,
+        durationSec: windowSec,
+        index: 0
+      }]
+    });
+  },
+
+  /**
+   * 滚动母片回放：墙钟 seek 需减去起录延迟后再映射到文件轴，避免 seek 越界（currentTime:-1）。
+   * @param {Record<string, unknown>} item
+   * @param {number} wallInitialSec
+   * @param {number} wallStopSec
+   * @returns {{ initialSec: number, stopSec: number, encodeStartOffsetMs: number }}
+   */
+  _resolveRollingReplaySeek: function (item, wallInitialSec, wallStopSec) {
+    const wallDur = typeof item.segmentWallDurationMs === 'number' ? item.segmentWallDurationMs : 0;
+    const winStart = typeof item.windowStartInSegMs === 'number' && item.windowStartInSegMs >= 0
+      ? item.windowStartInSegMs
+      : Math.max(0, Math.floor((Number(wallInitialSec) || 0) * 1000));
+    const winEnd = typeof item.windowEndInSegMs === 'number' && item.windowEndInSegMs > winStart
+      ? item.windowEndInSegMs
+      : Math.max(winStart + 500, Math.floor((Number(wallStopSec) || 0) * 1000));
+    if (wallDur <= 500 || winEnd <= winStart) {
+      return {
+        initialSec: Number(wallInitialSec) || 0,
+        stopSec: Number(wallStopSec) || 0,
+        encodeStartOffsetMs: 0
+      };
+    }
+    const trimMod = replayBufferMod.mediaContainerTrim;
+    if (!trimMod || typeof trimMod.mapWallWindowToFileMs !== 'function') {
+      return {
+        initialSec: Number(wallInitialSec) || 0,
+        stopSec: Number(wallStopSec) || 0,
+        encodeStartOffsetMs: 0
+      };
+    }
+    /** 真机观测 fileDur ≈ wallDur * 0.832（起录延迟 ~16.8%） */
+    const fileEstMs = Math.max(500, Math.floor(wallDur * 0.832));
+    const mapped = trimMod.mapWallWindowToFileMs(winStart, winEnd, wallDur, fileEstMs);
+    return {
+      initialSec: mapped.trimStartMs / 1000,
+      stopSec: mapped.trimEndMs / 1000,
+      encodeStartOffsetMs: mapped.encodeStartOffsetMs
+    };
+  },
+
+  /**
    * 选择高光回放路径。manifest-first，但只有 manifest 内所有文件仍可读时才使用，
    * 避免固化后 temp manifest 失效反而误伤回放。
    * @param {Record<string, unknown>} item
    * @returns {{ paths: string[], plan: Array<Record<string, unknown>>, useChain: boolean, target: string, fromManifest: boolean }}
    */
   _resolveHighlightReplaySource: function (item) {
-    const manifestPlan = this._collectManifestReplayPlan(item);
+    const normalized = this._normalizeMaterializedReplaySeek(item);
+    const manifestPlan = this._collectManifestReplayPlan(normalized);
     const manifestPaths = manifestPlan.map((entry) => entry.path).filter(Boolean);
     if (manifestPaths.length && manifestPaths.every((p) => this._isHighlightPathPlayable(p))) {
       return {
@@ -7392,7 +7700,7 @@ Page({
         fromManifest: true
       };
     }
-    const indexedPlan = this._collectIndexedReplayPlan(item);
+    const indexedPlan = this._collectIndexedReplayPlan(normalized);
     const indexedPaths = indexedPlan.map((entry) => entry.path).filter(Boolean);
     if (indexedPaths.length && indexedPaths.every((p) => this._isHighlightPathPlayable(p))) {
       return {
@@ -7403,35 +7711,38 @@ Page({
         fromManifest: false
       };
     }
-    const useChain = !!(item && item.replayUseChain && item.segments && item.segments.length >= 2);
-    const paths = useChain && Array.isArray(item.segments) ? item.segments.slice() : [];
+    const useChain = !!(normalized && normalized.replayUseChain && normalized.segments && normalized.segments.length >= 2);
+    const paths = useChain && Array.isArray(normalized.segments) ? normalized.segments.slice() : [];
     const target =
-      (item && item.replaySegment)
-      || ((item && Array.isArray(item.segments) && item.segments[item.segments.length - 1])
-        ? item.segments[item.segments.length - 1]
+      (normalized && normalized.replaySegment)
+      || ((normalized && Array.isArray(normalized.segments) && normalized.segments[normalized.segments.length - 1])
+        ? normalized.segments[normalized.segments.length - 1]
         : '');
-    const fallbackPaths = useChain ? paths : (target ? [target] : []);
+    const fallbackPaths = useChain ? paths.slice() : (target ? [target] : []);
     const fallbackPlan = fallbackPaths.map((path, idx) => {
       const isFirst = idx === 0;
       const isLast = idx === fallbackPaths.length - 1;
+      const preTrimmed = !!(normalized && normalized.replayPreTrimmed);
       let stopAtSec = null;
       if (isLast) {
         stopAtSec = idx === 0
-          ? (typeof item.replayMediaStopAtSec === 'number' ? item.replayMediaStopAtSec : null)
-          : (typeof item.replayChainPart2StopAtSec === 'number' ? item.replayChainPart2StopAtSec : null);
+          ? (typeof normalized.replayMediaStopAtSec === 'number' ? normalized.replayMediaStopAtSec : null)
+          : (typeof normalized.replayChainPart2StopAtSec === 'number' ? normalized.replayChainPart2StopAtSec : null);
       }
       return {
         path,
-        initialTimeSec: isFirst && typeof item.replayInitialTimeSec === 'number'
-          ? Math.max(0, item.replayInitialTimeSec)
-          : 0,
+        initialTimeSec: preTrimmed
+          ? 0
+          : (isFirst && typeof normalized.replayInitialTimeSec === 'number'
+            ? Math.max(0, normalized.replayInitialTimeSec)
+            : 0),
         stopAtSec,
         durationSec: null,
         index: idx
       };
     });
     return {
-      paths,
+      paths: fallbackPaths,
       plan: fallbackPlan,
       useChain,
       target,
@@ -7936,6 +8247,25 @@ Page({
         typeof pending.replayChainPart2StopAtSec === 'number'
           ? pending.replayChainPart2StopAtSec
           : null,
+      replayTailTrim: !!pending.replayTailTrim,
+      seekMode: pending.seekMode || '',
+      clickTime: typeof pending.clickTime === 'number' ? pending.clickTime : pending.createdAt,
+      segmentWallDurationMs: typeof pending.segmentWallDurationMs === 'number'
+        ? pending.segmentWallDurationMs
+        : null,
+      windowStartInSegMs: typeof pending.windowStartInSegMs === 'number'
+        ? pending.windowStartInSegMs
+        : (pending.trimDiagnostic && typeof pending.trimDiagnostic.windowStartInSegMs === 'number'
+          ? pending.trimDiagnostic.windowStartInSegMs
+          : null),
+      windowEndInSegMs: typeof pending.windowEndInSegMs === 'number'
+        ? pending.windowEndInSegMs
+        : (pending.trimDiagnostic && typeof pending.trimDiagnostic.windowEndInSegMs === 'number'
+          ? pending.trimDiagnostic.windowEndInSegMs
+          : null),
+      trimDiagnostic: pending.trimDiagnostic && typeof pending.trimDiagnostic === 'object'
+        ? pending.trimDiagnostic
+        : null,
       replayManifest: pending.replayManifest || null,
       replayPlan: Array.isArray(pending.replayPlan) ? pending.replayPlan.slice() : [],
       replayWindowStartTime:
@@ -8028,6 +8358,7 @@ Page({
       }
       const isTempLike =
         src.indexOf('wxfile://tmp_') === 0
+        || src.indexOf('wxfile://tmp') === 0
         || src.indexOf(`${wx.env.USER_DATA_PATH}/tmp_`) === 0
         || src.indexOf('/tmp_') >= 0;
       const useCopyFallback = () => {
@@ -8042,12 +8373,39 @@ Page({
           fail: () => resolve('')
         });
       };
+      const saveAutoThenMove = () => {
+        fs.saveFile({
+          tempFilePath: src,
+          success: (autoRes) => {
+            const autoPath = autoRes && autoRes.savedFilePath ? autoRes.savedFilePath : '';
+            if (!autoPath) {
+              useCopyFallback();
+              return;
+            }
+            if (autoPath === dst) {
+              resolve(dst);
+              return;
+            }
+            if (!fs.copyFile) {
+              resolve(autoPath);
+              return;
+            }
+            fs.copyFile({
+              srcPath: autoPath,
+              destPath: dst,
+              success: () => resolve(dst),
+              fail: () => resolve(autoPath)
+            });
+          },
+          fail: useCopyFallback
+        });
+      };
       if (isTempLike) {
         fs.saveFile({
           tempFilePath: src,
           filePath: dst,
           success: (r) => resolve((r && r.savedFilePath) ? r.savedFilePath : dst),
-          fail: useCopyFallback
+          fail: saveAutoThenMove
         });
         return;
       }
@@ -8055,16 +8413,50 @@ Page({
     };
     const copyOne = (srcPath, idx) => new Promise((resolve) => {
       const filePath = `${dir}/${task.id}_${idx}.mp4`;
+      const trimStartMs = typeof task.trimStartMs === 'number' ? task.trimStartMs : -1;
+      const trimEndMs = typeof task.trimEndMs === 'number' ? task.trimEndMs : -1;
+      const trimMod = replayBufferMod.mediaContainerTrim;
+      const tailTrim = !!task.tailTrim;
+      const tailLeadMs = typeof task.tailLeadMs === 'number' && task.tailLeadMs > 0
+        ? task.tailLeadMs
+        : 8000;
+      const fallbackWallDurationMs = typeof task.fallbackWallDurationMs === 'number'
+        ? task.fallbackWallDurationMs
+        : 0;
+      const windowStartInSegMs = typeof task.windowStartInSegMs === 'number'
+        ? task.windowStartInSegMs
+        : -1;
+      const windowEndInSegMs = typeof task.windowEndInSegMs === 'number'
+        ? task.windowEndInSegMs
+        : -1;
+      const seekMode = typeof task.seekMode === 'string' ? task.seekMode : '';
+      const canClickWallMap = windowStartInSegMs >= 0
+        && windowEndInSegMs > windowStartInSegMs + 400
+        && fallbackWallDurationMs > 500
+        && (seekMode === 'click_wall_mapped' || seekMode === 'click_wall_full' || tailTrim);
+      const canTrim = !tailTrim
+        && !canClickWallMap
+        && trimStartMs >= 0
+        && trimEndMs > trimStartMs + 400
+        && trimMod
+        && typeof trimMod.isMediaContainerSupported === 'function'
+        && trimMod.isMediaContainerSupported();
+      const canTailTrim = tailTrim
+        && !canClickWallMap
+        && trimMod
+        && typeof trimMod.trimVideoTail === 'function'
+        && typeof trimMod.isMediaContainerSupported === 'function'
+        && trimMod.isMediaContainerSupported();
 
-      const doMove = () => {
+      const doMove = (physicalSrc) => {
         const movePhysical = (fromPath) => {
           const cleanupOriginal = () => {
-            if (fromPath !== srcPath) {
+            if (fromPath !== srcPath && fromPath !== physicalSrc) {
               try { fs.unlink({ filePath: srcPath }); } catch (e) { }
             }
           };
           const handleFail = () => {
-            if (fromPath !== srcPath) {
+            if (fromPath !== srcPath && fromPath !== physicalSrc) {
               try { fs.unlink({ filePath: fromPath }); } catch (e) { }
             }
             resolve('');
@@ -8072,6 +8464,11 @@ Page({
 
           persistTempLikeFile(fromPath, filePath, (savedPath) => {
             if (!savedPath) {
+              this.appendHealthLog('highlight_materialize_save_fail', {
+                id: String(task.id || ''),
+                fromPath: typeof fromPath === 'string' ? fromPath.slice(-48) : '',
+                destPath: filePath.slice(-48)
+              });
               handleFail();
               return;
             }
@@ -8080,25 +8477,263 @@ Page({
           });
         };
 
-        if (task.isVkTimeshift) {
-          // 不再尝试 MediaContainer 裁切，直接保存原文件以保障极度稳定性
-          movePhysical(srcPath);
-        } else {
-          movePhysical(srcPath);
-        }
+        movePhysical(physicalSrc);
       };
 
       const checkSrc = () => {
         fs.getFileInfo({
           filePath: srcPath,
           success: (resSrc) => {
-            if (resSrc && resSrc.size > 1024) {
-              doMove();
-            } else {
-              resolve(''); // Size too small, trigger retry
+            if (!resSrc || !(resSrc.size > 1024)) {
+              this.appendHealthLog('highlight_materialize_src_missing', {
+                id: String(task.id || ''),
+                srcPath: srcPath.slice(-56),
+                size: resSrc && resSrc.size ? resSrc.size : 0
+              });
+              resolve('');
+              return;
             }
+            const srcSizeBytes = resSrc.size || 0;
+            const logMaterializeDiag = (subPhase, extra) => {
+              this._logHighlightTrimDiagnostic('materialize', Object.assign({
+                highlightId: String(task.id || ''),
+                subPhase: subPhase || '',
+                tailTrim,
+                seekMode: task.seekMode || '',
+                clickTime: typeof task.clickTime === 'number' ? task.clickTime : 0,
+                wallDurationMs: fallbackWallDurationMs,
+                plannedTrimStartMs: trimStartMs,
+                plannedTrimEndMs: trimEndMs,
+                srcSizeBytes
+              }, extra || {}));
+            };
+            const formatWxErr = replayBufferMod.formatWxErr;
+            const runFullCopyFallback = (reason) => {
+              logMaterializeDiag('trim_fallback_full_copy', { reason: reason || '' });
+              this.appendHealthLog('highlight_materialize_full_copy_fallback', {
+                id: String(task.id || ''),
+                reason: reason || ''
+              });
+              doMove(srcPath);
+            };
+            const applyTailTrimResult = (tailResult, trimStrategy, extraDiag) => {
+              if (!tailResult || !tailResult.path) {
+                runFullCopyFallback('tail_trim_empty');
+                return;
+              }
+              logMaterializeDiag('after_trim', Object.assign({
+                probedDurationMs: tailResult.durationMs,
+                durationSource: tailResult.durationSource || '',
+                appliedTrimStartMs: tailResult.trimStartMs,
+                appliedTrimEndMs: tailResult.trimEndMs,
+                appliedPlayMs: tailResult.trimEndMs - tailResult.trimStartMs,
+                outputDurationMs: tailResult.outputDurationMs || 0,
+                outputSizeBytes: tailResult.outputSizeBytes || 0,
+                srcSizeBytes,
+                trimStrategy: trimStrategy || 'tail_trim'
+              }, extraDiag || {}));
+              this.appendHealthLog('highlight_media_container_trim_ok', {
+                id: String(task.id || ''),
+                trimStartMs: tailResult.trimStartMs,
+                trimEndMs: tailResult.trimEndMs,
+                durationMs: tailResult.durationMs,
+                outputDurationMs: tailResult.outputDurationMs || 0,
+                outputSizeBytes: tailResult.outputSizeBytes || 0,
+                srcSizeBytes,
+                durationSource: tailResult.durationSource || '',
+                tailTrim: true,
+                trimStrategy: trimStrategy || 'tail_trim'
+              });
+              task.trimVerified = true;
+              task.trimOutputSizeBytes = tailResult.outputSizeBytes || 0;
+              task.trimOutputDurationMs = tailResult.outputDurationMs || 0;
+              task.srcSizeBytes = srcSizeBytes;
+              doMove(tailResult.path);
+            };
+            const runAfterProbe = (probe) => {
+              const probedDurationMs = probe && probe.durationMs ? probe.durationMs : 0;
+              const durationSource = probe && probe.source ? probe.source : '';
+              const runTailTrimFallback = (primaryErr, primaryStrategy) => {
+                const errText = formatWxErr(primaryErr);
+                logMaterializeDiag('trim_fail', {
+                  err: errText,
+                  trimStrategy: primaryStrategy
+                });
+                this.appendHealthLog('highlight_media_container_trim_fail', {
+                  id: String(task.id || ''),
+                  tailTrim: true,
+                  trimStrategy: primaryStrategy,
+                  err: errText
+                });
+                if (!trimMod || typeof trimMod.trimVideoTail !== 'function') {
+                  runFullCopyFallback('tail_trim_unsupported');
+                  return undefined;
+                }
+                logMaterializeDiag('trim_retry', {
+                  trimStrategy: 'tail_after_fail',
+                  priorStrategy: primaryStrategy
+                });
+                return new Promise((resolveDelay) => {
+                  setTimeout(resolveDelay, 520);
+                }).then(() => {
+                  return trimMod.trimVideoTail(
+                    srcPath,
+                    tailLeadMs,
+                    fallbackWallDurationMs || probedDurationMs,
+                    { sourceSizeBytes: srcSizeBytes, maxAttempts: 2 }
+                  )
+                    .then((tailResult) => {
+                      applyTailTrimResult(tailResult, 'tail_fallback', { priorStrategy: primaryStrategy });
+                    })
+                    .catch((tailErr) => {
+                      runFullCopyFallback(formatWxErr(tailErr) || 'tail_trim_fail');
+                    });
+                });
+              };
+              const wallVsProbeMs = fallbackWallDurationMs > 0
+                ? probedDurationMs - fallbackWallDurationMs
+                : 0;
+              logMaterializeDiag('before_trim', {
+                probedDurationMs,
+                durationSource,
+                wallVsProbeMs,
+                windowStartInSegMs,
+                windowEndInSegMs,
+                mapRatio: fallbackWallDurationMs > 0 ? probedDurationMs / fallbackWallDurationMs : 0
+              });
+              const preferTailForLongSeg = fallbackWallDurationMs > 120000;
+              if (preferTailForLongSeg && tailTrim && trimMod && typeof trimMod.trimVideoTail === 'function') {
+                logMaterializeDiag('trim_strategy', {
+                  trimStrategy: 'long_seg_tail_first',
+                  wallDurationMs: fallbackWallDurationMs
+                });
+                return trimMod.trimVideoTail(
+                  srcPath,
+                  tailLeadMs,
+                  fallbackWallDurationMs || probedDurationMs,
+                  { sourceSizeBytes: srcSizeBytes, maxAttempts: 3 }
+                )
+                  .then((tailResult) => {
+                    applyTailTrimResult(tailResult, 'long_seg_tail', {});
+                  })
+                  .catch((tailErr) => runFullCopyFallback(formatWxErr(tailErr) || 'long_seg_tail_fail'));
+              }
+              if (canClickWallMap && probedDurationMs > 500 && trimMod.mapWallWindowToFileMs) {
+                const mapped = trimMod.mapWallWindowToFileMs(
+                  windowStartInSegMs,
+                  windowEndInSegMs,
+                  fallbackWallDurationMs,
+                  probedDurationMs
+                );
+                return trimMod.trimVideoSegment(srcPath, mapped.trimStartMs, mapped.trimEndMs, {
+                  sourceSizeBytes: srcSizeBytes,
+                  maxAttempts: 3
+                })
+                  .then((trimResult) => {
+                    if (!trimResult || !trimResult.path) {
+                      return runTailTrimFallback('click_wall_map_empty', 'click_wall_mapped');
+                    }
+                    logMaterializeDiag('after_trim', {
+                      probedDurationMs,
+                      durationSource,
+                      mapRatio: mapped.mapRatio,
+                      encodeStartOffsetMs: mapped.encodeStartOffsetMs,
+                      wallWindowStartMs: windowStartInSegMs,
+                      wallWindowEndMs: windowEndInSegMs,
+                      appliedTrimStartMs: mapped.trimStartMs,
+                      appliedTrimEndMs: mapped.trimEndMs,
+                      appliedPlayMs: mapped.trimEndMs - mapped.trimStartMs,
+                      outputDurationMs: trimResult.outputDurationMs,
+                      outputSizeBytes: trimResult.outputSizeBytes,
+                      srcSizeBytes,
+                      trimStrategy: 'click_wall_mapped',
+                      videoOnly: !!trimResult.videoOnly
+                    });
+                    this.appendHealthLog('highlight_media_container_trim_ok', {
+                      id: String(task.id || ''),
+                      trimStartMs: mapped.trimStartMs,
+                      trimEndMs: mapped.trimEndMs,
+                      durationMs: probedDurationMs,
+                      outputDurationMs: trimResult.outputDurationMs,
+                      outputSizeBytes: trimResult.outputSizeBytes,
+                      srcSizeBytes,
+                      mapRatio: mapped.mapRatio,
+                      encodeStartOffsetMs: mapped.encodeStartOffsetMs,
+                      tailTrim: true,
+                      trimStrategy: 'click_wall_mapped',
+                      videoOnly: !!trimResult.videoOnly
+                    });
+                    task.trimVerified = true;
+                    task.trimOutputSizeBytes = trimResult.outputSizeBytes;
+                    task.trimOutputDurationMs = trimResult.outputDurationMs;
+                    task.srcSizeBytes = srcSizeBytes;
+                    doMove(trimResult.path);
+                  })
+                  .catch((trimErr) => runTailTrimFallback(trimErr, 'click_wall_mapped'));
+              }
+              if (canTailTrim) {
+                return trimMod.trimVideoTail(srcPath, tailLeadMs, fallbackWallDurationMs, {
+                  sourceSizeBytes: srcSizeBytes,
+                  maxAttempts: 3
+                })
+                  .then((tailResult) => {
+                    applyTailTrimResult(tailResult, 'tail_trim', {});
+                  })
+                  .catch((trimErr) => runFullCopyFallback(formatWxErr(trimErr) || 'tail_trim_fail'));
+              }
+              if (canTrim) {
+                return trimMod.trimVideoSegment(srcPath, trimStartMs, trimEndMs, {
+                  sourceSizeBytes: srcSizeBytes,
+                  maxAttempts: 3
+                })
+                  .then((trimResult) => {
+                    if (!trimResult || !trimResult.path) {
+                      runFullCopyFallback('wall_trim_empty');
+                      return;
+                    }
+                    logMaterializeDiag('after_trim', {
+                      appliedTrimStartMs: trimStartMs,
+                      appliedTrimEndMs: trimEndMs,
+                      appliedPlayMs: trimEndMs - trimStartMs,
+                      outputDurationMs: trimResult.outputDurationMs,
+                      outputSizeBytes: trimResult.outputSizeBytes,
+                      srcSizeBytes
+                    });
+                    this.appendHealthLog('highlight_media_container_trim_ok', {
+                      id: String(task.id || ''),
+                      trimStartMs,
+                      trimEndMs,
+                      outputDurationMs: trimResult.outputDurationMs,
+                      outputSizeBytes: trimResult.outputSizeBytes,
+                      srcSizeBytes
+                    });
+                    task.trimVerified = true;
+                    task.trimOutputSizeBytes = trimResult.outputSizeBytes;
+                    task.trimOutputDurationMs = trimResult.outputDurationMs;
+                    task.srcSizeBytes = srcSizeBytes;
+                    doMove(trimResult.path);
+                  })
+                  .catch((trimErr) => {
+                    logMaterializeDiag('trim_fail', { err: formatWxErr(trimErr) });
+                    this.appendHealthLog('highlight_media_container_trim_fail', {
+                      id: String(task.id || ''),
+                      err: formatWxErr(trimErr)
+                    });
+                    runFullCopyFallback(formatWxErr(trimErr) || 'wall_trim_fail');
+                  });
+              }
+              runFullCopyFallback('no_trim_strategy');
+              return undefined;
+            };
+            if (trimMod && typeof trimMod.probeVideoDurationMs === 'function') {
+              trimMod.probeVideoDurationMs(srcPath).then(runAfterProbe).catch(() => {
+                runAfterProbe({ durationMs: 0, source: 'probe_error' });
+              });
+              return;
+            }
+            runAfterProbe({ durationMs: 0, source: 'probe_unavailable' });
           },
-          fail: () => resolve('') // Not found, trigger retry
+          fail: () => resolve('')
         });
       };
 
@@ -8106,7 +8741,7 @@ Page({
         filePath: filePath,
         success: (resDest) => {
           if (resDest && resDest.size > 1024) {
-            resolve(filePath); // Already moved successfully in a previous attempt
+            resolve(filePath);
           } else {
             checkSrc();
           }
@@ -8163,9 +8798,38 @@ Page({
           if (idx < 0) return;
           if (savedPaths.length === segments.length) {
             const replaySegment = savedPaths[savedPaths.length - 1] || savedPaths[0] || '';
+            const wasTailTrim = !!task.tailTrim;
+            const wasWallTrim = typeof task.trimStartMs === 'number'
+              && task.trimStartMs >= 0
+              && typeof task.trimEndMs === 'number'
+              && task.trimEndMs > task.trimStartMs + 400;
+            const srcSizeBytes = typeof task.srcSizeBytes === 'number' ? task.srcSizeBytes : 0;
+            const outSizeBytes = typeof task.trimOutputSizeBytes === 'number' ? task.trimOutputSizeBytes : 0;
+            const trimLooksValid = !!task.trimVerified
+              && (srcSizeBytes <= 0 || outSizeBytes <= 0 || outSizeBytes < srcSizeBytes * 0.42);
+            const wasTrimmed = (wasTailTrim || wasWallTrim) && trimLooksValid;
+            const trimDurationSec = wasTailTrim
+              ? Math.max(0.5, (task.tailLeadMs || 8000) / 1000)
+              : wasWallTrim
+                ? Math.max(0.5, (task.trimEndMs - task.trimStartMs) / 1000)
+                : null;
             list[idx].segments = savedPaths;
             list[idx].replaySegment = replaySegment;
-            list[idx].replayPlan = remapReplayPlanPaths(list[idx].replayPlan, savedPaths);
+            if (wasTrimmed && trimDurationSec) {
+              list[idx].replayInitialTimeSec = 0;
+              list[idx].replayMediaStopAtSec = trimDurationSec;
+              list[idx].replayChainPart2StopAtSec = null;
+              list[idx].replayPreTrimmed = true;
+              list[idx].replayPlan = savedPaths.map((path, planIdx) => ({
+                path,
+                initialTimeSec: 0,
+                stopAtSec: trimDurationSec,
+                durationSec: trimDurationSec,
+                index: planIdx
+              }));
+            } else {
+              list[idx].replayPlan = remapReplayPlanPaths(list[idx].replayPlan, savedPaths);
+            }
             if (list[idx].replayManifest) {
               list[idx].replayManifest = remapReplayManifestPaths(list[idx].replayManifest, savedPaths);
             }
@@ -8173,6 +8837,14 @@ Page({
             if (coverDest) {
               list[idx].cover = coverDest;
             }
+            try {
+              const legacyList = wx.getStorageSync('highlight_list') || [];
+              const legacyIdx = legacyList.findIndex((it) => it && String(it.id) === String(task.id));
+              if (legacyIdx >= 0) {
+                legacyList[legacyIdx] = Object.assign({}, legacyList[legacyIdx], list[idx]);
+                wx.setStorageSync('highlight_list', legacyList);
+              }
+            } catch (eLegacy) { }
           } else {
             list[idx].status = 'failed';
           }
@@ -8184,10 +8856,17 @@ Page({
             sourceCount: segments.length,
             status: list[idx] && list[idx].status ? list[idx].status : '',
             hasManifest: !!(list[idx] && list[idx].replayManifest),
-            planCount: list[idx] && Array.isArray(list[idx].replayPlan) ? list[idx].replayPlan.length : 0
+            planCount: list[idx] && Array.isArray(list[idx].replayPlan) ? list[idx].replayPlan.length : 0,
+            replayPreTrimmed: !!(list[idx] && list[idx].replayPreTrimmed)
           });
           if (!clipsStorage.writeClipsMapSafe(clipsMap)) {
             this.appendHealthLog('highlight_materialize_clips_write_fail', { id: task.id });
+          }
+          if (typeof this.refreshDrawerHighlights === 'function') {
+            this.refreshDrawerHighlights();
+          }
+          if (savedPaths.length === segments.length) {
+            this._releaseMaterializedRollingSources(segments, savedPaths);
           }
         };
         if (savedPaths.length === segments.length && coverTempPath) {
@@ -8211,7 +8890,7 @@ Page({
             return;
           }
         }
-        this.releaseRollingSegmentsByPaths(segments);
+        this._releaseMaterializedRollingSources(segments, savedPaths);
       })
       .catch(() => {
         const retryCount = Number(task.retryCount || 0);
@@ -8224,7 +8903,7 @@ Page({
             this.processHighlightMaterializeQueue();
           }, delay);
         } else {
-          this.releaseRollingSegmentsByPaths(segments);
+          this._releaseMaterializedRollingSources(segments, []);
         }
         return Promise.resolve();
       });
@@ -8588,7 +9267,26 @@ Page({
           replayInitialTimeSec: seekPlan.replayInitialTimeSec,
           replayUseChain: false,
           replayMediaStopAtSec: seekPlan.replayMediaStopAtSec,
-          replayChainPart2StopAtSec: null
+          replayChainPart2StopAtSec: null,
+          replayTailTrim: !!seekPlan.tailTrim,
+          seekMode: seekPlan.seekMode || '',
+          clickTime: clickTime,
+          windowStartInSegMs: typeof seekPlan.windowStartInSegMs === 'number'
+            ? seekPlan.windowStartInSegMs
+            : -1,
+          windowEndInSegMs: typeof seekPlan.windowEndInSegMs === 'number'
+            ? seekPlan.windowEndInSegMs
+            : -1,
+          trimDiagnostic: seekPlan.trimDiagnostic || null,
+          segmentWallDurationMs: typeof seekPlan.wallDurationMs === 'number'
+            ? seekPlan.wallDurationMs
+            : 0,
+          replayPlan: [{
+            path: seekPlan.path,
+            initialTimeSec: seekPlan.replayInitialTimeSec,
+            stopAtSec: seekPlan.replayMediaStopAtSec,
+            index: 0
+          }]
         });
         this.pendingHighlight = null;
         if (this._recorderCore) this._recorderCore.clearPendingHighlight();
@@ -8845,54 +9543,170 @@ Page({
     const matchName = this.data.matchConfig.matchName || '未命名比赛';
     const id = String(now);
     const leadMs = this.highlightLeadMs || 8000;
-    const seekPlan = this._previewRecordPipeline
-      ? this._previewRecordPipeline.resolveHighlightSeek(anchorClickTime, leadMs)
-      : null;
+    const pipeline = this._previewRecordPipeline;
+    const self = this;
 
     this.beginHighlightSaving();
     this.vibrate('heavy');
     this.lastHighlightRequestAt = now;
+    this._highlightRequestLock = true;
 
-    if (seekPlan && seekPlan.path) {
-      this._previewRecordPipeline.pinPaths([seekPlan.path]);
-      this.appendHealthLog('highlight_ping_pong_seek', {
+    if (pipeline && typeof pipeline.getSegments === 'function') {
+      const liveSnap = pipeline.getSegments().filter((s) => s && s.live);
+      self._logHighlightTrimDiagnostic('click', {
+        highlightId: id,
+        clickTime: anchorClickTime,
+        leadMs,
+        recordingTracks: typeof pipeline.getRecordingTrackCount === 'function'
+          ? pipeline.getRecordingTrackCount()
+          : -1,
+        liveTrackCount: liveSnap.length,
+        liveTracks: liveSnap.map((s) => ({
+          trackId: s.trackId || '',
+          startTime: s.startTime || 0,
+          ageMs: anchorClickTime - (s.startTime || anchorClickTime),
+          endTime: s.endTime || 0
+        }))
+      });
+    }
+
+    const finalizeSeekPlan = (seekPlan, sourceTag) => {
+      self._highlightRequestLock = false;
+      if (!seekPlan || !seekPlan.path) {
+        self.appendHealthLog('highlight_request_wait_segment', {
+          anchorClickTime,
+          rollingActive: !!self.rollingActive,
+          source: sourceTag || 'wait',
+          recordingTracks: pipeline && typeof pipeline.getRecordingTrackCount === 'function'
+            ? pipeline.getRecordingTrackCount()
+            : -1
+        });
+        try {
+          const chunkMs = self.pingPongChunkDurationMs || 180000;
+          const waitHint = chunkMs >= 60000
+            ? '正在生成高光…'
+            : '录制缓冲同步中…';
+          wx.showToast({ title: waitHint, icon: 'none', duration: 2200 });
+        } catch (eToast) { }
+        self.onHighlightClick({
+          id,
+          matchName,
+          matchId: currentMatchId,
+          cover: self.data.defaultCover,
+          clickTime: anchorClickTime,
+          afterMs: 0
+        });
+        self.tryStartRollingWhenCameraReady('highlight_request');
+        const flushProgressMs = Math.min(
+          (self.pingPongHighlightFlushMinIntervalMs || 15000) + 6000,
+          22000
+        );
+        self.startHighlightSaveProgressAnim(
+          anchorClickTime,
+          anchorClickTime + flushProgressMs
+        );
+        self._tryGenerateHighlight();
+        return;
+      }
+      pipeline.pinPaths([seekPlan.path]);
+      const playSec = seekPlan.replayMediaStopAtSec - seekPlan.replayInitialTimeSec;
+      if (seekPlan.trimDiagnostic && typeof seekPlan.trimDiagnostic === 'object') {
+        self._logHighlightTrimDiagnostic('seek', Object.assign({
+          highlightId: id,
+          source: sourceTag || 'sync'
+        }, seekPlan.trimDiagnostic));
+      } else {
+        self._logHighlightTrimDiagnostic('seek', {
+          highlightId: id,
+          source: sourceTag || 'sync',
+          clickTime: anchorClickTime,
+          leadMs: leadMs,
+          trimStartMs: Math.floor((seekPlan.replayInitialTimeSec || 0) * 1000),
+          trimEndMs: Math.floor((seekPlan.replayMediaStopAtSec || 0) * 1000),
+          playDurationMs: Math.floor(playSec * 1000),
+          seekMode: seekPlan.seekMode || '',
+          tailTrim: !!seekPlan.tailTrim
+        });
+      }
+      self.appendHealthLog('highlight_ping_pong_seek', {
         clickTime: anchorClickTime,
         path: seekPlan.path,
         initialSec: seekPlan.replayInitialTimeSec,
-        stopSec: seekPlan.replayMediaStopAtSec
+        stopSec: seekPlan.replayMediaStopAtSec,
+        playSec: playSec,
+        tailTrim: !!seekPlan.tailTrim,
+        seekMode: seekPlan.seekMode || '',
+        source: sourceTag || 'sync'
       });
-      this.finalizeHighlight({
+      self.finalizeHighlight({
         id,
         createdAt: now,
         matchName,
         matchId: currentMatchId,
-        cover: this.data.defaultCover,
+        cover: self.data.defaultCover,
         finalizing: false,
         preSegments: [seekPlan.path],
         postSegments: [],
         replayInitialTimeSec: seekPlan.replayInitialTimeSec,
         replayUseChain: false,
         replayMediaStopAtSec: seekPlan.replayMediaStopAtSec,
-        replayChainPart2StopAtSec: null
+        replayChainPart2StopAtSec: null,
+        replayTailTrim: !!seekPlan.tailTrim,
+        seekMode: seekPlan.seekMode || '',
+        clickTime: anchorClickTime,
+        windowStartInSegMs: typeof seekPlan.windowStartInSegMs === 'number'
+          ? seekPlan.windowStartInSegMs
+          : (seekPlan.trimDiagnostic && typeof seekPlan.trimDiagnostic.windowStartInSegMs === 'number'
+            ? seekPlan.trimDiagnostic.windowStartInSegMs
+            : -1),
+        windowEndInSegMs: typeof seekPlan.windowEndInSegMs === 'number'
+          ? seekPlan.windowEndInSegMs
+          : (seekPlan.trimDiagnostic && typeof seekPlan.trimDiagnostic.windowEndInSegMs === 'number'
+            ? seekPlan.trimDiagnostic.windowEndInSegMs
+            : -1),
+        trimDiagnostic: seekPlan.trimDiagnostic || null,
+        segmentWallDurationMs: typeof seekPlan.wallDurationMs === 'number'
+          ? seekPlan.wallDurationMs
+          : 0,
+        replayPlan: [{
+          path: seekPlan.path,
+          initialTimeSec: seekPlan.replayInitialTimeSec,
+          stopAtSec: seekPlan.replayMediaStopAtSec,
+          index: 0
+        }]
       });
+    };
+
+    if (!pipeline) {
+      finalizeSeekPlan(null, 'no_pipeline');
       return;
     }
 
-    this.appendHealthLog('highlight_request_wait_segment', {
-      anchorClickTime,
-      rollingActive: !!this.rollingActive
-    });
-    this.onHighlightClick({
-      id,
-      matchName,
-      matchId: currentMatchId,
-      cover: this.data.defaultCover,
-      clickTime: anchorClickTime,
-      afterMs: 0
-    });
-    this.tryStartRollingWhenCameraReady('highlight_request');
-    this.startHighlightSaveProgressAnim(anchorClickTime, anchorClickTime + 12000);
-    this._tryGenerateHighlight();
+    const syncPlan = pipeline.resolveHighlightSeek(anchorClickTime, leadMs);
+    if (syncPlan && syncPlan.path) {
+      finalizeSeekPlan(syncPlan, 'sync_file');
+      return;
+    }
+
+    const flushPromise = typeof pipeline.flushAndResolveHighlightSeek === 'function'
+      ? pipeline.flushAndResolveHighlightSeek(anchorClickTime, leadMs)
+      : Promise.resolve(null);
+    try {
+      wx.showToast({ title: '正在生成高光…', icon: 'none', duration: 1800 });
+    } catch (eFlushToast) { }
+    self.startHighlightSaveProgressAnim(anchorClickTime, anchorClickTime + 12000);
+    flushPromise
+      .then((flushed) => finalizeSeekPlan(flushed, 'live_flush'))
+      .catch((err) => {
+        if (err && err.code === 'HIGHLIGHT_FLUSH_RATE_LIMITED') {
+          self._highlightRequestLock = false;
+          self.appendHealthLog('highlight_flush_rate_limited', { anchorClickTime });
+          wx.showToast({ title: '操作太频繁，请稍候再试', icon: 'none', duration: 2200 });
+          self.endHighlightSaving();
+          return;
+        }
+        finalizeSeekPlan(null, 'flush_fail');
+      });
   },
 
   finalizeHighlight: function (pending) {
@@ -8996,6 +9810,30 @@ Page({
       segments: segments.slice(),
       coverTempPath: coverTempPath,
       isVkTimeshift: !!pending.isVkTimeshift,
+      tailTrim: !!pending.replayTailTrim,
+      tailLeadMs: this.highlightLeadMs || 8000,
+      seekMode: pending.seekMode || '',
+      clickTime: typeof pending.clickTime === 'number' ? pending.clickTime : pending.createdAt,
+      windowStartInSegMs: typeof pending.windowStartInSegMs === 'number'
+        ? pending.windowStartInSegMs
+        : (pending.trimDiagnostic && typeof pending.trimDiagnostic.windowStartInSegMs === 'number'
+          ? pending.trimDiagnostic.windowStartInSegMs
+          : -1),
+      windowEndInSegMs: typeof pending.windowEndInSegMs === 'number'
+        ? pending.windowEndInSegMs
+        : (pending.trimDiagnostic && typeof pending.trimDiagnostic.windowEndInSegMs === 'number'
+          ? pending.trimDiagnostic.windowEndInSegMs
+          : -1),
+      trimDiagnostic: pending.trimDiagnostic || null,
+      fallbackWallDurationMs: typeof pending.segmentWallDurationMs === 'number'
+        ? pending.segmentWallDurationMs
+        : 0,
+      trimStartMs: typeof pending.replayInitialTimeSec === 'number'
+        ? Math.max(0, Math.floor(pending.replayInitialTimeSec * 1000))
+        : -1,
+      trimEndMs: typeof pending.replayMediaStopAtSec === 'number'
+        ? Math.max(0, Math.floor(pending.replayMediaStopAtSec * 1000))
+        : -1,
       retryCount: 0
     });
     this.highlightMissStreak = 0;
@@ -9430,6 +10268,13 @@ Page({
       clearTimeout(this._rollingKickoffTimer);
       this._rollingKickoffTimer = null;
     }
+    /** 相机已就绪时勿 rebuild，避免 insertCamera 冲突与重复授权弹窗。 */
+    if (this._cameraInitDone && this.data.cameraMounted && this.data.cameraContext) {
+      if (this.rollingActive) {
+        this.tryStartRollingWhenCameraReady('guide_dismiss');
+      }
+      return;
+    }
     this.armNativeEnhanceModeRestoreAfterCameraRebuild('guide_dismiss');
     const self = this;
     this.rebuildCameraComponent((generation) => {
@@ -9563,9 +10408,10 @@ Page({
       if (!Array.isArray(list)) return;
       list.forEach((it) => {
         if (!it || typeof it !== 'object' || it.exportedToAlbum) return;
+        const exportPaths = this._collectHighlightExportPaths(it);
         const segs = Array.isArray(it.segments) ? it.segments.filter((p) => p && typeof p === 'string') : [];
         const extra = it.replaySegment && typeof it.replaySegment === 'string' ? [it.replaySegment] : [];
-        const merged = [...new Set([...segs, ...extra])];
+        const merged = exportPaths.length ? exportPaths : [...new Set([...segs, ...extra])];
         if (merged.length === 0) return;
         tasks.push({ matchId, item: it, paths: merged });
       });
@@ -10152,6 +10998,7 @@ Page({
    */
   startReplayContinue: function (item) {
     if (!item || typeof item !== 'object') return;
+    item = this._normalizeMaterializedReplaySeek(item);
     this._replayActiveItem = item;
 
     // 递增观看次数并入库
@@ -10184,6 +11031,29 @@ Page({
       return;
     }
 
+    let replayFileSizeBytes = 0;
+    try {
+      const st = wx.getFileSystemManager().statSync(target);
+      replayFileSizeBytes = st && typeof st.size === 'number' ? st.size : 0;
+    } catch (eStat) { }
+    this._logHighlightTrimDiagnostic('replay', {
+      highlightId: item.id != null ? String(item.id) : '',
+      status: item.status || '',
+      replayPreTrimmed: !!item.replayPreTrimmed,
+      seekMode: item.seekMode || '',
+      tailTrim: !!item.replayTailTrim,
+      clickTime: typeof item.clickTime === 'number' ? item.clickTime : (item.createdAt || 0),
+      initialSec: replayPlan[0] && typeof replayPlan[0].initialTimeSec === 'number'
+        ? replayPlan[0].initialTimeSec
+        : (typeof item.replayInitialTimeSec === 'number' ? item.replayInitialTimeSec : 0),
+      stopSec: replayPlan[0] && typeof replayPlan[0].stopAtSec === 'number'
+        ? replayPlan[0].stopAtSec
+        : (typeof item.replayMediaStopAtSec === 'number' ? item.replayMediaStopAtSec : 0),
+      pathTail: typeof target === 'string' ? target.slice(-72) : '',
+      fileSizeBytes: replayFileSizeBytes,
+      fromManifest: !!replaySource.fromManifest
+    });
+
     if (wx.setPageOrientation) {
       wx.setPageOrientation({ orientation: 'landscape' });
     }
@@ -10194,6 +11064,38 @@ Page({
     let initialSec = replayPlan[0] && typeof replayPlan[0].initialTimeSec === 'number'
       ? replayPlan[0].initialTimeSec
       : (typeof item.replayInitialTimeSec === 'number' ? item.replayInitialTimeSec : 0);
+    let replayStopSec = replayPlan[0] && typeof replayPlan[0].stopAtSec === 'number'
+      ? replayPlan[0].stopAtSec
+      : (typeof item.replayMediaStopAtSec === 'number' ? item.replayMediaStopAtSec : 0);
+    /** 8s 高光正常 < ~1.8MB；接近母片体积说明 MediaContainer 假裁剪。 */
+    const suspectFakeTrim = !!item.replayPreTrimmed && replayFileSizeBytes > 1.8 * 1024 * 1024;
+    let mappedRollingSeek = false;
+    if (item.replayPreTrimmed && !suspectFakeTrim) {
+      initialSec = 0;
+    } else if (item.replayTailTrim && (suspectFakeTrim || (typeof target === 'string' && target.indexOf('_rolling/') >= 0))) {
+      const wallInitialSec = typeof item.windowStartInSegMs === 'number' && item.windowStartInSegMs >= 0
+        ? item.windowStartInSegMs / 1000
+        : initialSec;
+      const wallStopSec = typeof item.windowEndInSegMs === 'number' && item.windowEndInSegMs > 0
+        ? item.windowEndInSegMs / 1000
+        : replayStopSec;
+      const mappedSeek = this._resolveRollingReplaySeek(item, wallInitialSec, wallStopSec);
+      initialSec = mappedSeek.initialSec;
+      replayStopSec = mappedSeek.stopSec;
+      mappedRollingSeek = true;
+      this._logHighlightTrimDiagnostic('replay', {
+        highlightId: item.id != null ? String(item.id) : '',
+        subPhase: suspectFakeTrim ? 'fake_trim_fallback' : 'rolling_seek_map',
+        status: item.status || '',
+        seekMode: item.seekMode || '',
+        suspectFakeTrim,
+        encodeStartOffsetMs: mappedSeek.encodeStartOffsetMs,
+        initialSec,
+        stopSec: replayStopSec,
+        pathTail: typeof target === 'string' ? target.slice(-72) : '',
+        fileSizeBytes: replayFileSizeBytes
+      });
+    }
 
     // VK 模式特殊处理：废弃底层的 initial-time 属性（会因无关键帧导致黑屏报错）
     // 改为从 0 开始播，由业务层在 loadedmetadata/bindplay 中强行 seek 过去，并辅以 UI 遮罩
@@ -10223,14 +11125,16 @@ Page({
         ? replayPlan[1].initialTimeSec
         : 0;
 
-    const segLenSec = this.segmentDurationMs / 1000;
+    const segLenSec = (this.highlightPlaybackWindowMs || 8000) / 1000;
     const winSec = (this.highlightPlaybackWindowMs || 8000) / 1000;
 
-    if (typeof item.replayMediaStopAtSec === 'number') {
-      // VK 模式跳过 8s 截断限制，允许播放到实际终点
+    if (mappedRollingSeek && replayStopSec > initialSec + 0.08) {
+      this._replayStopAtMediaSec = replayStopSec;
+    } else if (typeof item.replayMediaStopAtSec === 'number') {
+      const stopAbs = item.replayMediaStopAtSec;
       this._replayStopAtMediaSec = isVk
-        ? item.replayMediaStopAtSec
-        : Math.min(segLenSec, item.replayMediaStopAtSec);
+        ? stopAbs
+        : Math.min(segLenSec, Math.max(stopAbs, initialSec + 0.5));
     } else {
       // VK 模式初始化时不写死 stopAt，等待 loadedmetadata 拿到真实时长后再定
       this._replayStopAtMediaSec = isVk
@@ -10244,7 +11148,7 @@ Page({
     } else {
       this._replayChainPart2StopAt = null;
     }
-    if (replayPlan.length) {
+    if (replayPlan.length && !mappedRollingSeek) {
       const firstStop =
         replayPlan[0] && typeof replayPlan[0].stopAtSec === 'number'
           ? replayPlan[0].stopAtSec

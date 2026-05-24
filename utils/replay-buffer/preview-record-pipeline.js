@@ -36,14 +36,31 @@ function createPreviewRecordPipeline(page) {
   let lastFrameAt = 0;
   let frameInterval = frameIntervalMs(12);
   let feeding = false;
+  /** 最近一次帧/轨道活动，供 segment watchdog 识别乒乓假死。 */
+  let lastPipelineHeartbeatAt = 0;
 
   /**
    * @param {string} eventName
    * @param {Object} [detail]
    */
+  function touchPipelineHeartbeat(reason) {
+    const now = Date.now();
+    lastPipelineHeartbeatAt = now;
+    if (page) {
+      page._previewRecordLastHeartbeatAt = now;
+      page.lastSegmentAt = now;
+    }
+  }
   function log(eventName, detail) {
     if (page && typeof page.appendHealthLog === 'function') {
       page.appendHealthLog(eventName, detail || {});
+    }
+    if (
+      (eventName === 'ping_pong_persist_save_fail' || eventName === 'ping_pong_persist_not_ready')
+      && page
+      && typeof page.freeRollingFileStorageAggressive === 'function'
+    ) {
+      page.freeRollingFileStorageAggressive('persist_io_fail');
     }
   }
 
@@ -56,6 +73,9 @@ function createPreviewRecordPipeline(page) {
     const now = Date.now();
     if (now - lastFrameAt < frameInterval) return;
     lastFrameAt = now;
+    if (now - lastPipelineHeartbeatAt >= 5000) {
+      touchPipelineHeartbeat('frame_feed');
+    }
     if (feeding) return;
     feeding = true;
     pingPong.feedFrame(frame).finally(() => {
@@ -68,7 +88,10 @@ function createPreviewRecordPipeline(page) {
    */
   function onSegmentReady(segment) {
     if (!page) return;
-    page.lastSegmentAt = Date.now();
+    const now = Date.now();
+    page.lastSegmentAt = now;
+    page._lastSuccessfulChunkAt = now;
+    touchPipelineHeartbeat('segment_ready');
     page.rollingSegments = page.rollingSegments || [];
     page.rollingSegments.push(Object.assign({}, segment));
     while (page.rollingSegments.length > (page.rollingBufferMax || 8)) {
@@ -115,14 +138,22 @@ function createPreviewRecordPipeline(page) {
     pingPong = new PingPongRecorder({
       onLog: log,
       onSegmentReady,
+      onTrackActivity: () => touchPipelineHeartbeat('track_start'),
+      onStoragePressure: (reason) => {
+        if (page && typeof page.freeRollingFileStorageAggressive === 'function') {
+          page.freeRollingFileStorageAggressive(reason || 'persist_io_fail');
+        }
+        return Promise.resolve();
+      },
       rollingDir,
       ensureRollingDir,
-      chunkDurationMs: options.chunkDurationMs || 16000,
+      chunkDurationMs: options.chunkDurationMs || 180000,
       staggerMs: options.staggerMs || 8000,
+      highlightFlushMinIntervalMs: options.highlightFlushMinIntervalMs || 15000,
       fps,
       stopToStartGapMs: options.stopToStartGapMs || 400,
-      recycleIntervalMs: options.recycleIntervalMs || 20 * 60 * 1000,
-      maxFiles: options.maxFiles || 4,
+      recycleIntervalMs: options.recycleIntervalMs || 25 * 60 * 1000,
+      maxFiles: options.maxFiles || 3,
       canvasWidth: options.canvasWidth || 640,
       canvasHeight: options.canvasHeight || 360
     });
@@ -135,8 +166,8 @@ function createPreviewRecordPipeline(page) {
       return frameSource.start();
     }).then(() => pingPong.start()).then(() => {
       active = true;
+      touchPipelineHeartbeat('pipeline_start');
       if (page) {
-        page.lastSegmentAt = Date.now();
         page.lastRecordStartAt = Date.now();
         page.setData({ isRecording: true });
       }
@@ -188,6 +219,18 @@ function createPreviewRecordPipeline(page) {
   }
 
   /**
+   * @param {number} clickTime
+   * @param {number} leadMs
+   * @returns {Promise<{ path: string, replayInitialTimeSec: number, replayMediaStopAtSec: number }|null>}
+   */
+  function flushAndResolveHighlightSeek(clickTime, leadMs) {
+    if (!pingPong || typeof pingPong.flushAndResolveHighlightSeek !== 'function') {
+      return Promise.resolve(resolveHighlightSeek(clickTime, leadMs));
+    }
+    return pingPong.flushAndResolveHighlightSeek(clickTime, leadMs);
+  }
+
+  /**
    * @returns {Array<Object>}
    */
   function getSegments() {
@@ -216,16 +259,55 @@ function createPreviewRecordPipeline(page) {
     if (pingPong) pingPong.unpinPaths(paths);
   }
 
+  /**
+   * @param {string[]} paths
+   */
+  function releaseSegmentPaths(paths) {
+    if (pingPong && typeof pingPong.releaseSegmentPaths === 'function') {
+      pingPong.releaseSegmentPaths(paths);
+    }
+  }
+
+  /**
+   * @returns {number}
+   */
+  function getLastHeartbeatAt() {
+    return lastPipelineHeartbeatAt;
+  }
+
+  /**
+   * @returns {number}
+   */
+  function getRecordingTrackCount() {
+    if (!pingPong || typeof pingPong.getRecordingTrackCount !== 'function') return 0;
+    return pingPong.getRecordingTrackCount();
+  }
+
+  /**
+   * 外部触发双轨健康巡检（如高光失败时）。
+   * @returns {void}
+   */
+  function ensureDualTrackHealth() {
+    if (pingPong && typeof pingPong._ensureDualTrackHealth === 'function') {
+      pingPong._ensureDualTrackHealth();
+    }
+  }
+
   return {
     isSupported,
     start,
     stop,
     destroy,
     resolveHighlightSeek,
+    flushAndResolveHighlightSeek,
     getSegments,
     isActive,
     pinPaths,
-    unpinPaths
+    unpinPaths,
+    releaseSegmentPaths,
+    getLastHeartbeatAt,
+    getRecordingTrackCount,
+    ensureDualTrackHealth
   };
 }
 
