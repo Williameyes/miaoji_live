@@ -4,6 +4,8 @@ const { HighlightManager } = require('./highlight-manager.js');
 const { MergeQueue } = require('./merge-queue.js');
 const { RecorderCore, RECORDER_STATE } = require('./recorder-core.js');
 const fsReady = require('./fs-ready.js');
+const { PingPongRecorder } = require('./ping-pong-recorder.js');
+const { createPreviewRecordPipeline } = require('./preview-record-pipeline.js');
 
 module.exports = {
   createReplayBuffer,
@@ -13,5 +15,7 @@ module.exports = {
   MergeQueue,
   RecorderCore,
   RECORDER_STATE,
-  fsReady
+  fsReady,
+  PingPongRecorder,
+  createPreviewRecordPipeline
 };
