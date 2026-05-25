@@ -12,6 +12,7 @@
 
 var API = require('../../../../config/api.js');
 var REQ = require('../../../../utils/request.js');
+var wsTokenReq = require('../../../../utils/ws-token-request.js');
 
 /** WSS 网关根地址（由 HTTPS BaseURL 推导） */
 var WS_BASE_URL = String(API.API_BASE_URL || '').replace(/^http/i, 'ws');
@@ -2370,31 +2371,7 @@ Page({
    * @returns {Promise<string>}
    */
   _fetchWsToken: function (roomId) {
-    var safeRoomId = encodeURIComponent(String(roomId || '').replace(/\D/g, '').slice(0, 6));
-    return new Promise(function (resolve, reject) {
-      wx.request({
-        url: API.API_BASE_URL + WS_TOKEN_PATH + '?roomId=' + safeRoomId,
-        method: 'GET',
-        success: function (res) {
-          var body = res && res.data;
-          var token = '';
-          if (body && typeof body === 'object') {
-            token = body.token || (body.data && body.data.token) || '';
-          }
-          if (!token && typeof body === 'string') {
-            token = body;
-          }
-          if (token) {
-            resolve(String(token));
-          } else {
-            reject(new Error('token missing'));
-          }
-        },
-        fail: function (err) {
-          reject(err || new Error('get_token fail'));
-        }
-      });
-    });
+    return wsTokenReq.fetchWsToken(roomId);
   },
 
   /**

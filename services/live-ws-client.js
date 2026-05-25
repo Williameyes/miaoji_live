@@ -3,11 +3,12 @@
  */
 
 const API = require('../config/api.js');
+const { fetchWsToken } = require('../utils/ws-token-request.js');
 
 /** @type {string} WSS 网关根地址（由 HTTPS BaseURL 推导） */
 const WS_BASE_URL = String(API.API_BASE_URL || '').replace(/^http/i, 'ws');
 
-/** @type {string} 获取一次性 Token 的 HTTP 路径 */
+/** @type {string} 获取一次性 Token 的 HTTP 路径（仅供文档引用，实际见 utils/ws-token-request.js） */
 const WS_TOKEN_PATH = '/api/get_token';
 
 /** @type {string} WebSocket 握手路径 */
@@ -27,39 +28,6 @@ const STORAGE_LAST_ROOM_ID = 'live_ws_last_room_id';
 function getWsReconnectDelayMs(attempt) {
   const idx = Math.max(0, Math.min(attempt - 1, WS_RECONNECT_DELAYS_MS.length - 1));
   return WS_RECONNECT_DELAYS_MS[idx];
-}
-
-/**
- * 从 HTTP 接口获取一次性 WebSocket Token。
- * @param {string} roomId 6 位房间号
- * @returns {Promise<string>}
- */
-function fetchWsToken(roomId) {
-  const safeRoomId = encodeURIComponent(String(roomId || '').replace(/\D/g, '').slice(0, 6));
-  return new Promise(function (resolve, reject) {
-    wx.request({
-      url: API.API_BASE_URL + WS_TOKEN_PATH + '?roomId=' + safeRoomId,
-      method: 'GET',
-      success: function (res) {
-        const body = res && res.data;
-        let token = '';
-        if (body && typeof body === 'object') {
-          token = body.token || (body.data && body.data.token) || '';
-        }
-        if (!token && typeof body === 'string') {
-          token = body;
-        }
-        if (token) {
-          resolve(String(token));
-        } else {
-          reject(new Error('token missing'));
-        }
-      },
-      fail: function (err) {
-        reject(err || new Error('get_token fail'));
-      }
-    });
-  });
 }
 
 /**

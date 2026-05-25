@@ -100,23 +100,30 @@ function request(options) {
   const authHeader =
     !skipAuth && token ? { Authorization: `Bearer ${token}` } : {};
 
+  const upperMethod = String(method).toUpperCase();
+  const hasDataPayload =
+    data != null &&
+    typeof data === 'object' &&
+    !Array.isArray(data) &&
+    Object.keys(data).length > 0;
+  const isPlainGet = upperMethod === 'GET' && !hasDataPayload;
+
   const isLoginPost =
-    String(method).toUpperCase() === 'POST' && String(url).indexOf('/api/auth/login') >= 0;
+    upperMethod === 'POST' && String(url).indexOf('/api/auth/login') >= 0;
   if (isLoginPost && data && typeof data === 'object') {
     console.log('[request] POST /api/auth/login', 'fullUrl=', fullUrl);
     console.log('[request] login body:', JSON.stringify(data));
   }
 
+  const mergedHeader = isPlainGet
+    ? { ...authHeader, ...header }
+    : { 'Content-Type': 'application/json', ...authHeader, ...header };
+
   return new Promise((resolve, reject) => {
-    wx.request({
+    const wxArgs = {
       url: fullUrl,
-      method,
-      data,
-      header: {
-        'Content-Type': 'application/json',
-        ...authHeader,
-        ...header
-      },
+      method: upperMethod,
+      header: mergedHeader,
       ...rest,
       success: (res) => {
         const { statusCode, data: body } = res;
@@ -166,7 +173,11 @@ function request(options) {
         }
         reject(Object.assign(new Error(message), { errMsg: raw, original: err }));
       }
-    });
+    };
+    if (!isPlainGet) {
+      wxArgs.data = data;
+    }
+    wx.request(wxArgs);
   });
 }
 
@@ -178,7 +189,11 @@ function request(options) {
  * @returns {Promise<unknown>}
  */
 function get(url, data, extra) {
-  return request({ url, method: 'GET', data: data || {}, ...(extra || {}) });
+  const opts = { url, method: 'GET', ...(extra || {}) };
+  if (data != null && typeof data === 'object' && Object.keys(data).length > 0) {
+    opts.data = data;
+  }
+  return request(opts);
 }
 
 /**
