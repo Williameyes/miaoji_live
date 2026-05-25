@@ -1,0 +1,16 @@
+<view class="report-page">
+  <view class="report-card">
+    <text class="report-title">{{matchTitle || '记分报表'}}</text>
+    <text class="report-score" wx:if="{{scoreInfo}}">当前比分 {{scoreInfo}}</text>
+    <text class="report-hint">V2 完整事件流水导出将在后续迭代接入。</text>
+  </view>
+  <button
+    class="report-export-btn"
+    type="primary"
+    loading="{{loading}}"
+    disabled="{{loading || !matchId}}"
+    bindtap="onExportExcel"
+  >
+    导出 Excel
+  </button>
+</view>

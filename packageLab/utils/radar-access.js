@@ -2,8 +2,8 @@
  * @fileoverview 雷达实验室页面访问控制（与 sync-lab / 自动同步白名单一致）。
  */
 
-const { getToken } = require('./request.js');
-const { checkSyncLabWhitelist } = require('./sync-lab-whitelist.js');
+const { getToken } = require('../../utils/request.js');
+const { checkSyncLabWhitelist } = require('../../utils/sync-lab-whitelist.js');
 
 /**
  * 校验登录 + 白名单；不通过时提示并返回 false。

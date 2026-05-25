@@ -79,7 +79,7 @@ Page({
   onNewTournament: function () {
     if (!ensureRadarLabAccess()) return;
     wx.navigateTo({
-      url: '/pages/radar-lab/oam/tournament-edit/tournament-edit?mode=new'
+      url: '/packageLab/pages/radar-lab/oam/tournament-edit/tournament-edit?mode=new'
     });
   },
 
@@ -93,7 +93,7 @@ Page({
     if (!id) return;
     wx.navigateTo({
       url:
-        '/pages/radar-lab/oam/tournament-edit/tournament-edit?id=' +
+        '/packageLab/pages/radar-lab/oam/tournament-edit/tournament-edit?id=' +
         encodeURIComponent(id)
     });
   }

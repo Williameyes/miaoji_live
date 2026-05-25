@@ -211,7 +211,7 @@ Page({
       .then(function (res) {
         const id = String(res.affected_id || d.matchId || '');
         wx.redirectTo({
-          url: '/pages/radar-lab/monitor/detail?match_id=' + encodeURIComponent(id)
+          url: '/packageLab/pages/radar-lab/monitor/detail?match_id=' + encodeURIComponent(id)
         });
       })
       .catch(function (err) {

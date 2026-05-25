@@ -23,8 +23,8 @@
  *   { x: 0-1, y: 0-1, w: 0-1, h: 0-1, label: string, rawText: string, pctStyle: string }
  */
 
-var BLE = require('../../../utils/ble-protocol.js');
-var REQ = require('../../../utils/request.js');
+var BLE = require('../../../../utils/ble-protocol.js');
+var REQ = require('../../../../utils/request.js');
 
 var STORAGE_KEY_ROIS = 'sync_lab_rois_v1';
 /** 当前 OCR 队列 ROI 数量：主队分、客队分、时间（已移除 24 秒 ROI）。 */

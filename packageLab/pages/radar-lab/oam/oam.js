@@ -9,7 +9,6 @@ const {
   fetchMatchList
 } = require('../../../services/radar-api.js');
 const { formatStartTimeDisplay } = require('../../../utils/radar-datetime.js');
-const { parseMatchExcelBuffer } = require('../../../utils/radar-excel-parser.js');
 
 Page({
   data: {
@@ -19,6 +18,24 @@ Page({
     matchRows: [],
     submitting: false,
     loading: false
+  },
+
+  /** @type {Promise<{ parseMatchExcelBuffer: Function }>|null} */
+  _excelParserPromise: null,
+
+  /**
+   * 异步加载分包 Excel 解析器，避免 xlsx 打入主包。
+   * @returns {Promise<{ parseMatchExcelBuffer: Function }>}
+   */
+  _loadExcelParser: function () {
+    if (this._excelParserPromise) return this._excelParserPromise;
+    this._excelParserPromise = require
+      .async('../../../../packageReport/utils/radar-excel-parser.js')
+      .catch(function (err) {
+        this._excelParserPromise = null;
+        return Promise.reject(err);
+      }.bind(this));
+    return this._excelParserPromise;
   },
 
   /**
@@ -146,7 +163,7 @@ Page({
         success: function (res) {
           if (res.confirm) {
             wx.navigateTo({
-              url: '/pages/radar-lab/oam/tournament-list/tournament-list'
+              url: '/packageLab/pages/radar-lab/oam/tournament-list/tournament-list'
             });
           }
         }
@@ -159,7 +176,7 @@ Page({
         : options[0].id;
     wx.navigateTo({
       url:
-        '/pages/radar-lab/oam/match-edit/match-edit?tournament_id=' +
+        '/packageLab/pages/radar-lab/oam/match-edit/match-edit?tournament_id=' +
         encodeURIComponent(tid)
     });
   },
@@ -172,7 +189,7 @@ Page({
     const id = e.currentTarget.dataset.id;
     if (!id) return;
     wx.navigateTo({
-      url: '/pages/radar-lab/oam/match-edit/match-edit?id=' + encodeURIComponent(id)
+      url: '/packageLab/pages/radar-lab/oam/match-edit/match-edit?id=' + encodeURIComponent(id)
     });
   },
 
@@ -184,7 +201,7 @@ Page({
     const id = e.currentTarget.dataset.id;
     if (!id) return;
     wx.navigateTo({
-      url: '/pages/radar-lab/monitor/detail?match_id=' + encodeURIComponent(id)
+      url: '/packageLab/pages/radar-lab/monitor/detail?match_id=' + encodeURIComponent(id)
     });
   },
 
@@ -240,46 +257,58 @@ Page({
    */
   _importExcelBuffer: function (buffer, fileName, tournamentId) {
     const self = this;
-    let rows;
-    try {
-      rows = parseMatchExcelBuffer(buffer, fileName);
-    } catch (err) {
-      wx.showToast({ title: err.message || '解析失败', icon: 'none' });
-      return;
-    }
-    const tourName = this._currentFilterTournamentName();
-    wx.showModal({
-      title: '确认导入',
-      content: '将 ' + rows.length + ' 条场次导入到「' + tourName + '」，是否继续？',
-      success: function (modalRes) {
-        if (!modalRes.confirm) return;
-        self.setData({ submitting: true });
-        wx.showLoading({ title: '导入中…', mask: true });
-        oamUpsert({
-          action: 'batch_import_matches',
-          tournament_id: tournamentId,
-          matches_list: rows
-        })
-          .then(function () {
-            wx.hideLoading();
-            wx.showToast({ title: '已导入 ' + rows.length + ' 场', icon: 'success' });
-            const nextFilterIndex = self.data.filterOptions.findIndex(function (o) {
-              return o.id === tournamentId;
-            });
-            self.setData({
-              filterIndex: nextFilterIndex >= 0 ? nextFilterIndex : 0,
-              selectedTournamentId: tournamentId
-            });
-            return self._reloadList(true);
-          })
-          .catch(function (err) {
-            wx.hideLoading();
-            wx.showToast({ title: err.message || '导入失败', icon: 'none' });
-          })
-          .finally(function () {
-            self.setData({ submitting: false });
-          });
-      }
-    });
+    wx.showLoading({ title: '解析表格…', mask: true });
+    self._loadExcelParser()
+      .then(function (mod) {
+        wx.hideLoading();
+        let rows;
+        try {
+          rows = mod.parseMatchExcelBuffer(buffer, fileName);
+        } catch (err) {
+          wx.showToast({ title: err.message || '解析失败', icon: 'none' });
+          return;
+        }
+        const tourName = self._currentFilterTournamentName();
+        wx.showModal({
+          title: '确认导入',
+          content: '将 ' + rows.length + ' 条场次导入到「' + tourName + '」，是否继续？',
+          success: function (modalRes) {
+            if (!modalRes.confirm) return;
+            self.setData({ submitting: true });
+            wx.showLoading({ title: '导入中…', mask: true });
+            oamUpsert({
+              action: 'batch_import_matches',
+              tournament_id: tournamentId,
+              matches_list: rows
+            })
+              .then(function () {
+                wx.hideLoading();
+                wx.showToast({ title: '已导入 ' + rows.length + ' 场', icon: 'success' });
+                const nextFilterIndex = self.data.filterOptions.findIndex(function (o) {
+                  return o.id === tournamentId;
+                });
+                self.setData({
+                  filterIndex: nextFilterIndex >= 0 ? nextFilterIndex : 0,
+                  selectedTournamentId: tournamentId
+                });
+                return self._reloadList(true);
+              })
+              .catch(function (err) {
+                wx.hideLoading();
+                wx.showToast({ title: err.message || '导入失败', icon: 'none' });
+              })
+              .finally(function () {
+                self.setData({ submitting: false });
+              });
+          }
+        });
+      })
+      .catch(function (err) {
+        wx.hideLoading();
+        wx.showToast({
+          title: (err && err.errMsg) || 'Excel 模块加载失败',
+          icon: 'none'
+        });
+      });
   }
 });

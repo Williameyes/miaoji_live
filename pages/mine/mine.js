@@ -642,7 +642,7 @@ Page({
       wx.showToast({ title: '暂无使用权限', icon: 'none' });
       return;
     }
-    wx.navigateTo({ url: '/pages/sync-lab/index/index' });
+    wx.navigateTo({ url: '/packageLab/pages/sync-lab/index/index' });
   },
 
   /**
@@ -658,7 +658,7 @@ Page({
       wx.showToast({ title: '暂无使用权限', icon: 'none' });
       return;
     }
-    wx.navigateTo({ url: '/pages/radar-lab/index/index' });
+    wx.navigateTo({ url: '/packageLab/pages/radar-lab/index/index' });
   },
 
   onAboutTap: function () {

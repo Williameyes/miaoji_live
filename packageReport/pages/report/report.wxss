@@ -1,0 +1,39 @@
+.report-page {
+  min-height: 100vh;
+  padding: 32rpx;
+  box-sizing: border-box;
+  background: #f8fafc;
+}
+
+.report-card {
+  padding: 32rpx;
+  border-radius: 16rpx;
+  background: #ffffff;
+  box-shadow: 0 8rpx 24rpx rgba(15, 23, 42, 0.06);
+}
+
+.report-title {
+  display: block;
+  font-size: 34rpx;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.report-score {
+  display: block;
+  margin-top: 16rpx;
+  font-size: 28rpx;
+  color: #334155;
+}
+
+.report-hint {
+  display: block;
+  margin-top: 20rpx;
+  font-size: 24rpx;
+  color: #64748b;
+  line-height: 1.6;
+}
+
+.report-export-btn {
+  margin-top: 32rpx;
+}

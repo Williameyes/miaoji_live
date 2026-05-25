@@ -4,9 +4,9 @@
  * v3: 使用全局单例 BLEManager & EventBus。
  */
 
-const BLE = require('../../../utils/ble-protocol.js');
-const eventBus = require('../../../utils/eventBus.js');
-const bleManager = require('../../../services/bleManager.js');
+const BLE = require('../../../../utils/ble-protocol.js');
+const eventBus = require('../../../../utils/eventBus.js');
+const bleManager = require('../../../../services/bleManager.js');
 
 /** 扫描超时（ms）*/
 const SCAN_TIMEOUT_MS = 20000;

@@ -3,19 +3,44 @@
     "pages/index/index",
     "pages/live/live",
     "pages/mine/mine",
-    "pages/help/help",
-    "pages/sync-lab/index/index",
-    "pages/sync-lab/collector/collector",
-    "pages/sync-lab/broadcaster/broadcaster",
-    "pages/radar-lab/index/index",
-    "pages/radar-lab/oam/oam",
-    "pages/radar-lab/oam/tournament-list/tournament-list",
-    "pages/radar-lab/oam/match-edit/match-edit",
-    "pages/radar-lab/oam/tournament-edit/tournament-edit",
-    "pages/radar-lab/monitor/index",
-    "pages/radar-lab/monitor/detail",
-    "pages/radar-lab/poster/poster"
+    "pages/help/help"
   ],
+  "subpackages": [
+    {
+      "root": "packageReport",
+      "name": "packageReport",
+      "pages": [
+        "pages/report/report"
+      ]
+    },
+    {
+      "root": "packageLab",
+      "name": "packageLab",
+      "pages": [
+        "pages/sync-lab/index/index",
+        "pages/sync-lab/collector/collector",
+        "pages/sync-lab/broadcaster/broadcaster",
+        "pages/radar-lab/index/index",
+        "pages/radar-lab/oam/oam",
+        "pages/radar-lab/oam/tournament-list/tournament-list",
+        "pages/radar-lab/oam/match-edit/match-edit",
+        "pages/radar-lab/oam/tournament-edit/tournament-edit",
+        "pages/radar-lab/monitor/index",
+        "pages/radar-lab/monitor/detail",
+        "pages/radar-lab/poster/poster"
+      ]
+    }
+  ],
+  "preloadRule": {
+    "pages/live/live": {
+      "network": "all",
+      "packages": ["packageReport"]
+    },
+    "pages/index/index": {
+      "network": "wifi",
+      "packages": ["packageReport"]
+    }
+  },
   "window": {
     "backgroundTextStyle": "light",
     "navigationBarBackgroundColor": "#000000",

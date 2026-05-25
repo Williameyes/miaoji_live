@@ -7,10 +7,10 @@ Page({
   data: {},
 
   onGoCollector: function () {
-    wx.navigateTo({ url: '/pages/sync-lab/collector/collector' });
+    wx.navigateTo({ url: '/packageLab/pages/sync-lab/collector/collector' });
   },
 
   onGoBroadcaster: function () {
-    wx.navigateTo({ url: '/pages/sync-lab/broadcaster/broadcaster' });
+    wx.navigateTo({ url: '/packageLab/pages/sync-lab/broadcaster/broadcaster' });
   }
 });

@@ -21,7 +21,7 @@ Page({
    */
   onGoOam: function () {
     if (!ensureRadarLabAccess()) return;
-    wx.navigateTo({ url: '/pages/radar-lab/oam/oam' });
+    wx.navigateTo({ url: '/packageLab/pages/radar-lab/oam/oam' });
   },
 
   /**
@@ -30,7 +30,7 @@ Page({
    */
   onGoTournament: function () {
     if (!ensureRadarLabAccess()) return;
-    wx.navigateTo({ url: '/pages/radar-lab/oam/tournament-list/tournament-list' });
+    wx.navigateTo({ url: '/packageLab/pages/radar-lab/oam/tournament-list/tournament-list' });
   },
 
   /**
@@ -39,7 +39,7 @@ Page({
    */
   onGoMonitor: function () {
     if (!ensureRadarLabAccess()) return;
-    wx.navigateTo({ url: '/pages/radar-lab/monitor/index' });
+    wx.navigateTo({ url: '/packageLab/pages/radar-lab/monitor/index' });
   },
 
   /**
@@ -48,6 +48,6 @@ Page({
    */
   onGoPoster: function () {
     if (!ensureRadarLabAccess()) return;
-    wx.navigateTo({ url: '/pages/radar-lab/poster/poster' });
+    wx.navigateTo({ url: '/packageLab/pages/radar-lab/poster/poster' });
   }
 });

@@ -2,7 +2,7 @@
  * @fileoverview 赛事直播雷达 `/api/app/*` 接口封装（响应格式 success: true）。
  */
 
-const { post, get, request } = require('../utils/request.js');
+const { post, get, request } = require('../../utils/request.js');
 const {
   parseMatchList,
   parseTournamentList,

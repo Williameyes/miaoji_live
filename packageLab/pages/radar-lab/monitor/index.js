@@ -138,7 +138,7 @@ Page({
     const id = e.currentTarget.dataset.id;
     if (!id) return;
     wx.navigateTo({
-      url: '/pages/radar-lab/monitor/detail?match_id=' + encodeURIComponent(id)
+      url: '/packageLab/pages/radar-lab/monitor/detail?match_id=' + encodeURIComponent(id)
     });
   }
 });
