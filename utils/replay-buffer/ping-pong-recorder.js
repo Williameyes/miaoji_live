@@ -87,22 +87,88 @@ function stopRecorder(recorder) {
 }
 
 /**
+ * 在 MediaRecorder requestFrame 回调内完成 canvas 绘制（官方语义）。
+ * Android 若在 callback 外 draw，会录到 cleared/black buffer。
  * @param {Object} recorder
+ * @param {function(): void} [onDraw] 须在 callback 内执行的绘制逻辑
  * @returns {Promise<void>}
  */
-function requestFrameRecorder(recorder) {
+function requestFrameRecorder(recorder, onDraw) {
   if (!recorder || typeof recorder.requestFrame !== 'function') {
+    if (typeof onDraw === 'function') {
+      try { onDraw(); } catch (eDraw) { }
+    }
     return Promise.resolve();
   }
-  const ret = recorder.requestFrame();
-  if (isPromiseLike(ret)) return ret;
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    let finished = false;
+    /**
+     * @param {Error|unknown} [err]
+     * @returns {void}
+     */
+    const finish = (err) => {
+      if (finished) return;
+      finished = true;
+      if (err) reject(err);
+      else resolve();
+    };
+    /**
+     * @returns {void}
+     */
+    const drawInCallback = () => {
+      if (typeof onDraw !== 'function') return;
+      try {
+        onDraw();
+      } catch (eDraw) { }
+    };
     try {
-      recorder.requestFrame(() => resolve());
-    } catch (e) {
-      resolve();
+      const ret = recorder.requestFrame(() => {
+        drawInCallback();
+        finish();
+      });
+      if (isPromiseLike(ret)) {
+        ret.then(() => {
+          if (!finished) {
+            drawInCallback();
+            finish();
+          }
+        }).catch((err) => finish(err));
+      }
+    } catch (eReq) {
+      finish(eReq);
     }
   });
+}
+
+/**
+ * 按平台返回 MediaRecorder 视频码率（与 camera.startRecord 对齐，避免 Android 极低码率黑场）。
+ * @returns {number}
+ */
+function resolveRecorderVideoBitsPerSecond() {
+  if (typeof wx === 'undefined' || typeof wx.getSystemInfoSync !== 'function') {
+    return 2600;
+  }
+  try {
+    const platform = String(wx.getSystemInfoSync().platform || '').toLowerCase();
+    if (platform === 'android') return 3200;
+    if (platform === 'ios') return 2600;
+  } catch (eSys) { }
+  return 2200;
+}
+
+/**
+ * Android 双 MediaRecorder 并发时 B 轨易产出空壳；单轨模式更稳定。
+ * @returns {boolean}
+ */
+function preferAndroidSingleTrackRecorder() {
+  if (typeof wx === 'undefined' || typeof wx.getSystemInfoSync !== 'function') {
+    return false;
+  }
+  try {
+    return String(wx.getSystemInfoSync().platform || '').toLowerCase() === 'android';
+  } catch (eSys) {
+    return false;
+  }
 }
 
 /**
@@ -181,6 +247,12 @@ class PingPongRecorder {
     this._dualTrackHealthTimer = null;
     /** 上次高光强制 flush 墙钟，用于频率限制。 */
     this._lastHighlightFlushAt = 0;
+    /** 最近一帧相机 RGBA，stop 前须再绘制一次确保落盘段有画面。 */
+    this._lastCameraFrame = null;
+    /** Android 默认单轨，避免 B 轨空壳与双 WebGL 并发采帧失败。 */
+    this._singleTrackMode = options.singleTrackMode != null
+      ? !!options.singleTrackMode
+      : preferAndroidSingleTrackRecorder();
   }
 
   /**
@@ -226,7 +298,7 @@ class PingPongRecorder {
       height: this.canvasHeight
     });
     const blit = createBlit();
-    return blit.init({ canvasNode: canvas }).then(() => {
+    return blit.init({ canvasNode: canvas, preserveDrawingBuffer: true }).then(() => {
       this.tracks[trackId] = {
         id: trackId,
         canvas,
@@ -260,7 +332,7 @@ class PingPongRecorder {
     track.recorder = wx.createMediaRecorder(track.canvas, {
       duration: Math.min(7200, durationSec),
       fps: this.fps,
-      videoBitsPerSecond: 1200,
+      videoBitsPerSecond: resolveRecorderVideoBitsPerSecond(),
       gop: Math.max(6, Math.floor(this.fps)),
       width: this.canvasWidth,
       height: this.canvasHeight
@@ -329,6 +401,15 @@ class PingPongRecorder {
    */
   _ensureDualTrackHealth() {
     if (!this.active) return;
+    if (this._singleTrackMode) {
+      const trackA = this.tracks.A;
+      if (!trackA || !trackA.recording) {
+        this._log('ping_pong_single_track_recovery', {});
+        this._startTrack('A', 'single_track_recovery').catch(() => { });
+      }
+      this._singleTrackStuckAt = 0;
+      return;
+    }
     const recording = TRACK_IDS.filter((id) => {
       const t = this.tracks[id];
       return t && t.recording;
@@ -590,7 +671,12 @@ class PingPongRecorder {
       track.stopTimer = null;
     }
     const recorder = track.recorder;
-    return requestFrameRecorder(recorder)
+    const lastFrame = this._lastCameraFrame;
+    return requestFrameRecorder(recorder, () => {
+      if (lastFrame && track.blit) {
+        track.blit.drawRgba(lastFrame);
+      }
+    })
       .then(() => stopRecorder(recorder))
       .then((res) => this._persistTemp(
         trackId,
@@ -678,6 +764,23 @@ class PingPongRecorder {
         };
         return attemptPersist(false).then((finalPath) => {
           if (finalPath) {
+            const wallDurationMs = Math.max(0, endTime - startTime);
+            if (fsReady.isHollowSegment(sizeBytes, wallDurationMs)) {
+              this._log('ping_pong_segment_rejected_hollow', {
+                trackId,
+                source: persistSource,
+                sizeBytes,
+                wallDurationMs,
+                pathTail: String(finalPath).slice(-56)
+              });
+              if (finalPath !== tempPath) {
+                try { fs.unlink({ filePath: finalPath }); } catch (eUn) { }
+              }
+              if (isHighlightFlush) {
+                return;
+              }
+              return;
+            }
             this._registerPersistedSegment(finalPath, startTime, endTime, trackId, sizeBytes, {
               pinPath: isHighlightFlush && finalPath === tempPath,
               tempDirect: finalPath === tempPath
@@ -700,6 +803,18 @@ class PingPongRecorder {
                   stage: 'all_save_failed',
                   destTail: destPath.slice(-48),
                   sizeBytes
+                });
+                return;
+              }
+              const wallDurationMs = Math.max(0, endTime - startTime);
+              if (fsReady.isHollowSegment(sizeBytes, wallDurationMs)) {
+                this._log('ping_pong_segment_rejected_hollow', {
+                  trackId,
+                  source: persistSource,
+                  sizeBytes,
+                  wallDurationMs,
+                  pathTail: String(tempDirect).slice(-56),
+                  fallback: 'after_save_fail'
                 });
                 return;
               }
@@ -839,6 +954,7 @@ class PingPongRecorder {
       endTime,
       trackId,
       sessionId: this.sessionId,
+      sizeBytes: Math.max(0, Math.floor(Number(sizeBytes) || 0)),
       ready: true
     };
     this.segments.push(segment);
@@ -924,15 +1040,20 @@ class PingPongRecorder {
     this.sessionId += 1;
     this._singleTrackStuckAt = 0;
     this._lastHighlightFlushAt = 0;
-    this._log('ping_pong_start', { sessionId: this.sessionId });
+    this._log('ping_pong_start', {
+      sessionId: this.sessionId,
+      singleTrackMode: !!this._singleTrackMode
+    });
     this._startDualTrackHealthWatch();
     return this._startTrack('A', 'kickoff').then(() => {
+      if (this._singleTrackMode) return undefined;
       const peerDelay = Math.max(0, this.chunkDurationMs - this.overlapMs);
       const t = setTimeout(() => {
         if (!this.active) return;
         this._startTrack('B', 'overlap_kickoff').catch(() => { });
       }, peerDelay);
       this._timers.push(t);
+      return undefined;
     });
   }
 
@@ -970,14 +1091,13 @@ class PingPongRecorder {
    */
   feedFrame(frame) {
     if (!this.active || !frame) return Promise.resolve();
+    this._lastCameraFrame = frame;
     const tasks = TRACK_IDS.map((trackId) => {
       const track = this.tracks[trackId];
       if (!track || !track.recording || !track.recorder || !track.blit) return Promise.resolve();
-      return requestFrameRecorder(track.recorder)
-        .then(() => {
-          track.blit.drawRgba(frame);
-        })
-        .catch(() => { });
+      return requestFrameRecorder(track.recorder, () => {
+        track.blit.drawRgba(frame);
+      }).catch(() => { });
     });
     return Promise.all(tasks).then(() => { });
   }
@@ -999,6 +1119,83 @@ class PingPongRecorder {
       };
     }).filter(Boolean);
     return this.segments.slice().concat(live);
+  }
+
+  /**
+   * 读取 segment 体积；优先用落盘时缓存的 sizeBytes，否则同步 stat。
+   * @param {{ path?: string, startTime?: number, endTime?: number, sizeBytes?: number }} seg
+   * @returns {number}
+   */
+  _getSegmentSizeBytes(seg) {
+    if (!seg) return 0;
+    if (typeof seg.sizeBytes === 'number' && seg.sizeBytes > 0) return seg.sizeBytes;
+    const path = typeof seg.path === 'string' ? seg.path : '';
+    if (!path || typeof wx === 'undefined' || typeof wx.getFileSystemManager !== 'function') return 0;
+    try {
+      const st = wx.getFileSystemManager().statSync(path);
+      return st && typeof st.size === 'number' ? st.size : 0;
+    } catch (eStat) {
+      return 0;
+    }
+  }
+
+  /**
+   * @param {{ path?: string, startTime?: number, endTime?: number, sizeBytes?: number }} seg
+   * @returns {boolean}
+   */
+  _isSegmentHollow(seg) {
+    if (!seg) return true;
+    const wallDurationMs = Math.max(0, (seg.endTime || 0) - (seg.startTime || 0));
+    return fsReady.isHollowSegment(this._getSegmentSizeBytes(seg), wallDurationMs);
+  }
+
+  /**
+   * 选取覆盖高光窗的最佳非空壳落盘段（体积优先，避免误选 B 轨空壳）。
+   * @param {number} clickTime
+   * @param {number} leadMs
+   * @param {string} [excludeTrackId]
+   * @returns {Object|null}
+   */
+  _pickBestHighlightSegment(clickTime, leadMs, excludeTrackId) {
+    const lead = typeof leadMs === 'number' && leadMs > 0 ? leadMs : 8000;
+    const windowStart = clickTime - lead;
+    const windowEnd = clickTime;
+    const exclude = typeof excludeTrackId === 'string' ? excludeTrackId : '';
+    const candidates = (this.segments || [])
+      .filter((seg) => seg
+        && seg.path
+        && (!exclude || seg.trackId !== exclude)
+        && seg.startTime <= clickTime
+        && seg.endTime >= clickTime
+        && !this._isSegmentHollow(seg))
+      .map((seg) => Object.assign({}, seg, {
+        sizeBytes: this._getSegmentSizeBytes(seg)
+      }))
+      .sort((a, b) => {
+        const aFull = a.startTime <= windowStart && a.endTime >= windowEnd ? 1 : 0;
+        const bFull = b.startTime <= windowStart && b.endTime >= windowEnd ? 1 : 0;
+        if (aFull !== bFull) return bFull - aFull;
+        const aDur = a.endTime - a.startTime;
+        const bDur = b.endTime - b.startTime;
+        if (aDur !== bDur) return bDur - aDur;
+        return (b.sizeBytes || 0) - (a.sizeBytes || 0);
+      });
+    return candidates[0] || null;
+  }
+
+  /**
+   * 估算轨道近期落盘质量（均字节），用于 flush 时避开持续产出空壳的轨。
+   * @param {string} trackId
+   * @returns {number}
+   */
+  _estimateTrackSegmentQuality(trackId) {
+    const recent = (this.segments || [])
+      .filter((seg) => seg && seg.trackId === trackId)
+      .slice(-3)
+      .map((seg) => this._getSegmentSizeBytes(seg))
+      .filter((size) => size > 0);
+    if (!recent.length) return 0;
+    return recent.reduce((sum, size) => sum + size, 0) / recent.length;
   }
 
   /**
@@ -1174,11 +1371,21 @@ class PingPongRecorder {
       picked = withFullWindow[0];
       pickReason = 'sole_full_window';
     } else if (withFullWindow.length > 1) {
-      withFullWindow.sort((a, b) => a.startTime - b.startTime);
+      withFullWindow.sort((a, b) => {
+        const qa = this._estimateTrackSegmentQuality(a.trackId);
+        const qb = this._estimateTrackSegmentQuality(b.trackId);
+        if (qa !== qb) return qb - qa;
+        return a.startTime - b.startTime;
+      });
       picked = withFullWindow[0];
       pickReason = 'overlap_primary_longest';
     } else {
-      candidates.sort((a, b) => b.ageMs - a.ageMs);
+      candidates.sort((a, b) => {
+        const qa = this._estimateTrackSegmentQuality(a.trackId);
+        const qb = this._estimateTrackSegmentQuality(b.trackId);
+        if (qa !== qb) return qb - qa;
+        return b.ageMs - a.ageMs;
+      });
       picked = candidates[0];
       pickReason = 'longest_age_partial';
       if (picked.ageMs < minPreferAgeMs && candidates.length > 1) {
@@ -1292,30 +1499,23 @@ class PingPongRecorder {
     const lead = typeof leadMs === 'number' && leadMs > 0 ? leadMs : 8000;
     const windowStart = clickTime - lead;
     const windowEnd = clickTime;
-    const fullCover = (this.segments || [])
-      .filter((seg) => seg && seg.path && seg.startTime <= windowStart && seg.endTime >= windowEnd)
-      .sort((a, b) => b.endTime - a.endTime)[0];
-    if (fullCover) {
-      const plan = this._buildSeekFromSegment(fullCover, windowStart, windowEnd);
+    const best = this._pickBestHighlightSegment(clickTime, lead);
+    if (best) {
+      const plan = this._buildHighlightSeekPlan(best, clickTime, lead)
+        || this._buildSeekFromSegment(best, windowStart, windowEnd);
       if (plan) {
-        plan.trimDiagnostic = this._emitTrimDiagnostic('sync_full_cover', fullCover, clickTime, lead, Object.assign({}, plan, {
-          seekMode: 'sync_full_cover',
-          tailTrim: false
-        }));
-      }
-      return plan;
-    }
-    /** 已落盘段：取含点击时刻的最长段，按墙钟 8s 窗裁剪（不用末尾 tail，避免误选短 flush 段）。 */
-    const clickInside = (this.segments || [])
-      .filter((seg) => seg && seg.path && seg.startTime <= clickTime && seg.endTime >= clickTime)
-      .sort((a, b) => (b.endTime - b.startTime) - (a.endTime - a.startTime))[0];
-    if (clickInside) {
-      const plan = this._buildSeekFromSegment(clickInside, windowStart, windowEnd);
-      if (plan) {
-        plan.trimDiagnostic = this._emitTrimDiagnostic('sync_click_inside', clickInside, clickTime, lead, Object.assign({}, plan, {
-          seekMode: 'sync_click_inside',
-          tailTrim: false
-        }));
+        plan.trimDiagnostic = this._emitTrimDiagnostic(
+          best.startTime <= windowStart && best.endTime >= windowEnd ? 'sync_full_cover' : 'sync_click_inside',
+          best,
+          clickTime,
+          lead,
+          Object.assign({}, plan, {
+            seekMode: plan.seekMode || (best.startTime <= windowStart && best.endTime >= windowEnd
+              ? 'sync_full_cover'
+              : 'sync_click_inside'),
+            tailTrim: !!plan.tailTrim
+          })
+        );
       }
       return plan;
     }
@@ -1391,9 +1591,40 @@ class PingPongRecorder {
         return this._stopTrack(trackId, 'highlight_flush').then(() => {
           return this._pickFlushSegmentAfterStop(trackId, flushStart);
         }).then((picked) => {
-          const seg = picked && picked.seg ? picked.seg : null;
+          let seg = picked && picked.seg ? picked.seg : null;
           const flushStart = picked && picked.flushStart ? picked.flushStart : Date.now();
           const flushEnd = picked && picked.flushEnd ? picked.flushEnd : Date.now();
+          if (seg && this._isSegmentHollow(seg)) {
+            this._log('ping_pong_highlight_flush_hollow_segment', {
+              trackId,
+              clickTime,
+              sizeBytes: this._getSegmentSizeBytes(seg),
+              wallDurationMs: Math.max(0, seg.endTime - seg.startTime),
+              pathTail: String(seg.path || '').slice(-56)
+            });
+            const alt = this._pickBestHighlightSegment(clickTime, lead, trackId);
+            if (alt) {
+              seg = alt;
+              this._log('ping_pong_highlight_flush_hollow_fallback', {
+                fromTrackId: trackId,
+                altTrackId: alt.trackId || '',
+                sizeBytes: this._getSegmentSizeBytes(alt)
+              });
+            } else {
+              seg = null;
+            }
+          }
+          if (!seg) {
+            const alt = this._pickBestHighlightSegment(clickTime, lead, trackId);
+            if (alt) {
+              seg = alt;
+              this._log('ping_pong_highlight_flush_no_segment_fallback', {
+                trackId,
+                altTrackId: alt.trackId || '',
+                sizeBytes: this._getSegmentSizeBytes(alt)
+              });
+            }
+          }
           if (!seg) {
             this._log('ping_pong_highlight_flush_no_segment', {
               trackId,

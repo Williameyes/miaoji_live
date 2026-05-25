@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<!-- saved from url=(0053)file:///Users/zan/projects/miaoji_live/testboard.html -->
+<html lang="zh-CN"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>高光记分 - 模拟电子记分牌</title>
+    <style>
+        body {
+            background-color: #000;
+            color: #fff;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+
+        .scoreboard {
+            width: 90vw;
+            max-width: 1000px;
+            background: #111;
+            border: 10px solid #333;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 0 50px rgba(255, 0, 0, 0.2);
+            position: relative;
+        }
+
+        /* LED 颜色与发光效果 */
+        .led-red {
+            color: #ff3b30;
+            text-shadow: 0 0 15px rgba(255, 59, 48, 0.8);
+        }
+
+        .led-green {
+            color: #4cd964;
+            text-shadow: 0 0 15px rgba(76, 217, 100, 0.8);
+        }
+
+        .led-yellow {
+            color: #ffcc00;
+            text-shadow: 0 0 15px rgba(255, 204, 0, 0.8);
+        }
+
+        /* 顶部队伍名 */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+
+        .team-box {
+            border: 3px solid #ff3b30;
+            padding: 10px 30px;
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: #ff3b30;
+        }
+
+        .vs {
+            font-size: 2rem;
+            color: #666;
+            font-style: italic;
+        }
+
+        /* 中间核心数据 */
+        .main-display {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 40px 0;
+        }
+
+        .score {
+            font-size: 10rem;
+            font-weight: bold;
+            min-width: 250px;
+            text-align: center;
+        }
+
+        .center-info {
+            text-align: center;
+            flex-grow: 1;
+        }
+
+        .period {
+            font-size: 2.5rem;
+            margin-bottom: 15px;
+        }
+
+        .timer {
+            font-size: 5rem;
+            border: 4px solid #4cd964;
+            padding: 5px 20px;
+            display: inline-block;
+            border-radius: 10px;
+        }
+
+        /* 底部辅助数据 */
+        .footer {
+            display: flex;
+            justify-content: space-around;
+            align-items: flex-end;
+            margin-top: 40px;
+        }
+
+        .foul-box {
+            text-align: center;
+        }
+
+        .foul-label {
+            font-size: 1.2rem;
+            color: #888;
+            margin-bottom: 5px;
+        }
+
+        .foul-val {
+            font-size: 4rem;
+            border: 2px solid #ff3b30;
+            padding: 5px 25px;
+            border-radius: 5px;
+        }
+
+        .shot-clock-box {
+            text-align: center;
+        }
+
+        .shot-clock {
+            font-size: 6rem;
+            border: 5px solid #ff3b30;
+            padding: 10px 30px;
+            border-radius: 15px;
+            display: inline-block;
+        }
+
+        /* 控制按钮 */
+        .controls {
+            position: absolute;
+            bottom: -100px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 15px;
+            width: 100%;
+            justify-content: center;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            background: #333;
+            color: #fff;
+            border: 1px solid #444;
+            border-radius: 5px;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #555;
+        }
+
+        .btn-reset {
+            border-color: #ffcc00;
+            color: #ffcc00;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="scoreboard">
+        <div class="header">
+            <div class="team-box">成都 1 队</div>
+            <div class="vs">VS</div>
+            <div class="team-box">北京 2 队</div>
+        </div>
+
+        <div class="main-display">
+            <div id="homeScore" class="score led-red">99</div>
+            <div class="center-info">
+                <div id="period" class="period led-yellow">第 3 节</div>
+                <div id="timer" class="timer led-green">10:00</div>
+            </div>
+            <div id="guestScore" class="score led-red">103</div>
+        </div>
+
+        <div class="footer">
+            <div class="foul-box">
+                <div class="foul-label">犯规</div>
+                <div id="homeFoul" class="foul-val led-red">8</div>
+            </div>
+            <div class="shot-clock-box">
+                <div id="shotClock" class="shot-clock led-red">24</div>
+            </div>
+            <div class="foul-box">
+                <div class="foul-label">犯规</div>
+                <div id="guestFoul" class="foul-val led-red">0</div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <button onclick="startSimulation()">开始模拟</button>
+            <button onclick="pauseSimulation()">暂停</button>
+            <button class="btn-reset" onclick="resetTimer()">重置时间</button>
+            <button class="btn-reset" onclick="resetScores()">重置比分</button>
+        </div>
+    </div>
+
+    <script>
+        // 初始数据设置为要求的重置值
+        let homeScore = 99;
+        let guestScore = 103;
+        let shotClock = 24;
+        let minutes = 10;
+        let seconds = 0;
+        let interval = null;
+
+        function updateDisplay() {
+            document.getElementById('homeScore').innerText = homeScore;
+            document.getElementById('guestScore').innerText = guestScore;
+            document.getElementById('shotClock').innerText = shotClock < 10 ? '0' + shotClock : shotClock;
+            document.getElementById('timer').innerText =
+                (minutes < 10 ? '0' + minutes : minutes) + ':' +
+                (seconds < 10 ? '0' + seconds : seconds);
+        }
+
+        function startSimulation() {
+            if (interval) return;
+            interval = setInterval(() => {
+                // 时间倒计时
+                if (seconds === 0) {
+                    if (minutes > 0) {
+                        minutes--;
+                        seconds = 59;
+                    } else {
+                        pauseSimulation();
+                    }
+                } else {
+                    seconds--;
+                }
+
+                // 24秒倒计时
+                if (shotClock > 0) {
+                    shotClock--;
+                } else {
+                    shotClock = 24; 
+                }
+
+                // 随机模拟进球
+                if (Math.random() > 0.98) {
+                    homeScore += Math.floor(Math.random() * 3) + 1;
+                }
+                if (Math.random() > 0.98) {
+                    guestScore += Math.floor(Math.random() * 3) + 1;
+                }
+
+                updateDisplay();
+            }, 1000);
+        }
+
+        function pauseSimulation() {
+            clearInterval(interval);
+            interval = null;
+        }
+
+        // 功能 1: 重置时间为 10:00，并重置24秒
+        function resetTimer() {
+            pauseSimulation();
+            minutes = 10;
+            seconds = 0;
+            shotClock = 24;
+            updateDisplay();
+        }
+
+        // 功能 2: 重置比分为 99:103
+        function resetScores() {
+            homeScore = 99;
+            guestScore = 103;
+            updateDisplay();
+        }
+    </script>
+
+
+</body></html>

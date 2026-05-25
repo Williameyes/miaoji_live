@@ -75,6 +75,7 @@ function createCameraBlitRenderer() {
   /**
    * @param {Object} opts
    * @param {Object} opts.canvasNode offscreen 或 wxml canvas node
+   * @param {boolean} [opts.preserveDrawingBuffer] MediaRecorder 采帧须 true，否则 Android 易录黑屏
    * @returns {Promise<void>}
    */
   function init(opts) {
@@ -82,13 +83,14 @@ function createCameraBlitRenderer() {
     if (!canvasNode) {
       return Promise.reject(new Error('canvasNode required'));
     }
+    const preserveDrawingBuffer = !opts || opts.preserveDrawingBuffer !== false;
     try {
       gl = canvasNode.getContext('webgl', {
         antialias: false,
         depth: false,
         stencil: false,
         alpha: false,
-        preserveDrawingBuffer: false
+        preserveDrawingBuffer: preserveDrawingBuffer
       });
     } catch (eCtx) {
       return Promise.reject(eCtx);
@@ -151,6 +153,10 @@ function createCameraBlitRenderer() {
     gl.enableVertexAttribArray(aUv);
     gl.vertexAttribPointer(aUv, 2, gl.FLOAT, false, 16, 8);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    /** 确保 GPU 提交后再结束 requestFrame callback，Android MediaRecorder 依赖此缓冲。 */
+    if (typeof gl.finish === 'function') {
+      gl.finish();
+    }
   }
 
   /**

@@ -1,3 +1,5 @@
+const fsReady = require('./fs-ready.js');
+
 /**
  * 利用 wx.createMediaContainer 从长滚动母片中无重编码裁剪高光片段。
  */
@@ -112,9 +114,18 @@ function probeVideoDurationViaGetVideoInfo(sourcePath) {
 function probeVideoDurationMs(sourcePath) {
   const src = typeof sourcePath === 'string' ? sourcePath : '';
   if (!src) return Promise.resolve({ durationMs: 0, source: 'empty' });
-  return probeVideoDurationViaGetVideoInfo(src).then((viaInfo) => {
-    if (viaInfo > 500) return { durationMs: viaInfo, source: 'getVideoInfo' };
-    if (!isMediaContainerSupported()) return { durationMs: 0, source: 'unsupported' };
+  return getFileSizeBytes(src).then((srcSizeBytes) => probeVideoDurationViaGetVideoInfo(src).then((viaInfo) => {
+    if (viaInfo > 500 && !fsReady.isSuspiciousDurationProbe(srcSizeBytes, viaInfo)) {
+      return { durationMs: viaInfo, source: 'getVideoInfo' };
+    }
+    if (viaInfo > 500 && fsReady.isSuspiciousDurationProbe(srcSizeBytes, viaInfo)) {
+      /** Android 空壳 mp4 常见 getVideoInfo 虚报时长，改走 MediaContainer 或判失败。 */
+    }
+    if (!isMediaContainerSupported()) {
+      return viaInfo > 500 && !fsReady.isSuspiciousDurationProbe(srcSizeBytes, viaInfo)
+        ? { durationMs: viaInfo, source: 'getVideoInfo' }
+        : { durationMs: 0, source: viaInfo > 500 ? 'suspicious_getVideoInfo' : 'unsupported' };
+    }
     return withMediaContainerLock(() => new Promise((resolve) => {
       const container = wx.createMediaContainer();
       let finished = false;
@@ -128,6 +139,10 @@ function probeVideoDurationMs(sourcePath) {
         } catch (eDestroy) { }
         const durationMs = Math.max(0, Math.floor(Number(ms) || 0));
         if (durationMs > 500) {
+          if (fsReady.isSuspiciousDurationProbe(srcSizeBytes, durationMs)) {
+            resolve({ durationMs: 0, source: 'suspicious_mediaContainer' });
+            return;
+          }
           resolve({ durationMs, source: 'mediaContainer' });
           return;
         }
@@ -143,6 +158,10 @@ function probeVideoDurationMs(sourcePath) {
             if (video && typeof video.duration === 'number' && video.duration > 0) {
               durationMs = normalizeDurationToMs(video.duration);
             }
+            if (durationMs > 500 && fsReady.isSuspiciousDurationProbe(srcSizeBytes, durationMs)) {
+              done(0);
+              return;
+            }
             done(durationMs);
           },
           fail: () => done(0)
@@ -151,7 +170,7 @@ function probeVideoDurationMs(sourcePath) {
         done(0);
       }
     }));
-  });
+  }));
 }
 
 /**
@@ -176,29 +195,55 @@ function delayMs(delayMs) {
 }
 
 /**
+ * 按母片/期望时长比例估算裁剪产物允许的最大体积（防假裁剪，且不误伤 iOS 短 flush 段）。
+ * iOS 实测：9.6s 母片裁 8s 窗，输出可达母片 ~43%，固定 42% 阈值会误拒。
+ * @param {number} sourceSizeBytes
+ * @param {number} expectedDurationMs
+ * @param {number} [sourceDurationMs]
+ * @returns {number}
+ */
+function computeMaxAllowedTrimOutputBytes(sourceSizeBytes, expectedDurationMs, sourceDurationMs) {
+  const srcSize = Math.max(0, Math.floor(Number(sourceSizeBytes) || 0));
+  const expected = Math.max(500, Math.floor(Number(expectedDurationMs) || 0));
+  const srcDur = Math.max(expected, Math.floor(Number(sourceDurationMs) || 0));
+  if (!srcSize) return 0;
+  const durationRatio = Math.min(1, expected / srcDur);
+  /** 长母片裁短窗仍用 42% 下限；短母片按 durationRatio + 12% 放宽。 */
+  const sizeRatio = Math.min(0.96, Math.max(0.42, durationRatio + 0.12));
+  return Math.max(256 * 1024, Math.floor(srcSize * sizeRatio));
+}
+
+/**
  * 校验裁剪产物：拒绝「日志成功但实际仍是整段母片」的假裁剪。
  * @param {string} outputPath
  * @param {number} expectedDurationMs
  * @param {number} sourceSizeBytes
+ * @param {number} [sourceDurationMs]
  * @returns {Promise<{ durationMs: number, sizeBytes: number }>}
  */
-function validateTrimOutput(outputPath, expectedDurationMs, sourceSizeBytes) {
+function validateTrimOutput(outputPath, expectedDurationMs, sourceSizeBytes, sourceDurationMs) {
   const expected = Math.max(500, Math.floor(Number(expectedDurationMs) || 0));
   const srcSize = Math.max(0, Math.floor(Number(sourceSizeBytes) || 0));
+  const srcDur = Math.max(expected, Math.floor(Number(sourceDurationMs) || 0));
   return Promise.all([
     probeVideoDurationMs(outputPath),
     getFileSizeBytes(outputPath)
   ]).then(([probe, sizeBytes]) => {
     const durationMs = probe && probe.durationMs ? probe.durationMs : 0;
     const maxAllowedDurationMs = expected + 2500;
-    const maxAllowedSizeBytes = srcSize > 0
-      ? Math.max(256 * 1024, Math.floor(srcSize * 0.42))
-      : 0;
+    const maxAllowedSizeBytes = computeMaxAllowedTrimOutputBytes(srcSize, expected, srcDur);
+    const minAllowedSizeBytes = Math.max(
+      4096,
+      fsReady.estimateMinSegmentBytes(Math.min(expected, 12000))
+    );
     if (durationMs > maxAllowedDurationMs) {
       return Promise.reject(new Error(`trim_output_too_long:${durationMs}/${expected}`));
     }
     if (srcSize > 0 && sizeBytes > maxAllowedSizeBytes) {
       return Promise.reject(new Error(`trim_output_too_large:${sizeBytes}/${srcSize}`));
+    }
+    if (sizeBytes < minAllowedSizeBytes) {
+      return Promise.reject(new Error(`trim_output_too_small:${sizeBytes}/${expected}`));
     }
     if (durationMs < Math.floor(expected * 0.45)) {
       return Promise.reject(new Error(`trim_output_too_short:${durationMs}/${expected}`));
@@ -307,7 +352,7 @@ function trimVideoSegmentOnce(sourcePath, startMs, endMs) {
  * @param {string} sourcePath
  * @param {number} startMs
  * @param {number} endMs
- * @param {{ sourceSizeBytes?: number, maxAttempts?: number }} [options]
+ * @param {{ sourceSizeBytes?: number, sourceDurationMs?: number, maxAttempts?: number }} [options]
  * @returns {Promise<{ path: string, trimStartMs: number, trimEndMs: number, outputDurationMs: number, outputSizeBytes: number, videoOnly: boolean }>}
  */
 function trimVideoSegment(sourcePath, startMs, endMs, options) {
@@ -316,6 +361,7 @@ function trimVideoSegment(sourcePath, startMs, endMs, options) {
   const end = Math.max(start + 500, Math.floor(Number(endMs) || 0));
   const expectedDurationMs = end - start;
   const sourceSizeBytes = Math.max(0, Math.floor(Number(opts.sourceSizeBytes) || 0));
+  const sourceDurationMs = Math.max(0, Math.floor(Number(opts.sourceDurationMs) || 0));
   const maxAttempts = Math.max(1, Math.floor(Number(opts.maxAttempts) || 3));
 
   /**
@@ -329,8 +375,12 @@ function trimVideoSegment(sourcePath, startMs, endMs, options) {
         const sizePromise = sourceSizeBytes > 0
           ? Promise.resolve(sourceSizeBytes)
           : getFileSizeBytes(sourcePath);
-        return sizePromise.then((srcSize) => validateTrimOutput(outPath, expectedDurationMs, srcSize)
-          .then((validated) => ({
+        return sizePromise.then((srcSize) => validateTrimOutput(
+          outPath,
+          expectedDurationMs,
+          srcSize,
+          sourceDurationMs
+        ).then((validated) => ({
             path: outPath,
             trimStartMs: start,
             trimEndMs: end,
@@ -375,6 +425,7 @@ function trimVideoTail(sourcePath, tailMs, fallbackDurationMs, options) {
     const start = Math.max(0, dur - tail);
     return trimVideoSegment(sourcePath, start, dur, {
       sourceSizeBytes: opts.sourceSizeBytes,
+      sourceDurationMs: dur,
       maxAttempts: opts.maxAttempts
     }).then((result) => {
       if (!result || !result.path) {
@@ -472,6 +523,7 @@ function trimClipForExport(sourcePath, clip) {
         const mapped = mapWallWindowToFileMs(winStart, winEnd, wallDur, probedDurationMs);
         return trimVideoSegment(src, mapped.trimStartMs, mapped.trimEndMs, {
           sourceSizeBytes: srcSizeBytes,
+          sourceDurationMs: probedDurationMs,
           maxAttempts: 3
         })
           .then((result) => (result && result.path ? result.path : src))

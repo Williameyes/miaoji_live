@@ -8,6 +8,63 @@
 
 const DEFAULT_MIN_BYTES = 1024;
 
+/** 极低码率阈值（字节/秒），低于此视为空壳。 */
+const HOLLOW_MAX_BYTES_PER_SEC = 1500;
+
+/** 短段绝对体积下限（字节）。 */
+const HOLLOW_SHORT_ABSOLUTE_MIN_BYTES = 16384;
+
+/** 长段绝对体积下限（字节）。 */
+const HOLLOW_LONG_ABSOLUTE_MIN_BYTES = 65536;
+
+/**
+ * @param {number} wallDurationMs
+ * @returns {number}
+ */
+function segmentDurationSec(wallDurationMs) {
+  return Math.max(1, Math.floor(Number(wallDurationMs) || 0) / 1000);
+}
+
+/**
+ * 按墙钟时长估算 rolling 段合理最小体积（用于裁剪产物校验）。
+ * @param {number} wallDurationMs
+ * @returns {number}
+ */
+function estimateMinSegmentBytes(wallDurationMs) {
+  const durSec = segmentDurationSec(wallDurationMs);
+  return Math.max(HOLLOW_SHORT_ABSOLUTE_MIN_BYTES, durSec * 4000);
+}
+
+/**
+ * 判断 rolling 段是否为空壳（有墙钟跨度但几乎无有效编码数据）。
+ * 采用分层阈值，避免 Android 长段低码率误拒（如 264KB/81s）。
+ * @param {number} sizeBytes
+ * @param {number} wallDurationMs
+ * @returns {boolean}
+ */
+function isHollowSegment(sizeBytes, wallDurationMs) {
+  const size = Math.max(0, Math.floor(Number(sizeBytes) || 0));
+  const wallMs = Math.max(0, Math.floor(Number(wallDurationMs) || 0));
+  const durSec = segmentDurationSec(wallMs);
+
+  if (size < DEFAULT_MIN_BYTES) return true;
+  if (wallMs < 500) return size < HOLLOW_SHORT_ABSOLUTE_MIN_BYTES;
+  if (wallMs >= 3000 && size < HOLLOW_SHORT_ABSOLUTE_MIN_BYTES) return true;
+  if (wallMs >= 10000 && size < HOLLOW_LONG_ABSOLUTE_MIN_BYTES) return true;
+  if (wallMs >= 5000 && size / durSec < HOLLOW_MAX_BYTES_PER_SEC) return true;
+  return false;
+}
+
+/**
+ * 探测时长与文件体积严重不匹配（Android 空壳 mp4 常见 getVideoInfo 虚报时长）。
+ * @param {number} sizeBytes
+ * @param {number} durationMs
+ * @returns {boolean}
+ */
+function isSuspiciousDurationProbe(sizeBytes, durationMs) {
+  return isHollowSegment(sizeBytes, durationMs);
+}
+
 function getFs() {
   if (typeof wx === 'undefined' || !wx.getFileSystemManager) return null;
   return wx.getFileSystemManager();
@@ -113,6 +170,12 @@ function waitForFileReady(filePath, opts) {
 
 module.exports = {
   DEFAULT_MIN_BYTES,
+  HOLLOW_SHORT_ABSOLUTE_MIN_BYTES,
+  HOLLOW_LONG_ABSOLUTE_MIN_BYTES,
+  HOLLOW_MAX_BYTES_PER_SEC,
+  estimateMinSegmentBytes,
+  isHollowSegment,
+  isSuspiciousDurationProbe,
   checkFileReady,
   waitForFileReady,
   getFileInfo,

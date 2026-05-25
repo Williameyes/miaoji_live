@@ -1256,6 +1256,9 @@ Page({
   _highlightSaveProgressTimer: null,
   /** 保存高光期间若用户点了回放，暂存条目，待 {@link endHighlightSaving} 后再真正进入回放 */
   _replayDeferredItem: null,
+  /** Android：indexed 滚动母片需等固化完成后再回放，避免 rolling seek 黑屏 */
+  _replayDeferredMaterializeItem: null,
+  _replayMaterializeWaitTimer: null,
   _highlightRequestLock: false,
   /**
    * 画质档位切换防抖截止时间（ms 时间戳）；此前拦截工具条连点，减轻 VK 与 camera 互切黑屏。
@@ -7764,18 +7767,143 @@ Page({
   /**
    * 同步探测路径是否可播放（存在且体积合理）。
    * @param {string} p
+   * @param {number} [wallDurationMs] 可选墙钟跨度，用于识别空壳 mp4
    * @returns {boolean}
    */
-  _isHighlightPathPlayable: function (p) {
+  _isHighlightPathPlayable: function (p, wallDurationMs) {
     if (!p || typeof p !== 'string') return false;
     const fs = wx.getFileSystemManager();
     try {
       const st = fs.statSync(p);
       const sz = st && typeof st.size === 'number' ? st.size : 0;
-      return sz >= 64;
+      if (sz < 64) return false;
+      const fsReadyMod = replayBufferMod.fsReady;
+      if (fsReadyMod && typeof fsReadyMod.isHollowSegment === 'function'
+        && typeof wallDurationMs === 'number' && wallDurationMs > 500) {
+        return !fsReadyMod.isHollowSegment(sz, wallDurationMs);
+      }
+      return true;
     } catch (eStat) {
       return false;
     }
+  },
+
+  /**
+   * 判断高光源文件是否为空壳（Android 部分机型 B 轨常见）。
+   * @param {string} path
+   * @param {number} [wallDurationMs]
+   * @returns {boolean}
+   */
+  _isHighlightSourceHollow: function (path, wallDurationMs) {
+    if (!path || typeof path !== 'string') return true;
+    const fsReadyMod = replayBufferMod.fsReady;
+    if (!fsReadyMod || typeof fsReadyMod.isHollowSegment !== 'function') return false;
+    try {
+      const st = wx.getFileSystemManager().statSync(path);
+      const sz = st && typeof st.size === 'number' ? st.size : 0;
+      const wallMs = typeof wallDurationMs === 'number' && wallDurationMs > 0
+        ? wallDurationMs
+        : 8000;
+      return fsReadyMod.isHollowSegment(sz, wallMs);
+    } catch (eStat) {
+      return true;
+    }
+  },
+
+  /**
+   * Android 上 indexed 滚动母片 + tailTrim 在固化前 seek 回放易黑屏，须等 materialized。
+   * @param {Record<string, unknown>} item
+   * @returns {boolean}
+   */
+  _needsAndroidMaterializedReplay: function (item) {
+    if (isLiveHostIos() || !item || typeof item !== 'object') return false;
+    if (item.replayPreTrimmed && item.status === 'materialized') return false;
+    if (!item.replayTailTrim && item.seekMode !== 'click_wall_mapped') return false;
+    const source = this._resolveHighlightReplaySource(item);
+    const target = source && source.target ? source.target : '';
+    if (typeof target !== 'string') return false;
+    if (target.indexOf('_rolling/') >= 0) return true;
+    return item.status !== 'materialized';
+  },
+
+  /**
+   * 从 clips 存储读取最新高光条目。
+   * @param {string} matchId
+   * @param {string|number} id
+   * @returns {Record<string, unknown>|null}
+   */
+  _getHighlightClipFromStorage: function (matchId, id) {
+    const key = clipsStorage.normalizeMatchIdKey(matchId);
+    if (!key || id == null) return null;
+    const clipsMap = clipsStorage.readClipsMapSafe();
+    if (!clipsMap || !Array.isArray(clipsMap[key])) return null;
+    return clipsMap[key].find((clip) => clip && String(clip.id) === String(id)) || null;
+  },
+
+  /**
+   * 取消 Android 固化等待回放。
+   * @returns {void}
+   */
+  _clearReplayMaterializeWait: function () {
+    if (this._replayMaterializeWaitTimer) {
+      clearTimeout(this._replayMaterializeWaitTimer);
+      this._replayMaterializeWaitTimer = null;
+    }
+  },
+
+  /**
+   * 固化完成后尝试启动此前 deferred 的回放。
+   * @param {string|number} highlightId
+   * @param {string} matchId
+   * @returns {void}
+   */
+  _maybeStartDeferredMaterializeReplay: function (highlightId, matchId) {
+    const deferred = this._replayDeferredMaterializeItem;
+    if (!deferred || String(deferred.id) !== String(highlightId)) return;
+    this._clearReplayMaterializeWait();
+    this._replayDeferredMaterializeItem = null;
+    const fresh = this._getHighlightClipFromStorage(matchId, highlightId);
+    if (!fresh || fresh.status !== 'materialized') return;
+    this.appendHealthLog('replay_start_after_materialize', {
+      id: String(highlightId || ''),
+      replayPreTrimmed: !!fresh.replayPreTrimmed
+    });
+    setTimeout(() => {
+      if (!this._livePageVisible) return;
+      this.startReplay(fresh);
+    }, 160);
+  },
+
+  /**
+   * Android：等待高光固化完成后再回放。
+   * @param {Record<string, unknown>} item
+   * @returns {void}
+   */
+  _deferReplayUntilMaterialized: function (item) {
+    if (!item || typeof item !== 'object') return;
+    this._clearReplayMaterializeWait();
+    this._replayDeferredMaterializeItem = item;
+    this.appendHealthLog('replay_deferred_until_materialize', {
+      id: item.id != null ? String(item.id) : '',
+      status: item.status || ''
+    });
+    wx.showToast({ title: '正在处理高光视频…', icon: 'none', duration: 2200 });
+    const startedAt = Date.now();
+    const poll = () => {
+      const fresh = this._getHighlightClipFromStorage(item.matchId, item.id);
+      if (fresh && fresh.status === 'materialized' && !this._needsAndroidMaterializedReplay(fresh)) {
+        this._maybeStartDeferredMaterializeReplay(item.id, item.matchId);
+        return;
+      }
+      if (Date.now() - startedAt >= 18000) {
+        this._clearReplayMaterializeWait();
+        this._replayDeferredMaterializeItem = null;
+        wx.showToast({ title: '高光处理超时，请稍后再试', icon: 'none' });
+        return;
+      }
+      this._replayMaterializeWaitTimer = setTimeout(poll, 420);
+    };
+    this._replayMaterializeWaitTimer = setTimeout(poll, 420);
   },
 
   /**
@@ -7787,7 +7915,10 @@ Page({
     const source = this._resolveHighlightReplaySource(item);
     const paths = source.useChain ? source.paths : (source.target ? [source.target] : []);
     if (!paths.length) return false;
-    return paths.every((p) => this._isHighlightPathPlayable(p));
+    const wallDurationMs = typeof item.segmentWallDurationMs === 'number'
+      ? item.segmentWallDurationMs
+      : (this.highlightPlaybackWindowMs || 8000);
+    return paths.every((p) => this._isHighlightPathPlayable(p, wallDurationMs));
   },
 
   /**
@@ -8518,6 +8649,24 @@ Page({
                 srcSizeBytes
               }, extra || {}));
             };
+            const srcWallDurationMs = typeof task.fallbackWallDurationMs === 'number' && task.fallbackWallDurationMs > 0
+              ? task.fallbackWallDurationMs
+              : (this.highlightPlaybackWindowMs || 8000);
+            const fsReadyMod = replayBufferMod.fsReady;
+            if (fsReadyMod && typeof fsReadyMod.isHollowSegment === 'function'
+              && fsReadyMod.isHollowSegment(srcSizeBytes, srcWallDurationMs)) {
+              this.appendHealthLog('highlight_materialize_src_hollow', {
+                id: String(task.id || ''),
+                srcPath: srcPath.slice(-56),
+                size: srcSizeBytes,
+                wallDurationMs: srcWallDurationMs
+              });
+              logMaterializeDiag('src_hollow_reject', {
+                wallDurationMs: srcWallDurationMs
+              });
+              resolve('');
+              return;
+            }
             const formatWxErr = replayBufferMod.formatWxErr;
             const runFullCopyFallback = (reason) => {
               logMaterializeDiag('trim_fallback_full_copy', { reason: reason || '' });
@@ -8641,6 +8790,7 @@ Page({
                       );
                       return trimMod.trimVideoSegment(srcPath, mapped.trimStartMs, mapped.trimEndMs, {
                         sourceSizeBytes: srcSizeBytes,
+                        sourceDurationMs: probedDurationMs,
                         maxAttempts: 3
                       })
                         .then((trimResult) => {
@@ -8680,6 +8830,23 @@ Page({
                     return runTailTrimFallback(tailErr, 'long_seg_tail');
                   });
               }
+              if (!isLiveHostIos()
+                && tailTrim
+                && trimMod
+                && typeof trimMod.trimVideoTail === 'function'
+                && probedDurationMs > 500) {
+                logMaterializeDiag('trim_strategy', { trimStrategy: 'android_tail_first' });
+                return trimMod.trimVideoTail(
+                  srcPath,
+                  tailLeadMs,
+                  fallbackWallDurationMs || probedDurationMs,
+                  { sourceSizeBytes: srcSizeBytes, sourceDurationMs: probedDurationMs, maxAttempts: 3 }
+                )
+                  .then((tailResult) => {
+                    applyTailTrimResult(tailResult, 'android_tail_first', {});
+                  })
+                  .catch((androidTailErr) => runTailTrimFallback(androidTailErr, 'android_tail_first'));
+              }
               if (canClickWallMap && probedDurationMs > 500 && trimMod.mapWallWindowToFileMs) {
                 const mapped = trimMod.mapWallWindowToFileMs(
                   windowStartInSegMs,
@@ -8689,6 +8856,7 @@ Page({
                 );
                 return trimMod.trimVideoSegment(srcPath, mapped.trimStartMs, mapped.trimEndMs, {
                   sourceSizeBytes: srcSizeBytes,
+                  sourceDurationMs: probedDurationMs,
                   maxAttempts: 3
                 })
                   .then((trimResult) => {
@@ -8746,6 +8914,7 @@ Page({
               if (canTrim) {
                 return trimMod.trimVideoSegment(srcPath, trimStartMs, trimEndMs, {
                   sourceSizeBytes: srcSizeBytes,
+                  sourceDurationMs: probedDurationMs,
                   maxAttempts: 3
                 })
                   .then((trimResult) => {
@@ -8867,11 +9036,25 @@ Page({
               && task.trimEndMs > task.trimStartMs + 400;
             const srcSizeBytes = typeof task.srcSizeBytes === 'number' ? task.srcSizeBytes : 0;
             const outSizeBytes = typeof task.trimOutputSizeBytes === 'number' ? task.trimOutputSizeBytes : 0;
-            const trimLooksValid = !!task.trimVerified
-              && (srcSizeBytes <= 0 || outSizeBytes <= 0 || outSizeBytes < srcSizeBytes * 0.42);
+            const fsReadyMod = replayBufferMod.fsReady;
+            const minHighlightBytes = fsReadyMod && typeof fsReadyMod.estimateMinSegmentBytes === 'function'
+              ? fsReadyMod.estimateMinSegmentBytes(Math.floor((task.tailLeadMs || 8000) * 0.85))
+              : 32000;
+            const outputLooksLikeHighlight = !!task.trimVerified
+              && outSizeBytes >= minHighlightBytes
+              && typeof task.trimOutputDurationMs === 'number'
+              && task.trimOutputDurationMs >= Math.floor((task.tailLeadMs || 8000) * 0.45);
+            const trimLooksValid = !!task.trimVerified && (
+              srcSizeBytes <= 0
+              || outSizeBytes <= 0
+              || outSizeBytes < srcSizeBytes * 0.42
+              || outputLooksLikeHighlight
+            );
             const wasTrimmed = (wasTailTrim || wasWallTrim) && trimLooksValid;
             const trimDurationSec = wasTailTrim
-              ? Math.max(0.5, (task.tailLeadMs || 8000) / 1000)
+              ? (typeof task.trimOutputDurationMs === 'number' && task.trimOutputDurationMs > 500
+                ? Math.max(0.5, task.trimOutputDurationMs / 1000)
+                : Math.max(0.5, (task.tailLeadMs || 8000) / 1000))
               : wasWallTrim
                 ? Math.max(0.5, (task.trimEndMs - task.trimStartMs) / 1000)
                 : null;
@@ -8932,6 +9115,7 @@ Page({
           if (savedPaths.length === segments.length) {
             this._releaseMaterializedRollingSources(segments, savedPaths);
           }
+          this._maybeStartDeferredMaterializeReplay(task.id, matchId);
         };
         if (savedPaths.length === segments.length && coverTempPath) {
           const coverDest = `${dir}/${task.id}_cover.jpg`;
@@ -11009,6 +11193,10 @@ Page({
       wx.showToast({ title: '正在保存高光，完成后自动播放', icon: 'none' });
       return;
     }
+    if (this._needsAndroidMaterializedReplay(item)) {
+      this._deferReplayUntilMaterialized(item);
+      return;
+    }
     this._replayPendingActiveSlot = null;
     if (this._replayStartTimer) {
       clearTimeout(this._replayStartTimer);
@@ -11090,7 +11278,19 @@ Page({
     const target = replaySource.target;
     if (!target) return;
     const sourcePaths = useChain ? paths : [target];
-    if (!sourcePaths.every((p) => this._isHighlightPathPlayable(p))) {
+    const replayWallDurationMs = typeof item.segmentWallDurationMs === 'number' && item.segmentWallDurationMs > 0
+      ? item.segmentWallDurationMs
+      : (this.highlightPlaybackWindowMs || 8000);
+    if (!sourcePaths.every((p) => this._isHighlightPathPlayable(p, replayWallDurationMs))) {
+      this._rejectHighlightReplayMissingFiles(item);
+      return;
+    }
+    if (this._isHighlightSourceHollow(target, replayWallDurationMs)) {
+      this.appendHealthLog('highlight_replay_reject_hollow', {
+        id: item.id != null ? String(item.id) : '',
+        pathTail: typeof target === 'string' ? target.slice(-72) : '',
+        wallDurationMs: replayWallDurationMs
+      });
       this._rejectHighlightReplayMissingFiles(item);
       return;
     }
