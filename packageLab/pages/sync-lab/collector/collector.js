@@ -2370,11 +2370,11 @@ Page({
    * @returns {Promise<string>}
    */
   _fetchWsToken: function (roomId) {
+    var safeRoomId = encodeURIComponent(String(roomId || '').replace(/\D/g, '').slice(0, 6));
     return new Promise(function (resolve, reject) {
       wx.request({
-        url: API.API_BASE_URL + WS_TOKEN_PATH,
+        url: API.API_BASE_URL + WS_TOKEN_PATH + '?roomId=' + safeRoomId,
         method: 'GET',
-        data: { roomId: roomId },
         success: function (res) {
           var body = res && res.data;
           var token = '';

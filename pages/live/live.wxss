@@ -2857,6 +2857,20 @@ button.live-ble-btn::after {
 }
 
 /* --- 自动模式状态框 (BLE Sync) --- */
+.auto-mode-status-box--inline {
+  margin-top: 4rpx;
+  transform: scale(0.72);
+  transform-origin: center top;
+}
+
+.wxs-clock-driver {
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .auto-mode-status-box {
   display: flex;
   align-items: center;

@@ -46,11 +46,8 @@ const vkCanvasRecorderMod = {
     };
   }
 };
-const eventBus = require('../../utils/eventBus.js');
 const { checkSyncLabWhitelist } = require('../../utils/sync-lab-whitelist.js');
-const bleManager = require('../../services/bleManager.js');
-const bleProtocol = require('../../utils/ble-protocol.js');
-const liveBleQuick = require('../../utils/live-ble-quick-connect.js');
+const liveWsClientMod = require('../../services/live-ws-client.js');
 const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
 
 /**
@@ -619,30 +616,26 @@ Page({
     vkDebugFreezeAuto: true,
     isVkTimeshift: false,
     
-    // --- 自动模式相关 ---
+    // --- 自动模式相关（V2 WebSocket 云端同步） ---
     isAutoMode: false,
-    bleMinutes: 0,
-    bleSeconds: 0,
-    /** 采集端蓝牙已连接（与 bleManager 同步，用于角标） */
-    liveBleChipConnected: false,
-    /** 采集端蓝牙已连接（远控区 WXML 语义别名） */
-    bleConnected: false,
-    /** 采集端真实 OCR 开关状态，由 BLE notify 回传驱动 */
-    remoteOcrEnabled: false,
-    /** 采集端 OCR 正在启动/停止过渡 */
-    remoteOcrTransitioning: false,
-    /** 直播端远控写入防抖锁 */
-    remoteOcrCommandBusy: false,
-    /** 采集端 OCR 远控状态文案 */
-    remoteOcrStatusText: '采集端 OCR 已关闭',
-    /** 是否展开 Live 内蓝牙快连面板 */
-    liveBlePanelOpen: false,
-    /** 4 位匹配码输入 */
-    liveBleQuickCode: '',
-    /** 正在扫描或连接中 */
-    liveBleQuickBusy: false,
-    /** 快连面板状态说明（仅扫描/错误时简短展示） */
-    liveBleQuickStatusText: ''
+    /** WXS 倒计时束：逻辑层仅在收包时更新，渲染由 timer.wxs rAF 驱动 */
+    wxsClockBundle: null,
+    /** WXS 回写的大表 MM:SS 文案 */
+    wxsClockMainText: '00:00',
+    /** WXS 回写的 24 秒整秒 */
+    wxsClockShotSec: 24,
+    /** 24 秒 ≤5 时高亮警示 */
+    wxsClockShotWarn: false,
+    /** 云端 WSS 已连接（角标） */
+    liveWsConnected: false,
+    /** 是否展开 Live 内云端连房面板 */
+    liveWsPanelOpen: false,
+    /** 6 位 roomId 输入 */
+    liveWsRoomId: '',
+    /** 正在取 Token / 握手中 */
+    liveWsQuickBusy: false,
+    /** 连房面板状态说明 */
+    liveWsStatusText: ''
   },
 
   /**
@@ -690,7 +683,7 @@ Page({
     this.setData(payload, function () {
       if (latestConfig.mode === 'manual' && selfSyncMc.data.autoSyncWhitelisted) {
         selfSyncMc.updateTeamGroupWidth(true);
-        selfSyncMc._liveBleTeardownForManualMode();
+        selfSyncMc._liveWsTeardownForManualMode();
       }
     });
     app.globalData.matchConfig = latestConfig;
@@ -1367,15 +1360,12 @@ Page({
     /** 相机 bindinitdone 完成前禁止 startRecord，否则部分机型预览一直黑屏 */
     this._cameraInitDone = false;
 
-    // BLE EventBus 仅在「自动记分」开启期间绑定，见 _liveBleEnsureBleEventBusBound。
-    this._onBleDataUpdate = this._onBleDataUpdate.bind(this);
-    this._onBleConnectionUpdate = this._onBleConnectionUpdate.bind(this);
-    this._liveBleEventBusBound = false;
-    /** 手动记分态下正在执行 BLE 全量 teardown，用于吞掉 shutdown 触发的重复断开事件 */
-    this._liveBleTeardownRunning = false;
-
-    /** 自动记分更新节流戳 */
-    this._lastBleUpdateAt = 0;
+    // WebSocket 云端同步：见 _liveWsEnsureClient / _consumeWsBroadcast。
+    this._liveWsCurrentSeq = 0;
+    this._liveWsPreferAutoAfterConnect = false;
+    this._liveWsPersistTimer = null;
+    this._liveWsManualTeardown = false;
+    this._liveWsClient = null;
 
     const enhanceDeviceWhitelisted = !!(app.globalData && app.globalData.enableEnhanceRender);
     const enhanceBetaWhitelisted = checkEnhanceBetaWhitelist();
@@ -1395,10 +1385,8 @@ Page({
         && enhanceBetaWhitelisted)
     });
     
-    // 检查蓝牙管理器当前状态，同步初始模式（可选，默认手动）
-    if (bleManager.isConnected) {
-      console.log('[Live] BLE is connected, ready for AutoMode');
-    }
+    // 检查云端同步白名单（可选，默认手动）
+    this._liveWsEnsureClient();
 
     this._rollingKickoffTimer = null;
     this._opsToolsTimer = null;
@@ -1577,28 +1565,22 @@ Page({
     } catch (eL0) { }
 
     try {
-      this._liveBleSyncChipConnected();
-    } catch (eBle0) {}
+      this._liveWsSyncChipConnected();
+    } catch (eWs0) {}
 
-    // 进入直播默认手动记分：清理可能遗留的全局 BLE（含适配器），避免非自动记分仍占资源。
+    // 进入直播默认手动记分：断开可能遗留的 WSS，避免非自动记分仍占资源。
     try {
-      var selfBleBoot = this;
+      var selfWsBoot = this;
       setTimeout(function () {
         try {
-          if (!selfBleBoot.data.isAutoMode) {
-            selfBleBoot._liveBleTeardownForManualMode();
+          if (!selfWsBoot.data.isAutoMode) {
+            selfWsBoot._liveWsTeardownForManualMode();
           }
-        } catch (eBootBle) {}
+        } catch (eBootWs) {}
       }, 0);
     } catch (eBootT) {}
 
     // 直播核心拉起统一放在 onShow，避免 onLoad + onShow 并发触发 camera 重建。
-    this._liveBlePreferAutoAfterConnect = false;
-    this._liveBleQuickScanRunner = null;
-    this._liveBleAutoRestoreConsumed = false;
-    this._liveBlePersistTimer = null;
-    this._remoteOcrWriteBusyUntil = 0;
-    this._remoteOcrBusyTimer = null;
   },
 
   // 已合并至文件后部 onUnload：此处不再重复定义，避免后项覆盖导致事件未解绑。
@@ -1608,7 +1590,7 @@ Page({
    * （当前主路径为 `isAutoMode`；`matchConfig.mode` 供后续配置对齐预留。）
    * @returns {boolean}
    */
-  _liveBleIsManualScoringMode: function () {
+  _liveWsIsManualScoringMode: function () {
     var mc = this.data.matchConfig;
     if (mc && mc.mode === 'manual') return true;
     if (mc && mc.mode === 'auto') return false;
@@ -1616,560 +1598,493 @@ Page({
   },
 
   /**
-   * 绑定 BLE 相关 EventBus（仅在进入自动记分 / 快连流程时调用，避免手动记分仍收包）。
+   * 懒创建 WebSocket 客户端单例。
    * @returns {void}
    */
-  _liveBleEnsureBleEventBusBound: function () {
-    if (this._liveBleEventBusBound) return;
-    eventBus.on('BLE_DATA_UPDATE', this._onBleDataUpdate);
-    eventBus.on('BLE_CONNECTION_UPDATE', this._onBleConnectionUpdate);
-    this._liveBleEventBusBound = true;
-  },
-
-  /**
-   * 解绑 BLE EventBus。
-   * @returns {void}
-   */
-  _liveBleUnbindBleEventBusIfBound: function () {
-    if (!this._liveBleEventBusBound) return;
-    try {
-      eventBus.off('BLE_DATA_UPDATE', this._onBleDataUpdate);
-      eventBus.off('BLE_CONNECTION_UPDATE', this._onBleConnectionUpdate);
-    } catch (eOff) {}
-    this._liveBleEventBusBound = false;
-  },
-
-  /**
-   * 将直播端 BLE 相关 UI 复位为未连接态（不修改 `isAutoMode`，由调用方负责）。
-   * @returns {void}
-   */
-  _liveBleApplyDisconnectedBleUiPatch: function () {
-    this.setData({
-      liveBleChipConnected: false,
-      bleConnected: false,
-      liveBlePanelOpen: false,
-      liveBleQuickBusy: false,
-      liveBleQuickStatusText: '',
-      remoteOcrEnabled: false,
-      remoteOcrTransitioning: false,
-      remoteOcrCommandBusy: false,
-      remoteOcrStatusText: '采集端 OCR 已关闭',
-      bleMinutes: 0,
-      bleSeconds: 0
+  _liveWsEnsureClient: function () {
+    var self = this;
+    if (this._liveWsClient) return;
+    this._liveWsClient = liveWsClientMod.createLiveWsClient({
+      onOpen: function () {
+        self._liveWsOnSocketOpen();
+      },
+      onMessage: function (raw) {
+        self._liveWsOnSocketMessage(raw);
+      },
+      onClose: function () {
+        self._liveWsOnSocketClose();
+      },
+      onPhase: function (phase, detail) {
+        self._liveWsOnPhase(phase, detail);
+      }
     });
   },
 
   /**
-   * 手动记分态：中止快扫、解绑 EventBus、`bleManager.shutdownCentralStack`、复位 UI。
-   * @param {{ emitDisconnected?: boolean }} [opt] 为 false 时不在 EventBus 上再次广播断开（如 page unload）
-   * @returns {Promise<void>}
+   * WSS 连接阶段文案同步到连房面板。
+   * @param {string} phase
+   * @param {string} [detail]
+   * @returns {void}
    */
-  _liveBleTeardownForManualMode: function (opt) {
-    var self = this;
-    var emitDisc = !(opt && opt.emitDisconnected === false);
-    if (this._liveBleTeardownRunning) {
-      return Promise.resolve();
+  _liveWsOnPhase: function (phase, detail) {
+    var text = '';
+    var busy = false;
+    if (phase === 'token') {
+      text = '获取 Token…';
+      busy = true;
+    } else if (phase === 'handshake') {
+      text = '握手中…';
+      busy = true;
+    } else if (phase === 'reconnecting') {
+      text = '断线重连中…';
+      busy = true;
+    } else if (phase === 'error') {
+      text = detail === 'token fail' ? 'Token 获取失败' : '连接失败';
+      busy = false;
+      wx.showToast({ title: text, icon: 'none' });
+    } else if (phase === 'connected') {
+      text = '';
+      busy = false;
+    } else if (phase === 'idle') {
+      text = '';
+      busy = false;
     }
-    this._liveBleTeardownRunning = true;
-    this._liveBleAbortQuickScanSilently();
-    try {
-      if (this._remoteOcrBusyTimer) {
-        clearTimeout(this._remoteOcrBusyTimer);
-        this._remoteOcrBusyTimer = null;
-      }
-      this._remoteOcrWriteBusyUntil = 0;
-    } catch (eT0) {}
-    try {
-      this._liveBleFlushScorePersist();
-    } catch (eF) {}
-    this._liveBleUnbindBleEventBusIfBound();
-    return bleManager
-      .shutdownCentralStack({ emitDisconnected: emitDisc })
-      .then(function () {
-        self._liveBleTeardownRunning = false;
-        self._liveBleApplyDisconnectedBleUiPatch();
-      })
-      .catch(function () {
-        self._liveBleTeardownRunning = false;
-        self._liveBleApplyDisconnectedBleUiPatch();
-      });
+    var patch = { liveWsQuickBusy: busy, liveWsStatusText: text };
+    if (phase === 'connected') {
+      patch.liveWsConnected = true;
+    }
+    if (phase === 'idle' || phase === 'error') {
+      patch.liveWsConnected = false;
+    }
+    this.setData(patch);
   },
 
-  _onBleConnectionUpdate: function (res) {
-    var connected = !!res.connected;
-    if (!connected && this._liveBleTeardownRunning) {
-      return;
+  /**
+   * WSS onOpen：同步角标并尝试恢复自动记分。
+   * @returns {void}
+   */
+  _liveWsOnSocketOpen: function () {
+    var patch = {
+      liveWsConnected: true,
+      liveWsQuickBusy: false,
+      liveWsStatusText: '',
+      liveWsPanelOpen: false
+    };
+    if (this.data.autoSyncWhitelisted) {
+      patch.isAutoMode = true;
     }
+    var self = this;
+    this.setData(patch, function () {
+      if (patch.isAutoMode) self.updateTeamGroupWidth(true);
+    });
+    wx.showToast({ title: '云端已连接', icon: 'success', duration: 1400 });
+  },
 
-    if (connected) {
-      if (this.data.liveBleChipConnected !== connected || this.data.bleConnected !== connected) {
-        this.setData({ liveBleChipConnected: connected, bleConnected: connected });
-      }
+  /**
+   * WSS onClose：非主动断开时回退手动记分。
+   * @returns {void}
+   */
+  _liveWsOnSocketClose: function () {
+    if (this._liveWsManualTeardown) return;
+    if (this.data.liveWsConnected) {
+      this.setData({ liveWsConnected: false });
     }
-
-    if (!connected) {
-      if (this._remoteOcrBusyTimer) {
-        clearTimeout(this._remoteOcrBusyTimer);
-        this._remoteOcrBusyTimer = null;
-      }
-      this._remoteOcrWriteBusyUntil = 0;
-      this.setData({
-        remoteOcrEnabled: false,
-        remoteOcrTransitioning: false,
-        remoteOcrCommandBusy: false,
-        remoteOcrStatusText: '采集端 OCR 已关闭'
+    if (this.data.isAutoMode) {
+      this._liveWsPreferAutoAfterConnect = true;
+      this.setData({ isAutoMode: false }, () => {
+        this.updateTeamGroupWidth(true);
       });
-      this._liveBleFlushScorePersist();
-      var wasAuto = this.data.isAutoMode;
-      if (wasAuto) {
-        this._liveBlePreferAutoAfterConnect = true;
-        console.warn('[Live] BLE disconnected in AutoMode, switching back to manual');
-        this.setData({ isAutoMode: false }, () => {
-          this.updateTeamGroupWidth(true);
-        });
-        wx.showToast({
-          title: '采集端已断开，已恢复手动。点「蓝牙」可重连',
-          icon: 'none',
-          duration: 2800
-        });
-      }
-      if (this.data.autoSyncWhitelisted) {
-        this._liveBleTeardownForManualMode();
-      } else if (this.data.liveBleChipConnected !== connected || this.data.bleConnected !== connected) {
-        this.setData({ liveBleChipConnected: connected, bleConnected: connected });
-      }
-      return;
+      wx.showToast({
+        title: '云端已断开，已恢复手动。点「同步」可重连',
+        icon: 'none',
+        duration: 2800
+      });
     }
+  },
 
-    if (connected && this._liveBlePreferAutoAfterConnect && this.data.autoSyncWhitelisted) {
-      this._liveBleEnsureBleEventBusBound();
-      this._liveBlePreferAutoAfterConnect = false;
-      this._liveBleAutoRestoreConsumed = true;
-      this.setData({ isAutoMode: true }, () => {
+  /**
+   * 解析并分发 WSS 下行 JSON。
+   * @param {string} raw 原始消息字符串
+   * @returns {void}
+   */
+  _liveWsOnSocketMessage: function (raw) {
+    try {
+      var msg = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (!msg || typeof msg !== 'object') return;
+
+      if (msg.type === 'DEVICE_OFFLINE') {
+        this._liveWsHandleDeviceOffline();
+        return;
+      }
+      if (msg.type === 'COLLECTOR_EXIST') {
+        wx.showModal({
+          title: '连接失败',
+          content: '房间不可用',
+          showCancel: false
+        });
+        this._liveWsDisconnect(true);
+        return;
+      }
+      if (msg.type === 'ROOM_FULL') {
+        wx.showModal({
+          title: '连接失败',
+          content: '房间已满',
+          showCancel: false
+        });
+        this._liveWsDisconnect(true);
+        return;
+      }
+
+      if (msg.type === 'DATA_BROADCAST') {
+        var nested = msg.payload && typeof msg.payload === 'object' ? msg.payload : msg;
+        this._consumeWsBroadcast(nested);
+        return;
+      }
+
+      if (typeof msg.act === 'string' && typeof msg.seq === 'number') {
+        this._consumeWsBroadcast(msg);
+      }
+    } catch (eParse) {
+      console.warn('[Live][WS] message parse fail', eParse);
+    }
+  },
+
+  /**
+   * 采集端离线：断开 Socket、清空 UI、弹窗提示。
+   * @returns {void}
+   */
+  _liveWsHandleDeviceOffline: function () {
+    this._liveWsDisconnect(true);
+    this._liveWsApplyDisconnectedUiPatch();
+    if (this.data.isAutoMode) {
+      this.setData({ isAutoMode: false }, () => {
         this.updateTeamGroupWidth(true);
       });
     }
-  },
-
-  /**
-   * 与 bleManager 同步角标（onShow 等调用）。
-   * @returns {void}
-   */
-  _liveBleSyncChipConnected: function () {
-    if (!this.data.autoSyncWhitelisted) return;
-    if (this._liveBleIsManualScoringMode()) return;
-    var c = !!bleManager.isConnected;
-    if (this.data.liveBleChipConnected !== c || this.data.bleConnected !== c) {
-      this.setData({ liveBleChipConnected: c, bleConnected: c });
-    }
-  },
-
-  /**
-   * 打开蓝牙快连面板并预填上次匹配码。
-   * @returns {void}
-   */
-  _liveBleOpenQuickPanelPrefilled: function () {
-    if (!this.data.autoSyncWhitelisted) return;
-    var code = '';
-    try {
-      code = String(wx.getStorageSync(liveBleQuick.STORAGE_LAST_MATCH_CODE) || '');
-    } catch (e0) {}
-    code = code.replace(/\D/g, '').slice(0, 4);
-    this.setData({
-      liveBlePanelOpen: true,
-      liveBleQuickCode: code || this.data.liveBleQuickCode,
-      liveBleQuickStatusText: ''
+    wx.showModal({
+      title: '采集端已离线',
+      content: '云端连接已断开，已恢复手动记分。',
+      showCancel: false
     });
   },
 
   /**
-   * 点击左侧「BLE」圆钮：展开/收起快连面板（仅自动记分模式可见）。
+   * 乱序盾牌 + 网络延迟补偿 + 喂给 WXS 时钟束。
+   * @param {{
+   *   act: string,
+   *   t: number,
+   *   a: number,
+   *   b: number,
+   *   p?: number,
+   *   seq: number,
+   *   sys_t: number,
+   *   sc?: number
+   * }} payload 广播包
    * @returns {void}
    */
-  onLiveBleChipTap: function () {
+  _consumeWsBroadcast: function (payload) {
+    if (!payload || typeof payload.act !== 'string') return;
+
+    var currentSeq = this._liveWsCurrentSeq || 0;
+    if (payload.seq <= currentSeq) return;
+    this._liveWsCurrentSeq = payload.seq;
+
+    var netLagMs = Date.now() - (Number(payload.sys_t) || Date.now());
+    if (netLagMs < 0) netLagMs = 0;
+    var rawSeconds = Math.max(0, Math.floor(Number(payload.t) || 0));
+    var targetSeconds = rawSeconds;
+    var nowMs = Date.now();
+
+    var prevBundle = this.data.wxsClockBundle || {};
+    var mainRunning = !!prevBundle.mainRunning;
+    var shotBaseSec = typeof prevBundle.shotBaseSec === 'number' ? prevBundle.shotBaseSec : 24;
+    var shotAnchorMs = typeof prevBundle.shotAnchorMs === 'number' ? prevBundle.shotAnchorMs : nowMs;
+
+    if (payload.act === 'START') {
+      targetSeconds = Math.max(0, rawSeconds - (netLagMs / 1000));
+      mainRunning = true;
+    } else if (payload.act === 'STOP') {
+      targetSeconds = rawSeconds;
+      mainRunning = false;
+    } else if (payload.act === 'SYNC') {
+      targetSeconds = rawSeconds;
+    } else if (payload.act === 'S_RESET') {
+      targetSeconds = rawSeconds;
+      var resetShot = Number(payload.sc);
+      if (!resetShot || resetShot <= 0) resetShot = 24;
+      shotBaseSec = Math.max(0, Math.min(24, Math.floor(resetShot)));
+      shotAnchorMs = nowMs;
+    }
+
+    var patch = {};
+    var timeActs = { START: 1, STOP: 1, SYNC: 1, S_RESET: 1 };
+    if (timeActs[payload.act]) {
+      var bundleToken = (prevBundle.token || 0) + 1;
+      patch.wxsClockBundle = {
+        token: bundleToken,
+        mainBaseSec: targetSeconds,
+        mainAnchorMs: nowMs,
+        mainRunning: mainRunning,
+        shotBaseSec: shotBaseSec,
+        shotAnchorMs: shotAnchorMs
+      };
+    }
+
+    if (this.data.isAutoMode && this.data.autoSyncWhitelisted) {
+      var mc = this.data.matchConfig;
+      var changed = false;
+      var scoreA = Math.max(0, Math.floor(Number(payload.a) || 0));
+      var scoreB = Math.max(0, Math.floor(Number(payload.b) || 0));
+      if (mc.teamA.score !== scoreA) {
+        mc.teamA.score = scoreA;
+        changed = true;
+      }
+      if (mc.teamB.score !== scoreB) {
+        mc.teamB.score = scoreB;
+        changed = true;
+      }
+      if (changed) {
+        patch.matchConfig = mc;
+        this._liveWsScheduleScorePersist();
+      }
+    }
+
+    if (Object.keys(patch).length) {
+      this.setData(patch);
+    }
+  },
+
+  /**
+   * WXS rAF 回写显示字段（仅整秒变化时触发，非 setInterval）。
+   * @param {{
+   *   wxsClockMainText?: string,
+   *   wxsClockShotSec?: number,
+   *   wxsClockShotWarn?: boolean
+   * }} renderPatch
+   * @returns {void}
+   */
+  _onWxsClockRender: function (renderPatch) {
+    if (!renderPatch || typeof renderPatch !== 'object') return;
+    var sd = {};
+    if (
+      renderPatch.wxsClockMainText !== undefined &&
+      renderPatch.wxsClockMainText !== this.data.wxsClockMainText
+    ) {
+      sd.wxsClockMainText = renderPatch.wxsClockMainText;
+    }
+    if (
+      renderPatch.wxsClockShotSec !== undefined &&
+      renderPatch.wxsClockShotSec !== this.data.wxsClockShotSec
+    ) {
+      sd.wxsClockShotSec = renderPatch.wxsClockShotSec;
+    }
+    if (
+      renderPatch.wxsClockShotWarn !== undefined &&
+      renderPatch.wxsClockShotWarn !== this.data.wxsClockShotWarn
+    ) {
+      sd.wxsClockShotWarn = renderPatch.wxsClockShotWarn;
+    }
+    if (Object.keys(sd).length) {
+      this.setData(sd);
+    }
+  },
+
+  /**
+   * 复位 WSS 相关 UI（不修改 isAutoMode，由调用方负责）。
+   * @returns {void}
+   */
+  _liveWsApplyDisconnectedUiPatch: function () {
+    this.setData({
+      liveWsConnected: false,
+      liveWsPanelOpen: false,
+      liveWsQuickBusy: false,
+      liveWsStatusText: '',
+      wxsClockBundle: null,
+      wxsClockMainText: '00:00',
+      wxsClockShotSec: 24,
+      wxsClockShotWarn: false
+    });
+    this._liveWsCurrentSeq = 0;
+  },
+
+  /**
+   * 手动记分态：断开 WSS 并复位 UI。
+   * @returns {void}
+   */
+  _liveWsTeardownForManualMode: function () {
+    this._liveWsManualTeardown = true;
+    try {
+      this._liveWsFlushScorePersist();
+    } catch (eF) { /* ignore */ }
+    this._liveWsDisconnect(true);
+    this._liveWsApplyDisconnectedUiPatch();
+    this._liveWsManualTeardown = false;
+  },
+
+  /**
+   * 主动断开 WebSocket。
+   * @param {boolean} [manual] 是否为用户/业务主动断开
+   * @returns {void}
+   */
+  _liveWsDisconnect: function (manual) {
+    this._liveWsEnsureClient();
+    if (this._liveWsClient) {
+      this._liveWsClient.disconnect(!!manual);
+    }
+    if (manual) {
+      this._liveWsCurrentSeq = 0;
+    }
+  },
+
+  /**
+   * 与 WSS 客户端同步角标（onShow 等调用）。
+   * @returns {void}
+   */
+  _liveWsSyncChipConnected: function () {
     if (!this.data.autoSyncWhitelisted) return;
-    this._liveBleSyncChipConnected();
-    if (this.data.liveBlePanelOpen) {
-      if (!this.data.liveBleQuickBusy) {
-        this.setData({ liveBlePanelOpen: false, liveBleQuickStatusText: '' });
+    if (this._liveWsIsManualScoringMode()) return;
+    this._liveWsEnsureClient();
+    var c = !!(this._liveWsClient && this._liveWsClient.isConnected());
+    if (this.data.liveWsConnected !== c) {
+      this.setData({ liveWsConnected: c });
+    }
+  },
+
+  /**
+   * 打开云端连房面板并预填上次 roomId。
+   * @returns {void}
+   */
+  _liveWsOpenPanelPrefilled: function () {
+    if (!this.data.autoSyncWhitelisted) return;
+    var roomId = '';
+    try {
+      roomId = String(wx.getStorageSync(liveWsClientMod.STORAGE_LAST_ROOM_ID) || '');
+    } catch (e0) { /* ignore */ }
+    roomId = roomId.replace(/\D/g, '').slice(0, 6);
+    this.setData({
+      liveWsPanelOpen: true,
+      liveWsRoomId: roomId || this.data.liveWsRoomId,
+      liveWsStatusText: ''
+    });
+  },
+
+  /**
+   * 点击左侧「同步」圆钮：展开/收起连房面板。
+   * @returns {void}
+   */
+  onLiveWsChipTap: function () {
+    if (!this.data.autoSyncWhitelisted) return;
+    this._liveWsSyncChipConnected();
+    if (this.data.liveWsPanelOpen) {
+      if (!this.data.liveWsQuickBusy) {
+        this.setData({ liveWsPanelOpen: false, liveWsStatusText: '' });
       }
       return;
     }
-    this._liveBleOpenQuickPanelPrefilled();
+    this._liveWsOpenPanelPrefilled();
   },
 
   /**
-   * 轻点遮罩关闭快连面板（扫描中不可关，避免误触中断）。
+   * 轻点遮罩关闭连房面板。
    * @returns {void}
    */
-  onLiveBlePanelBackdropTap: function () {
-    if (this.data.liveBleQuickBusy) {
-      this._liveBleAbortQuickScanSilently();
-    }
-    this.setData({ liveBlePanelOpen: false, liveBleQuickStatusText: '' });
+  onLiveWsPanelBackdropTap: function () {
+    this.setData({ liveWsPanelOpen: false, liveWsStatusText: '' });
   },
 
-  /**
-   * 阻止点击穿透到遮罩（空 catch）。
-   * @returns {void}
-   */
   noopCatchTap: function () {},
 
   /**
-   * 匹配码输入框变更。
+   * roomId 输入框变更。
    * @param {object} e 微信 input 事件
    * @returns {void}
    */
-  onLiveBleMatchCodeInput: function (e) {
-    var v = String((e.detail && e.detail.value) || '').replace(/\D/g, '').slice(0, 4);
-    this.setData({ liveBleQuickCode: v });
+  onLiveWsRoomIdInput: function (e) {
+    var v = String((e.detail && e.detail.value) || '').replace(/\D/g, '').slice(0, 6);
+    this.setData({ liveWsRoomId: v });
   },
 
   /**
-   * 执行扫描并连接采集端（与 sync-lab broadcaster 同源流程）。
+   * 执行 Token → WSS 连房流程。
    * @returns {void}
    */
-  onLiveBleQuickConnectRun: function () {
+  onLiveWsConnectRun: function () {
     var self = this;
-    if (!this.data.autoSyncWhitelisted || this.data.liveBleQuickBusy) return;
-    var code = String(this.data.liveBleQuickCode || '').replace(/\D/g, '');
-    if (code.length !== 4) {
-      wx.showToast({ title: '请输入 4 位匹配码', icon: 'none' });
+    if (!this.data.autoSyncWhitelisted || this.data.liveWsQuickBusy) return;
+    var roomId = String(this.data.liveWsRoomId || '').replace(/\D/g, '');
+    if (roomId.length !== 6) {
+      wx.showToast({ title: '请输入 6 位房间号', icon: 'none' });
       return;
     }
-    this._liveBleEnsureBleEventBusBound();
-    if (this._liveBleQuickScanRunner) {
-      try {
-        this._liveBleQuickScanRunner.cancel();
-      } catch (e0) {}
-      this._liveBleQuickScanRunner = null;
-    }
-    var deviceName = bleProtocol.DEVICE_NAME_PREFIX + code;
-    this.setData({ liveBleQuickBusy: true, liveBleQuickStatusText: '扫描中' });
-    var runner = liveBleQuick.startLiveBleQuickScan({
-      deviceName: deviceName,
-      onPhase: function (phase, detail) {
-        var text = '';
-        if (phase === 'scanning') text = '扫描中';
-        else if (phase === 'connecting') text = '连接中';
-        else if (phase === 'connected') text = '';
-        else if (phase === 'not_found') text = '未发现设备';
-        else if (phase === 'error') text = String(detail || '失败').slice(0, 40);
-        else if (phase === 'cancelled') text = '';
-        self.setData({ liveBleQuickStatusText: text });
-      }
-    });
-    this._liveBleQuickScanRunner = runner;
-    runner.finished
-      .then(function () {
-        self._liveBleQuickScanRunner = null;
-        try {
-          wx.setStorageSync(liveBleQuick.STORAGE_LAST_MATCH_CODE, code);
-        } catch (eS) {}
-        var autoRestored = !!self._liveBleAutoRestoreConsumed;
-        self._liveBleAutoRestoreConsumed = false;
-        var patch = {
-          liveBleQuickBusy: false,
-          liveBleChipConnected: true,
-          bleConnected: true,
-          liveBlePanelOpen: false,
-          liveBleQuickStatusText: ''
-        };
-        if (self.data.autoSyncWhitelisted) {
-          patch.isAutoMode = true;
-        }
-        self.setData(patch, function () {
-          if (patch.isAutoMode) {
-            self.updateTeamGroupWidth(true);
-          }
-        });
-        wx.showToast({
-          title: autoRestored ? '已连接，自动记分已恢复' : '已连接并开启自动记分',
-          icon: 'success',
-          duration: 1600
-        });
-      })
-      .catch(function (err) {
-        self._liveBleQuickScanRunner = null;
-        self.setData({
-          liveBleQuickBusy: false,
-          liveBleChipConnected: !!bleManager.isConnected,
-          bleConnected: !!bleManager.isConnected,
-          liveBleQuickStatusText: ''
-        });
-        var msg = err && err.message ? String(err.message) : '';
-        if (msg === 'not_found') {
-          wx.showToast({ title: '未找到设备', icon: 'none' });
-        } else if (msg !== 'cancelled') {
-          wx.showToast({ title: '连接失败', icon: 'none' });
-        }
-      });
+    this._liveWsEnsureClient();
+    this.setData({ liveWsQuickBusy: true, liveWsStatusText: '获取 Token…' });
+    try {
+      wx.setStorageSync(liveWsClientMod.STORAGE_LAST_ROOM_ID, roomId);
+    } catch (eS) { /* ignore */ }
+    this._liveWsClient.connect(roomId);
   },
 
   /**
-   * 主动断开采集端蓝牙（与节次长按菜单「手动」独立，便于更换设备）。
+   * 主动断开云端 WSS。
    * @returns {void}
    */
-  onLiveBleDisconnectTap: function () {
+  onLiveWsDisconnectTap: function () {
     var self = this;
     if (!this.data.autoSyncWhitelisted) return;
-    this._liveBleFlushScorePersist();
-    this._liveBlePreferAutoAfterConnect = false;
-    this.setData({ liveBleQuickBusy: true, isAutoMode: false }, function () {
+    this._liveWsFlushScorePersist();
+    this._liveWsPreferAutoAfterConnect = false;
+    this.setData({ liveWsQuickBusy: true, isAutoMode: false }, function () {
       self.updateTeamGroupWidth(true);
     });
-    this._liveBleTeardownForManualMode().finally(function () {
-      self.setData({ liveBleQuickBusy: false });
-      wx.showToast({ title: '已断开蓝牙', icon: 'none' });
-    });
+    this._liveWsTeardownForManualMode();
+    this.setData({ liveWsQuickBusy: false });
+    wx.showToast({ title: '已断开云端', icon: 'none' });
   },
 
-  sendRemoteStartOcr: function () {
-    this._sendRemoteOcrCommand(0x01);
-  },
-
-  sendRemoteStopOcr: function () {
-    this._sendRemoteOcrCommand(0x00);
-  },
-
-  _sendRemoteOcrCommand: function (cmd) {
+  /**
+   * 将当前 matchConfig 比分经 persistConfig 落盘（短防抖）。
+   * @returns {void}
+   */
+  _liveWsScheduleScorePersist: function () {
     var self = this;
-    var now = Date.now();
-    if (!this.data.autoSyncWhitelisted) return;
-    if (!bleManager.isConnected || !bleManager.deviceId || !bleManager.serviceId || !bleManager.characteristicId) {
-      this._liveBleSyncChipConnected();
-      wx.showToast({ title: '请先连接采集端', icon: 'none' });
-      return;
+    if (this._liveWsPersistTimer) {
+      clearTimeout(this._liveWsPersistTimer);
+      this._liveWsPersistTimer = null;
     }
-    var props = bleManager.characteristicProperties || {};
-    if (props && props.write === false && !props.writeNoResponse) {
-      wx.showToast({ title: '请重启采集端蓝牙后重连', icon: 'none' });
-      return;
-    }
-    if (this.data.remoteOcrCommandBusy || now < (this._remoteOcrWriteBusyUntil || 0)) {
-      return;
-    }
-    this._remoteOcrWriteBusyUntil = now + 2000;
-    if (this._remoteOcrBusyTimer) {
-      clearTimeout(this._remoteOcrBusyTimer);
-      this._remoteOcrBusyTimer = null;
-    }
-    var isStartCmd = (cmd & 0xFF) === 0x01;
-    var buf = new ArrayBuffer(1);
-    new Uint8Array(buf)[0] = cmd & 0xFF;
-    this.setData({
-      remoteOcrCommandBusy: true,
-      remoteOcrTransitioning: true,
-      remoteOcrEnabled: isStartCmd,
-      remoteOcrStatusText: isStartCmd ? '采集端 OCR 启动中' : '采集端 OCR 释放中'
-    });
-    this._remoteOcrBusyTimer = setTimeout(function () {
-      self._remoteOcrBusyTimer = null;
-      self.setData({
-        remoteOcrCommandBusy: false,
-        remoteOcrTransitioning: false,
-        remoteOcrStatusText: '等待采集端状态回传'
-      });
-    }, 5000);
-    wx.writeBLECharacteristicValue({
-      deviceId: bleManager.deviceId,
-      serviceId: bleManager.serviceId,
-      characteristicId: bleManager.characteristicId,
-      value: buf,
-      writeType: props && props.writeNoResponse ? 'writeNoResponse' : 'write',
-      success: function () {
-        console.log('[Live][BLE] remote OCR command write queued');
-      },
-      fail: function (err) {
-        self._remoteOcrWriteBusyUntil = 0;
-        if (self._remoteOcrBusyTimer) {
-          clearTimeout(self._remoteOcrBusyTimer);
-          self._remoteOcrBusyTimer = null;
-        }
-        self.setData({
-          remoteOcrCommandBusy: false,
-          remoteOcrTransitioning: false,
-          remoteOcrEnabled: !isStartCmd,
-          remoteOcrStatusText: !isStartCmd ? '采集端 OCR 运行中' : '采集端 OCR 已关闭'
-        });
-        var errCode = err && (err.errCode || err.errno);
-        wx.showToast({
-          title: errCode === 10007 ? '请重启采集端蓝牙后重连' : '远程指令发送失败',
-          icon: 'none'
-        });
-        console.error('[Live][BLE] remote OCR command write fail', err);
-      }
-    });
-  },
-
-  /**
-   * 页面隐藏或中断扫描时调用：停止发现、清理句柄。
-   * @returns {void}
-   */
-  _liveBleAbortQuickScanSilently: function () {
-    if (this._liveBleQuickScanRunner) {
-      try {
-        this._liveBleQuickScanRunner.cancel();
-      } catch (eA) {}
-      this._liveBleQuickScanRunner = null;
-    }
-    if (this.data.liveBleQuickBusy) {
-      this.setData({ liveBleQuickBusy: false });
-    }
-  },
-
-  /**
-   * 用户取消正在进行的扫描/连接。
-   * @returns {void}
-   */
-  onLiveBleQuickScanCancelTap: function () {
-    if (!this.data.liveBleQuickBusy) return;
-    this._liveBleAbortQuickScanSilently();
-    this.setData({ liveBleQuickStatusText: '' });
-  },
-
-  /**
-   * 将当前 `matchConfig` 比分经 {@link persistConfig} 落盘（含 MIAOXIE_MATCHES），与手动记分同源。
-   * 使用短防抖合并连续 BLE 包，减轻 Storage 写入频率。
-   * @returns {void}
-   */
-  _liveBleScheduleScorePersist: function () {
-    var self = this;
-    if (this._liveBlePersistTimer) {
-      clearTimeout(this._liveBlePersistTimer);
-      this._liveBlePersistTimer = null;
-    }
-    this._liveBlePersistTimer = setTimeout(function () {
-      self._liveBlePersistTimer = null;
+    this._liveWsPersistTimer = setTimeout(function () {
+      self._liveWsPersistTimer = null;
       try {
         self.persistConfig();
       } catch (eP) {
-        console.error('[Live] BLE score persist:', eP);
+        console.error('[Live] WS score persist:', eP);
       }
     }, 320);
   },
 
   /**
-   * 取消防抖并立即执行比分落盘（断线、回手动、离页等路径调用）。
+   * 取消防抖并立即执行比分落盘。
    * @returns {void}
    */
-  _liveBleFlushScorePersist: function () {
-    if (this._liveBlePersistTimer) {
-      clearTimeout(this._liveBlePersistTimer);
-      this._liveBlePersistTimer = null;
+  _liveWsFlushScorePersist: function () {
+    if (this._liveWsPersistTimer) {
+      clearTimeout(this._liveWsPersistTimer);
+      this._liveWsPersistTimer = null;
     }
     try {
       this.persistConfig();
     } catch (eP) {
-      console.error('[Live] BLE score persist flush:', eP);
-    }
-  },
-
-  _syncRemoteOcrStateFromBle: function (data) {
-    var hasOcrState = data && (
-      typeof data.ocrEnabled === 'boolean' ||
-      typeof data.ocrTransitioning === 'boolean'
-    );
-    if (!hasOcrState) return false;
-    var nextEnabled = !!data.ocrEnabled;
-    var nextTransitioning = !!data.ocrTransitioning;
-    var patch = {};
-    var changed = false;
-    var nextStatusText = nextTransitioning
-      ? (this.data.remoteOcrStatusText || '采集端 OCR 处理中')
-      : (nextEnabled ? '采集端 OCR 运行中' : '采集端 OCR 已关闭');
-    if (this.data.remoteOcrEnabled !== nextEnabled) {
-      patch.remoteOcrEnabled = nextEnabled;
-      changed = true;
-    }
-    if (this.data.remoteOcrTransitioning !== nextTransitioning) {
-      patch.remoteOcrTransitioning = nextTransitioning;
-      changed = true;
-    }
-    var nextBusy = nextTransitioning || (this.data.remoteOcrCommandBusy && !data.timestamp);
-    if (!nextTransitioning) {
-      nextBusy = false;
-      this._remoteOcrWriteBusyUntil = 0;
-      if (this._remoteOcrBusyTimer) {
-        clearTimeout(this._remoteOcrBusyTimer);
-        this._remoteOcrBusyTimer = null;
-      }
-    }
-    if (this.data.remoteOcrCommandBusy !== nextBusy) {
-      patch.remoteOcrCommandBusy = nextBusy;
-      changed = true;
-    }
-    if (this.data.remoteOcrStatusText !== nextStatusText) {
-      patch.remoteOcrStatusText = nextStatusText;
-      changed = true;
-    }
-    if (changed) {
-      this.setData(patch);
-    }
-    return changed;
-  },
-
-  _onBleDataUpdate: function (data) {
-    const now = Date.now();
-    const ocrStateChanged = this._syncRemoteOcrStateFromBle(data);
-    // 节流：如果是密集数据包，限制更新频率（约 10fps）以防 UI 卡死
-    if (now - this._lastBleUpdateAt < 100 && !ocrStateChanged) {
-      return;
-    }
-    this._lastBleUpdateAt = now;
-
-    try {
-      if (!this.data.isAutoMode) {
-        // 即使不在自动模式，也更新节间时钟显示用的缓存值（进攻 24s 已由采集端下线）
-        this.setData({
-          bleMinutes: data.minutes,
-          bleSeconds: data.seconds
-        });
-        return;
-      }
-      if (!this.data.autoSyncWhitelisted) {
-        return;
-      }
-
-      // 自动模式：全量同步
-      const mc = this.data.matchConfig;
-      let changed = false;
-
-      if (mc.teamA.score !== data.homeScore) {
-        mc.teamA.score = data.homeScore;
-        changed = true;
-      }
-      if (mc.teamB.score !== data.awayScore) {
-        mc.teamB.score = data.awayScore;
-        changed = true;
-      }
-      // 节次由直播页手动切换并持久化；采集端已不再同步可靠节次，禁止用 BLE 覆盖
-
-      const patch = {
-        bleMinutes: data.minutes,
-        bleSeconds: data.seconds
-      };
-
-      if (changed) {
-        patch.matchConfig = mc;
-        this._liveBleScheduleScorePersist();
-      }
-
-      this.setData(patch);
-    } catch (e) {
-      console.error('[Live] _onBleDataUpdate error:', e);
+      console.error('[Live] WS score persist flush:', eP);
     }
   },
 
   onPeriodLongPress: function () {
     const self = this;
 
-    // 与 sync-lab 同源 OpenID 白名单；非白名单在 WXML 已不绑定 longpress，此处仅防御性短路。
     if (!this.data.autoSyncWhitelisted) {
       return;
     }
 
-    const items = this.data.isAutoMode ? ['恢复手动记分'] : ['切换至自动记分（敬请期待）'];
+    const items = this.data.isAutoMode ? ['恢复手动记分'] : ['切换至自动记分'];
     
     wx.showActionSheet({
       itemList: items,
@@ -2178,24 +2093,20 @@ Page({
         if (res.tapIndex === 0) {
           const nextMode = !self.data.isAutoMode;
 
-          if (nextMode) {
-            self._liveBleEnsureBleEventBusBound();
-          }
-
-          if (nextMode && !bleManager.isConnected) {
-            self._liveBleOpenQuickPanelPrefilled();
+          if (nextMode && !self.data.liveWsConnected) {
+            self._liveWsOpenPanelPrefilled();
             return;
           }
 
           if (!nextMode) {
-            self._liveBlePreferAutoAfterConnect = false;
-            self._liveBleFlushScorePersist();
+            self._liveWsPreferAutoAfterConnect = false;
+            self._liveWsFlushScorePersist();
           }
 
           self.setData({ isAutoMode: nextMode }, () => {
             self.updateTeamGroupWidth(true);
             if (!nextMode) {
-              self._liveBleTeardownForManualMode();
+              self._liveWsTeardownForManualMode();
             }
           });
           wx.showToast({
@@ -4721,7 +4632,7 @@ Page({
       this.setData(patch, function () {
         if (patch.isAutoMode === false) {
           self.updateTeamGroupWidth(true);
-          self._liveBleTeardownForManualMode();
+          self._liveWsTeardownForManualMode();
         }
       });
     }
@@ -4740,7 +4651,7 @@ Page({
 
     this.syncMatchConfigFromPageSources();
     try {
-      this._liveBleSyncChipConnected();
+      this._liveWsSyncChipConnected();
     } catch (eBleChip) {}
     try {
       const cid =
@@ -5438,17 +5349,12 @@ Page({
 
   onUnload: function () {
     try {
-      this._liveBleAbortQuickScanSilently();
-      this._liveBleFlushScorePersist();
-    } catch (eBleU0) {}
+      this._liveWsFlushScorePersist();
+    } catch (eWsU0) {}
     try {
-      this._liveBleTeardownForManualMode({ emitDisconnected: false });
-    } catch (eBleU2) {}
+      this._liveWsTeardownForManualMode();
+    } catch (eWsU2) {}
     wx.setKeepScreenOn({ keepScreenOn: false });
-    if (this._remoteOcrBusyTimer) {
-      clearTimeout(this._remoteOcrBusyTimer);
-      this._remoteOcrBusyTimer = null;
-    }
     if (this._vkEnvironmentSampler && typeof this._vkEnvironmentSampler.destroy === 'function') {
       this._vkEnvironmentSampler.destroy();
       this._vkEnvironmentSampler = null;
@@ -5613,9 +5519,8 @@ Page({
     }
     this.stopRollingRecording();
 
-    this._liveBleAbortQuickScanSilently();
-    this._liveBleFlushScorePersist();
-    this.setData({ liveBlePanelOpen: false, liveBleQuickStatusText: '' });
+    this._liveWsFlushScorePersist();
+    this.setData({ liveWsPanelOpen: false, liveWsStatusText: '' });
     this._cacheLampBatchRunning = false;
     if (this._lightHintFadeTimer) {
       try {

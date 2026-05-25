@@ -1,0 +1,141 @@
+/**
+ * @fileoverview 大表 + 24 秒影子跟随倒计时（WXS requestAnimationFrame 驱动，逻辑层零 setInterval）。
+ *
+ * 影子跟随：24 秒表是否递减由大表 running 态决定（最后主控 START → 跟随，STOP → 定住）。
+ */
+
+var _rafId = 0;
+var _bundle = null;
+var _lastMainSec = -1;
+var _lastShotSec = -1;
+
+/**
+ * 停止 rAF 循环。
+ * @param {object} ownerInstance 页面/组件 owner
+ * @returns {void}
+ */
+function stopLoop(ownerInstance) {
+  if (_rafId) {
+    ownerInstance.cancelAnimationFrame(_rafId);
+    _rafId = 0;
+  }
+}
+
+/**
+ * 两位数补零。
+ * @param {number} n
+ * @returns {string}
+ */
+function zeroPad2(n) {
+  n = Math.floor(n);
+  if (n < 0) n = 0;
+  var s = '' + n;
+  return s.length < 2 ? '0' + s : s;
+}
+
+/**
+ * 大表剩余秒格式化为 MM:SS。
+ * @param {number} totalSec
+ * @returns {string}
+ */
+function formatMainText(totalSec) {
+  totalSec = Math.max(0, Math.floor(totalSec));
+  var m = Math.floor(totalSec / 60);
+  var s = totalSec % 60;
+  return zeroPad2(m) + ':' + zeroPad2(s);
+}
+
+/**
+ * 根据锚点与 running 态计算当前剩余整秒。
+ * @param {number} baseSec 基准剩余秒
+ * @param {number} anchorMs 锚点墙钟毫秒
+ * @param {boolean} running 是否跑动
+ * @returns {number}
+ */
+function computeRemain(baseSec, anchorMs, running) {
+  if (!running) return Math.max(0, Math.floor(baseSec));
+  var elapsed = (getDate().getTime() - anchorMs) / 1000;
+  return Math.max(0, Math.floor(baseSec - elapsed));
+}
+
+/**
+ * 仅在显示整秒变化时回写逻辑层，避免每帧 setData。
+ * @param {object} ownerInstance
+ * @param {number} mainSec
+ * @param {number} shotSec
+ * @returns {void}
+ */
+function pushDisplay(ownerInstance, mainSec, shotSec) {
+  var mainText = formatMainText(mainSec);
+  var shotDisplay = Math.max(0, Math.floor(shotSec));
+  if (mainSec === _lastMainSec && shotSec === _lastShotSec) return;
+  _lastMainSec = mainSec;
+  _lastShotSec = shotSec;
+  ownerInstance.callMethod('_onWxsClockRender', {
+    wxsClockMainText: mainText,
+    wxsClockShotSec: shotDisplay,
+    wxsClockShotWarn: shotDisplay > 0 && shotDisplay <= 5
+  });
+}
+
+/**
+ * rAF 主循环：大表 + 24 秒影子同步扣减。
+ * @param {object} ownerInstance
+ * @returns {void}
+ */
+function tickLoop(ownerInstance) {
+  if (!_bundle) {
+    stopLoop(ownerInstance);
+    return;
+  }
+  var mainRunning = !!_bundle.mainRunning;
+  var shotRunning = mainRunning;
+
+  var mainSec = computeRemain(_bundle.mainBaseSec, _bundle.mainAnchorMs, mainRunning);
+  var shotSec = computeRemain(_bundle.shotBaseSec, _bundle.shotAnchorMs, shotRunning);
+
+  pushDisplay(ownerInstance, mainSec, shotSec);
+
+  if (mainRunning) {
+    _rafId = ownerInstance.requestAnimationFrame(function () {
+      tickLoop(ownerInstance);
+    });
+  } else {
+    _rafId = 0;
+  }
+}
+
+/**
+ * change:prop 回调：逻辑层 wxsClockBundle 变更时重启/停止 WXS 倒计时。
+ * @param {object} newVal 新时钟束
+ * @param {object} oldVal 旧时钟束
+ * @param {object} ownerInstance 页面 owner
+ * @param {object} instance 绑定节点 instance
+ * @returns {void}
+ */
+function onClockBundleChange(newVal, oldVal, ownerInstance, instance) {
+  stopLoop(ownerInstance);
+  _bundle = newVal || null;
+  _lastMainSec = -1;
+  _lastShotSec = -1;
+
+  if (!_bundle) {
+    ownerInstance.callMethod('_onWxsClockRender', {
+      wxsClockMainText: '00:00',
+      wxsClockShotSec: 24,
+      wxsClockShotWarn: false
+    });
+    return;
+  }
+
+  var mainSec = computeRemain(_bundle.mainBaseSec, _bundle.mainAnchorMs, !!_bundle.mainRunning);
+  var shotSec = computeRemain(_bundle.shotBaseSec, _bundle.shotAnchorMs, !!_bundle.mainRunning);
+  pushDisplay(ownerInstance, mainSec, shotSec);
+  tickLoop(ownerInstance);
+}
+
+module.exports = {
+  onClockBundleChange: onClockBundleChange,
+  zeroPad2: zeroPad2,
+  formatMainText: formatMainText
+};
