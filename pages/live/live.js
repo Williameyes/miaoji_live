@@ -187,6 +187,51 @@ const VIEW_MODE_CLOSE_ZOOM = 2;
  */
 const ANDROID_ULTRAWIDE_PROBE_COMPLETE_MS = 280;
 
+/** 走表本地刷新间隔（逻辑层 tick，规避 WXS rAF 在 0 尺寸节点不续帧） */
+const LIVE_WS_CLOCK_TICK_MS = 200;
+
+/**
+ * 大表剩余秒格式化为 MM:SS。
+ * @param {number} totalSec
+ * @returns {string}
+ */
+function formatWxsMainText(totalSec) {
+  var sec = Math.max(0, Math.floor(Number(totalSec) || 0));
+  var m = Math.floor(sec / 60);
+  var s = sec % 60;
+  var ms = m < 10 ? '0' + m : '' + m;
+  var ss = s < 10 ? '0' + s : '' + s;
+  return ms + ':' + ss;
+}
+
+/**
+ * 根据时钟束与墙钟计算大表 / 24 秒当前显示值。
+ * @param {object | null} bundle
+ * @returns {{ mainText: string, shotSec: number, shotWarn: boolean }}
+ */
+function computeClockDisplayFromBundle(bundle) {
+  if (!bundle || typeof bundle !== 'object') {
+    return { mainText: '00:00', shotSec: 24, shotWarn: false };
+  }
+  var nowMs = Date.now();
+  var mainBase = Math.max(0, Math.floor(Number(bundle.mainBaseSec) || 0));
+  var shotBase = Math.max(0, Math.floor(Number(bundle.shotBaseSec) || 24));
+  var mainAnchor = Number(bundle.mainAnchorMs) || nowMs;
+  var shotAnchor = Number(bundle.shotAnchorMs) || nowMs;
+  var running = !!bundle.mainRunning;
+  var mainSec = mainBase;
+  var shotSec = shotBase;
+  if (running) {
+    mainSec = Math.max(0, mainBase - Math.floor((nowMs - mainAnchor) / 1000));
+    shotSec = Math.max(0, shotBase - Math.floor((nowMs - shotAnchor) / 1000));
+  }
+  return {
+    mainText: formatWxsMainText(mainSec),
+    shotSec: shotSec,
+    shotWarn: shotSec > 0 && shotSec <= 5
+  };
+}
+
 /**
  * 将 zoom 值格式化为按钮文案（如 1x / 2x / 2.5x）。
  * @param {number} z
@@ -618,7 +663,7 @@ Page({
     
     // --- 自动模式相关（V2 WebSocket 云端同步） ---
     isAutoMode: false,
-    /** WXS 倒计时束：逻辑层仅在收包时更新，渲染由 timer.wxs rAF 驱动 */
+    /** 时钟束：收包时更新锚点，走表由逻辑层 tick 渲染 */
     wxsClockBundle: null,
     /** WXS 回写的大表 MM:SS 文案 */
     wxsClockMainText: '00:00',
@@ -1362,6 +1407,9 @@ Page({
 
     // WebSocket 云端同步：见 _liveWsEnsureClient / _consumeWsBroadcast。
     this._liveWsCurrentSeq = 0;
+    /** 大表跑停态：仅由 START/STOP 翻转，SYNC 校准时间但不擅自开表 */
+    this._liveWsClockRunning = false;
+    this._liveWsClockTickTimer = null;
     this._liveWsPreferAutoAfterConnect = false;
     this._liveWsPersistTimer = null;
     this._liveWsManualTeardown = false;
@@ -1659,6 +1707,78 @@ Page({
     this.setData(patch);
   },
 
+  _liveWsRefreshWxsClockDriver: function () {
+    if (this.data.wxsClockBundle && this.data.wxsClockBundle.mainRunning) {
+      this._liveWsStartClockTick();
+    } else {
+      this._liveWsTickClockDisplay();
+    }
+  },
+
+  /**
+   * 停止走表本地 tick。
+   * @returns {void}
+   */
+  _liveWsStopClockTick: function () {
+    if (this._liveWsClockTickTimer) {
+      clearInterval(this._liveWsClockTickTimer);
+      this._liveWsClockTickTimer = null;
+    }
+  },
+
+  /**
+   * 启动走表本地 tick（START 后每秒刷新显示）。
+   * @returns {void}
+   */
+  _liveWsStartClockTick: function () {
+    var self = this;
+    this._liveWsStopClockTick();
+    if (!this.data.wxsClockBundle || !this.data.wxsClockBundle.mainRunning) return;
+    this._liveWsClockTickTimer = setInterval(function () {
+      self._liveWsTickClockDisplay();
+    }, LIVE_WS_CLOCK_TICK_MS);
+  },
+
+  /**
+   * 根据当前 wxsClockBundle 刷新大表 / 24 秒显示。
+   * @returns {void}
+   */
+  _liveWsTickClockDisplay: function () {
+    var bundle = this.data.wxsClockBundle;
+    if (!bundle || !bundle.mainRunning) {
+      this._liveWsStopClockTick();
+      return;
+    }
+    var display = computeClockDisplayFromBundle(bundle);
+    var sd = {};
+    if (display.mainText !== this.data.wxsClockMainText) {
+      sd.wxsClockMainText = display.mainText;
+    }
+    if (display.shotSec !== this.data.wxsClockShotSec) {
+      sd.wxsClockShotSec = display.shotSec;
+    }
+    if (display.shotWarn !== this.data.wxsClockShotWarn) {
+      sd.wxsClockShotWarn = display.shotWarn;
+    }
+    if (Object.keys(sd).length) {
+      this.setData(sd);
+    }
+  },
+
+  /**
+   * 由时钟束生成显示 patch。
+   * @param {object} bundle
+   * @returns {{ wxsClockMainText: string, wxsClockShotSec: number, wxsClockShotWarn: boolean }}
+   */
+  _liveWsBuildClockDisplayPatch: function (bundle) {
+    var display = computeClockDisplayFromBundle(bundle);
+    return {
+      wxsClockMainText: display.mainText,
+      wxsClockShotSec: display.shotSec,
+      wxsClockShotWarn: display.shotWarn
+    };
+  },
+
   /**
    * WSS onOpen：同步角标并尝试恢复自动记分。
    * @returns {void}
@@ -1675,7 +1795,10 @@ Page({
     }
     var self = this;
     this.setData(patch, function () {
-      if (patch.isAutoMode) self.updateTeamGroupWidth(true);
+      if (patch.isAutoMode) {
+        self.updateTeamGroupWidth(true);
+        self._liveWsRefreshWxsClockDriver();
+      }
     });
     wx.showToast({ title: '云端已连接', icon: 'success', duration: 1400 });
   },
@@ -1720,6 +1843,15 @@ Page({
         wx.showModal({
           title: '连接失败',
           content: '房间不可用',
+          showCancel: false
+        });
+        this._liveWsDisconnect(true);
+        return;
+      }
+      if (msg.type === 'ROOM_NOT_FOUND') {
+        wx.showModal({
+          title: '房间不存在',
+          content: '请确认采集端已开启且房间号一致',
           showCancel: false
         });
         this._liveWsDisconnect(true);
@@ -1796,20 +1928,34 @@ Page({
     var nowMs = Date.now();
 
     var prevBundle = this.data.wxsClockBundle || {};
-    var mainRunning = !!prevBundle.mainRunning;
+    var mainRunning = !!this._liveWsClockRunning;
     var shotBaseSec = typeof prevBundle.shotBaseSec === 'number' ? prevBundle.shotBaseSec : 24;
     var shotAnchorMs = typeof prevBundle.shotAnchorMs === 'number' ? prevBundle.shotAnchorMs : nowMs;
 
     if (payload.act === 'START') {
       targetSeconds = Math.max(0, rawSeconds - (netLagMs / 1000));
       mainRunning = true;
+      this._liveWsClockRunning = true;
     } else if (payload.act === 'STOP') {
       targetSeconds = rawSeconds;
       mainRunning = false;
+      this._liveWsClockRunning = false;
+      if (prevBundle.mainRunning) {
+        var shotElapsed = (nowMs - shotAnchorMs) / 1000;
+        shotBaseSec = Math.max(0, Math.floor(shotBaseSec - shotElapsed));
+        shotAnchorMs = nowMs;
+      }
     } else if (payload.act === 'SYNC') {
       targetSeconds = rawSeconds;
+      mainRunning = !!this._liveWsClockRunning;
+      if (prevBundle.mainRunning && !mainRunning) {
+        var syncShotElapsed = (nowMs - shotAnchorMs) / 1000;
+        shotBaseSec = Math.max(0, Math.floor(shotBaseSec - syncShotElapsed));
+        shotAnchorMs = nowMs;
+      }
     } else if (payload.act === 'S_RESET') {
       targetSeconds = rawSeconds;
+      mainRunning = !!this._liveWsClockRunning;
       var resetShot = Number(payload.sc);
       if (!resetShot || resetShot <= 0) resetShot = 24;
       shotBaseSec = Math.max(0, Math.min(24, Math.floor(resetShot)));
@@ -1818,7 +1964,8 @@ Page({
 
     var patch = {};
     var timeActs = { START: 1, STOP: 1, SYNC: 1, S_RESET: 1 };
-    if (timeActs[payload.act]) {
+    var hadTimeAct = !!timeActs[payload.act];
+    if (hadTimeAct) {
       var bundleToken = (prevBundle.token || 0) + 1;
       patch.wxsClockBundle = {
         token: bundleToken,
@@ -1828,6 +1975,18 @@ Page({
         shotBaseSec: shotBaseSec,
         shotAnchorMs: shotAnchorMs
       };
+      var clockDisplayPatch = this._liveWsBuildClockDisplayPatch(patch.wxsClockBundle);
+      patch.wxsClockMainText = clockDisplayPatch.wxsClockMainText;
+      patch.wxsClockShotSec = clockDisplayPatch.wxsClockShotSec;
+      patch.wxsClockShotWarn = clockDisplayPatch.wxsClockShotWarn;
+      console.log(
+        '[Live][WS] clock act=%s seq=%s t=%s running=%s text=%s',
+        payload.act,
+        payload.seq,
+        rawSeconds,
+        mainRunning,
+        patch.wxsClockMainText
+      );
     }
 
     if (this.data.isAutoMode && this.data.autoSyncWhitelisted) {
@@ -1850,42 +2009,15 @@ Page({
     }
 
     if (Object.keys(patch).length) {
-      this.setData(patch);
-    }
-  },
-
-  /**
-   * WXS rAF 回写显示字段（仅整秒变化时触发，非 setInterval）。
-   * @param {{
-   *   wxsClockMainText?: string,
-   *   wxsClockShotSec?: number,
-   *   wxsClockShotWarn?: boolean
-   * }} renderPatch
-   * @returns {void}
-   */
-  _onWxsClockRender: function (renderPatch) {
-    if (!renderPatch || typeof renderPatch !== 'object') return;
-    var sd = {};
-    if (
-      renderPatch.wxsClockMainText !== undefined &&
-      renderPatch.wxsClockMainText !== this.data.wxsClockMainText
-    ) {
-      sd.wxsClockMainText = renderPatch.wxsClockMainText;
-    }
-    if (
-      renderPatch.wxsClockShotSec !== undefined &&
-      renderPatch.wxsClockShotSec !== this.data.wxsClockShotSec
-    ) {
-      sd.wxsClockShotSec = renderPatch.wxsClockShotSec;
-    }
-    if (
-      renderPatch.wxsClockShotWarn !== undefined &&
-      renderPatch.wxsClockShotWarn !== this.data.wxsClockShotWarn
-    ) {
-      sd.wxsClockShotWarn = renderPatch.wxsClockShotWarn;
-    }
-    if (Object.keys(sd).length) {
-      this.setData(sd);
+      var selfTick = this;
+      this.setData(patch, function () {
+        if (!hadTimeAct) return;
+        if (selfTick.data.wxsClockBundle && selfTick.data.wxsClockBundle.mainRunning) {
+          selfTick._liveWsStartClockTick();
+        } else {
+          selfTick._liveWsStopClockTick();
+        }
+      });
     }
   },
 
@@ -1894,6 +2026,7 @@ Page({
    * @returns {void}
    */
   _liveWsApplyDisconnectedUiPatch: function () {
+    this._liveWsStopClockTick();
     this.setData({
       liveWsConnected: false,
       liveWsPanelOpen: false,
@@ -1905,6 +2038,7 @@ Page({
       wxsClockShotWarn: false
     });
     this._liveWsCurrentSeq = 0;
+    this._liveWsClockRunning = false;
   },
 
   /**
@@ -1933,6 +2067,7 @@ Page({
     }
     if (manual) {
       this._liveWsCurrentSeq = 0;
+      this._liveWsClockRunning = false;
     }
   },
 
@@ -2105,7 +2240,9 @@ Page({
 
           self.setData({ isAutoMode: nextMode }, () => {
             self.updateTeamGroupWidth(true);
-            if (!nextMode) {
+            if (nextMode) {
+              self._liveWsRefreshWxsClockDriver();
+            } else {
               self._liveWsTeardownForManualMode();
             }
           });
@@ -5323,7 +5460,7 @@ Page({
     let widthPx = needRpx * rpxToPx;
     const boardPx = shortEdge * 0.98;
     /** 需与 `.period-center-outer` 的最小宽度 + padding 保持一致。 */
-    const centerRpx = this.data.isAutoMode ? 106 : 80;
+    const centerRpx = this.data.isAutoMode ? 72 : 80;
     const maxSidePx = Math.max(72, (boardPx - centerRpx * rpxToPx) / 2 - 4);
     widthPx = Math.min(widthPx, maxSidePx);
     return Math.round(widthPx);

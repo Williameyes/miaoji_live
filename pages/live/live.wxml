@@ -1,6 +1,5 @@
 <page-meta background-color="#000000" background-color-top="#000000" background-color-bottom="#000000" page-style="background: #000000;"></page-meta>
 <wxs module="c" src="./live.wxs"></wxs>
-<wxs module="timer" src="./timer.wxs"></wxs>
 <view class="container landscape {{isRecording ? 'container--rec-performance' : ''}}">
   <!-- Level 0: 16:9 内接取景框（与 computeLiveStage16x9 一致），避免全屏与相机典型 16:9 输出比例差导致的非等比拉伸感 -->
   <view
@@ -270,18 +269,6 @@
             <view wx:if="{{isAutoMode}}" class="period-time" style="color: {{periodFlash ? '#000000' : '#fff'}}">
               {{wxsClockMainText}}
             </view>
-            <view wx:if="{{isAutoMode}}" class="auto-mode-status-box auto-mode-status-box--inline">
-              <view class="auto-mode-item">
-                <text class="auto-mode-label">24"</text>
-                <text class="auto-mode-value {{wxsClockShotWarn ? 'auto-mode-value--warn' : ''}}">{{wxsClockShotSec}}</text>
-              </view>
-            </view>
-            <view
-              wx:if="{{isAutoMode}}"
-              class="wxs-clock-driver"
-              change:prop="{{timer.onClockBundleChange}}"
-              prop="{{wxsClockBundle}}"
-            ></view>
           </view>
         </view>
 
@@ -323,6 +310,10 @@
         </view>
       </view>
 
+      <!-- 24 秒进攻时钟：右下角正方格，高度与记分栏一致 -->
+      <view wx:if="{{isAutoMode}}" class="shot-clock-box">
+        <text class="shot-clock-digit {{wxsClockShotWarn ? 'shot-clock-digit--warn' : ''}}">{{wxsClockShotSec}}</text>
+      </view>
 
     </view>
 

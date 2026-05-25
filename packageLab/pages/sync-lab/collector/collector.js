@@ -22,6 +22,10 @@ var WS_TOKEN_PATH = '/api/get_token';
 var WS_SOCKET_PATH = '/gaoguang-ws';
 /** 假停表防御：同一秒持续超过该毫秒才发 STOP */
 var OCR_FAKE_STOP_HOLD_MS = 1200;
+/** 假停表：同一秒需连续 OCR 样本次数（防走表 OCR 慢读误触） */
+var OCR_FAKE_STOP_STREAK = 3;
+/** 开表恢复：连续读到同一更低秒数才发 START（防停表 OCR 误读） */
+var OCR_START_CONFIRM_STREAK = 2;
 /** SYNC 观察室：时间落差超过该秒数才进入观察 */
 var OCR_SYNC_JUMP_THRESHOLD_SEC = 2;
 /** SYNC 观察室：连续稳定帧数 */
@@ -154,7 +158,10 @@ var _globalSeq = 0;
  *   lastOcrSec: number,
  *   syncObserve: { sec: number, streak: number } | null,
  *   scoreObserve: { h: number, a: number, streak: number, needStreak: number } | null,
- *   published: { t: number, a: number, b: number, p: number, shotClock: number, running: boolean } | null
+ *   published: { t: number, a: number, b: number, p: number, shotClock: number, running: boolean } | null,
+ *   sameSecStreak: number,
+ *   pauseConfirmed: boolean,
+ *   startObserve: { sec: number, streak: number } | null
  * }}
  */
 var _procState = {
@@ -163,7 +170,10 @@ var _procState = {
   lastOcrSec: -1,
   syncObserve: null,
   scoreObserve: null,
-  published: null
+  published: null,
+  sameSecStreak: 0,
+  pauseConfirmed: false,
+  startObserve: null
 };
 var _cameraContext = null;
 var _cameraFrameListener = null;
@@ -441,6 +451,9 @@ function resetProcessOcrState() {
   _procState.syncObserve = null;
   _procState.scoreObserve = null;
   _procState.published = null;
+  _procState.sameSecStreak = 0;
+  _procState.pauseConfirmed = false;
+  _procState.startObserve = null;
 }
 
 function filterClockByMode(clock) {
@@ -1301,6 +1314,14 @@ Page({
     // 强制挂起预测器，防止在无 OCR 数据支撑的情况下盲目倒数。
     if (now - (_ocrLastTimeSuccessTs || 0) > 3000) {
       console.log('[Collector][OCR] Predictor suspended due to OCR starvation');
+      if (_procState.clockRunning && _lastCommittedFrame) {
+        this._emitWsPacket('STOP', {
+          t: ocrFrameClockSec(_lastCommittedFrame),
+          a: _lastCommittedFrame.homeScore,
+          b: _lastCommittedFrame.awayScore,
+          p: _lastCommittedFrame.period
+        });
+      }
       _clockMode = 'paused';
       this._clearClockPredictTimer();
       return;
@@ -2386,23 +2407,39 @@ Page({
     _wsManualClose = false;
     this.setData({ wsState: 'connecting', wsStateText: '获取 Token…' });
 
+    console.log('【WS追踪 1】开始获取 Token，roomId:', roomId);
+
     this._fetchWsToken(roomId).then(function (token) {
-      if (_wsManualClose) return;
+      console.log('【WS追踪 2】获取 Token 成功，结果是:', token);
+      if (_wsManualClose) {
+        _wsConnecting = false;
+        console.warn('【WS追踪】Token 已到手但连接已被手动取消，跳过 WS');
+        return;
+      }
       var wsUrl = WS_BASE_URL + WS_SOCKET_PATH +
         '?roomId=' + encodeURIComponent(roomId) +
         '&token=' + encodeURIComponent(token);
+      console.log('【WS追踪 3】准备发起 WS 连接，完整 URL:', wsUrl);
       self.setData({ wsStateText: '握手中…' });
       try {
         if (_socketTask) {
           try { _socketTask.close({}); } catch (eClose) { }
           _socketTask = null;
         }
-        _socketTask = wx.connectSocket({ url: wsUrl });
+        _socketTask = wx.connectSocket({
+          url: wsUrl,
+          fail: function (err) {
+            _wsConnecting = false;
+            self.setData({ wsState: 'idle', wsStateText: '连接失败' });
+            console.error('【WS追踪 4】WS 连结触发 fail 回调:', err);
+            wx.showToast({ title: 'WebSocket 连接失败', icon: 'none' });
+          }
+        });
       } catch (errConnect) {
         _wsConnecting = false;
         self.setData({ wsState: 'idle', wsStateText: '连接失败' });
         wx.showToast({ title: 'WebSocket 连接失败', icon: 'none' });
-        console.error('[Collector][WS] connectSocket throw', errConnect);
+        console.error('【WS追踪 致命错误】连接流程中断:', errConnect);
         return;
       }
 
@@ -2413,6 +2450,7 @@ Page({
           clearTimeout(_wsReconnectTimer);
           _wsReconnectTimer = 0;
         }
+        console.log('【WS追踪 5】WS onOpen 成功，roomId:', roomId);
         self.setData({ wsState: 'connected', wsStateText: '云端已连接 ✓' });
         wx.vibrateShort({ type: 'medium' });
         console.log('[Collector][WS] connected room=%s', roomId);
@@ -2433,12 +2471,14 @@ Page({
       });
 
       _socketTask.onError(function (err) {
+        console.error('【WS追踪 7】WS onError:', err);
         console.warn('[Collector][WS] error', err);
       });
 
-      _socketTask.onClose(function () {
+      _socketTask.onClose(function (res) {
         _wsConnecting = false;
         _socketTask = null;
+        console.warn('【WS追踪 6】WS onClose:', res);
         if (_wsManualClose) {
           self.setData({ wsState: 'idle', wsStateText: '未连接' });
           return;
@@ -2450,7 +2490,7 @@ Page({
       _wsConnecting = false;
       self.setData({ wsState: 'idle', wsStateText: 'Token 获取失败' });
       wx.showToast({ title: 'Token 获取失败', icon: 'none' });
-      console.error('[Collector][WS] get_token fail', err);
+      console.error('【WS追踪 致命错误】连接流程中断:', err);
     });
   },
 
@@ -2526,6 +2566,7 @@ Page({
     if (!_socketTask || this.data.wsState !== 'connected') return;
     _globalSeq += 1;
     var packet = {
+      type: 'COLLECTOR_UPDATE',
       act: act,
       t: Math.max(0, Math.floor(Number(payload.t) || 0)),
       a: Math.max(0, Math.floor(Number(payload.a) || 0)),
@@ -2542,7 +2583,8 @@ Page({
       console.warn('[Collector][WS] send fail act=%s err=%o', act, errSend);
       return;
     }
-    _procState.published = {
+    var prevPublished = _procState.published;
+    var nextPublished = {
       t: packet.t,
       a: packet.a,
       b: packet.b,
@@ -2550,11 +2592,22 @@ Page({
       shotClock: this.data.shotClock,
       running: act === 'START' || (act === 'SYNC' && _procState.clockRunning)
     };
+    if ((act === 'SCORE' || act === 'PERIOD') && prevPublished) {
+      nextPublished.t = prevPublished.t;
+      nextPublished.running = prevPublished.running;
+    }
+    _procState.published = nextPublished;
     if (act === 'START') {
       _procState.clockRunning = true;
+      _procState.pauseConfirmed = false;
+      _procState.sameSecStreak = 0;
+      _procState.sameSecFirstSeen = 0;
+      _procState.startObserve = null;
       _clockMode = 'running';
     } else if (act === 'STOP') {
       _procState.clockRunning = false;
+      _procState.pauseConfirmed = true;
+      _procState.sameSecStreak = 0;
       _clockMode = 'paused';
     }
   },
@@ -2637,9 +2690,9 @@ Page({
         ? _procState.published.t
         : clockToTotalSec({ minutes: this.data.minutes, seconds: this.data.seconds }));
     var pub = _procState.published;
-    var refT = pub
-      ? pub.t
-      : (_procState.lastOcrSec >= 0 ? _procState.lastOcrSec : t);
+    var refT = _procState.lastOcrSec >= 0
+      ? _procState.lastOcrSec
+      : (pub ? pub.t : t);
     var payloadBase = { t: t, a: h, b: a, p: period };
 
     // 阀门 2：遮挡 / 闪电调表 → SYNC 观察室（遇 null 保持静默）
@@ -2655,9 +2708,8 @@ Page({
           this._emitWsPacket('SYNC', payloadBase);
           _procState.syncObserve = null;
           _procState.sameSecFirstSeen = now;
+          _procState.sameSecStreak = 1;
           _procState.lastOcrSec = t;
-          _procState.clockRunning = true;
-          _clockMode = 'running';
         }
         this._commitLocalState({
           homeScore: h,
@@ -2675,28 +2727,66 @@ Page({
     // 阀门 1：假停表防御 + START 恢复（仅大表，不涉及 24 秒表）
     if (timeInfo) {
       if (t === _procState.lastOcrSec) {
+        _procState.sameSecStreak = (_procState.sameSecStreak || 0) + 1;
         if (!_procState.sameSecFirstSeen) {
           _procState.sameSecFirstSeen = now;
         }
-        if (_procState.clockRunning && (now - _procState.sameSecFirstSeen) >= OCR_FAKE_STOP_HOLD_MS) {
+        var holdMs = now - _procState.sameSecFirstSeen;
+        if (
+          _procState.clockRunning &&
+          _procState.sameSecStreak >= OCR_FAKE_STOP_STREAK &&
+          holdMs >= OCR_FAKE_STOP_HOLD_MS
+        ) {
           this._emitWsPacket('STOP', payloadBase);
+        } else if (
+          !_procState.clockRunning &&
+          _procState.startObserve &&
+          _procState.startObserve.sec === t
+        ) {
+          _procState.startObserve.streak += 1;
+          var needResumeStreak = (_procState.pauseConfirmed || _clockMode === 'paused')
+            ? OCR_START_CONFIRM_STREAK
+            : 1;
+          if (_procState.startObserve.streak >= needResumeStreak) {
+            this._emitWsPacket('START', payloadBase);
+            _procState.startObserve = null;
+          }
         }
       } else {
         var prevSec = _procState.lastOcrSec;
         _procState.sameSecFirstSeen = now;
+        _procState.sameSecStreak = 1;
         _procState.lastOcrSec = t;
-        if (timeInfo && t < refT && (refT - t) === 1 && !_procState.clockRunning) {
-          _procState.clockRunning = true;
-          _clockMode = 'running';
-        }
-        if (!_procState.clockRunning && refT >= 0 && prevSec >= 0) {
-          var resumeDrop = refT - t;
-          if (resumeDrop >= 1 && resumeDrop <= 2) {
-            this._emitWsPacket('START', payloadBase);
+        if (refT >= 0 && prevSec >= 0 && t < refT) {
+          var dropSec = refT - t;
+          if (dropSec >= 1 && dropSec <= 2 && !_procState.clockRunning) {
+            var allowStart = _procState.pauseConfirmed ||
+              _clockMode === 'paused' ||
+              !pub ||
+              !pub.running;
+            if (allowStart) {
+              if (_procState.startObserve && _procState.startObserve.sec === t) {
+                _procState.startObserve.streak += 1;
+              } else {
+                _procState.startObserve = { sec: t, streak: 1 };
+              }
+              var needStartStreak = (_procState.pauseConfirmed || _clockMode === 'paused')
+                ? OCR_START_CONFIRM_STREAK
+                : 1;
+              if (_procState.startObserve.streak >= needStartStreak) {
+                this._emitWsPacket('START', payloadBase);
+                _procState.startObserve = null;
+              }
+            }
+          } else {
+            _procState.startObserve = null;
+            if (dropSec === 1 && _procState.clockRunning) {
+              _clockMode = 'running';
+              _procState.pauseConfirmed = false;
+            }
           }
-        }
-        if (_procState.clockRunning && refT >= 0 && t < refT && (refT - t) === 1) {
-          _clockMode = 'running';
+        } else {
+          _procState.startObserve = null;
         }
       }
     }

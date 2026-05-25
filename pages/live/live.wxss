@@ -747,7 +747,9 @@ button.live-ble-btn::after {
 
 /* --- 自动记分模式优化 --- */
 .period-center-outer--auto {
-  min-width: 90rpx;
+  min-width: 72rpx;
+  min-height: 60rpx;
+  padding: 0 4rpx;
 }
 
 .period-container {
@@ -756,21 +758,56 @@ button.live-ble-btn::after {
   align-items: center;
   justify-content: center;
   z-index: 1;
+  max-width: 100%;
+  line-height: 1;
+  gap: 1rpx;
 }
 
 .period-text--auto {
-  font-size: 8rpx;
-  line-height: 1.2;
+  font-size: 7rpx;
+  line-height: 1.1;
   min-height: 0 !important;
-  margin-bottom: 2rpx;
+  height: auto;
+  padding: 0;
 }
 
 .period-time {
-  font-size: 11rpx;
-  font-weight: normal;
-  line-height: 1;
+  font-size: 8rpx;
+  font-weight: 600;
+  line-height: 1.1;
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.5rpx;
+  letter-spacing: 0;
+}
+
+/* 24 秒：右下角与记分栏同高正方格 */
+.shot-clock-box {
+  position: absolute;
+  right: 2vw;
+  bottom: calc(4rpx + env(safe-area-inset-bottom));
+  width: 60rpx;
+  height: 60rpx;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6rpx;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.shot-clock-digit {
+  font-size: 8rpx;
+  font-weight: 600;
+  line-height: 1;
+  color: #ffffff;
+  font-variant-numeric: tabular-nums;
+}
+
+.shot-clock-digit--warn {
+  color: #ff4d4f;
+  animation: shotClockPulse 0.5s infinite alternate;
 }
 
 .replay-overlay {

@@ -113,25 +113,38 @@ function createLiveWsClient(handlers) {
     manualClose = false;
     emitPhase('token');
 
+    console.log('【WS追踪 1】开始获取 Token，roomId:', roomId);
+
     fetchWsToken(roomId).then(function (token) {
+      console.log('【WS追踪 2】获取 Token 成功，结果是:', token);
       if (manualClose) {
         connecting = false;
+        console.warn('【WS追踪】Token 已到手但连接已被手动取消，跳过 WS');
         return;
       }
       emitPhase('handshake');
       const wsUrl = WS_BASE_URL + WS_SOCKET_PATH +
         '?roomId=' + encodeURIComponent(roomId) +
         '&token=' + encodeURIComponent(token);
+      console.log('【WS追踪 3】准备发起 WS 连接，完整 URL:', wsUrl);
       try {
         if (socketTask) {
           try { socketTask.close({}); } catch (eClose) { /* ignore */ }
           socketTask = null;
         }
-        socketTask = wx.connectSocket({ url: wsUrl });
+        socketTask = wx.connectSocket({
+          url: wsUrl,
+          fail: function (err) {
+            connecting = false;
+            console.error('【WS追踪 4】WS 连结触发 fail 回调:', err);
+            emitPhase('error', 'connectSocket fail');
+            if (typeof cb.onError === 'function') cb.onError(err || {});
+          }
+        });
       } catch (errConnect) {
         connecting = false;
         emitPhase('error', 'connectSocket throw');
-        console.error('[LiveWS] connectSocket throw', errConnect);
+        console.error('【WS追踪 致命错误】连接流程中断:', errConnect);
         return;
       }
 
@@ -139,25 +152,35 @@ function createLiveWsClient(handlers) {
         connecting = false;
         reconnectAttempt = 0;
         clearReconnectTimer();
+        console.log('【WS追踪 5】WS onOpen 成功，roomId:', roomId);
+        try {
+          socketTask.send({ data: JSON.stringify({ type: 'BROADCAST_JOIN' }) });
+          console.log('【WS追踪 5b】已发送 BROADCAST_JOIN');
+        } catch (eJoin) {
+          console.error('【WS追踪】BROADCAST_JOIN 发送失败:', eJoin);
+        }
         emitPhase('connected');
         if (typeof cb.onOpen === 'function') cb.onOpen();
       });
 
       socketTask.onMessage(function (msg) {
         if (!msg || msg.data == null) return;
+        console.log('【WS追踪 8】WS onMessage:', String(msg.data).slice(0, 200));
         if (typeof cb.onMessage === 'function') {
           cb.onMessage(String(msg.data));
         }
       });
 
       socketTask.onError(function (err) {
+        console.error('【WS追踪 7】WS onError:', err);
         console.warn('[LiveWS] error', err);
         if (typeof cb.onError === 'function') cb.onError(err || {});
       });
 
-      socketTask.onClose(function () {
+      socketTask.onClose(function (res) {
         connecting = false;
         socketTask = null;
+        console.warn('【WS追踪 6】WS onClose:', res);
         if (typeof cb.onClose === 'function') cb.onClose();
         if (manualClose) {
           emitPhase('idle');
@@ -168,7 +191,7 @@ function createLiveWsClient(handlers) {
     }).catch(function (err) {
       connecting = false;
       emitPhase('error', 'token fail');
-      console.error('[LiveWS] get_token fail', err);
+      console.error('【WS追踪 致命错误】连接流程中断:', err);
       if (typeof cb.onError === 'function') cb.onError(err || {});
     });
   }
