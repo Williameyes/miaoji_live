@@ -1,5 +1,4 @@
 const { STORAGE_USER_INFO_KEY, getToken, get } = require('./utils/request.js');
-const { installWsTokenRequestInterceptor } = require('./utils/ws-token-request.js');
 const {
   persistPendingReferrerFromQuery,
   consumeVipExtensionCelebrationIfNeeded
@@ -16,7 +15,6 @@ App({
    * @returns {void}
    */
   onLaunch: function (options) {
-    installWsTokenRequestInterceptor();
     try {
       const cached = wx.getStorageSync(STORAGE_USER_INFO_KEY);
       if (cached && typeof cached === 'object') {
