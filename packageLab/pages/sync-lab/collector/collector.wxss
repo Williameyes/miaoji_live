@@ -126,10 +126,10 @@ page { background: #000; }
   border-radius: 50%;
   flex-shrink: 0;
 }
-.col-top-dot--idle        { background: #94a3b8; }
-.col-top-dot--starting    { background: #38bdf8; }
-.col-top-dot--advertising { background: #f59e0b; }
-.col-top-dot--connected   { background: #22c55e; }
+.col-top-dot--idle         { background: #94a3b8; }
+.col-top-dot--connecting   { background: #38bdf8; }
+.col-top-dot--reconnecting { background: #f59e0b; }
+.col-top-dot--connected    { background: #22c55e; }
 .col-top-state {
   font-size: 18rpx;
   color: rgba(255,255,255,0.85);

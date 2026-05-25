@@ -52,8 +52,8 @@
 
     <!-- ② 顶部状态条 -->
     <view class="col-top-bar">
-      <view class="col-top-dot col-top-dot--{{bleState}}"></view>
-      <view class="col-top-state">{{bleStateText}}</view>
+      <view class="col-top-dot col-top-dot--{{wsState}}"></view>
+      <view class="col-top-state">{{wsStateText}}</view>
       <view class="col-top-code" wx:if="{{matchCode}}">码 {{matchCode}}</view>
       <view class="col-top-code col-top-code--muted" wx:else>码待生成</view>
       <view class="col-top-hz" wx:if="{{ocrTransitioning}}">OCR 切换中</view>
@@ -116,7 +116,7 @@
                 bindtap="onToggleOcr"
               >{{ocrTransitioning?'OCR切换中':(ocrEnabled?'关OCR':'开OCR')}}</view>
               <view
-                wx:if="{{bleState === 'idle'}}"
+                wx:if="{{wsState === 'idle'}}"
                 class="col-act-btn col-act-btn--ble col-act-btn--blue"
                 hover-class="col-act-btn--pressed"
                 hover-stay-time="100"

@@ -1,30 +1,36 @@
 /**
- * @fileoverview 采集端 (Peripheral / GATT Server + VisionKit OCR)
+ * @fileoverview 采集端 (WebSocket 云端同步 + VisionKit OCR)
  *
- * Phase 3 v2：
- *   - OCR pump 节流 + 单 ROI 轮询，严禁 30 帧暴力采集
- *   - ROI 拖动/缩放拆分：mode 'move' | 'resize-se'
- *   - wx.requestAnimationFrame 节流 touchmove（局部 setData，path 语法）
- *   - OCR 锚点局部更新（只写 rawText，不覆盖坐标）
- *   - 登录 + 白名单双重门控（isLogin && isInWhitelist）
- *   - VKSession 错误过滤（saaa/node js 底层错误不弹 Toast）
- *   - BLE 校验升级为 CRC-8/SMBUS（ble-protocol.js v2）
- *
- * 长时运行（数小时直播）：
- *   - 定时温和重建 VK 会话；手动 OCR 失败堆积时延迟温和重建
- *   - onHide 停相机帧泵、onShow 恢复，减轻后台无效回调
- *   - BLE notify 失败指数退避 + 定时补发，避免半连接写风暴
- *   - OCR 解析后仅按 frameKey 去重；仅 3 个 ROI（主/客分、时间），24 秒与节次改人工，减轻 CPU 与跳秒
- *   - 时间 ROI 优先调度 + 短窗「时钟回跳」暂缓整帧 notify（阈值偏保守，减少对顺计时干扰）
- *   - 现场实体记分牌由技术台改分为主；大单帧比分跳变用 streak 确认，截断式误读(111→11)要求更多连续一致帧
- *   - 比分待确认时仍推送「上一已确认比分 + 新时间」，避免时间因整帧暂缓而累积跳秒
+ * V2 架构：
+ *   - HTTP 换取 Token → WSS 长连接，仅在状态翻转时发包（信号灯模式）
+ *   - processOcrFrame 落实 5 大防抖阀门（假停表 / SYNC 观察室 / 高位频闪 / 24 秒影子 / 允许回退）
+ *   - OCR pump 节流 + 单 ROI 轮询；ROI 拖动/缩放；登录 + 白名单双重门控
  *
  * ROI 选区数据结构（归一化坐标，相对于相机预览区）：
  *   { x: 0-1, y: 0-1, w: 0-1, h: 0-1, label: string, rawText: string, pctStyle: string }
  */
 
-var BLE = require('../../../../utils/ble-protocol.js');
+var API = require('../../../../config/api.js');
 var REQ = require('../../../../utils/request.js');
+
+/** WSS 网关根地址（由 HTTPS BaseURL 推导） */
+var WS_BASE_URL = String(API.API_BASE_URL || '').replace(/^http/i, 'ws');
+/** 获取一次性 Token 的 HTTP 路径 */
+var WS_TOKEN_PATH = '/api/get_token';
+/** WebSocket 握手路径 */
+var WS_SOCKET_PATH = '/gaoguang-ws';
+/** 假停表防御：同一秒持续超过该毫秒才发 STOP */
+var OCR_FAKE_STOP_HOLD_MS = 1200;
+/** SYNC 观察室：时间落差超过该秒数才进入观察 */
+var OCR_SYNC_JUMP_THRESHOLD_SEC = 2;
+/** SYNC 观察室：连续稳定帧数 */
+var OCR_SYNC_CONFIRM_STREAK = 5;
+/** 比分变化默认确认帧数 */
+var OCR_SCORE_CONFIRM_STREAK = 3;
+/** 高位频闪（截断误读）确认帧数 */
+var OCR_SCORE_TRUNC_STREAK = 6;
+/** WebSocket 断线重连退避序列（毫秒），上限 15 秒 */
+var WS_RECONNECT_DELAYS_MS = [3000, 6000, 12000, 15000];
 
 var STORAGE_KEY_ROIS = 'sync_lab_rois_v1';
 /** 当前 OCR 队列 ROI 数量：主队分、客队分、时间（已移除 24 秒 ROI）。 */
@@ -44,7 +50,7 @@ var OCR_RUN_TIMEOUT_MS = 720;
  *
  * 现在用 1500ms：让 SDK 有真实的处理时间，避免"未完成→重新提交→队列堆积→更慢"
  * 死循环；OCR 实际感知到的延迟由状态机内的 captureTs 流水线补偿（realWorldSec =
- * ocrSec - lostSec）抵消，BLE 推送的依然是当前真实时钟。
+ * ocrSec - lostSec）抵消，本地 UI 仍展示当前真实时钟；云端仅在状态翻转时发包。
  */
 var OCR_TIME_RUN_TIMEOUT_MS = 1500;
 /**
@@ -122,9 +128,6 @@ var OCR_HEALTH_INTERVAL_MS = 60 * 1000;
 /** 连续 runOCR 超时/异常达到该次数后触发温和重建（滑动窗口内） */
 var OCR_MANUAL_FAIL_THRESHOLD = 8;
 var OCR_MANUAL_FAIL_WINDOW_MS = 90 * 1000;
-/** BLE notify 失败后最大退避（毫秒），避免半连接时写特征风暴 */
-var BLE_NOTIFY_BACKOFF_MAX_MS = 8000;
-var BLE_NOTIFY_BACKOFF_BASE_MS = 220;
 var ROI_MIN_SIZE = 0.05; // 归一化最小宽/高，防止缩至 0
 
 var DEFAULT_ROIS = [
@@ -133,9 +136,34 @@ var DEFAULT_ROIS = [
   { x: 0.30, y: 0.35, w: 0.40, h: 0.18, label: '时间', rawText: '' }
 ];
 
-/** @type {WechatMiniprogram.BLEPeripheralServer | null} */
-var _server = null;
-var _connectedDeviceId = '';
+/** @type {WechatMiniprogram.SocketTask | null} */
+var _socketTask = null;
+var _wsRoomId = '';
+var _wsConnecting = false;
+var _wsManualClose = false;
+var _wsReconnectAttempt = 0;
+var _wsReconnectTimer = 0;
+/** 全局单调递增发包序列号 */
+var _globalSeq = 0;
+/**
+ * processOcrFrame 状态机（5 大防抖阀门 + 已发布快照）
+ * @type {{
+ *   clockRunning: boolean,
+ *   sameSecFirstSeen: number,
+ *   lastOcrSec: number,
+ *   syncObserve: { sec: number, streak: number } | null,
+ *   scoreObserve: { h: number, a: number, streak: number, needStreak: number } | null,
+ *   published: { t: number, a: number, b: number, p: number, shotClock: number, running: boolean } | null
+ * }}
+ */
+var _procState = {
+  clockRunning: false,
+  sameSecFirstSeen: 0,
+  lastOcrSec: -1,
+  syncObserve: null,
+  scoreObserve: null,
+  published: null
+};
 var _cameraContext = null;
 var _cameraFrameListener = null;
 var _ocrVkCanvas = null;
@@ -146,7 +174,6 @@ var _vkSession = null;
 var _lastHandleTs = 0;   // OCR 锚点兜底门控时间戳
 var _pendingOcrFrame = null;
 var _lastCommittedFrameKey = '';
-var _bleStarting = false;
 var _ocrBootTimer = 0;
 var _ocrCameraRemountTimer = 0;
 var _ocrSessionToken = 0;
@@ -172,9 +199,9 @@ var _ocrLastTimeSuccessTs = 0;
 /** 预测时钟：OCR 短时掉帧时根据墙钟平滑补秒，减轻恢复后跳秒。 */
 var _predictedClock = null;
 var _predictedClockWallTs = 0;
-/** 最近一次成功 BLE 提交的墙钟时间戳（供单帧时钟回跳检测）。 */
+/** 最近一次本地 UI 提交的墙钟时间戳（供单帧时钟回跳检测）。 */
 var _lastNotifyWallAt = 0;
-/** 待下一帧复核的帧快照（时间疑似 OCR 跳变时暂缓 _notify）。 */
+/** 待下一帧复核的帧快照（时间疑似 OCR 跳变时暂缓本地提交）。 */
 var _timeJumpHoldFrame = null;
 /** 大单帧比分跳变待确认：同分值 streak 达标后放行。 */
 var _scoreJumpHold = null;
@@ -229,13 +256,6 @@ var _scorePumpCursor = 0;
 var _isFinalMinuteMode = false;
 /** 是否因小程序 onHide 暂停了相机帧泵（onShow 恢复） */
 var _ocrPausedForBackground = false;
-/** BLE notify 退避截止时刻 */
-var _bleNotifyBackoffUntil = 0;
-/** BLE notify 失败次数（用于指数退避） */
-var _bleNotifyFailStreak = 0;
-/** 退避结束后补发一次的定时器 */
-var _bleNotifyRetryTimer = 0;
-
 /** 相机预览区实际 px 尺寸 */
 var _previewW = 0;
 var _previewH = 0;
@@ -387,6 +407,41 @@ function getClockRunUntil(now, clockSec) {
   return now + Math.max(OCR_CLOCK_PREDICT_ACTIVE_MS, (sec + 2) * 1000);
 }
 
+/**
+ * 生成 6 位房间号（供直播端输入连入）。
+ * @returns {string}
+ */
+function generateRoomId() {
+  var n = Math.floor(Math.random() * 1000000);
+  if (String(n).padStart) {
+    return String(n).padStart(6, '0');
+  }
+  return ('000000' + n).slice(-6);
+}
+
+/**
+ * 计算 WebSocket 断线重连等待毫秒（3→6→12，上限 15 秒）。
+ * @param {number} attempt 已断开次数（从 1 起）
+ * @returns {number}
+ */
+function getWsReconnectDelayMs(attempt) {
+  var idx = Math.max(0, Math.min(attempt - 1, WS_RECONNECT_DELAYS_MS.length - 1));
+  return WS_RECONNECT_DELAYS_MS[idx];
+}
+
+/**
+ * 重置 processOcrFrame 状态机（OCR 重启或房间重连时调用）。
+ * @returns {void}
+ */
+function resetProcessOcrState() {
+  _procState.clockRunning = false;
+  _procState.sameSecFirstSeen = 0;
+  _procState.lastOcrSec = -1;
+  _procState.syncObserve = null;
+  _procState.scoreObserve = null;
+  _procState.published = null;
+}
+
 function filterClockByMode(clock) {
   if (!clock) return null;
   if (_clockMode === 'paused' && _predictedClock) {
@@ -405,9 +460,9 @@ Page({
     /** 登录 + 白名单双重门控 */
     isLogin: false,
     isInWhitelist: false,
-    // BLE 状态
-    bleState: 'idle',
-    bleStateText: '未开启',
+    // WebSocket 连接状态
+    wsState: 'idle',
+    wsStateText: '未连接',
     matchCode: '',
     // 比赛数据
     homeScore: 0,
@@ -572,7 +627,7 @@ Page({
 
   onUnload: function () {
     this._stopOcr(true);
-    this._stopAll();
+    this._disconnectWebSocket(true);
     wx.setKeepScreenOn({ keepScreenOn: false });
   },
 
@@ -804,7 +859,13 @@ Page({
     var p = parseInt(e.currentTarget.dataset.p, 10);
     if (!p || p < 1 || p > 8) return;
     this.setData({ period: p });
-    this._notify({
+    this._emitWsPacket('PERIOD', {
+      t: clockToTotalSec({ minutes: this.data.minutes, seconds: this.data.seconds }),
+      a: this.data.homeScore,
+      b: this.data.awayScore,
+      p: p
+    });
+    this._commitLocalState({
       homeScore: this.data.homeScore,
       awayScore: this.data.awayScore,
       period: p,
@@ -841,7 +902,7 @@ Page({
     var token = ++_ocrSessionToken;
     this._clearOcrBootTimers();
     this._stopOcrSession();
-    // 每次启动 OCR 前，彻底清空遗留脏数据，实现完全重新采集（不影响蓝牙连接、不覆盖人工维护的 period / shotClock）。
+    // 每次启动 OCR 前，彻底清空遗留脏数据，实现完全重新采集（不影响 WebSocket、不覆盖人工维护的 period / shotClock）。
     this._wipeOcrDirtyState();
     this._prepareCameraForOcrBoot(token, 'start');
   },
@@ -850,7 +911,7 @@ Page({
    * 彻底清理 OCR 的残留状态，模拟页面重新加载。
    * 解决原地重启 OCR（或接收远程重启指令）时，因残留旧比分触发大比分下降防抖（isLargeScoreDrop），
    * 导致比分卡死、必须完全退出页面重进才能恢复的问题。
-   * 严格约束：不触碰任何 BLE 相关逻辑、不重置 period / shotClock 这两个人工维护字段。
+   * 严格约束：不触碰 WebSocket 连接、不重置 period / shotClock 这两个人工维护字段。
    * @returns {void}
    */
   _wipeOcrDirtyState: function () {
@@ -876,11 +937,11 @@ Page({
       rois: rois
     });
 
+    resetProcessOcrState();
+
     if (typeof bumpManualScoreEditGate === 'function') {
       bumpManualScoreEditGate();
     }
-
-    this._notify();
   },
 
   _clearOcrBootTimers: function () {
@@ -900,7 +961,6 @@ Page({
     this._clearOcrBootTimers();
     console.log('[Collector][OCR] prepare camera for boot token=%s reason=%s bootDelay=%s', token, reason || '', bootDelay);
     this.setData({ ocrTransitioning: true, cameraMounted: true }, function () {
-      self._notify();
       if (!_cameraContext) {
         _cameraContext = wx.createCameraContext(self);
         _cameraReadyAt = Date.now();
@@ -1017,7 +1077,7 @@ Page({
           self._stopOcrSession();
           self._restoreCameraPreview(function () {
             self.setData({ ocrEnabled: false, ocrTransitioning: false }, function () {
-              self._notify();
+              self._commitLocalState();
             });
           });
           console.error('[Collector] createVKSession fail', eCreateWithGl || eCreateFallback || eCreate);
@@ -1041,7 +1101,7 @@ Page({
         self._stopOcrSession();
         self._restoreCameraPreview(function () {
           self.setData({ ocrEnabled: false, ocrTransitioning: false }, function () {
-            self._notify();
+            self._commitLocalState();
           });
         });
         if (!isSdkInternal) {
@@ -1051,7 +1111,7 @@ Page({
         return;
       }
       self.setData({ ocrEnabled: true, ocrTransitioning: false }, function () {
-        self._notify();
+        self._commitLocalState();
       });
       _ocrSessionBootAt = Date.now();
       self._startOcrHealthTimer();
@@ -1129,18 +1189,7 @@ Page({
   },
 
   /**
-   * OCR 时间样本入口（带流水线延迟补偿与非对称信任状态机）。
-   *
-   * 状态机三态：
-   *   - PAUSE：连续 OCR_CLOCK_PAUSE_HOLD_MS 读到同一秒，认定停表，强制对齐预测时钟。
-   *   - RESUME：从 paused 切到 running 时（drop 在 1~2 秒内）立即推送 BLE，无需等待。
-   *   - JUMP：上跳或下跳 > OCR_CLOCK_JUMP_DROP_THRESHOLD 秒，需连续 OCR_CLOCK_JUMP_HOLD_MS
-   *           维持同值才视为人工改表，确认后强制覆盖并立即推送 BLE。
-   *
-   * 流水线补偿：
-   *   - 由于摄像帧 → runOCR → updateAnchors 之间存在 ms 级延迟，
-   *     用 captureTs 推算 lostSec，得到「绝对真实秒」realWorldSec = ocrSec - lostSec。
-   *
+   * OCR 时间样本入口：更新预测时钟供本地 UI，并交给 processOcrFrame 做状态提纯。
    * @param {{ minutes: number, seconds: number } | null} parsedTime parseTime 输出
    * @param {number} frameCaptureTs 调用 runOCR 之前的墙钟戳
    * @returns {void}
@@ -1148,154 +1197,39 @@ Page({
   _recordOcrClockSample: function (parsedTime, frameCaptureTs) {
     if (!parsedTime) return;
     var now = Date.now();
-
-    // === 1) 流水线延迟补偿：把 OCR 读到的秒数倒推到「现在的真实秒」 ===
-    var processDelayMs = frameCaptureTs ? Math.max(0, now - frameCaptureTs) : 0;
-    // 【修复 2：根除幽灵抖动，恢复停表检测】
-    // 废除 Math.floor(processDelayMs / 1000) 引入的 1 秒级人工抖动误差。
-    // 确保物理表暂停时，realWorldSec 绝对静止，从而顺利触发 delta === 0 的停表判定。
-    var lostSec = 0;
     var ocrSec = clockToTotalSec(parsedTime);
-    var realWorldSec = Math.max(0, ocrSec - lostSec);
+    var realWorldSec = Math.max(0, ocrSec);
 
-    // 【修复 3：打破遮挡恢复后的“三重死锁”】
-    // 若距离上次成功读取时间超过 2500ms（说明刚从看门狗的饥饿暂停中苏醒），
-    // 此时物理时钟可能已走远。必须强行重置底层状态机的锚点，
-    // 否则正确的新时间会被后续的 20 秒防抖逻辑当做“跳变乱码”无情抛弃。
     if (now - (_ocrLastTimeSuccessTs || 0) > 2500) {
-      console.log('[Collector][OCR] Time recovered from starvation, force aligning to ' + realWorldSec);
       _lastOcrClockSec = realWorldSec;
-      _clockMode = 'running'; // 假定比赛在进行，强制唤醒预测器。若实体表真停了，后续稳态逻辑会在 800ms 内自动将其纠正回 paused
+      _clockMode = 'running';
       _ocrClockRunAnchorWallTs = now;
       _ocrClockRunAnchorOcrSec = realWorldSec;
     }
     _ocrLastTimeSuccessTs = now;
 
     var realClock = clockFromTotalSec(realWorldSec);
-
-    var prevOcrSec = _lastOcrClockSec;
-    var prevOcrWallTs = _lastOcrClockWallTs || now;
-
-    if (!_predictedClock || prevOcrSec < 0) {
-      _lastOcrClockSec = realWorldSec;
-      _lastOcrClockWallTs = now;
-      updatePredictedClock(realClock);
-      _lastClockPredictEmitSec = realWorldSec;
-      _sameOcrClockSince = now;
-      _clockMode = 'unknown';
-      _clockJumpCandidateSec = -1;
-      _clockJumpCandidateSince = 0;
-      this._maybeApplyFinalMinuteMode(realClock);
-      return;
-    }
-
-    var delta = realWorldSec - prevOcrSec;
-    var dropSec = -delta;
-
-    // === 2) 大跨度跳变 / 回表确认（JUMP）===
-    if (isLikelyClockReset(prevOcrSec, ocrSec, parsedTime)) {
-      var resetClock = cloneClock(parsedTime) || realClock;
-      var resetSec = clockToTotalSec(resetClock);
-      if (this.data.debugMode) {
-        console.log('[Collector][OCR] CLOCK RESET accepted prev=%s now=%s', prevOcrSec, resetSec);
-      }
-      _clockMode = 'paused';
-      _lastOcrClockSec = resetSec;
-      _lastOcrClockWallTs = now;
-      _sameOcrClockSince = now;
-      _clockPauseCandidateUntil = 0;
-      _clockResumeCandidateSec = -1;
-      _clockResumeCandidateSince = 0;
-      _clockJumpCandidateSec = -1;
-      _clockJumpCandidateSince = 0;
-      updatePredictedClock(resetClock);
-      _lastClockPredictEmitSec = resetSec;
-      this._clearClockPredictTimer();
-      this._maybeApplyFinalMinuteMode(resetClock);
-      this._emitTimeOnlyIfChanged(resetClock, now, true);
-      return;
-    }
-
-    if (delta > 0 || dropSec > OCR_CLOCK_JUMP_DROP_THRESHOLD) {
-      if (_clockJumpCandidateSec === realWorldSec) {
-        if (now - _clockJumpCandidateSince >= OCR_CLOCK_JUMP_HOLD_MS) {
-          if (this.data.debugMode) {
-            console.log('[Collector][OCR] CLOCK JUMP confirmed prev=%s now=%s drop=%s', prevOcrSec, realWorldSec, dropSec);
-          }
-          // 技术台人工改表后（如回表到 5:00），比赛通常即将继续或处于随时开球的死球状态。
-          // 设为 running 让预测时钟立刻接管并平滑输出，避免 OCR 慢半拍时停摆。
-          _clockMode = 'running';
-          _lastOcrClockSec = realWorldSec;
-          _lastOcrClockWallTs = now;
-          _sameOcrClockSince = now;
-          _clockPauseCandidateUntil = 0;
-          _clockResumeCandidateSec = -1;
-          _clockResumeCandidateSince = 0;
-          _clockJumpCandidateSec = -1;
-          _clockJumpCandidateSince = 0;
-          updatePredictedClock(realClock);
-          _lastClockPredictEmitSec = realWorldSec;
-          this._clearClockPredictTimer();
-          this._maybeApplyFinalMinuteMode(realClock);
-          this._emitTimeOnlyIfChanged(realClock, now, true);
-        }
-      } else {
-        _clockJumpCandidateSec = realWorldSec;
-        _clockJumpCandidateSince = now;
-        if (this.data.debugMode) {
-          console.log('[Collector][OCR] CLOCK JUMP candidate prev=%s next=%s drop=%s', prevOcrSec, realWorldSec, dropSec);
-        }
-      }
-      return;
-    }
-
-    // 走出 JUMP 候选窗口后清空
-    _clockJumpCandidateSec = -1;
-    _clockJumpCandidateSince = 0;
-
-    // === 3) 停表强校准（PAUSE）===
-    if (delta === 0) {
-      _lastOcrClockSec = realWorldSec;
-      _lastOcrClockWallTs = now;
-      _clockResumeCandidateSec = -1;
-      _clockResumeCandidateSince = 0;
-      if (!_sameOcrClockSince) _sameOcrClockSince = prevOcrWallTs;
-      _clockPauseCandidateUntil = now + OCR_CLOCK_PAUSE_HOLD_MS;
-      if (now - _sameOcrClockSince >= OCR_CLOCK_PAUSE_HOLD_MS) {
-        if (_clockMode !== 'paused' && this.data.debugMode) {
-          console.log('[Collector][OCR] CLOCK PAUSE confirmed at sec=%s', realWorldSec);
-        }
-        _clockMode = 'paused';
-        updatePredictedClock(realClock);
-        _lastClockPredictEmitSec = realWorldSec;
-        this._clearClockPredictTimer();
-        this._maybeApplyFinalMinuteMode(realClock);
-      }
-      return;
-    }
-
-    // === 4) 秒启恢复（RESUME）/ 正常下降 ===
-    var wasPaused = (_clockMode === 'paused');
     _lastOcrClockSec = realWorldSec;
     _lastOcrClockWallTs = now;
-    _sameOcrClockSince = now;
-    _clockPauseCandidateUntil = 0;
-    _clockResumeCandidateSec = -1;
-    _clockResumeCandidateSince = 0;
-    _clockMode = 'running';
     updatePredictedClock(realClock);
     _lastClockPredictEmitSec = realWorldSec;
-    _clockPredictUntil = Math.max(_clockPredictUntil || 0, getClockRunUntil(now, realWorldSec));
-    this._ensureClockPredictTimer();
     this._maybeApplyFinalMinuteMode(realClock);
 
-    // 从 paused 立即恢复，无任何等待，直接推送 BLE
-    if (wasPaused && dropSec >= 1 && dropSec <= OCR_CLOCK_RESUME_DROP_MAX) {
-      if (this.data.debugMode) {
-        console.log('[Collector][OCR] CLOCK RESUME prev=%s now=%s drop=%s (force-emit)', prevOcrSec, realWorldSec, dropSec);
-      }
-      this._emitTimeOnlyIfChanged(realClock, now, true);
+    if (_clockMode !== 'paused') {
+      _clockPredictUntil = Math.max(_clockPredictUntil || 0, getClockRunUntil(now, realWorldSec));
+      this._ensureClockPredictTimer();
     }
+
+    var homeScore = _lastCommittedFrame ? _lastCommittedFrame.homeScore : this.data.homeScore;
+    var awayScore = _lastCommittedFrame ? _lastCommittedFrame.awayScore : this.data.awayScore;
+    this.processOcrFrame({
+      homeScore: homeScore,
+      awayScore: awayScore,
+      minutes: realClock.minutes,
+      seconds: realClock.seconds,
+      timeValid: true,
+      wallMs: now
+    });
   },
 
   _ensureClockPredictTimer: function () {
@@ -1436,7 +1370,7 @@ Page({
         // 时间泵节奏 ~120ms 远小于单次 OCR 耗时（~150-250ms），若把时间泵放在前面，
         // 引擎刚空出又被它抢走，比分泵会被无限饿死（home/away 的 rawText 永远空，
         // 进而 _parseAndMaybeNotify 因 parseScore===null 始终 early-return，
-        // 整局比赛比分卡在 0、BLE 也不会推送）。
+        // 整局比赛比分卡在 0、云端也不会推送）。
         // 比分泵间隔较长（800ms），让它到点先抢一槽，时间泵在间隙里仍能跑 3~4 次。
         if (captureTs - _lastScorePumpTs >= SCORE_PUMP_INTERVAL) {
           _lastScorePumpTs = captureTs;
@@ -1478,7 +1412,7 @@ Page({
    * 雪崩并把整条 OCR 链路拖死。
    *
    * 真实"低延迟"由状态机的 captureTs 流水线补偿（realWorldSec = ocrSec - lostSec）
-   * 与 _onClockPredictTick 预测时钟共同保证：BLE 推送的总是当前真实时间，而不是
+   * 与 _onClockPredictTick 预测时钟共同保证：采集端本地 UI 展示当前真实时间，而不是
    * OCR 落地时已经过时的样本。
    * @param {any} session
    * @param {number} token
@@ -1709,8 +1643,8 @@ Page({
   },
 
   /**
-   * 停止 OCR：先落库 UI，再在 `wx.nextTick` 后 BLE 同步，短延迟后销毁 VK；`ocrTransitioning` 在会话销毁后立即结束，不等待相机 remount（remount 仍异步执行，缩短「切换中」遮挡时间）。
-   * @param {boolean} [skipRemount] 为 true 时立即停会话（如 `onUnload`），避免与 `_stopAll` 竞态。
+   * 停止 OCR：先落库 UI，短延迟后销毁 VK；`ocrTransitioning` 在会话销毁后立即结束。
+   * @param {boolean} [skipRemount] 为 true 时立即停会话（如 `onUnload`），避免与 `_disconnectWebSocket` 竞态。
    * @returns {void}
    */
   _stopOcr: function (skipRemount) {
@@ -1732,7 +1666,7 @@ Page({
       }
       this._stopOcrSession();
       this.setData({ ocrEnabled: false, ocrTransitioning: false }, function () {
-        self._notify();
+        self._commitLocalState();
       });
       return;
     }
@@ -1772,7 +1706,7 @@ Page({
             ocrTransitioning: false
           };
           self.setData({ ocrTransitioning: false }, function () {
-            self._notify(finSnap);
+            self._commitLocalState(finSnap);
           });
           setTimeout(function () {
             if (token !== _ocrSessionToken) return;
@@ -1781,7 +1715,7 @@ Page({
         };
 
         var afterUiNotifyThenHeavy = function () {
-          self._notify(notifySnap);
+          self._commitLocalState(notifySnap);
           setTimeout(runHeavy, 400);
         };
 
@@ -1976,7 +1910,7 @@ Page({
   },
 
   /**
-   * 温和重建 VK OCR 会话：不关闭 BLE，不打断用户「OCR 已开」状态，仅 stop/destroy 后重新 boot。
+   * 温和重建 VK OCR 会话：不关闭 WebSocket，不打断用户「OCR 已开」状态，仅 stop/destroy 后重新 boot。
    * @param {string} reason 日志用原因
    */
   _softRestartOcrSession: function (reason) {
@@ -2216,15 +2150,10 @@ Page({
   },
 
   /**
-   * 推送「上一已确认比分 + 新时间」到 BLE 与 data，避免比分待确认时时间停更。
-   *
-   * 默认（force=false）：仅允许时间下降 ≤1 秒；下降 >1 秒走平滑（每次只前进 1 秒）。
-   * 强制（force=true）：状态机在 RESUME / JUMP 确认后调用，跳过所有平滑保护，
-   *                    即时把 realWorldSec 推上蓝牙以消除积压。
-   *
+   * 仅更新采集端本地 UI 时间展示（预测补秒），不向云端发包。
    * @param {{ minutes: number, seconds: number } | null} timeInfo
    * @param {number} wallMs
-   * @param {boolean} [force] 是否绕过平滑保护强制 emit
+   * @param {boolean} [force] 是否绕过平滑保护强制刷新本地 UI
    * @returns {void}
    */
   _emitTimeOnlyIfChanged: function (timeInfo, wallMs, force) {
@@ -2233,8 +2162,6 @@ Page({
     var newT = (Number(timeInfo.minutes) || 0) * 60 + (Number(timeInfo.seconds) || 0);
     if (newT === prevT) return;
     if (!force) {
-      // 【修复1：击穿旁路的 20 秒死锁】
-      // 若新时间获得了底层时间状态机的信任（误差2秒内），完全放行，忽略向下跳变和向上回表的限制
       var isOcrAligned = (_lastOcrClockSec >= 0 && Math.abs(newT - _lastOcrClockSec) <= 2);
       if (!isOcrAligned) {
         if (newT > prevT) return;
@@ -2258,20 +2185,11 @@ Page({
       seconds: timeInfo.seconds,
       shotClock: this.data.shotClock
     };
-    this.setData({
-      minutes: snap.minutes,
-      seconds: snap.seconds,
-      homeScore: snap.homeScore,
-      awayScore: snap.awayScore,
-      period: snap.period,
-      shotClock: snap.shotClock
-    });
     _lastNotifyWallAt = wallMs;
     _lastClockPredictEmitWallTs = wallMs;
     _lastClockPredictEmitSec = newT;
-    // 与 _parseAndMaybeNotify 路径共享去重 key，避免 force-emit 后下一帧的 commit 又触发同样负载。
     _lastCommittedFrameKey = buildFrameKey(snap);
-    this._notify(snap);
+    this._commitLocalState(snap);
     this._maybeApplyFinalMinuteMode(timeInfo);
   },
 
@@ -2320,8 +2238,10 @@ Page({
   },
 
   /**
-   * 解析 ROI 文字 → 比赛状态；节次与 24 秒仅人工，OCR 不解析。
-   * 对「短墙钟间隔内比赛时钟异常回跳」暂缓整帧 notify，待下一帧复核。
+   * 解析 ROI 文字 → 比赛状态，交给 processOcrFrame 做 5 大阀门提纯。
+   * @param {Array<{ rawText: string }>} rois ROI 列表
+   * @param {number} updatedRoiIdx 本帧更新的 ROI 索引，-1 表示未知
+   * @returns {void}
    */
   _parseAndMaybeNotify: function (rois, updatedRoiIdx) {
     var homeScore = parseScore(rois[0].rawText);
@@ -2329,9 +2249,6 @@ Page({
     var ocrTimeInfo = updatedRoiIdx === 2
       ? filterClockByMode(parseTime(rois[2] && rois[2].rawText ? rois[2].rawText : ''))
       : null;
-    var timeInfo = ocrTimeInfo;
-    // _ocrLastTimeSuccessTs 只在时间 ROI 真实产出时更新，避免旧 rawText 被反复当成新时钟样本。
-    if (!timeInfo) timeInfo = getPredictedClock();
 
     if (homeScore === null || awayScore === null) {
       if (this.data.debugMode) {
@@ -2345,95 +2262,17 @@ Page({
       wallPre - (_manualScoreEditAt || 0) < OCR_SCORE_JUMP_MANUAL_GUARD_MS;
     if (bypassScoreJumpHold) {
       _scoreJumpHold = null;
-    } else if (_lastCommittedFrame) {
-      var dMax = maxScoreDeltaVsCommitted(_lastCommittedFrame, homeScore, awayScore);
-      if (dMax >= OCR_SCORE_JUMP_CONFIRM_THRESHOLD) {
-        var isDrop = isLargeScoreDrop(_lastCommittedFrame, homeScore, awayScore);
-        var truncH = isLikelyTruncateGlitch(_lastCommittedFrame.homeScore, homeScore);
-        var truncA = isLikelyTruncateGlitch(_lastCommittedFrame.awayScore, awayScore);
-
-        // 【优化】：取消对分数下降的“一刀切绝对封杀(return)”，改为动态提高“连续稳定帧”的要求
-        var needStreak = OCR_SCORE_JUMP_STREAK_NORMAL;
-        if (isDrop) {
-          // 如果比分刚好是双 0，极大可能是换节重置，要求 4 帧确认（约 3-4 秒响应）
-          // 如果是其他不规则的大幅下降（如 118 掉到 18），误读风险极高，要求 6 帧严格确认
-          var isZeroReset = (homeScore === 0 && awayScore === 0);
-          needStreak = isZeroReset ? 4 : 6;
-        } else if (truncH || truncA) {
-          needStreak = OCR_SCORE_JUMP_STREAK_TRUNC;
-        }
-        var changedHome = Math.abs(homeScore - _lastCommittedFrame.homeScore) >= OCR_SCORE_JUMP_CONFIRM_THRESHOLD;
-        var changedAway = Math.abs(awayScore - _lastCommittedFrame.awayScore) >= OCR_SCORE_JUMP_CONFIRM_THRESHOLD;
-        var homeSeq = _ocrRoiTextSeq[0] || 0;
-        var awaySeq = _ocrRoiTextSeq[1] || 0;
-
-        if (
-          Math.abs(homeScore - _lastCommittedFrame.homeScore) <= OCR_SCORE_JUMP_REVERT_EPSILON &&
-          Math.abs(awayScore - _lastCommittedFrame.awayScore) <= OCR_SCORE_JUMP_REVERT_EPSILON
-        ) {
-          _scoreJumpHold = null;
-        } else if (
-          _scoreJumpHold &&
-          _scoreJumpHold.homeScore === homeScore &&
-          _scoreJumpHold.awayScore === awayScore
-        ) {
-          var hasFreshScoreRead = false;
-          if (changedHome && _scoreJumpHold.homeSeq !== homeSeq) {
-            _scoreJumpHold.homeSeq = homeSeq;
-            hasFreshScoreRead = true;
-          }
-          if (changedAway && _scoreJumpHold.awaySeq !== awaySeq) {
-            _scoreJumpHold.awaySeq = awaySeq;
-            hasFreshScoreRead = true;
-          }
-          if (hasFreshScoreRead) {
-            _scoreJumpHold.streak = (_scoreJumpHold.streak || 1) + 1;
-          }
-        } else {
-          _scoreJumpHold = {
-            homeScore: homeScore,
-            awayScore: awayScore,
-            streak: 1,
-            since: wallPre,
-            homeSeq: homeSeq,
-            awaySeq: awaySeq
-          };
-        }
-
-        if (_scoreJumpHold && (_scoreJumpHold.streak || 1) < needStreak) {
-          if (this.data.debugMode) {
-            console.log(
-              '[Collector][OCR] score jump hold dMax=%s need=%s streak=%s h=%s a=%s trunc=%s/%s',
-              dMax,
-              needStreak,
-              _scoreJumpHold.streak,
-              homeScore,
-              awayScore,
-              truncH,
-              truncA
-            );
-          }
-          this._emitTimeOnlyIfChanged(timeInfo, wallPre);
-          return;
-        }
-        _scoreJumpHold = null;
-      } else {
-        _scoreJumpHold = null;
-      }
-    } else {
-      _scoreJumpHold = null;
     }
 
+    var timeInfo = ocrTimeInfo || getPredictedClock();
     var hasFrameClock = !!ocrTimeInfo;
-    var period = this.data.period;
-    var shotClock = this.data.shotClock;
     var frame = {
       homeScore: homeScore,
       awayScore: awayScore,
-      period: period,
+      period: this.data.period,
       minutes: timeInfo ? timeInfo.minutes : this.data.minutes,
       seconds: timeInfo ? timeInfo.seconds : this.data.seconds,
-      shotClock: shotClock
+      shotClock: this.data.shotClock
     };
 
     var wall = Date.now();
@@ -2476,24 +2315,21 @@ Page({
     }
 
     var frameKey = buildFrameKey(frame);
-    if (this.data.debugMode) {
-      console.log('[Collector][OCR] parsed frame=%o key=%s', frame, frameKey);
-    }
     if (frameKey === _lastCommittedFrameKey) {
       _pendingOcrFrame = null;
       return;
     }
-    if (this.data.debugMode) {
-      console.log('[Collector][OCR] immediate commit=%o prev=%o', frame, _lastCommittedFrame);
-    }
-    this.setData({
+
+    this.processOcrFrame({
       homeScore: frame.homeScore,
       awayScore: frame.awayScore,
-      period: frame.period,
       minutes: frame.minutes,
       seconds: frame.seconds,
-      shotClock: frame.shotClock
+      timeValid: hasFrameClock,
+      wallMs: wall,
+      bypassScoreHold: bypassScoreJumpHold
     });
+
     _pendingOcrFrame = null;
     _lastCommittedFrameKey = frameKey;
     _lastRejectedStableFrameKey = '';
@@ -2501,272 +2337,437 @@ Page({
     _lastNotifyWallAt = wall;
     _lastClockPredictEmitWallTs = wall;
     _lastClockPredictEmitSec = ocrFrameClockSec(frame);
-    this._notify(frame);
     this._maybeApplyFinalMinuteMode({ minutes: frame.minutes, seconds: frame.seconds });
   },
 
-  // ─── BLE：启动 / 停止 ────────────────────────────────
+  // ─── WebSocket：连接 / 断线重连 ────────────────────────
 
+  /**
+   * 点击「开启采集」：生成房间号 → HTTP 换 Token → WSS 长连接。
+   * @returns {void}
+   */
   onStartTap: function () {
-    if (_bleStarting || this.data.bleState !== 'idle') return;
-    var self = this;
-    _bleStarting = true;
-    this.setData({ bleStateText: '初始化蓝牙…' });
-    this._stopAll(function () {
-      wx.openBluetoothAdapter({
-        mode: 'peripheral',
-        success: function () { self._createServer(); },
-        fail: function (err) {
-          _bleStarting = false;
-          self.setData({ bleState: 'idle', bleStateText: '蓝牙初始化失败' });
-          wx.showToast({ title: '蓝牙初始化失败', icon: 'none' });
-          console.error('[Collector] openBluetoothAdapter fail', err);
-        }
-      });
-    }, true);
+    if (_wsConnecting || this.data.wsState !== 'idle') return;
+    var roomId = generateRoomId();
+    _wsRoomId = roomId;
+    this.setData({ matchCode: roomId, wsStateText: '正在连接…' });
+    this._connectWebSocket(roomId);
   },
 
-  _createServer: function () {
-    var self = this;
-    var code = BLE.generateMatchCode();
-    this.setData({ matchCode: code });
-    wx.createBLEPeripheralServer({
-      success: function (res) {
-        _server = res.server;
-        self._addServiceAndAdvertise(BLE.DEVICE_NAME_PREFIX + code);
-      },
-      fail: function (err) {
-        _bleStarting = false;
-        self.setData({ bleState: 'idle', bleStateText: '创建GATT服务失败' });
-        wx.showToast({ title: '创建GATT服务失败', icon: 'none' });
-        console.error('[Collector] createBLEPeripheralServer fail', err);
-      }
-    });
-  },
-
-  _addServiceAndAdvertise: function (deviceName) {
-    var self = this;
-    if (!_server) return;
-    _server.addService({
-      service: {
-        uuid: BLE.SERVICE_UUID,
-        characteristics: [{
-          uuid: BLE.CHAR_SCORE_UUID,
-          properties: { read: true, notify: true, indicate: true, write: true, writeNoResponse: true },
-          permission: {
-            read: true, readEncrypted: false,
-            write: true, writeEncrypted: false,
-            readable: true, readEncryptionRequired: false,
-            writeable: true, writeEncryptionRequired: false
-          },
-          descriptors: [{
-            uuid: BLE.CCCD_UUID,
-            permission: { read: true, write: true }
-          }],
-          value: new ArrayBuffer(BLE.PACKET_LENGTH)
-        }]
-      },
-      success: function () {
-        self._bindServerEvents();
-        self._startAdv(deviceName);
-      },
-      fail: function (err) {
-        _bleStarting = false;
-        self.setData({ bleState: 'idle', bleStateText: '注册特征值失败' });
-        wx.showToast({ title: '注册特征值失败，请重试', icon: 'none' });
-        console.error('[Collector] addService fail', err);
-      }
-    });
-  },
-
-  _buildBlePacketValue: function (snapshot) {
-    var d = snapshot || _lastCommittedFrame || this.data;
-    return BLE.encodePacket({
-      homeScore: d.homeScore,
-      awayScore: d.awayScore,
-      period: d.period,
-      minutes: d.minutes,
-      seconds: d.seconds,
-      shotClock: d.shotClock,
-      ocrEnabled: !!this.data.ocrEnabled,
-      ocrTransitioning: !!this.data.ocrTransitioning
-    });
-  },
-
-  _safeServerWriteCharacteristicValue: function (options, label) {
-    if (!_server) return;
-    try {
-      var ret = _server.writeCharacteristicValue(options);
-      if (ret && typeof ret.catch === 'function') {
-        ret.catch(function (err) {
-          if (typeof options.fail !== 'function') {
-            console.warn('[Collector] peripheral write rejected label=%s err=%o', label || '', err);
-          }
-        });
-      }
-    } catch (err) {
-      if (typeof options.fail === 'function') {
-        options.fail(err);
-      } else {
-        console.warn('[Collector] peripheral write throw label=%s err=%o', label || '', err);
-      }
-    }
-  },
-
-  _bindServerEvents: function () {
-    var self = this;
-    if (!_server) return;
-    try { wx.offBLEPeripheralConnectionStateChanged(); } catch (e) { }
-
-    wx.onBLEPeripheralConnectionStateChanged(function (res) {
-      if (res.connected) {
-        _connectedDeviceId = res.deviceId || '';
-        _bleNotifyFailStreak = 0;
-        _bleNotifyBackoffUntil = 0;
-        if (_bleNotifyRetryTimer) {
-          clearTimeout(_bleNotifyRetryTimer);
-          _bleNotifyRetryTimer = 0;
-        }
-        self.setData({ bleState: 'connected', bleStateText: '已连接 ✓' });
-        wx.vibrateShort({ type: 'medium' });
-        console.log('[Collector] Central connected:', _connectedDeviceId);
-      } else {
-        _connectedDeviceId = '';
-        if (_bleNotifyRetryTimer) {
-          clearTimeout(_bleNotifyRetryTimer);
-          _bleNotifyRetryTimer = 0;
-        }
-        _bleNotifyFailStreak = 0;
-        _bleNotifyBackoffUntil = 0;
-        self.setData({ bleState: 'advertising', bleStateText: '广播中，等待连接…' });
-        console.log('[Collector] Central disconnected');
-      }
-    });
-
-    _server.onCharacteristicReadRequest(function (res) {
-      if (!_server) return;
-      var d = _lastCommittedFrame || self.data;
-      self._safeServerWriteCharacteristicValue({
-        serviceId: BLE.SERVICE_UUID,
-        characteristicId: BLE.CHAR_SCORE_UUID,
-        value: self._buildBlePacketValue(d),
-        needNotify: false,
-        callbackId: res && res.callbackId,
-        callbackType: 'read'
-      }, 'read');
-    });
-
-    if (typeof _server.onCharacteristicWriteRequest === 'function') {
-      _server.onCharacteristicWriteRequest(function (res) {
-        var cmd = -1;
-        var validCommand = false;
-        try {
-          var charId = String((res && res.characteristicId) || '').toLowerCase();
-          var isScoreChar = !charId || charId === String(BLE.CHAR_SCORE_UUID).toLowerCase();
-          var value = res && res.value;
-          var view = value ? new Uint8Array(value) : null;
-          if (isScoreChar && view && view.length >= 1) {
-            cmd = view[0] & 0xFF;
-            validCommand = cmd === 0x00 || cmd === 0x01;
-            if (!validCommand) {
-              console.warn('[Collector][BLE] unknown remote command:', cmd);
-            }
-          }
-        } catch (eWrite) {
-          console.error('[Collector][BLE] write request handling fail', eWrite);
-        }
-        try {
-          if (_server && res && res.callbackId) {
-            self._safeServerWriteCharacteristicValue({
-              serviceId: BLE.SERVICE_UUID,
-              characteristicId: BLE.CHAR_SCORE_UUID,
-              value: res.value || new ArrayBuffer(1),
-              needNotify: false,
-              callbackId: res.callbackId,
-              callbackType: 'write'
-            }, 'write-ack');
-          }
-        } catch (eAck) {
-          console.warn('[Collector][BLE] write ack fail', eAck);
-        }
-        if (!validCommand) {
-          return;
-        }
-        setTimeout(function () {
-          if (cmd === 0x00) {
-            console.log('[Collector][BLE] remote OCR stop');
-            self._stopOcr(false);
-          } else if (cmd === 0x01) {
-            console.log('[Collector][BLE] remote OCR start');
-            if (!self.data.ocrEnabled && !self.data.ocrTransitioning && !_vkSession && !_ocrBootTimer) {
-              self._startOcr();
-            } else {
-              self._notify();
-            }
-          }
-        }, 100);
-      });
-    }
-  },
-
-  _startAdv: function (deviceName) {
-    var self = this;
-    if (!_server) return;
-    _server.startAdvertising({
-      advertiseRequest: {
-        connectable: true,
-        deviceName: deviceName,
-        serviceUuids: [BLE.SERVICE_UUID]
-      },
-      success: function () {
-        _bleStarting = false;
-        self.setData({ bleState: 'advertising', bleStateText: '广播中，等待连接…' });
-      },
-      fail: function (err) {
-        _bleStarting = false;
-        self.setData({ bleState: 'idle', bleStateText: '广播启动失败' });
-        wx.showToast({ title: '广播启动失败', icon: 'none' });
-        console.error('[Collector] startAdvertising fail', err);
-      }
-    });
-  },
-
+  /**
+   * 点击「停止」：断开 WebSocket 并清空房间号。
+   * @returns {void}
+   */
   onStopTap: function () {
     this._stopOcr(false);
-    this._stopAll();
-    this.setData({ bleState: 'idle', bleStateText: '未开启', matchCode: '' });
+    this._disconnectWebSocket(true);
+    this.setData({ wsState: 'idle', wsStateText: '未连接', matchCode: '' });
   },
 
-  _stopAll: function () {
-    var doneCalled = false;
-    var finish = arguments[0];
-    var keepStarting = !!arguments[1];
-    var finalize = function () {
-      if (doneCalled) return;
-      doneCalled = true;
-      if (typeof finish === 'function') finish();
-    };
-
-    try { wx.offBLEPeripheralConnectionStateChanged(); } catch (e) { }
-    if (_bleNotifyRetryTimer) {
-      clearTimeout(_bleNotifyRetryTimer);
-      _bleNotifyRetryTimer = 0;
-    }
-    _bleNotifyFailStreak = 0;
-    _bleNotifyBackoffUntil = 0;
-    if (_server) {
-      try { _server.stopAdvertising(); } catch (e) { }
-      try { _server.close(); } catch (e) { }
-      _server = null;
-    }
-    _connectedDeviceId = '';
-    if (!keepStarting) _bleStarting = false;
-    try {
-      wx.closeBluetoothAdapter({
-        complete: function () { finalize(); }
+  /**
+   * 从 HTTP 接口获取一次性 WebSocket Token。
+   * @param {string} roomId 房间号
+   * @returns {Promise<string>}
+   */
+  _fetchWsToken: function (roomId) {
+    return new Promise(function (resolve, reject) {
+      wx.request({
+        url: API.API_BASE_URL + WS_TOKEN_PATH,
+        method: 'GET',
+        data: { roomId: roomId },
+        success: function (res) {
+          var body = res && res.data;
+          var token = '';
+          if (body && typeof body === 'object') {
+            token = body.token || (body.data && body.data.token) || '';
+          }
+          if (!token && typeof body === 'string') {
+            token = body;
+          }
+          if (token) {
+            resolve(String(token));
+          } else {
+            reject(new Error('token missing'));
+          }
+        },
+        fail: function (err) {
+          reject(err || new Error('get_token fail'));
+        }
       });
-    } catch (e) {
-      finalize();
+    });
+  },
+
+  /**
+   * 建立 WebSocket 长连接（先取 Token 再 connectSocket）。
+   * @param {string} roomId 房间号
+   * @returns {void}
+   */
+  _connectWebSocket: function (roomId) {
+    var self = this;
+    if (_wsConnecting) return;
+    _wsConnecting = true;
+    _wsManualClose = false;
+    this.setData({ wsState: 'connecting', wsStateText: '获取 Token…' });
+
+    this._fetchWsToken(roomId).then(function (token) {
+      if (_wsManualClose) return;
+      var wsUrl = WS_BASE_URL + WS_SOCKET_PATH +
+        '?roomId=' + encodeURIComponent(roomId) +
+        '&token=' + encodeURIComponent(token);
+      self.setData({ wsStateText: '握手中…' });
+      try {
+        if (_socketTask) {
+          try { _socketTask.close({}); } catch (eClose) { }
+          _socketTask = null;
+        }
+        _socketTask = wx.connectSocket({ url: wsUrl });
+      } catch (errConnect) {
+        _wsConnecting = false;
+        self.setData({ wsState: 'idle', wsStateText: '连接失败' });
+        wx.showToast({ title: 'WebSocket 连接失败', icon: 'none' });
+        console.error('[Collector][WS] connectSocket throw', errConnect);
+        return;
+      }
+
+      _socketTask.onOpen(function () {
+        _wsConnecting = false;
+        _wsReconnectAttempt = 0;
+        if (_wsReconnectTimer) {
+          clearTimeout(_wsReconnectTimer);
+          _wsReconnectTimer = 0;
+        }
+        self.setData({ wsState: 'connected', wsStateText: '云端已连接 ✓' });
+        wx.vibrateShort({ type: 'medium' });
+        console.log('[Collector][WS] connected room=%s', roomId);
+        self._maybeBootstrapSnapshot();
+      });
+
+      _socketTask.onMessage(function (msg) {
+        if (!msg || !msg.data) return;
+        try {
+          var payload = typeof msg.data === 'string' ? JSON.parse(msg.data) : msg.data;
+          if (payload && payload.type === 'COLLECTOR_EXIST') {
+            wx.showToast({ title: '房间已有采集端', icon: 'none' });
+            self._disconnectWebSocket(true);
+          }
+        } catch (eParse) {
+          console.warn('[Collector][WS] message parse fail', eParse);
+        }
+      });
+
+      _socketTask.onError(function (err) {
+        console.warn('[Collector][WS] error', err);
+      });
+
+      _socketTask.onClose(function () {
+        _wsConnecting = false;
+        _socketTask = null;
+        if (_wsManualClose) {
+          self.setData({ wsState: 'idle', wsStateText: '未连接' });
+          return;
+        }
+        self.setData({ wsState: 'reconnecting', wsStateText: '断线重连中…' });
+        self._scheduleWsReconnect();
+      });
+    }).catch(function (err) {
+      _wsConnecting = false;
+      self.setData({ wsState: 'idle', wsStateText: 'Token 获取失败' });
+      wx.showToast({ title: 'Token 获取失败', icon: 'none' });
+      console.error('[Collector][WS] get_token fail', err);
+    });
+  },
+
+  /**
+   * 指数退避重连（3→6→12 秒，上限 15 秒）。
+   * @returns {void}
+   */
+  _scheduleWsReconnect: function () {
+    var self = this;
+    if (_wsManualClose || !_wsRoomId) return;
+    if (_wsReconnectTimer) return;
+    _wsReconnectAttempt += 1;
+    var delay = getWsReconnectDelayMs(_wsReconnectAttempt);
+    console.log('[Collector][WS] reconnect in %sms attempt=%s', delay, _wsReconnectAttempt);
+    _wsReconnectTimer = setTimeout(function () {
+      _wsReconnectTimer = 0;
+      if (_wsManualClose || !_wsRoomId) return;
+      self._connectWebSocket(_wsRoomId);
+    }, delay);
+  },
+
+  /**
+   * 断开 WebSocket；manual=true 时不触发自动重连。
+   * @param {boolean} [manual] 是否为用户主动断开
+   * @returns {void}
+   */
+  _disconnectWebSocket: function (manual) {
+    _wsManualClose = !!manual;
+    _wsConnecting = false;
+    if (_wsReconnectTimer) {
+      clearTimeout(_wsReconnectTimer);
+      _wsReconnectTimer = 0;
+    }
+    _wsReconnectAttempt = 0;
+    if (_socketTask) {
+      try { _socketTask.close({}); } catch (e) { }
+      _socketTask = null;
+    }
+    if (manual) {
+      _wsRoomId = '';
+      resetProcessOcrState();
+    }
+  },
+
+  /**
+   * 连接成功后若已有本地快照，补发一条 SYNC 建立基线。
+   * @returns {void}
+   */
+  _maybeBootstrapSnapshot: function () {
+    var snap = _lastCommittedFrame || {
+      homeScore: this.data.homeScore,
+      awayScore: this.data.awayScore,
+      period: this.data.period,
+      minutes: this.data.minutes,
+      seconds: this.data.seconds,
+      shotClock: this.data.shotClock
+    };
+    this._emitWsPacket('SYNC', {
+      t: clockToTotalSec(snap),
+      a: snap.homeScore,
+      b: snap.awayScore,
+      p: snap.period
+    });
+  },
+
+  /**
+   * 向云端发送状态翻转包（携带 sys_t 与单调递增 seq）。
+   * @param {'START'|'STOP'|'SYNC'|'SCORE'|'S_RESET'|'PERIOD'} act 动作语义
+   * @param {{ t: number, a: number, b: number, p: number }} payload 业务字段
+   * @returns {void}
+   */
+  _emitWsPacket: function (act, payload) {
+    if (!_socketTask || this.data.wsState !== 'connected') return;
+    _globalSeq += 1;
+    var packet = {
+      act: act,
+      t: Math.max(0, Math.floor(Number(payload.t) || 0)),
+      a: Math.max(0, Math.floor(Number(payload.a) || 0)),
+      b: Math.max(0, Math.floor(Number(payload.b) || 0)),
+      p: Math.max(1, Math.floor(Number(payload.p) || 1)),
+      seq: _globalSeq,
+      sys_t: Date.now(),
+      match_id: 'M_' + (_wsRoomId || this.data.matchCode || '')
+    };
+    try {
+      _socketTask.send({ data: JSON.stringify(packet) });
+      console.log('[Collector][WS] send act=%s seq=%s t=%s', act, packet.seq, packet.t);
+    } catch (errSend) {
+      console.warn('[Collector][WS] send fail act=%s err=%o', act, errSend);
+      return;
+    }
+    _procState.published = {
+      t: packet.t,
+      a: packet.a,
+      b: packet.b,
+      p: packet.p,
+      shotClock: this.data.shotClock,
+      running: act === 'START' || (act === 'SYNC' && _procState.clockRunning)
+    };
+    if (act === 'START') {
+      _procState.clockRunning = true;
+      _clockMode = 'running';
+    } else if (act === 'STOP') {
+      _procState.clockRunning = false;
+      _clockMode = 'paused';
+    }
+  },
+
+  /**
+   * 同步采集端本地 UI 快照（不向云端发包）。
+   * @param {{
+   *   homeScore?: number,
+   *   awayScore?: number,
+   *   period?: number,
+   *   minutes?: number,
+   *   seconds?: number,
+   *   shotClock?: number
+   * } | void} snapshot
+   * @returns {void}
+   */
+  _commitLocalState: function (snapshot) {
+    if (snapshot && typeof snapshot === 'object') {
+      _lastCommittedFrame = {
+        homeScore: Number(snapshot.homeScore) || 0,
+        awayScore: Number(snapshot.awayScore) || 0,
+        period: Number(snapshot.period) || 1,
+        minutes: Number(snapshot.minutes) || 0,
+        seconds: Number(snapshot.seconds) || 0,
+        shotClock: Number(snapshot.shotClock) || 0
+      };
+    } else {
+      _lastCommittedFrame = {
+        homeScore: this.data.homeScore,
+        awayScore: this.data.awayScore,
+        period: this.data.period,
+        minutes: this.data.minutes,
+        seconds: this.data.seconds,
+        shotClock: this.data.shotClock
+      };
+    }
+    this.setData({
+      homeScore: _lastCommittedFrame.homeScore,
+      awayScore: _lastCommittedFrame.awayScore,
+      period: _lastCommittedFrame.period,
+      minutes: _lastCommittedFrame.minutes,
+      seconds: _lastCommittedFrame.seconds,
+      shotClock: _lastCommittedFrame.shotClock
+    });
+  },
+
+  /**
+   * OCR 帧提纯核心：5 大防抖阀门，仅在状态翻转时向云端发包。
+   *
+   * 阀门 1 — 假停表防御：同一秒持续 >1200ms 才发 STOP。
+   * 阀门 2 — SYNC 观察室：落差 >2 秒连续 5 帧稳定才 SYNC；timeValid=false 保持静默。
+   * 阀门 3 — 高位频闪：截断误读门限从 3 帧拉高到 6 帧。
+   * 阀门 4 — 24 秒影子：不向 24 秒表发 START/STOP，仅 S_RESET（人工改分路径触发）。
+   * 阀门 5 — 允许回退：比分/时间可倒退，稳定 N 帧即老实发包。
+   *
+   * @param {{
+   *   homeScore: number,
+   *   awayScore: number,
+   *   minutes: number,
+   *   seconds: number,
+   *   timeValid: boolean,
+   *   wallMs?: number,
+   *   bypassScoreHold?: boolean
+   * }} input OCR 提纯输入
+   * @returns {void}
+   */
+  processOcrFrame: function (input) {
+    if (!input || input.homeScore === null || input.awayScore === null) return;
+    var now = input.wallMs || Date.now();
+    var h = Number(input.homeScore) || 0;
+    var a = Number(input.awayScore) || 0;
+    var period = this.data.period;
+    var shotClock = this.data.shotClock;
+    var timeInfo = input.timeValid
+      ? { minutes: Number(input.minutes) || 0, seconds: Number(input.seconds) || 0 }
+      : null;
+    var t = timeInfo
+      ? clockToTotalSec(timeInfo)
+      : (_procState.published
+        ? _procState.published.t
+        : clockToTotalSec({ minutes: this.data.minutes, seconds: this.data.seconds }));
+    var pub = _procState.published;
+    var refT = pub
+      ? pub.t
+      : (_procState.lastOcrSec >= 0 ? _procState.lastOcrSec : t);
+    var payloadBase = { t: t, a: h, b: a, p: period };
+
+    // 阀门 2：遮挡 / 闪电调表 → SYNC 观察室（遇 null 保持静默）
+    if (timeInfo && refT >= 0) {
+      var jump = Math.abs(t - refT);
+      if (jump > OCR_SYNC_JUMP_THRESHOLD_SEC) {
+        if (_procState.syncObserve && _procState.syncObserve.sec === t) {
+          _procState.syncObserve.streak += 1;
+        } else {
+          _procState.syncObserve = { sec: t, streak: 1 };
+        }
+        if (_procState.syncObserve.streak >= OCR_SYNC_CONFIRM_STREAK) {
+          this._emitWsPacket('SYNC', payloadBase);
+          _procState.syncObserve = null;
+          _procState.sameSecFirstSeen = now;
+          _procState.lastOcrSec = t;
+          _procState.clockRunning = true;
+          _clockMode = 'running';
+        }
+        this._commitLocalState({
+          homeScore: h,
+          awayScore: a,
+          period: period,
+          minutes: timeInfo.minutes,
+          seconds: timeInfo.seconds,
+          shotClock: shotClock
+        });
+        return;
+      }
+      _procState.syncObserve = null;
+    }
+
+    // 阀门 1：假停表防御 + START 恢复（仅大表，不涉及 24 秒表）
+    if (timeInfo) {
+      if (t === _procState.lastOcrSec) {
+        if (!_procState.sameSecFirstSeen) {
+          _procState.sameSecFirstSeen = now;
+        }
+        if (_procState.clockRunning && (now - _procState.sameSecFirstSeen) >= OCR_FAKE_STOP_HOLD_MS) {
+          this._emitWsPacket('STOP', payloadBase);
+        }
+      } else {
+        var prevSec = _procState.lastOcrSec;
+        _procState.sameSecFirstSeen = now;
+        _procState.lastOcrSec = t;
+        if (timeInfo && t < refT && (refT - t) === 1 && !_procState.clockRunning) {
+          _procState.clockRunning = true;
+          _clockMode = 'running';
+        }
+        if (!_procState.clockRunning && refT >= 0 && prevSec >= 0) {
+          var resumeDrop = refT - t;
+          if (resumeDrop >= 1 && resumeDrop <= 2) {
+            this._emitWsPacket('START', payloadBase);
+          }
+        }
+        if (_procState.clockRunning && refT >= 0 && t < refT && (refT - t) === 1) {
+          _clockMode = 'running';
+        }
+      }
+    }
+
+    // 阀门 3 & 5：比分变化（允许回退，截断误读需 6 帧）
+    if (pub && (h !== pub.a || a !== pub.b) && !input.bypassScoreHold) {
+      var needStreak = OCR_SCORE_CONFIRM_STREAK;
+      if (isLikelyTruncateGlitch(pub.a, h) || isLikelyTruncateGlitch(pub.b, a)) {
+        needStreak = OCR_SCORE_TRUNC_STREAK;
+      } else if (
+        maxScoreDeltaVsCommitted({ homeScore: pub.a, awayScore: pub.b }, h, a) >= OCR_SCORE_JUMP_CONFIRM_THRESHOLD
+      ) {
+        needStreak = OCR_SCORE_JUMP_STREAK_NORMAL;
+        if (isLargeScoreDrop({ homeScore: pub.a, awayScore: pub.b }, h, a)) {
+          needStreak = (h === 0 && a === 0) ? 4 : OCR_SCORE_TRUNC_STREAK;
+        }
+      }
+      if (_procState.scoreObserve && _procState.scoreObserve.h === h && _procState.scoreObserve.a === a) {
+        _procState.scoreObserve.streak += 1;
+      } else {
+        _procState.scoreObserve = { h: h, a: a, streak: 1, needStreak: needStreak };
+      }
+      if (_procState.scoreObserve.streak >= _procState.scoreObserve.needStreak) {
+        this._emitWsPacket('SCORE', payloadBase);
+        _procState.scoreObserve = null;
+      }
+    } else if (!pub || (h === pub.a && a === pub.b)) {
+      _procState.scoreObserve = null;
+    }
+
+    if (timeInfo) {
+      this._commitLocalState({
+        homeScore: h,
+        awayScore: a,
+        period: period,
+        minutes: timeInfo.minutes,
+        seconds: timeInfo.seconds,
+        shotClock: shotClock
+      });
+    } else {
+      this._commitLocalState({
+        homeScore: h,
+        awayScore: a,
+        period: period,
+        minutes: this.data.minutes,
+        seconds: this.data.seconds,
+        shotClock: shotClock
+      });
     }
   },
 
@@ -2776,7 +2777,13 @@ Page({
     bumpManualScoreEditGate();
     var nh = this.data.homeScore + 1;
     this.setData({ homeScore: nh });
-    this._notify({
+    this._emitWsPacket('SCORE', {
+      t: clockToTotalSec({ minutes: this.data.minutes, seconds: this.data.seconds }),
+      a: nh,
+      b: this.data.awayScore,
+      p: this.data.period
+    });
+    this._commitLocalState({
       homeScore: nh,
       awayScore: this.data.awayScore,
       period: this.data.period,
@@ -2789,7 +2796,13 @@ Page({
     bumpManualScoreEditGate();
     var na = this.data.awayScore + 1;
     this.setData({ awayScore: na });
-    this._notify({
+    this._emitWsPacket('SCORE', {
+      t: clockToTotalSec({ minutes: this.data.minutes, seconds: this.data.seconds }),
+      a: this.data.homeScore,
+      b: na,
+      p: this.data.period
+    });
+    this._commitLocalState({
       homeScore: this.data.homeScore,
       awayScore: na,
       period: this.data.period,
@@ -2803,7 +2816,13 @@ Page({
     var cur = this.data.period;
     var np = cur < 8 ? cur + 1 : cur;
     if (cur < 8) this.setData({ period: np });
-    this._notify({
+    this._emitWsPacket('PERIOD', {
+      t: clockToTotalSec({ minutes: this.data.minutes, seconds: this.data.seconds }),
+      a: this.data.homeScore,
+      b: this.data.awayScore,
+      p: np
+    });
+    this._commitLocalState({
       homeScore: this.data.homeScore,
       awayScore: this.data.awayScore,
       period: np,
@@ -2815,7 +2834,10 @@ Page({
   onReset: function () {
     bumpManualScoreEditGate();
     this.setData({ homeScore: 0, awayScore: 0, period: 1, minutes: 10, seconds: 0, shotClock: 24 });
-    this._notify({
+    var t = clockToTotalSec({ minutes: 10, seconds: 0 });
+    this._emitWsPacket('SYNC', { t: t, a: 0, b: 0, p: 1 });
+    this._emitWsPacket('S_RESET', { t: t, a: 0, b: 0, p: 1 });
+    this._commitLocalState({
       homeScore: 0,
       awayScore: 0,
       period: 1,
@@ -2823,115 +2845,6 @@ Page({
       seconds: 0,
       shotClock: 24
     });
-  },
-
-  // ─── BLE 推送 notify ─────────────────────────────────
-
-  /**
-   * 在退避窗口结束后补发：使用 `_lastCommittedFrame` 编码，与 `_notify` 写入的快照一致。
-   * @returns {void}
-   */
-  _flushBleNotifyIfReady: function () {
-    var self = this;
-    if (!_server || !_connectedDeviceId) return;
-    var now = Date.now();
-    if (now < _bleNotifyBackoffUntil) {
-      if (!_bleNotifyRetryTimer) {
-        var waitMs = Math.max(50, _bleNotifyBackoffUntil - now);
-        _bleNotifyRetryTimer = setTimeout(function () {
-          _bleNotifyRetryTimer = 0;
-          self._flushBleNotifyIfReady();
-        }, waitMs);
-      }
-      return;
-    }
-    var d = _lastCommittedFrame;
-    if (!d) return;
-    this._safeServerWriteCharacteristicValue({
-      serviceId: BLE.SERVICE_UUID,
-      characteristicId: BLE.CHAR_SCORE_UUID,
-      value: this._buildBlePacketValue(d),
-      needNotify: true,
-      success: function () {
-        _bleNotifyFailStreak = 0;
-        _bleNotifyBackoffUntil = 0;
-        console.log('[Collector] notify ok', d.homeScore, d.awayScore, d.minutes, d.seconds, d.shotClock);
-      },
-      fail: function (err) {
-        if (isBlePeripheralNotInitError(err)) {
-          if (_bleNotifyRetryTimer) {
-            clearTimeout(_bleNotifyRetryTimer);
-            _bleNotifyRetryTimer = 0;
-          }
-          _connectedDeviceId = '';
-          _bleNotifyFailStreak = 0;
-          _bleNotifyBackoffUntil = 0;
-          self.setData({ bleState: 'advertising', bleStateText: '连接失效，等待重连…' });
-          console.warn('[Collector] notify channel not init, stop retrying until reconnect err=%o', err);
-          return;
-        }
-        _bleNotifyFailStreak = Math.min(_bleNotifyFailStreak + 1, 12);
-        var pow = Math.min(Math.max(_bleNotifyFailStreak - 1, 0), 8);
-        var backoff = Math.min(
-          BLE_NOTIFY_BACKOFF_MAX_MS,
-          Math.round(BLE_NOTIFY_BACKOFF_BASE_MS * Math.pow(2, pow))
-        );
-        _bleNotifyBackoffUntil = Date.now() + backoff;
-        console.warn('[Collector] notify fail — backoff %sms streak=%s err=%o', backoff, _bleNotifyFailStreak, err);
-        if (!_bleNotifyRetryTimer) {
-          _bleNotifyRetryTimer = setTimeout(function () {
-            _bleNotifyRetryTimer = 0;
-            self._flushBleNotifyIfReady();
-          }, backoff);
-        }
-      }
-    }, 'notify');
-  },
-
-  /**
-   * 同步「已提交」状态并尝试 BLE notify。
-   * @param {{
-   *   homeScore?: number,
-   *   awayScore?: number,
-   *   period?: number,
-   *   minutes?: number,
-   *   seconds?: number,
-   *   shotClock?: number,
-   *   ocrEnabled?: boolean,
-   *   ocrTransitioning?: boolean
-   * } | void} snapshot 若传入则写入 `_lastCommittedFrame`；`ocrEnabled` / `ocrTransitioning` 可显式传入，避免与 `setData` 异步落库交叉时读到旧 `this.data`。
-   * @returns {void}
-   */
-  _notify: function (snapshot) {
-    if (snapshot && typeof snapshot === 'object') {
-      _lastCommittedFrame = {
-        homeScore: Number(snapshot.homeScore) || 0,
-        awayScore: Number(snapshot.awayScore) || 0,
-        period: Number(snapshot.period) || 1,
-        minutes: Number(snapshot.minutes) || 0,
-        seconds: Number(snapshot.seconds) || 0,
-        shotClock: Number(snapshot.shotClock) || 0,
-        ocrEnabled:
-          typeof snapshot.ocrEnabled === 'boolean' ? snapshot.ocrEnabled : !!this.data.ocrEnabled,
-        ocrTransitioning:
-          typeof snapshot.ocrTransitioning === 'boolean'
-            ? snapshot.ocrTransitioning
-            : !!this.data.ocrTransitioning
-      };
-    } else {
-      _lastCommittedFrame = {
-        homeScore: this.data.homeScore,
-        awayScore: this.data.awayScore,
-        period: this.data.period,
-        minutes: this.data.minutes,
-        seconds: this.data.seconds,
-        shotClock: this.data.shotClock,
-        ocrEnabled: !!this.data.ocrEnabled,
-        ocrTransitioning: !!this.data.ocrTransitioning
-      };
-    }
-    if (!_server || !_connectedDeviceId) return;
-    this._flushBleNotifyIfReady();
   }
 });
 
@@ -3075,14 +2988,8 @@ function isLikelyClockReset(prevSec, nextSec, clock) {
   return delta >= OCR_CLOCK_JUMP_DROP_THRESHOLD && clock && Number(clock.seconds) === 0;
 }
 
-function isBlePeripheralNotInitError(err) {
-  if (!err) return false;
-  var msg = String(err.errMsg || err.message || '').toLowerCase();
-  return Number(err.errCode || err.errno || 0) === 10000 && msg.indexOf('not init') !== -1;
-}
-
 /**
- * 在较短墙钟间隔内，比赛时钟相对上一提交「多跳了」若干秒则视为可疑 OCR，暂缓 notify。
+ * 在较短墙钟间隔内，比赛时钟相对上一提交「多跳了」若干秒则视为可疑 OCR，暂缓本地提交。
  * @param {{ minutes?: number, seconds?: number }} prev
  * @param {{ minutes?: number, seconds?: number }} next
  * @param {number} wallDtMs
