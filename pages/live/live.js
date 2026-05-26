@@ -189,6 +189,8 @@ const ANDROID_ULTRAWIDE_PROBE_COMPLETE_MS = 280;
 
 /** 走表本地刷新间隔（逻辑层 tick，规避 WXS rAF 在 0 尺寸节点不续帧） */
 const LIVE_WS_CLOCK_TICK_MS = 200;
+/** START 时网络延迟补偿上限（过大易让直播端比现场表快 1～2 秒再被 SYNC 拉回） */
+const LIVE_WS_START_LAG_COMP_MAX_MS = 500;
 
 /**
  * 大表剩余秒格式化为 MM:SS。
@@ -1933,7 +1935,8 @@ Page({
     var shotAnchorMs = typeof prevBundle.shotAnchorMs === 'number' ? prevBundle.shotAnchorMs : nowMs;
 
     if (payload.act === 'START') {
-      targetSeconds = Math.max(0, rawSeconds - (netLagMs / 1000));
+      var lagCompSec = Math.min(netLagMs, LIVE_WS_START_LAG_COMP_MAX_MS) / 1000;
+      targetSeconds = Math.max(0, rawSeconds - lagCompSec);
       mainRunning = true;
       this._liveWsClockRunning = true;
     } else if (payload.act === 'STOP') {

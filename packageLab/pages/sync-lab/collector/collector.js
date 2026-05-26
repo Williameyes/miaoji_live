@@ -3,7 +3,7 @@
  *
  * V2 架构：
  *   - HTTP 换取 Token → WSS 长连接，仅在状态翻转时发包（信号灯模式）
- *   - processOcrFrame 落实 5 大防抖阀门（假停表 / SYNC 观察室 / 高位频闪 / 24 秒影子 / 允许回退）
+ *   - processOcrFrame：时间阀门（假停表 / SYNC 观察室）与比分阀门（_applyScoreValve）解耦
  *   - OCR pump 节流 + 单 ROI 轮询；ROI 拖动/缩放；登录 + 白名单双重门控
  *
  * ROI 选区数据结构（归一化坐标，相对于相机预览区）：
@@ -36,8 +36,16 @@ var OCR_OCCLUSION_EVAL_MS = 400;
 var OCR_SYNC_JUMP_THRESHOLD_SEC = 2;
 /** SYNC 观察室：连续稳定帧数 */
 var OCR_SYNC_CONFIRM_STREAK = 5;
-/** 比分变化默认确认帧数 */
-var OCR_SCORE_CONFIRM_STREAK = 3;
+/** 比分变化默认确认帧数（走表） */
+var OCR_SCORE_CONFIRM_STREAK = 2;
+/** 停表期间比分变化确认帧数（死球改分更急，略放宽） */
+var OCR_SCORE_CONFIRM_STREAK_PAUSED = 2;
+/** 走表时云端时间与 OCR 偏差超过该秒数则发软 SYNC 校准直播端 */
+var OCR_SOFT_SYNC_DRIFT_SEC = 2;
+/** 软 SYNC 防抖间隔 */
+var OCR_SOFT_SYNC_DEBOUNCE_MS = 1500;
+/** 预测补秒相对最近一次 OCR 时间最多允许领先的秒数 */
+var OCR_CLOCK_PREDICT_MAX_LEAD_SEC = 1;
 /** 高位频闪（截断误读）确认帧数 */
 var OCR_SCORE_TRUNC_STREAK = 6;
 /** WebSocket 断线重连退避序列（毫秒），上限 15 秒 */
@@ -287,6 +295,8 @@ var _lastTimePumpTs = 0;
 var _lastScorePumpTs = 0;
 /** 比分泵 round-robin 游标（0=主队分, 1=客队分） */
 var _scorePumpCursor = 0;
+/** 最近一次软 SYNC 墙钟（防抖） */
+var _lastSoftSyncWallTs = 0;
 /** 是否进入最后一分钟极限调度模式（minutes===0 && seconds<=60） */
 var _isFinalMinuteMode = false;
 /** 是否因小程序 onHide 暂停了相机帧泵（onShow 恢复） */
@@ -395,7 +405,15 @@ function getPredictedClock() {
   var baseSec = clockToTotalSec(_predictedClock);
   var maxAge = Math.max(OCR_TIME_PREDICT_MAX_STALE_MS, (baseSec + 2) * 1000);
   if (age > maxAge) return null;
-  return subtractClock(_predictedClock, Math.floor(age / 1000));
+  var predicted = subtractClock(_predictedClock, Math.floor(age / 1000));
+  if (_lastOcrClockSec >= 0) {
+    var predSec = clockToTotalSec(predicted);
+    var minSec = Math.max(0, _lastOcrClockSec - OCR_CLOCK_PREDICT_MAX_LEAD_SEC);
+    if (predSec < minSec) {
+      return clockFromTotalSec(minSec);
+    }
+  }
+  return predicted;
 }
 
 function updatePredictedClock(clock) {
@@ -1142,6 +1160,7 @@ Page({
     _lastTimePumpTs = 0;
     _lastScorePumpTs = 0;
     _scorePumpCursor = 0;
+    _lastSoftSyncWallTs = 0;
     _clockJumpCandidateSec = -1;
     _clockJumpCandidateSince = 0;
     _isFinalMinuteMode = false;
@@ -1348,6 +1367,22 @@ Page({
       timeValid: true,
       wallMs: now
     });
+
+    if (
+      _procState.clockRunning &&
+      _procState.published &&
+      !_ocrOcclusionActive &&
+      Math.abs(realWorldSec - _procState.published.t) >= OCR_SOFT_SYNC_DRIFT_SEC &&
+      now - (_lastSoftSyncWallTs || 0) >= OCR_SOFT_SYNC_DEBOUNCE_MS
+    ) {
+      _lastSoftSyncWallTs = now;
+      this._emitWsPacket('SYNC', {
+        t: realWorldSec,
+        a: homeScore,
+        b: awayScore,
+        p: this.data.period
+      });
+    }
   },
 
   /**
@@ -1571,6 +1606,12 @@ Page({
     var minEmitMs = lag > 2 ? OCR_CLOCK_CATCHUP_FAST_INTERVAL_MS : OCR_CLOCK_NORMAL_INTERVAL_MS;
     if (_lastClockPredictEmitWallTs && now - _lastClockPredictEmitWallTs < minEmitMs) return;
     var emitSec = Math.max(predictedSec, committedSec - 1);
+    if (_lastOcrClockSec >= 0) {
+      var minAllowedSec = Math.max(0, _lastOcrClockSec - OCR_CLOCK_PREDICT_MAX_LEAD_SEC);
+      if (emitSec < minAllowedSec) {
+        emitSec = minAllowedSec;
+      }
+    }
     if (emitSec === _lastClockPredictEmitSec) return;
     this._emitTimeOnlyIfChanged(clockFromTotalSec(emitSec), now);
   },
@@ -1611,10 +1652,10 @@ Page({
           console.log('[Collector][OCR] pump seq=%s frame=%s size=%sx%s', _ocrPumpFrameCount, !!(frame && frame.data), frameW, frameH);
         }
         if (!frame || !frame.data || frameW <= 0 || frameH <= 0) return;
-        self._maybeEvaluateOcrOcclusion(captureTs);
         // 永远只处理最新帧：busy 时直接丢弃当前帧，不排队不积压。
         if (_ocrRunBusy) return;
         var captureTs = Date.now();
+        self._maybeEvaluateOcrOcclusion(captureTs);
         // SDK 节流闸：上一次 OCR 超时后给 SDK OCR_TIMEOUT_SETTLE_MS 缓冲；
         // 否则连续超时会让 SDK 内部队列雪崩。
         if (captureTs < _ocrTimeoutSettleUntil) return;
@@ -2360,8 +2401,9 @@ Page({
     }
     var next = {};
     var changed = false;
-    var homeScore = parseScore(rois[0].rawText);
-    var awayScore = parseScore(rois[1].rawText);
+    var scorePairPreview = resolveOcrScorePair(rois);
+    var homeScore = scorePairPreview ? scorePairPreview.homeScore : null;
+    var awayScore = scorePairPreview ? scorePairPreview.awayScore : null;
     var timeInfo = updatedRoiIdx === 2 ? filterClockByMode(parseTime(rois[2].rawText)) : null;
     if (!timeInfo) timeInfo = getPredictedClock();
     if (timeInfo && _lastCommittedFrame) {
@@ -2505,18 +2547,18 @@ Page({
       return;
     }
 
-    var homeScore = parseScore(rois[0].rawText);
-    var awayScore = parseScore(rois[1].rawText);
-    var ocrTimeInfo = updatedRoiIdx === 2
-      ? filterClockByMode(parseTime(rois[2] && rois[2].rawText ? rois[2].rawText : ''))
-      : null;
-
-    if (homeScore === null || awayScore === null) {
+    var scorePair = resolveOcrScorePair(rois);
+    if (!scorePair) {
       if (this.data.debugMode) {
-        console.log('[Collector][OCR] parse skip home=%s away=%s raw=%o', homeScore, awayScore, rois.map(function (r) { return r.rawText; }));
+        console.log('[Collector][OCR] parse skip home/away raw=%o', rois.map(function (r) { return r.rawText; }));
       }
       return;
     }
+    var homeScore = scorePair.homeScore;
+    var awayScore = scorePair.awayScore;
+    var ocrTimeInfo = updatedRoiIdx === 2
+      ? filterClockByMode(parseTime(rois[2] && rois[2].rawText ? rois[2].rawText : ''))
+      : null;
 
     var scoreOkTs = Date.now();
     _ocrLastHomeScoreSuccessTs = scoreOkTs;
@@ -2580,7 +2622,13 @@ Page({
     }
 
     var frameKey = buildFrameKey(frame);
-    if (frameKey === _lastCommittedFrameKey) {
+    var pubBefore = _procState.published;
+    var pendingScoreSync = scoresDifferFromPublished(
+      pubBefore,
+      frame.homeScore,
+      frame.awayScore
+    );
+    if (frameKey === _lastCommittedFrameKey && !pendingScoreSync) {
       _pendingOcrFrame = null;
       return;
     }
@@ -2596,7 +2644,13 @@ Page({
     });
 
     _pendingOcrFrame = null;
-    _lastCommittedFrameKey = frameKey;
+    var pubAfter = _procState.published;
+    if (
+      !pubAfter ||
+      (frame.homeScore === pubAfter.a && frame.awayScore === pubAfter.b)
+    ) {
+      _lastCommittedFrameKey = frameKey;
+    }
     _lastRejectedStableFrameKey = '';
     _lastRejectedStableFrameCount = 0;
     _lastNotifyWallAt = wall;
@@ -2898,11 +2952,57 @@ Page({
   },
 
   /**
+   * 比分阀门：独立于走表/SYNC 观察室，有变化即尝试发 SCORE（或首次 SYNC 基线）。
+   * @param {{ t: number, a: number, b: number, p: number }} payloadBase
+   * @param {number} h 主队分
+   * @param {number} a 客队分
+   * @param {boolean} bypassScoreHold 是否旁路确认门禁
+   * @returns {boolean} 是否已向云端发包
+   */
+  _applyScoreValve: function (payloadBase, h, a, bypassScoreHold) {
+    var pub = _procState.published;
+
+    if (bypassScoreHold) {
+      if (!scoresDifferFromPublished(pub, h, a)) {
+        _procState.scoreObserve = null;
+        return false;
+      }
+      this._emitWsPacket(pub ? 'SCORE' : 'SYNC', payloadBase);
+      _procState.scoreObserve = null;
+      return true;
+    }
+
+    if (!pub) {
+      this._emitWsPacket('SYNC', payloadBase);
+      _procState.scoreObserve = null;
+      return true;
+    }
+
+    if (!scoresDifferFromPublished(pub, h, a)) {
+      _procState.scoreObserve = null;
+      return false;
+    }
+
+    var needStreak = getScoreConfirmNeedStreak(pub, h, a);
+    if (_procState.scoreObserve && _procState.scoreObserve.h === h && _procState.scoreObserve.a === a) {
+      _procState.scoreObserve.streak += 1;
+    } else {
+      _procState.scoreObserve = { h: h, a: a, streak: 1, needStreak: needStreak };
+    }
+    if (_procState.scoreObserve.streak >= _procState.scoreObserve.needStreak) {
+      this._emitWsPacket('SCORE', payloadBase);
+      _procState.scoreObserve = null;
+      return true;
+    }
+    return false;
+  },
+
+  /**
    * OCR 帧提纯核心：5 大防抖阀门，仅在状态翻转时向云端发包。
    *
    * 阀门 1 — 假停表防御：同一秒持续 >1200ms 才发 STOP。
    * 阀门 2 — SYNC 观察室：落差 >2 秒连续 5 帧稳定才 SYNC；timeValid=false 保持静默。
-   * 阀门 3 — 高位频闪：截断误读门限从 3 帧拉高到 6 帧。
+   * 阀门 3 — 高位频闪：截断误读门限从 3 帧拉高到 6 帧（见 _applyScoreValve，与时间解耦）。
    * 阀门 4 — 24 秒影子：不向 24 秒表发 START/STOP，仅 S_RESET（人工改分路径触发）。
    * 阀门 5 — 允许回退：比分/时间可倒退，稳定 N 帧即老实发包。
    *
@@ -2937,6 +3037,9 @@ Page({
       ? _procState.lastOcrSec
       : (pub ? pub.t : t);
     var payloadBase = { t: t, a: h, b: a, p: period };
+
+    // 比分阀门优先：与时间 SYNC/START/STOP 解耦，避免观察室 return 或 frameKey 去重导致 SCORE 永不发出
+    this._applyScoreValve(payloadBase, h, a, !!input.bypassScoreHold);
 
     // 阀门 2：遮挡 / 闪电调表 → SYNC 观察室（遇 null 保持静默）
     if (timeInfo && refT >= 0) {
@@ -3032,32 +3135,6 @@ Page({
           _procState.startObserve = null;
         }
       }
-    }
-
-    // 阀门 3 & 5：比分变化（允许回退，截断误读需 6 帧）
-    if (pub && (h !== pub.a || a !== pub.b) && !input.bypassScoreHold) {
-      var needStreak = OCR_SCORE_CONFIRM_STREAK;
-      if (isLikelyTruncateGlitch(pub.a, h) || isLikelyTruncateGlitch(pub.b, a)) {
-        needStreak = OCR_SCORE_TRUNC_STREAK;
-      } else if (
-        maxScoreDeltaVsCommitted({ homeScore: pub.a, awayScore: pub.b }, h, a) >= OCR_SCORE_JUMP_CONFIRM_THRESHOLD
-      ) {
-        needStreak = OCR_SCORE_JUMP_STREAK_NORMAL;
-        if (isLargeScoreDrop({ homeScore: pub.a, awayScore: pub.b }, h, a)) {
-          needStreak = (h === 0 && a === 0) ? 4 : OCR_SCORE_TRUNC_STREAK;
-        }
-      }
-      if (_procState.scoreObserve && _procState.scoreObserve.h === h && _procState.scoreObserve.a === a) {
-        _procState.scoreObserve.streak += 1;
-      } else {
-        _procState.scoreObserve = { h: h, a: a, streak: 1, needStreak: needStreak };
-      }
-      if (_procState.scoreObserve.streak >= _procState.scoreObserve.needStreak) {
-        this._emitWsPacket('SCORE', payloadBase);
-        _procState.scoreObserve = null;
-      }
-    } else if (!pub || (h === pub.a && a === pub.b)) {
-      _procState.scoreObserve = null;
     }
 
     if (timeInfo) {
@@ -3328,6 +3405,64 @@ function maxScoreDeltaVsCommitted(prev, h, a) {
     Math.abs(h - (Number(prev.homeScore) || 0)),
     Math.abs(a - (Number(prev.awayScore) || 0))
   );
+}
+
+/**
+ * 解析主客比分；双泵轮询单帧只更新一侧 ROI 时，另一侧回退到最近一次有效读数。
+ * @param {Array<{ rawText?: string }>} rois ROI 列表（至少含主/客两项）
+ * @returns {{ homeScore: number, awayScore: number } | null}
+ */
+function resolveOcrScorePair(rois) {
+  if (!rois || rois.length < 2) return null;
+  var homeScore = parseScore(rois[0] && rois[0].rawText ? rois[0].rawText : '');
+  var awayScore = parseScore(rois[1] && rois[1].rawText ? rois[1].rawText : '');
+  if (homeScore === null && _ocrLastGoodHomeScore >= 0) {
+    homeScore = _ocrLastGoodHomeScore;
+  }
+  if (awayScore === null && _ocrLastGoodAwayScore >= 0) {
+    awayScore = _ocrLastGoodAwayScore;
+  }
+  if (homeScore === null || awayScore === null) return null;
+  return { homeScore: homeScore, awayScore: awayScore };
+}
+
+/**
+ * 云端已发布比分与 OCR 帧是否不一致。
+ * @param {{ a: number, b: number } | null} pub
+ * @param {number} h
+ * @param {number} a
+ * @returns {boolean}
+ */
+function scoresDifferFromPublished(pub, h, a) {
+  if (!pub) return true;
+  return h !== pub.a || a !== pub.b;
+}
+
+/**
+ * 按变化幅度计算比分确认所需连续帧数（与走表/停表解耦，仅用于 SCORE 阀门）。
+ * @param {{ a: number, b: number }} pub
+ * @param {number} h
+ * @param {number} a
+ * @returns {number}
+ */
+function getScoreConfirmNeedStreak(pub, h, a) {
+  if (isLikelyTruncateGlitch(pub.a, h) || isLikelyTruncateGlitch(pub.b, a)) {
+    return OCR_SCORE_TRUNC_STREAK;
+  }
+  var delta = maxScoreDeltaVsCommitted({ homeScore: pub.a, awayScore: pub.b }, h, a);
+  if (delta >= OCR_SCORE_JUMP_CONFIRM_THRESHOLD) {
+    if (isLargeScoreDrop({ homeScore: pub.a, awayScore: pub.b }, h, a)) {
+      return (h === 0 && a === 0) ? 4 : OCR_SCORE_TRUNC_STREAK;
+    }
+    return OCR_SCORE_JUMP_STREAK_NORMAL;
+  }
+  if (delta > 0 && delta <= 3) {
+    return OCR_SCORE_CONFIRM_STREAK_PAUSED;
+  }
+  if (!_procState.clockRunning || _clockMode === 'paused') {
+    return OCR_SCORE_CONFIRM_STREAK_PAUSED;
+  }
+  return OCR_SCORE_CONFIRM_STREAK;
 }
 
 /**
