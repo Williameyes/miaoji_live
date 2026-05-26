@@ -1052,14 +1052,15 @@ Page({
   },
 
   /**
-   * 彻底清理 OCR 的残留状态，模拟页面重新加载。
-   * 解决原地重启 OCR（或接收远程重启指令）时，因残留旧比分触发大比分下降防抖（isLargeScoreDrop），
-   * 导致比分卡死、必须完全退出页面重进才能恢复的问题。
-   * 严格约束：不触碰 WebSocket 连接、不重置 period / shotClock 这两个人工维护字段。
+   * 清理 OCR 内部状态机，让重启后的 OCR 从空白基线开始识别。
+   * 严格约束：
+   *   - 不重置比分 / 时间 UI 数据（关 OCR 不应让直播端瞬间跳回 0:0/10:00；
+   *     重启后 OCR 读到多少就上报多少，以现场记分牌为准）。
+   *   - 不触碰 WebSocket 连接、不重置 period / shotClock。
    * @returns {void}
    */
   _wipeOcrDirtyState: function () {
-    console.log('[Collector][OCR] Wiping dirty state for fresh start');
+    console.log('[Collector][OCR] Wiping OCR internal state (UI scores/time preserved)');
 
     _lastCommittedFrameKey = '';
     _lastPreviewFrameKey = '';
@@ -1073,13 +1074,7 @@ Page({
       return Object.assign({}, r, { rawText: '' });
     });
 
-    this.setData({
-      homeScore: 0,
-      awayScore: 0,
-      minutes: 10,
-      seconds: 0,
-      rois: rois
-    });
+    this.setData({ rois: rois });
 
     resetProcessOcrState();
 
@@ -2734,12 +2729,23 @@ Page({
         var roomId = generateRoomId();
         savePersistedRoomId(roomId);
         _wsRoomId = roomId;
+        /* 新房间 = 新一场比赛：清空采集端 UI 与 OCR 内部基线，
+           连上云端后由 _maybeBootstrapSnapshot 自动用 0:0/10:00 建立新房间基线快照 */
+        _lastCommittedFrame = null;
+        bumpManualScoreEditGate();
         self.setData({
           matchCode: roomId,
           wsState: 'idle',
-          wsStateText: '正在连接…'
+          wsStateText: '正在连接…',
+          homeScore: 0,
+          awayScore: 0,
+          period: 1,
+          minutes: 10,
+          seconds: 0,
+          shotClock: 24
+        }, function () {
+          self._connectWebSocket(roomId);
         });
-        self._connectWebSocket(roomId);
       }
     });
   },

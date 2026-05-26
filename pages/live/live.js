@@ -2013,19 +2013,13 @@ Page({
         nextTeamB = Object.assign({}, nextTeamB, { score: scoreB });
         changed = true;
       }
-      var nextPeriod = mc.period;
-      if (payload.p !== undefined) {
-        var pNum = Math.max(0, Math.floor(Number(payload.p) || 0));
-        if (pNum !== Number(mc.period || 0)) {
-          nextPeriod = pNum;
-          changed = true;
-        }
-      }
+      /* 节次：采集端目前没有节次 OCR 框，云端 payload.p 只是协议占位（与 24 秒同处理）。
+         节次完全由直播端 onPeriodTap 手动维护并落盘；此处不消费 payload.p，
+         避免把采集端默认的 1 节秒回到直播端。未来若开发节次采集，只需打开此处消费即可。 */
       if (changed) {
         patch.matchConfig = Object.assign({}, mc, {
           teamA: nextTeamA,
-          teamB: nextTeamB,
-          period: nextPeriod
+          teamB: nextTeamB
         });
         this._liveWsScheduleScorePersist();
       }

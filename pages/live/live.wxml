@@ -311,7 +311,8 @@
       </view>
 
       <!-- 24 秒进攻时钟：右下角正方格，高度与记分栏一致 -->
-      <view wx:if="{{isAutoMode}}" class="shot-clock-box">
+      <!-- TODO 24 秒采集功能待开发，先隐藏；恢复时把 wx:if 改回 {{isAutoMode}} -->
+      <view wx:if="{{false}}" class="shot-clock-box">
         <text class="shot-clock-digit {{wxsClockShotWarn ? 'shot-clock-digit--warn' : ''}}">{{wxsClockShotSec}}</text>
       </view>
 
