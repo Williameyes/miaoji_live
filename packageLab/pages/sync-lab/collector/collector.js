@@ -26,6 +26,12 @@ var OCR_FAKE_STOP_HOLD_MS = 1200;
 var OCR_FAKE_STOP_STREAK = 3;
 /** 开表恢复：连续读到同一更低秒数才发 START（防停表 OCR 误读） */
 var OCR_START_CONFIRM_STREAK = 2;
+/** 遮挡判定：时间/主分/客分均无法识别超过该毫秒 */
+var OCR_OCCLUSION_HOLD_MS = 2800;
+/** 遮挡恢复：连续多少次检测到三项均可读才退出遮挡 */
+var OCR_OCCLUSION_RECOVER_STREAK = 2;
+/** 遮挡状态评估最小间隔（毫秒） */
+var OCR_OCCLUSION_EVAL_MS = 400;
 /** SYNC 观察室：时间落差超过该秒数才进入观察 */
 var OCR_SYNC_JUMP_THRESHOLD_SEC = 2;
 /** SYNC 观察室：连续稳定帧数 */
@@ -207,6 +213,24 @@ var _ocrTick = 0;
 var _ocrManualMode = false;
 /** 最近一次时间 ROI 解析出合法 mm:ss 的墙钟时间戳（供时间优先调度）。 */
 var _ocrLastTimeSuccessTs = 0;
+/** 最近一次主队分 ROI 成功识别墙钟戳 */
+var _ocrLastHomeScoreSuccessTs = 0;
+/** 最近一次客队分 ROI 成功识别墙钟戳 */
+var _ocrLastAwayScoreSuccessTs = 0;
+/** 是否处于遮挡静默期（不处理 OCR、保留上次正确快照） */
+var _ocrOcclusionActive = false;
+/** 遮挡开始墙钟戳 */
+var _ocrOcclusionSince = 0;
+/** 遮挡恢复连续确认计数 */
+var _ocrOcclusionRecoverStreak = 0;
+/** 上次遮挡评估墙钟戳 */
+var _ocrOcclusionEvalLastTs = 0;
+/** 遮挡期内最近一次有效主队分（用于恢复后立即同步） */
+var _ocrLastGoodHomeScore = -1;
+/** 遮挡期内最近一次有效客队分（用于恢复后立即同步） */
+var _ocrLastGoodAwayScore = -1;
+/** 遮挡期内最近一次有效时间秒数（用于恢复后立即同步） */
+var _ocrLastGoodClockSec = -1;
 /** 预测时钟：OCR 短时掉帧时根据墙钟平滑补秒，减轻恢复后跳秒。 */
 var _predictedClock = null;
 var _predictedClockWallTs = 0;
@@ -438,6 +462,56 @@ function generateRoomId() {
 function getWsReconnectDelayMs(attempt) {
   var idx = Math.max(0, Math.min(attempt - 1, WS_RECONNECT_DELAYS_MS.length - 1));
   return WS_RECONNECT_DELAYS_MS[idx];
+}
+
+/**
+ * START 发包确认帧数：真停表需双帧；OCR 已观测到走表（遮挡恢复）单帧即可。
+ * @returns {number}
+ */
+function getOcrStartConfirmStreak() {
+  return _clockMode === 'paused' ? OCR_START_CONFIRM_STREAK : 1;
+}
+
+/**
+ * 重置遮挡检测状态（OCR 重启时调用）。
+ * @returns {void}
+ */
+function resetOcrOcclusionState() {
+  _ocrOcclusionActive = false;
+  _ocrOcclusionSince = 0;
+  _ocrOcclusionRecoverStreak = 0;
+  _ocrOcclusionEvalLastTs = 0;
+  _ocrLastHomeScoreSuccessTs = 0;
+  _ocrLastAwayScoreSuccessTs = 0;
+  _ocrLastGoodHomeScore = -1;
+  _ocrLastGoodAwayScore = -1;
+  _ocrLastGoodClockSec = -1;
+}
+
+/**
+ * 三项 OCR 是否均在有效窗口内有成功读数。
+ * @param {number} nowMs
+ * @returns {boolean}
+ */
+function areAllOcrFieldsFresh(nowMs) {
+  return (
+    (nowMs - (_ocrLastTimeSuccessTs || 0)) <= OCR_OCCLUSION_HOLD_MS &&
+    (nowMs - (_ocrLastHomeScoreSuccessTs || 0)) <= OCR_OCCLUSION_HOLD_MS &&
+    (nowMs - (_ocrLastAwayScoreSuccessTs || 0)) <= OCR_OCCLUSION_HOLD_MS
+  );
+}
+
+/**
+ * 是否已建立可进入遮挡判定的 OCR 基线。
+ * @returns {boolean}
+ */
+function hasOcrOcclusionBaseline() {
+  return !!(
+    _lastCommittedFrame &&
+    _ocrLastTimeSuccessTs > 0 &&
+    _ocrLastHomeScoreSuccessTs > 0 &&
+    _ocrLastAwayScoreSuccessTs > 0
+  );
 }
 
 /**
@@ -953,6 +1027,8 @@ Page({
 
     resetProcessOcrState();
 
+    resetOcrOcclusionState();
+
     if (typeof bumpManualScoreEditGate === 'function') {
       bumpManualScoreEditGate();
     }
@@ -1191,14 +1267,35 @@ Page({
       return;
     }
     _ocrRoiTextSeq[roiIdx] = (_ocrRoiTextSeq[roiIdx] || 0) + 1;
-    if (roiIdx === 2) {
-      var captureTs = (_ocrRunState && _ocrRunState.captureTs) || Date.now();
-      this._recordOcrClockSample(parseTime(text), captureTs);
+    var nowTs = Date.now();
+    if (roiIdx === 0) {
+      var parsedHomeScore = parseScore(text);
+      if (parsedHomeScore !== null) {
+        _ocrLastHomeScoreSuccessTs = nowTs;
+        _ocrLastGoodHomeScore = parsedHomeScore;
+      }
+    } else if (roiIdx === 1) {
+      var parsedAwayScore = parseScore(text);
+      if (parsedAwayScore !== null) {
+        _ocrLastAwayScoreSuccessTs = nowTs;
+        _ocrLastGoodAwayScore = parsedAwayScore;
+      }
+    } else if (roiIdx === 2) {
+      var parsedTime = parseTime(text);
+      if (parsedTime) {
+        _ocrLastTimeSuccessTs = nowTs;
+        _ocrLastGoodClockSec = clockToTotalSec(parsedTime);
+        if (!_ocrOcclusionActive) {
+          var captureTs = (_ocrRunState && _ocrRunState.captureTs) || nowTs;
+          this._recordOcrClockSample(parsedTime, captureTs);
+        }
+      }
     }
     _ocrRunState.updatedRoiIdx = roiIdx;
     _ocrRunState.rawTexts[roiIdx] = text;
     this._applyPartialOcrPreview(_ocrRunState.rawTexts, roiIdx);
     _ocrRunState.queuePos += 1;
+    this._maybeEvaluateOcrOcclusion(nowTs);
     this._runNextRoiOcr();
   },
 
@@ -1209,10 +1306,17 @@ Page({
    * @returns {void}
    */
   _recordOcrClockSample: function (parsedTime, frameCaptureTs) {
-    if (!parsedTime) return;
+    if (!parsedTime || _ocrOcclusionActive) return;
     var now = Date.now();
     var ocrSec = clockToTotalSec(parsedTime);
     var realWorldSec = Math.max(0, ocrSec);
+
+    if (_lastOcrClockSec >= 0 && realWorldSec > 0 && realWorldSec < _lastOcrClockSec) {
+      var dropFromLast = _lastOcrClockSec - realWorldSec;
+      if (dropFromLast >= 1 && dropFromLast <= 3) {
+        _clockMode = 'running';
+      }
+    }
 
     if (now - (_ocrLastTimeSuccessTs || 0) > 2500) {
       _lastOcrClockSec = realWorldSec;
@@ -1244,6 +1348,127 @@ Page({
       timeValid: true,
       wallMs: now
     });
+  },
+
+  /**
+   * 评估遮挡：时间/主分/客分均长时间无法识别 → 停表、保留上次快照并通知直播端。
+   * @param {number} [nowMs] 评估时刻墙钟
+   * @returns {void}
+   */
+  _maybeEvaluateOcrOcclusion: function (nowMs) {
+    if (!this.data.ocrEnabled) return;
+    nowMs = nowMs || Date.now();
+    if (_ocrOcclusionEvalLastTs && nowMs - _ocrOcclusionEvalLastTs < OCR_OCCLUSION_EVAL_MS) {
+      return;
+    }
+    _ocrOcclusionEvalLastTs = nowMs;
+
+    if (!_ocrOcclusionActive) {
+      if (!hasOcrOcclusionBaseline()) return;
+      if (areAllOcrFieldsFresh(nowMs)) return;
+      this._enterOcrOcclusion(nowMs);
+      return;
+    }
+
+    if (areAllOcrFieldsFresh(nowMs)) {
+      _ocrOcclusionRecoverStreak += 1;
+      if (_ocrOcclusionRecoverStreak >= OCR_OCCLUSION_RECOVER_STREAK) {
+        _ocrOcclusionActive = false;
+        _ocrOcclusionSince = 0;
+        _ocrOcclusionRecoverStreak = 0;
+        console.log('[Collector][OCR] occlusion cleared, resume processing');
+        this._onOcrOcclusionCleared(nowMs);
+      }
+    } else {
+      _ocrOcclusionRecoverStreak = 0;
+    }
+  },
+
+  /**
+   * 遮挡恢复：用遮挡期内缓存的最后一次可解析快照立即校准直播端，并在判断走表时补发 START。
+   * @param {number} nowMs
+   * @returns {void}
+   */
+  _onOcrOcclusionCleared: function (nowMs) {
+    if (_ocrLastGoodClockSec < 0 || _ocrLastGoodHomeScore < 0 || _ocrLastGoodAwayScore < 0) {
+      return;
+    }
+    var prevSec = -1;
+    if (_lastCommittedFrame) {
+      prevSec = ocrFrameClockSec(_lastCommittedFrame);
+    } else if (_procState.published && typeof _procState.published.t === 'number') {
+      prevSec = _procState.published.t;
+    }
+    var looksRunning = prevSec > 0 && _ocrLastGoodClockSec >= 0 && _ocrLastGoodClockSec < prevSec;
+    if (looksRunning) {
+      _clockMode = 'running';
+    }
+    var snap = {
+      homeScore: _ocrLastGoodHomeScore,
+      awayScore: _ocrLastGoodAwayScore,
+      period: this.data.period,
+      minutes: Math.floor(_ocrLastGoodClockSec / 60),
+      seconds: _ocrLastGoodClockSec % 60,
+      shotClock: this.data.shotClock
+    };
+    this._commitLocalState(snap);
+    this._emitWsPacket('SYNC', {
+      t: _ocrLastGoodClockSec,
+      a: _ocrLastGoodHomeScore,
+      b: _ocrLastGoodAwayScore,
+      p: this.data.period
+    });
+    if (!_procState.clockRunning && (_clockMode === 'running' || looksRunning)) {
+      this._emitWsPacket('START', {
+        t: _ocrLastGoodClockSec,
+        a: _ocrLastGoodHomeScore,
+        b: _ocrLastGoodAwayScore,
+        p: this.data.period
+      });
+    }
+  },
+
+  /**
+   * 进入遮挡静默：不发包改分/改时，保留上次正确 UI，并向云端 STOP。
+   * @param {number} nowMs
+   * @returns {void}
+   */
+  _enterOcrOcclusion: function (nowMs) {
+    if (_ocrOcclusionActive) return;
+    _ocrOcclusionActive = true;
+    _ocrOcclusionSince = nowMs;
+    _ocrOcclusionRecoverStreak = 0;
+    _clockMode = 'paused';
+    _procState.startObserve = null;
+    _procState.syncObserve = null;
+    this._clearClockPredictTimer();
+
+    if (_lastCommittedFrame) {
+      this._commitLocalState({
+        homeScore: _lastCommittedFrame.homeScore,
+        awayScore: _lastCommittedFrame.awayScore,
+        period: _lastCommittedFrame.period,
+        minutes: _lastCommittedFrame.minutes,
+        seconds: _lastCommittedFrame.seconds,
+        shotClock: _lastCommittedFrame.shotClock
+      });
+    }
+
+    if (_procState.clockRunning && _lastCommittedFrame) {
+      this._emitWsPacket('STOP', {
+        t: ocrFrameClockSec(_lastCommittedFrame),
+        a: _lastCommittedFrame.homeScore,
+        b: _lastCommittedFrame.awayScore,
+        p: _lastCommittedFrame.period
+      });
+    }
+
+    console.log(
+      '[Collector][OCR] occlusion active hold t=%s a=%s b=%s',
+      _lastCommittedFrame ? ocrFrameClockSec(_lastCommittedFrame) : 0,
+      _lastCommittedFrame ? _lastCommittedFrame.homeScore : 0,
+      _lastCommittedFrame ? _lastCommittedFrame.awayScore : 0
+    );
   },
 
   _ensureClockPredictTimer: function () {
@@ -1300,6 +1525,11 @@ Page({
       return;
     }
     var now = Date.now();
+    this._maybeEvaluateOcrOcclusion(now);
+    if (_ocrOcclusionActive) {
+      this._clearClockPredictTimer();
+      return;
+    }
     if (!_clockPredictUntil || now > _clockPredictUntil) {
       this._clearClockPredictTimer();
       return;
@@ -1381,6 +1611,7 @@ Page({
           console.log('[Collector][OCR] pump seq=%s frame=%s size=%sx%s', _ocrPumpFrameCount, !!(frame && frame.data), frameW, frameH);
         }
         if (!frame || !frame.data || frameW <= 0 || frameH <= 0) return;
+        self._maybeEvaluateOcrOcclusion(captureTs);
         // 永远只处理最新帧：busy 时直接丢弃当前帧，不排队不积压。
         if (_ocrRunBusy) return;
         var captureTs = Date.now();
@@ -1808,6 +2039,7 @@ Page({
     _ocrRoiBackoffUntil = [0, 0, 0];
     _ocrRoiTextSeq = [0, 0, 0];
     _ocrLastTimeSuccessTs = Date.now();
+    resetOcrOcclusionState();
     if (!preserveClock) {
       _predictedClock = null;
       _predictedClockWallTs = 0;
@@ -2123,6 +2355,9 @@ Page({
   },
 
   _applyParsedPreview: function (rois, updatedRoiIdx) {
+    if (_ocrOcclusionActive) {
+      return;
+    }
     var next = {};
     var changed = false;
     var homeScore = parseScore(rois[0].rawText);
@@ -2266,6 +2501,10 @@ Page({
    * @returns {void}
    */
   _parseAndMaybeNotify: function (rois, updatedRoiIdx) {
+    if (_ocrOcclusionActive) {
+      return;
+    }
+
     var homeScore = parseScore(rois[0].rawText);
     var awayScore = parseScore(rois[1].rawText);
     var ocrTimeInfo = updatedRoiIdx === 2
@@ -2278,6 +2517,10 @@ Page({
       }
       return;
     }
+
+    var scoreOkTs = Date.now();
+    _ocrLastHomeScoreSuccessTs = scoreOkTs;
+    _ocrLastAwayScoreSuccessTs = scoreOkTs;
 
     var wallPre = Date.now();
     var bypassScoreJumpHold =
@@ -2706,6 +2949,12 @@ Page({
         }
         if (_procState.syncObserve.streak >= OCR_SYNC_CONFIRM_STREAK) {
           this._emitWsPacket('SYNC', payloadBase);
+          if (
+            !_procState.clockRunning &&
+            (_clockMode === 'running' || (_procState.pauseConfirmed && t < refT))
+          ) {
+            this._emitWsPacket('START', payloadBase);
+          }
           _procState.syncObserve = null;
           _procState.sameSecFirstSeen = now;
           _procState.sameSecStreak = 1;
@@ -2744,10 +2993,7 @@ Page({
           _procState.startObserve.sec === t
         ) {
           _procState.startObserve.streak += 1;
-          var needResumeStreak = (_procState.pauseConfirmed || _clockMode === 'paused')
-            ? OCR_START_CONFIRM_STREAK
-            : 1;
-          if (_procState.startObserve.streak >= needResumeStreak) {
+          if (_procState.startObserve.streak >= getOcrStartConfirmStreak()) {
             this._emitWsPacket('START', payloadBase);
             _procState.startObserve = null;
           }
@@ -2770,10 +3016,7 @@ Page({
               } else {
                 _procState.startObserve = { sec: t, streak: 1 };
               }
-              var needStartStreak = (_procState.pauseConfirmed || _clockMode === 'paused')
-                ? OCR_START_CONFIRM_STREAK
-                : 1;
-              if (_procState.startObserve.streak >= needStartStreak) {
+              if (_procState.startObserve.streak >= getOcrStartConfirmStreak()) {
                 this._emitWsPacket('START', payloadBase);
                 _procState.startObserve = null;
               }

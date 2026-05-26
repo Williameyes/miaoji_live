@@ -1990,20 +1990,34 @@ Page({
     }
 
     if (this.data.isAutoMode && this.data.autoSyncWhitelisted) {
-      var mc = this.data.matchConfig;
+      var mc = this.data.matchConfig || {};
       var changed = false;
       var scoreA = Math.max(0, Math.floor(Number(payload.a) || 0));
       var scoreB = Math.max(0, Math.floor(Number(payload.b) || 0));
-      if (mc.teamA.score !== scoreA) {
-        mc.teamA.score = scoreA;
+      var nextTeamA = mc.teamA || { name: '队 A', bgColor: '#E64340', textColor: '#FFFFFF', score: 0 };
+      var nextTeamB = mc.teamB || { name: '队 B', bgColor: '#10AEFF', textColor: '#FFFFFF', score: 0 };
+      if (Number(nextTeamA.score) !== scoreA) {
+        nextTeamA = Object.assign({}, nextTeamA, { score: scoreA });
         changed = true;
       }
-      if (mc.teamB.score !== scoreB) {
-        mc.teamB.score = scoreB;
+      if (Number(nextTeamB.score) !== scoreB) {
+        nextTeamB = Object.assign({}, nextTeamB, { score: scoreB });
         changed = true;
+      }
+      var nextPeriod = mc.period;
+      if (payload.p !== undefined) {
+        var pNum = Math.max(0, Math.floor(Number(payload.p) || 0));
+        if (pNum !== Number(mc.period || 0)) {
+          nextPeriod = pNum;
+          changed = true;
+        }
       }
       if (changed) {
-        patch.matchConfig = mc;
+        patch.matchConfig = Object.assign({}, mc, {
+          teamA: nextTeamA,
+          teamB: nextTeamB,
+          period: nextPeriod
+        });
         this._liveWsScheduleScorePersist();
       }
     }
