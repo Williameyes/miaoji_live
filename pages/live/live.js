@@ -1948,6 +1948,7 @@ Page({
       targetSeconds = rawSeconds;
       mainRunning = false;
       this._liveWsClockRunning = false;
+      this._liveWsStopClockTick();
       if (prevBundle.mainRunning) {
         var shotElapsed = (nowMs - shotAnchorMs) / 1000;
         shotBaseSec = Math.max(0, Math.floor(shotBaseSec - shotElapsed));

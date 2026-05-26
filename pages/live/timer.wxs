@@ -147,8 +147,8 @@ function onClockBundleChange(newVal, oldVal, ownerInstance, instance) {
 
   var mainSec = computeRemain(_bundle.mainBaseSec, _bundle.mainAnchorMs, !!_bundle.mainRunning);
   var shotSec = computeRemain(_bundle.shotBaseSec, _bundle.shotAnchorMs, !!_bundle.mainRunning);
+  pushDisplay(ownerInstance, mainSec, shotSec);
   if (_bundle.mainRunning) {
-    pushDisplay(ownerInstance, mainSec, shotSec);
     tickLoop(ownerInstance);
   }
 }
