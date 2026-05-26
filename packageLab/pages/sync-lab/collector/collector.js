@@ -52,6 +52,8 @@ var OCR_SCORE_TRUNC_STREAK = 6;
 var WS_RECONNECT_DELAYS_MS = [3000, 6000, 12000, 15000];
 
 var STORAGE_KEY_ROIS = 'sync_lab_rois_v1';
+/** 本场稳定房间号（除非用户点「新房间」） */
+var STORAGE_KEY_WS_ROOM_ID = 'sync_lab_collector_room_id_v1';
 /** 当前 OCR 队列 ROI 数量：主队分、客队分、时间（已移除 24 秒 ROI）。 */
 var OCR_ROI_COUNT = 3;
 var OCR_MIN_INTERVAL_BASE_MS = 160;
@@ -470,6 +472,42 @@ function generateRoomId() {
     return String(n).padStart(6, '0');
   }
   return ('000000' + n).slice(-6);
+}
+
+/**
+ * 读取本地持久化的 6 位房间号。
+ * @returns {string}
+ */
+function loadPersistedRoomId() {
+  try {
+    var id = String(wx.getStorageSync(STORAGE_KEY_WS_ROOM_ID) || '').replace(/\D/g, '').slice(0, 6);
+    return id.length === 6 ? id : '';
+  } catch (eLoad) {
+    return '';
+  }
+}
+
+/**
+ * 持久化本场房间号（OCR 重启 / 采集中断线重连仍复用）。
+ * @param {string} roomId 6 位房间号
+ * @returns {void}
+ */
+function savePersistedRoomId(roomId) {
+  var safe = String(roomId || '').replace(/\D/g, '').slice(0, 6);
+  if (safe.length !== 6) return;
+  try {
+    wx.setStorageSync(STORAGE_KEY_WS_ROOM_ID, safe);
+  } catch (eSave) { /* ignore */ }
+}
+
+/**
+ * 清除持久化房间号（用户主动「新房间」时调用）。
+ * @returns {void}
+ */
+function clearPersistedRoomId() {
+  try {
+    wx.removeStorageSync(STORAGE_KEY_WS_ROOM_ID);
+  } catch (eClr) { /* ignore */ }
 }
 
 /**
@@ -2662,15 +2700,48 @@ Page({
   // ─── WebSocket：连接 / 断线重连 ────────────────────────
 
   /**
-   * 点击「开启采集」：生成房间号 → HTTP 换 Token → WSS 长连接。
+   * 点击「开启采集」：复用本场房间号（无则生成并持久化）→ HTTP 换 Token → WSS。
    * @returns {void}
    */
   onStartTap: function () {
     if (_wsConnecting || this.data.wsState !== 'idle') return;
-    var roomId = generateRoomId();
+    var roomId = loadPersistedRoomId();
+    if (!roomId) {
+      roomId = generateRoomId();
+      savePersistedRoomId(roomId);
+    }
     _wsRoomId = roomId;
     this.setData({ matchCode: roomId, wsStateText: '正在连接…' });
     this._connectWebSocket(roomId);
+  },
+
+  /**
+   * 主动结束当前房间并生成新房间号（需直播端改连新码）。
+   * @returns {void}
+   */
+  onNewRoomTap: function () {
+    var self = this;
+    if (_wsConnecting) return;
+    wx.showModal({
+      title: '开启新房间',
+      content: '将断开当前云端房间并生成新的 6 位房间码，直播端需输入新号码。确定继续？',
+      confirmText: '新房间',
+      cancelText: '取消',
+      success: function (res) {
+        if (!res.confirm) return;
+        self._disconnectWebSocket(true);
+        clearPersistedRoomId();
+        var roomId = generateRoomId();
+        savePersistedRoomId(roomId);
+        _wsRoomId = roomId;
+        self.setData({
+          matchCode: roomId,
+          wsState: 'idle',
+          wsStateText: '正在连接…'
+        });
+        self._connectWebSocket(roomId);
+      }
+    });
   },
 
   /**
@@ -2680,7 +2751,12 @@ Page({
   onStopTap: function () {
     this._stopOcr(false);
     this._disconnectWebSocket(true);
-    this.setData({ wsState: 'idle', wsStateText: '未连接', matchCode: '' });
+    var savedCode = loadPersistedRoomId();
+    this.setData({
+      wsState: 'idle',
+      wsStateText: '未连接',
+      matchCode: savedCode || ''
+    });
   },
 
   /**

@@ -1413,6 +1413,7 @@ Page({
     this._liveWsClockRunning = false;
     this._liveWsClockTickTimer = null;
     this._liveWsPreferAutoAfterConnect = false;
+    this._liveWsWaitingCollector = false;
     this._liveWsPersistTimer = null;
     this._liveWsManualTeardown = false;
     this._liveWsClient = null;
@@ -1686,7 +1687,10 @@ Page({
       text = '握手中…';
       busy = true;
     } else if (phase === 'reconnecting') {
-      text = '断线重连中…';
+      text = this._liveWsWaitingCollector ? '等待采集端上线…' : '断线重连中…';
+      busy = true;
+    } else if (phase === 'waiting_collector') {
+      text = '等待采集端上线…';
       busy = true;
     } else if (phase === 'error') {
       text = detail === 'token fail' ? 'Token 获取失败' : '连接失败';
@@ -1786,6 +1790,7 @@ Page({
    * @returns {void}
    */
   _liveWsOnSocketOpen: function () {
+    this._liveWsWaitingCollector = false;
     var patch = {
       liveWsConnected: true,
       liveWsQuickBusy: false,
@@ -1811,18 +1816,20 @@ Page({
    */
   _liveWsOnSocketClose: function () {
     if (this._liveWsManualTeardown) return;
+    var client = this._liveWsClient;
+    var stillRetrying = !!(client && client.getRoomId && client.getRoomId());
     if (this.data.liveWsConnected) {
       this.setData({ liveWsConnected: false });
     }
-    if (this.data.isAutoMode) {
-      this._liveWsPreferAutoAfterConnect = true;
-      this.setData({ isAutoMode: false }, () => {
-        this.updateTeamGroupWidth(true);
+    if (stillRetrying && this.data.isAutoMode) {
+      this.setData({
+        liveWsStatusText: this._liveWsWaitingCollector ? '等待采集端上线…' : '断线重连中…',
+        liveWsQuickBusy: true
       });
       wx.showToast({
-        title: '云端已断开，已恢复手动。点「同步」可重连',
+        title: this._liveWsWaitingCollector ? '采集端重连中，请稍候' : '云端重连中…',
         icon: 'none',
-        duration: 2800
+        duration: 2200
       });
     }
   },
@@ -1838,7 +1845,7 @@ Page({
       if (!msg || typeof msg !== 'object') return;
 
       if (msg.type === 'DEVICE_OFFLINE') {
-        this._liveWsHandleDeviceOffline();
+        this._liveWsHandleCollectorAbsent('offline');
         return;
       }
       if (msg.type === 'COLLECTOR_EXIST') {
@@ -1851,12 +1858,7 @@ Page({
         return;
       }
       if (msg.type === 'ROOM_NOT_FOUND') {
-        wx.showModal({
-          title: '房间不存在',
-          content: '请确认采集端已开启且房间号一致',
-          showCancel: false
-        });
-        this._liveWsDisconnect(true);
+        this._liveWsHandleCollectorAbsent('not_found');
         return;
       }
       if (msg.type === 'ROOM_FULL') {
@@ -1884,22 +1886,25 @@ Page({
   },
 
   /**
-   * 采集端离线：断开 Socket、清空 UI、弹窗提示。
+   * 采集端暂不可用：保留房间号与自动模式，退避重连（服务端宽限期内可恢复）。
+   * @param {'offline' | 'not_found'} reason 触发原因
    * @returns {void}
    */
-  _liveWsHandleDeviceOffline: function () {
-    this._liveWsDisconnect(true);
-    this._liveWsApplyDisconnectedUiPatch();
-    if (this.data.isAutoMode) {
-      this.setData({ isAutoMode: false }, () => {
-        this.updateTeamGroupWidth(true);
-      });
-    }
-    wx.showModal({
-      title: '采集端已离线',
-      content: '云端连接已断开，已恢复手动记分。',
-      showCancel: false
+  _liveWsHandleCollectorAbsent: function (reason) {
+    this._liveWsWaitingCollector = true;
+    this._liveWsEnsureClient();
+    this.setData({
+      liveWsConnected: false,
+      liveWsQuickBusy: true,
+      liveWsStatusText: '等待采集端上线…'
     });
+    if (this._liveWsClient && typeof this._liveWsClient.signalTransientFailure === 'function') {
+      this._liveWsClient.signalTransientFailure();
+    }
+    var toastTitle = reason === 'not_found'
+      ? '房间未就绪，等待采集端…'
+      : '采集端离线较久，等待重连…';
+    wx.showToast({ title: toastTitle, icon: 'none', duration: 2600 });
   },
 
   /**
@@ -2043,6 +2048,7 @@ Page({
    * @returns {void}
    */
   _liveWsApplyDisconnectedUiPatch: function () {
+    this._liveWsWaitingCollector = false;
     this._liveWsStopClockTick();
     this.setData({
       liveWsConnected: false,
@@ -2079,6 +2085,9 @@ Page({
    */
   _liveWsDisconnect: function (manual) {
     this._liveWsEnsureClient();
+    if (manual) {
+      this._liveWsWaitingCollector = false;
+    }
     if (this._liveWsClient) {
       this._liveWsClient.disconnect(!!manual);
     }

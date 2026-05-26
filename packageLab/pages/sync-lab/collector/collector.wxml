@@ -124,7 +124,15 @@
                 bindtap="onStartTap"
               >开启采集</view>
               <view
-                wx:else
+                wx:if="{{wsState !== 'idle'}}"
+                class="col-act-btn col-act-btn--ble col-act-btn--yellow"
+                hover-class="col-act-btn--pressed"
+                hover-stay-time="100"
+                hover-start-time="20"
+                bindtap="onNewRoomTap"
+              >新房间</view>
+              <view
+                wx:if="{{wsState !== 'idle'}}"
                 class="col-act-btn col-act-btn--ble col-act-btn--red"
                 hover-class="col-act-btn--pressed"
                 hover-stay-time="100"

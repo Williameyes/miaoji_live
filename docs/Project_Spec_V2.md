@@ -62,7 +62,7 @@ location /gaoguang-ws {
 • WebSocket 服务：在 upgrade 阶段提取 URL 中的 roomId 和 token，验证合法性。
 • 房间模型：内存维护 roomMap。每个 Room 包含： • collector：采集端 WS 实例（独占锁，后来的采集端将被拒绝并返回 COLLECTOR_EXIST）。 • broadcasts：Set 集合，存放最多 50 个直播端 WS 实例。 • lastSnapshot：保存最新一次的比赛状态数据包。
 • 消息路由规则： • 收到采集端包：更新 lastSnapshot，遍历 broadcasts Set 下发广播。 • 直播端连入：连接成功后，立即向其单播一次 lastSnapshot。
-• 断线兜底与清理（极重要）： • 必须监听 ws.on('close')。如果是直播端断开，从 Set 中 delete(ws) 防止内存泄漏。 • 如果是采集端断开，向该房间所有直播端下发 {"type": "DEVICE_OFFLINE"}，并 roomMap.delete(roomId) 销毁房间。 • 防爆指令：任何收到的 JSON，必须包在 try...catch 中解析！
+• 断线兜底与清理（极重要）： • 必须监听 ws.on('close')。如果是直播端断开，从 Set 中 delete(ws) 防止内存泄漏。 • 如果是采集端断开，进入 **10 分钟宽限期**（保留 lastSnapshot，直播端可连入等待）；宽限结束再下发 DEVICE_OFFLINE 并 roomMap.delete(roomId)。 • 防爆指令：任何收到的 JSON，必须包在 try...catch 中解析！
 三、采集端 (小程序) 开发实施规范
 核心定位：赛场视觉保安。你需要把原有基于蓝牙底层的代码彻底替换为 WebSocket，同时坚守 5 大异常防抖机制。
 3.1 网络连接与指数退避重连

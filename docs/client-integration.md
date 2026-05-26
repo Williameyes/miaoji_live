@@ -233,9 +233,9 @@ async function connectWithToken(roomId) {
 }
 ```
 
-直播端收到后应断开 Socket、清空 UI，并提示「采集端已离线」。
+直播端收到后应**保留房间号并指数退避重连**（服务端默认宽限 10 分钟；宽限结束后才下发此消息）。
 
-#### 房间不存在
+#### 房间不存在（兼容旧服务端）
 
 ```json
 {
@@ -243,6 +243,8 @@ async function connectWithToken(roomId) {
   "roomId": "123456"
 }
 ```
+
+新服务端在直播端 `BROADCAST_JOIN` 时会预建空房间（可拉取 `lastSnapshot`），通常不再下发此消息。直播端仍应按「等待采集端」退避重连。
 
 #### 房间已满
 
@@ -310,10 +312,10 @@ function onDataBroadcast(payload) {
 | roomId 格式错误 | HTTP 400 | 检查房间号是否为六位数字 |
 | Token 过期或未使用 | WS 401 | 重新调用 `/api/get_token` |
 | roomId 与 token 不匹配 | WS 401 | 确保 Query 参数一致 |
-| 房间不存在 | WS 下行 `ROOM_NOT_FOUND` | 提示用户，等待采集端上线 |
+| 房间未就绪 | WS 下行 `ROOM_NOT_FOUND`（旧）/ 空房等待 | 保留 roomId，退避重连，提示「等待采集端」 |
 | 席位已满 | WS 下行 `ROOM_FULL` | 提示用户稍后重试 |
 | 采集端已被占用 | WS 下行 `COLLECTOR_EXIST` | 提示已有裁判，断开连接 |
-| 采集端断线 | WS 下行 `DEVICE_OFFLINE` | 清空 UI，提示离线 |
+| 采集端断线 | WS 下行 `DEVICE_OFFLINE` | 宽限期（10 分钟）内退避重连；超时后再提示离线 |
 
 ---
 
@@ -336,4 +338,5 @@ function onDataBroadcast(payload) {
 
 | 日期 | 变更 |
 |------|------|
+| 2026-05-26 | 采集端断线宽限 10 分钟；直播端可先连入空房；采集端房间号持久化 +「新房间」 |
 | 2026-05-25 | Token 接口新增 `POST` 方法支持；`roomId` 仍通过 URL Query 传递，body 无需携带参数 |

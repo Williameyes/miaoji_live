@@ -42,6 +42,7 @@ function getWsReconnectDelayMs(attempt) {
  * @returns {{
  *   connect: (roomId: string) => void,
  *   disconnect: (manual?: boolean) => void,
+ *   signalTransientFailure: () => void,
  *   isConnected: () => boolean,
  *   getRoomId: () => string
  * }}
@@ -94,6 +95,20 @@ function createLiveWsClient(handlers) {
       if (manualClose || !roomId) return;
       connect(roomId);
     }, delay);
+  }
+
+  /**
+   * 瞬时不可用（房间未就绪 / 采集端离线等）：关闭当前 Socket 并保留 roomId 退避重连。
+   * @returns {void}
+   */
+  function signalTransientFailure() {
+    if (manualClose || !roomId) return;
+    connecting = false;
+    if (socketTask) {
+      try { socketTask.close({}); } catch (eClose) { /* ignore */ }
+      socketTask = null;
+    }
+    scheduleReconnect();
   }
 
   /**
@@ -193,6 +208,9 @@ function createLiveWsClient(handlers) {
       emitPhase('error', 'token fail');
       console.error('【WS追踪 致命错误】连接流程中断:', err);
       if (typeof cb.onError === 'function') cb.onError(err || {});
+      if (!manualClose && roomId) {
+        scheduleReconnect();
+      }
     });
   }
 
@@ -235,6 +253,7 @@ function createLiveWsClient(handlers) {
   return {
     connect: connect,
     disconnect: disconnect,
+    signalTransientFailure: signalTransientFailure,
     isConnected: isConnected,
     getRoomId: getRoomId
   };
