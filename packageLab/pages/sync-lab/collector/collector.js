@@ -51,27 +51,70 @@ var OCR_SCORE_TRUNC_STREAK = 6;
 /** WebSocket 断线重连退避序列（毫秒），上限 15 秒 */
 var WS_RECONNECT_DELAYS_MS = [3000, 6000, 12000, 15000];
 /**
- * 应用层心跳间隔（25s < 移动 NAT 60-90s 老化窗口 / Nginx idle）。
+ * 应用层心跳间隔基准（毫秒）。
+ *
+ * 历史教训（2026-05 现场日志）：
+ *   - 心跳 25s 时，iOS 端 100% 在 open 后 25.0 秒整点被服务端以 1006 强关：
+ *     `since_open_ms ≈ 25078 / 25088 / 25141`，且每次都在关闭前 70~130ms 有一次心跳
+ *     send.success 回调；`last_recv_ago_ms: -1` 全程没有任何下行。
+ *   - 推断：服务端 / 网关的 read idle ≈ 25s，心跳间隔与之撞车；且自定义 JSON
+ *     `{type:'PING'}` 在某些代理下并不会被识别为"业务流量"来刷 idle。
+ *
+ * 现策略：基准 3s + 抖动。采集端心跳同时承担「刷新 lastSnapshot」职责，直播端中途接入
+ * 时最多拿到几秒前的快照，而不是等下一次 START/STOP/SYNC 事件。
  * @type {number}
  */
-var WS_HEARTBEAT_INTERVAL_MS = 25000;
+var WS_HEARTBEAT_INTERVAL_MS = 3000;
+/** 心跳间隔最大抖动（毫秒），避免多个心跳跟服务端时钟同步「叠在 idle 边界」上。 */
+var WS_HEARTBEAT_JITTER_MS = 500;
+/** 紧急模式心跳间隔（连续短命连接时启用），更激进地刷 idle。 */
+var WS_HEARTBEAT_EMERGENCY_MS = 7000;
+/** open 后多久内被关视为「短命连接」，连续 N 次触发紧急心跳模式。 */
+var WS_SHORTLIVED_OPEN_MS = 30000;
+/** 触发紧急心跳模式所需的连续短命次数。 */
+var WS_SHORTLIVED_TRIGGER_COUNT = 3;
 /** 看门狗检查间隔。 */
 var WS_WATCHDOG_INTERVAL_MS = 10000;
 /**
  * 心跳累计未成功发送的最大间隔；超过即视为底层链路死、强制 reconnect。
  * 采集端不依赖服务端下行（除错误码），所以采用「send 健康度」作为存活判据：
- * 25s 心跳 + 10s 看门狗，60s 内若没有任何成功 send（包括心跳）即认定假死。
+ * 12s 心跳 + 10s 看门狗，45s 内若没有任何成功 send（包括心跳）即认定假死。
  */
-var WS_SEND_STALE_MS = 60000;
+var WS_SEND_STALE_MS = 45000;
+/**
+ * 握手超时（socket 阶段）：connectSocket 后多久内必须收到 onOpen，否则强制重连。
+ *
+ * 历史教训 1：Android（Xiaomi M2102J2SC, wx 8.0.70）的某些 case 下 `wx.connectSocket`
+ *   既不触发 fail 也不触发 open/close 任何回调，UI 永远停在「握手中…」。
+ * 历史教训 2：同一 Android case，wx onOpen 与 setTimeout fire 几乎同帧进入事件循环，
+ *   8s 这个阈值会"误杀"一个 14ms 后就正常 open 的连接（since_open_ms=3 后被 1000 关）。
+ *   将 socket 阶段超时拉到 15s，并在 timer 触发时再二次校验 `_wsOpenedAt`。
+ */
+var WS_HANDSHAKE_SOCKET_TIMEOUT_MS = 15000;
+/** 握手超时（token 阶段）：fetchWsToken 一直挂起的兜底，独立于 socket 阶段。 */
+var WS_HANDSHAKE_TOKEN_TIMEOUT_MS = 10000;
+/** 网络切换后延迟多久再发起重连（让网络栈稳定）。 */
+var WS_NETWORK_CHANGE_DEBOUNCE_MS = 1500;
+/** 网络切换后若刚收到下行，说明链路仍新鲜，不主动断开。 */
+var WS_NETWORK_CHANGE_FRESH_RECV_MS = 15000;
+/** 网络切换后若刚成功上行，优先保留链路，交给心跳/看门狗继续体检。 */
+var WS_NETWORK_CHANGE_FRESH_SEND_MS = 15000;
+/** 刚 open 的 socket 给一个宽限期，避免 iOS 网络类型回调把新连接立刻关掉。 */
+var WS_NETWORK_CHANGE_OPEN_GRACE_MS = 8000;
+/** open 成功后稳定多久才清零 reconnectAttempt（避免短命连接掩盖退避计数）。 */
+var WS_ATTEMPT_CLEAR_AFTER_MS = 8000;
+/** token_fail 时的最小退避（毫秒）。 */
+var WS_TOKEN_FAIL_MIN_DELAY_MS = 5000;
 
 /** 采集端健康日志 Storage Key */
 var COLLECTOR_HEALTH_LOG_STORAGE_KEY = 'SYNC_LAB_COLLECTOR_HEALTH_LOGS_V1';
 /** 内存环形缓冲上限 */
-var COLLECTOR_HEALTH_LOG_MAX = 120;
+var COLLECTOR_HEALTH_LOG_MAX = 200;
 /** 落盘节流（毫秒） */
 var COLLECTOR_HEALTH_LOG_FLUSH_DELAY_MS = 1800;
 
 var STORAGE_KEY_ROIS = 'sync_lab_rois_v1';
+var STORAGE_KEY_OCR_PRESET = 'sync_lab_ocr_preset_v1';
 /** 本场稳定房间号（除非用户点「新房间」） */
 var STORAGE_KEY_WS_ROOM_ID = 'sync_lab_collector_room_id_v1';
 /** 当前 OCR 队列 ROI 数量：主队分、客队分、时间（已移除 24 秒 ROI）。 */
@@ -186,12 +229,22 @@ var _wsConnecting = false;
 var _wsManualClose = false;
 var _wsReconnectAttempt = 0;
 var _wsReconnectTimer = 0;
-/** 全局单调递增发包序列号 */
+/** 全局单调递增发包序列号（业务包与快照心跳共用，保证直播端可接收最新快照） */
 var _globalSeq = 0;
-/** 心跳定时器句柄 */
+/** 心跳独立序列号，仅作诊断字段；快照心跳仍会占用业务 seq */
+var _wsHeartbeatSeq = 0;
+/** 页面实例引用，供心跳/看门狗失败时主动触发 setData 与 _scheduleWsReconnect */
+var _wsPageRef = null;
+/** 心跳定时器句柄（setTimeout，每次心跳后重新 schedule，自带随机抖动） */
 var _wsHeartbeatTimer = 0;
 /** 看门狗定时器句柄 */
 var _wsWatchdogTimer = 0;
+/** 握手超时定时器：connectSocket 后启动；onOpen 时清除 */
+var _wsHandshakeTimer = 0;
+/** open 成功后用于清零 reconnectAttempt 的延迟定时器 */
+var _wsAttemptClearTimer = 0;
+/** 网络变化重连的防抖定时器 */
+var _wsNetworkChangeTimer = 0;
 /** 当前 socket onOpen 时间戳（诊断用） */
 var _wsOpenedAt = 0;
 /** 最近一次 send.success 时间戳（含心跳与业务发包） */
@@ -200,6 +253,12 @@ var _wsLastSendOkAt = 0;
 var _wsLastRecvAt = 0;
 /** wx.onNetworkStatusChange 已安装的回调，供 destroy 时摘除 */
 var _wsNetworkChangeHandler = null;
+/** 最近一次记录的网络类型，用于过滤同类型「假切换」 */
+var _wsLastNetworkType = '';
+/** 紧急心跳模式下连续短命连接的剩余触发计数；为 0 退出紧急模式 */
+var _wsShortLivedStreak = 0;
+/** 紧急心跳模式是否启用 */
+var _wsHeartbeatEmergency = false;
 /** 采集端健康日志环形缓冲 */
 var _collectorHealthLogs = null;
 /** 健康日志落盘节流定时器 */
@@ -216,7 +275,7 @@ var _collectorHealthLogInitialized = false;
  *   lastOcrSec: number,
  *   syncObserve: { sec: number, streak: number } | null,
  *   scoreObserve: { h: number, a: number, streak: number, needStreak: number } | null,
- *   published: { t: number, a: number, b: number, p: number, shotClock: number, running: boolean } | null,
+ *   published: { t: number, a: number, b: number, p: number, shotClock: number, running: boolean, wallMs: number } | null,
  *   sameSecStreak: number,
  *   pauseConfirmed: boolean,
  *   startObserve: { sec: number, streak: number } | null
@@ -478,6 +537,91 @@ function clockFromTotalSec(totalSec) {
   };
 }
 
+/**
+ * 根据最近一次已发布时钟包，推算云端/直播端此刻应显示的大表秒数。
+ * START/SYNC 发出后直播端会本地走表，所以软校准不能拿静态 published.t 比较。
+ * @param {number} [nowMs]
+ * @returns {number} -1 表示尚无发布基线
+ */
+function getPublishedClockSecAt(nowMs) {
+  var pub = _procState.published;
+  if (!pub || typeof pub.t !== 'number') return -1;
+  var sec = Math.max(0, Math.floor(Number(pub.t) || 0));
+  if (!pub.running) return sec;
+  var wall = Number(pub.wallMs) || 0;
+  if (!wall) return sec;
+  var now = nowMs || Date.now();
+  var elapsed = Math.floor(Math.max(0, now - wall) / 1000);
+  return Math.max(0, sec - elapsed);
+}
+
+/**
+ * 采集端当前可发布快照：优先取 OCR 已提交/预测时间，而不是旧的云端 published。
+ * 这用于心跳刷新服务端 lastSnapshot，保证直播端中途接入时拿到当前时间。
+ * @param {WechatMiniprogram.Page.Instance<any, any> | null} page
+ * @param {number} [nowMs]
+ * @returns {{ t: number, a: number, b: number, p: number, shotClock: number, running: boolean } | null}
+ */
+function buildCurrentCollectorSnapshot(page, nowMs) {
+  var now = nowMs || Date.now();
+  var src = _lastCommittedFrame || null;
+  var pageData = page && page.data ? page.data : null;
+  var pub = _procState.published;
+  var t = -1;
+  var a = 0;
+  var b = 0;
+  var p = 1;
+  var shotClock = 24;
+
+  if (src) {
+    t = ocrFrameClockSec(src);
+    a = Math.max(0, Math.floor(Number(src.homeScore) || 0));
+    b = Math.max(0, Math.floor(Number(src.awayScore) || 0));
+    p = Math.max(1, Math.floor(Number(src.period) || 1));
+    shotClock = Math.max(0, Math.floor(Number(src.shotClock) || 24));
+  } else if (pageData) {
+    t = clockToTotalSec({ minutes: pageData.minutes, seconds: pageData.seconds });
+    a = Math.max(0, Math.floor(Number(pageData.homeScore) || 0));
+    b = Math.max(0, Math.floor(Number(pageData.awayScore) || 0));
+    p = Math.max(1, Math.floor(Number(pageData.period) || 1));
+    shotClock = Math.max(0, Math.floor(Number(pageData.shotClock) || 24));
+  } else if (pub) {
+    t = getPublishedClockSecAt(now);
+    a = Math.max(0, Math.floor(Number(pub.a) || 0));
+    b = Math.max(0, Math.floor(Number(pub.b) || 0));
+    p = Math.max(1, Math.floor(Number(pub.p) || 1));
+    shotClock = Math.max(0, Math.floor(Number(pub.shotClock) || 24));
+  }
+
+  var modePaused = _clockMode === 'paused' || _ocrOcclusionActive;
+  var running = !modePaused && (
+    _clockMode === 'running' ||
+    !!_procState.clockRunning ||
+    !!(pub && pub.running)
+  );
+  if (running) {
+    var predicted = getPredictedClock();
+    if (predicted) {
+      var predictedSec = clockToTotalSec(predicted);
+      if (t < 0 || predictedSec <= t + 1) {
+        t = predictedSec;
+      }
+    } else if (pub && pub.running) {
+      t = getPublishedClockSecAt(now);
+    }
+  }
+
+  if (t < 0) return null;
+  return {
+    t: Math.max(0, Math.floor(t)),
+    a: a,
+    b: b,
+    p: p,
+    shotClock: shotClock,
+    running: !!(running && t > 0)
+  };
+}
+
 function isLargeScoreDrop(prev, homeScore, awayScore) {
   if (!prev) return false;
   return (
@@ -736,36 +880,124 @@ function getCollectorWsDiagnosticSnapshot() {
 // ─── WS 心跳 / 看门狗 / 网络监听 ───────────────────────────────────────────────
 
 /**
- * 启动应用层心跳：每 25 秒发一次 PING 包，制造上行流量保活 NAT/网关。
+ * 构造一条「快照型心跳包」。
+ *
+ * 不能发送无 act/seq 的自定义心跳：服务端会把采集端上行包写入 lastSnapshot，
+ * 直播端重连后若拿到的是普通心跳，就会因缺少 act/t/seq 而保持 00:00。
+ * 因此心跳直接携带一份合法 COLLECTOR_UPDATE 快照，既刷新网关 idle，也保持
+ * 服务端 lastSnapshot 始终可被新直播端消费。
+ * @returns {string} JSON 字符串
+ */
+function _buildHeartbeatPacket() {
+  _wsHeartbeatSeq += 1;
+  var now = Date.now();
+  var page = _wsPageRef;
+  var snap = buildCurrentCollectorSnapshot(page, now);
+
+  if (snap) {
+    _globalSeq += 1;
+    var packet = {
+      type: 'COLLECTOR_UPDATE',
+      act: snap.running ? 'START' : 'STOP',
+      t: snap.t,
+      a: snap.a,
+      b: snap.b,
+      p: snap.p,
+      seq: _globalSeq,
+      sys_t: now,
+      match_id: 'M_' + (_wsRoomId || (page && page.data ? page.data.matchCode : '') || ''),
+      hb_seq: _wsHeartbeatSeq,
+      heartbeat: 1
+    };
+    _procState.published = {
+      t: packet.t,
+      a: packet.a,
+      b: packet.b,
+      p: packet.p,
+      shotClock: snap.shotClock,
+      running: snap.running,
+      wallMs: now
+    };
+    return JSON.stringify(packet);
+  }
+
+  return JSON.stringify({
+    type: 'COLLECTOR_HEARTBEAT',
+    hb_seq: _wsHeartbeatSeq,
+    sys_t: now,
+    match_id: 'M_' + (_wsRoomId || ''),
+    ping: 1
+  });
+}
+
+/**
+ * 计算下一次心跳间隔：基准 + 随机抖动；紧急模式下使用更短间隔。
+ * @returns {number} 毫秒
+ */
+function _getNextHeartbeatDelay() {
+  var base = _wsHeartbeatEmergency ? WS_HEARTBEAT_EMERGENCY_MS : WS_HEARTBEAT_INTERVAL_MS;
+  var jitter = Math.floor((Math.random() * 2 - 1) * WS_HEARTBEAT_JITTER_MS);
+  return Math.max(3000, base + jitter);
+}
+
+/**
+ * 启动应用层心跳。
+ *
+ * 与旧版区别：
+ *   - 使用 setTimeout 自递归，每次心跳后按「基准 + ±抖动」重新调度，
+ *     避免与服务端 idle 边界形成稳定共振（旧 setInterval(25000) 正好踩在
+ *     服务端 25s read timeout 上，触发了批量 1006 关闭）；
+ *   - 心跳包结构与业务包同 schema（type/match_id/seq/sys_t），
+ *     方便网关/服务端按统一规则识别业务流量并刷 idle。
  * @returns {void}
  */
 function startCollectorHeartbeat() {
   stopCollectorHeartbeat();
-  _wsHeartbeatTimer = setInterval(function () {
-    if (!_socketTask || _wsManualClose) return;
-    var pkt = JSON.stringify({ type: 'PING', ts: Date.now() });
-    try {
-      _socketTask.send({
-        data: pkt,
-        success: function () {
-          _wsLastSendOkAt = Date.now();
-        },
-        fail: function (err) {
-          logCollectorWs('heartbeat_send_fail', {
-            msg: err && err.errMsg ? String(err.errMsg).slice(0, 120) : 'fail',
-            since_open_ms: _wsOpenedAt ? Date.now() - _wsOpenedAt : -1
-          });
-          _handleCollectorWsSendFailure('heartbeat_fail');
-        }
-      });
-      /* 心跳成功路径不打日志，避免日志环形缓冲被刷爆 */
-    } catch (eHb) {
-      logCollectorWs('heartbeat_throw', {
-        msg: eHb && eHb.message ? String(eHb.message).slice(0, 120) : 'throw'
-      });
-      _handleCollectorWsSendFailure('heartbeat_throw');
-    }
-  }, WS_HEARTBEAT_INTERVAL_MS);
+  var scheduleNext = function () {
+    var delay = _getNextHeartbeatDelay();
+    _wsHeartbeatTimer = setTimeout(function () {
+      _wsHeartbeatTimer = 0;
+      _sendHeartbeatOnce(scheduleNext);
+    }, delay);
+  };
+  /* 第一次提前一些发，让连接快速暴露在「心跳已就绪」状态：4~6s */
+  _wsHeartbeatTimer = setTimeout(function () {
+    _wsHeartbeatTimer = 0;
+    _sendHeartbeatOnce(scheduleNext);
+  }, 4000 + Math.floor(Math.random() * 2000));
+}
+
+/**
+ * 单次心跳：发送、记账、失败兜底。
+ * @param {() => void} scheduleNext 下一次心跳的调度器（成功/失败后均调用）
+ * @returns {void}
+ */
+function _sendHeartbeatOnce(scheduleNext) {
+  if (!_socketTask || _wsManualClose) return;
+  var pkt = _buildHeartbeatPacket();
+  try {
+    _socketTask.send({
+      data: pkt,
+      success: function () {
+        _wsLastSendOkAt = Date.now();
+        if (typeof scheduleNext === 'function') scheduleNext();
+      },
+      fail: function (err) {
+        logCollectorWs('heartbeat_send_fail', {
+          msg: err && err.errMsg ? String(err.errMsg).slice(0, 120) : 'fail',
+          since_open_ms: _wsOpenedAt ? Date.now() - _wsOpenedAt : -1,
+          emergency: !!_wsHeartbeatEmergency
+        });
+        _handleCollectorWsSendFailure('heartbeat_fail', _wsPageRef);
+      }
+    });
+    /* 心跳成功路径不打日志，避免日志环形缓冲被刷爆 */
+  } catch (eHb) {
+    logCollectorWs('heartbeat_throw', {
+      msg: eHb && eHb.message ? String(eHb.message).slice(0, 120) : 'throw'
+    });
+    _handleCollectorWsSendFailure('heartbeat_throw', _wsPageRef);
+  }
 }
 
 /**
@@ -774,7 +1006,7 @@ function startCollectorHeartbeat() {
  */
 function stopCollectorHeartbeat() {
   if (_wsHeartbeatTimer) {
-    clearInterval(_wsHeartbeatTimer);
+    clearTimeout(_wsHeartbeatTimer);
     _wsHeartbeatTimer = 0;
   }
 }
@@ -815,9 +1047,22 @@ function stopCollectorWatchdog() {
 }
 
 /**
- * send 失败 / 看门狗触发的统一处理：close 当前 socket 并退避重连。
+ * send 失败 / 看门狗触发的统一处理：close 当前 socket 并立即调度重连。
+ *
+ * 重要：不再等待 onClose 回调。
+ *
+ * 历史教训（2026-05 Android wx 8.0.70）：`socketTask.send` fail 后业务侧调用 close，
+ * 但 `onClose` 回调实测延迟 51 秒甚至 187 秒才到达；期间整个采集端卡在 wsState=connected
+ * 但实际死透。旧实现依赖 onClose 调度重连，所以这段时间用户感知就是「连接没了又没重连」。
+ *
+ * 现策略：
+ *   1) 立即同步置 wsState=reconnecting；
+ *   2) 立即同步调用 _scheduleWsReconnect（内部已用 _wsReconnectTimer 去重，安全）；
+ *   3) 真的 onClose 到来时只补打日志，不会再触发一次 reconnect（_wsReconnectTimer 已占位）。
+ *
  * @param {string} reason 触发原因
- * @param {WechatMiniprogram.Page.Instance<any, any>} [pageInstance] 页面实例（用于触发 setData 与重连）
+ * @param {WechatMiniprogram.Page.Instance<any, any>} [pageInstance] 兼容旧调用方式；可为空，
+ *   兜底会用 `_wsPageRef`（在 onLoad 注入）
  * @returns {void}
  */
 function _handleCollectorWsSendFailure(reason, pageInstance) {
@@ -830,22 +1075,26 @@ function _handleCollectorWsSendFailure(reason, pageInstance) {
     try { _socketTask.close({}); } catch (eClose) { /* ignore */ }
     _socketTask = null;
   }
-  /* onClose 回调会调用 _scheduleWsReconnect；如果 close 没触发回调（极端情况），
-     通过页面实例兜底调度重连。 */
-  if (pageInstance && typeof pageInstance._scheduleWsReconnect === 'function') {
-    setTimeout(function () {
-      try {
-        if (pageInstance.data && pageInstance.data.wsState !== 'connected') {
-          pageInstance.setData({ wsState: 'reconnecting', wsStateText: '断线重连中…' });
-          pageInstance._scheduleWsReconnect();
-        }
-      } catch (eR) { /* ignore */ }
-    }, 250);
-  }
+  /* 关键修复：onClose 在某些 Android 版本上会延迟数十秒到几分钟才回调。
+     必须立即同步把 wsState 改成 reconnecting，并主动 schedule 一次。 */
+  var page = pageInstance || _wsPageRef;
+  if (!page || typeof page._scheduleWsReconnect !== 'function') return;
+  try {
+    if (page.data && page.data.wsState !== 'reconnecting') {
+      page.setData({ wsState: 'reconnecting', wsStateText: '断线重连中…' });
+    }
+    page._scheduleWsReconnect();
+  } catch (eR) { /* ignore */ }
 }
 
 /**
  * 安装网络变化监听：从无网→有网或网络类型切换时触发主动 reconnect 自检。
+ *
+ * 防抖策略（修复 wifi↔4g 快速来回切的反复断连）：
+ *   - 同类型「假切换」（如 wifi→wifi）直接跳过，不打断当前会话；
+ *   - 真切换走 1500ms 防抖：等网络栈稳定后再去 close + reconnect；
+ *   - 期间如果再次切换，复位防抖窗口，避免一边切一边重连请求 token 失败。
+ *
  * @param {() => WechatMiniprogram.Page.Instance<any, any>} getPageInstance
  * @returns {void}
  */
@@ -854,17 +1103,74 @@ function installCollectorNetworkListener(getPageInstance) {
   if (typeof wx === 'undefined' || typeof wx.onNetworkStatusChange !== 'function') return;
   _wsNetworkChangeHandler = function (res) {
     if (_wsManualClose || !_wsRoomId) return;
+    var nextType = res && res.networkType ? String(res.networkType) : '';
+    var isConnected = !!(res && res.isConnected);
+    var sameType = !!nextType && nextType === _wsLastNetworkType;
     logCollectorWs('network_change', {
-      net_type: res && res.networkType ? String(res.networkType) : '',
-      is_connected: !!(res && res.isConnected)
+      net_type: nextType,
+      prev: _wsLastNetworkType,
+      is_connected: isConnected,
+      debounced: !sameType && isConnected
     });
-    if (res && res.isConnected) {
+    _wsLastNetworkType = nextType;
+    /* 同类型「假切换」（wifi→wifi/4g→4g）：不打断当前 socket */
+    if (sameType) return;
+    if (!isConnected) return;
+    /* 真切换：进入防抖窗口；窗口内再来一次切换会自动 reset */
+    if (_wsNetworkChangeTimer) {
+      clearTimeout(_wsNetworkChangeTimer);
+      _wsNetworkChangeTimer = 0;
+    }
+    _wsNetworkChangeTimer = setTimeout(function () {
+      _wsNetworkChangeTimer = 0;
+      if (_wsManualClose || !_wsRoomId) return;
+      var now = Date.now();
+      var recvAge = _wsLastRecvAt ? now - _wsLastRecvAt : -1;
+      var sendAge = _wsLastSendOkAt ? now - _wsLastSendOkAt : -1;
+      var openAge = _wsOpenedAt ? now - _wsOpenedAt : -1;
+      var linkFresh =
+        (recvAge >= 0 && recvAge <= WS_NETWORK_CHANGE_FRESH_RECV_MS) ||
+        (sendAge >= 0 && sendAge <= WS_NETWORK_CHANGE_FRESH_SEND_MS) ||
+        (openAge >= 0 && openAge <= WS_NETWORK_CHANGE_OPEN_GRACE_MS);
+
+      if (_socketTask && linkFresh) {
+        logCollectorWs('network_change_skip_fresh', {
+          net_type: nextType,
+          recv_age_ms: recvAge,
+          send_age_ms: sendAge,
+          open_age_ms: openAge
+        });
+        return;
+      }
+
+      if (_socketTask) {
+        logCollectorWs('network_change_probe', {
+          net_type: nextType,
+          recv_age_ms: recvAge,
+          send_age_ms: sendAge,
+          open_age_ms: openAge
+        });
+        _sendHeartbeatOnce(function () {
+          logCollectorWs('network_change_probe_ok', { net_type: nextType });
+        });
+        return;
+      }
+
       var page = typeof getPageInstance === 'function' ? getPageInstance() : null;
       _handleCollectorWsSendFailure('network_change', page);
-    }
+    }, WS_NETWORK_CHANGE_DEBOUNCE_MS);
   };
   try {
     wx.onNetworkStatusChange(_wsNetworkChangeHandler);
+    try {
+      if (typeof wx.getNetworkType === 'function') {
+        wx.getNetworkType({
+          success: function (r) {
+            _wsLastNetworkType = r && r.networkType ? String(r.networkType) : '';
+          }
+        });
+      }
+    } catch (eGet) { /* ignore */ }
   } catch (eNet) {
     _wsNetworkChangeHandler = null;
   }
@@ -875,6 +1181,10 @@ function installCollectorNetworkListener(getPageInstance) {
  * @returns {void}
  */
 function uninstallCollectorNetworkListener() {
+  if (_wsNetworkChangeTimer) {
+    clearTimeout(_wsNetworkChangeTimer);
+    _wsNetworkChangeTimer = 0;
+  }
   if (!_wsNetworkChangeHandler) return;
   try {
     if (typeof wx !== 'undefined' && typeof wx.offNetworkStatusChange === 'function') {
@@ -944,6 +1254,10 @@ Page({
     wx.setKeepScreenOn({ keepScreenOn: true });
     /* 健康日志与网络监听一次性安装；与原有 OCR/相机链路完全解耦 */
     initCollectorHealthLogs();
+    /* 关键：把页面实例存到模块级 _wsPageRef，
+       供心跳/看门狗失败时直接拿来 setData / _scheduleWsReconnect。
+       不再依赖 onClose（Android 上 onClose 实测延迟 51~187 秒）。 */
+    _wsPageRef = this;
     var self = this;
     installCollectorNetworkListener(function () { return self; });
     this._checkAccess();
@@ -1067,6 +1381,7 @@ Page({
     uninstallCollectorNetworkListener();
     wx.setKeepScreenOn({ keepScreenOn: false });
     appendCollectorHealthLog('page_unload', {});
+    _wsPageRef = null;
   },
 
   /**
@@ -1185,6 +1500,64 @@ Page({
       return { x: r.x, y: r.y, w: r.w, h: r.h, label: r.label, rawText: '' };
     });
     try { wx.setStorageSync(STORAGE_KEY_ROIS, raw); } catch (e) { }
+  },
+
+  // ─── OCR 机位预设 ───────────────────────────────────
+
+  onSavePreset: function () {
+    var preset = {
+      rois: this.data.rois.map(function (r) {
+        return { x: r.x, y: r.y, w: r.w, h: r.h, label: r.label };
+      }),
+      cameraZoom: this.data.cameraZoom
+    };
+    wx.setStorageSync(STORAGE_KEY_OCR_PRESET, preset);
+    wx.showToast({ title: '机位预设已保存', icon: 'success' });
+  },
+
+  onLoadPreset: function () {
+    var preset = wx.getStorageSync(STORAGE_KEY_OCR_PRESET);
+    if (!preset || !Array.isArray(preset.rois) || !preset.rois.length) {
+      wx.showToast({ title: '未找到机位预设', icon: 'none' });
+      return;
+    }
+
+    var rois = preset.rois.map(function (r) {
+      return {
+        x: r.x,
+        y: r.y,
+        w: r.w,
+        h: r.h,
+        label: r.label,
+        rawText: '',
+        pctStyle: _computePctStyle(r.x, r.y, r.w, r.h)
+      };
+    });
+    var targetZoom = Number(preset.cameraZoom || 1);
+    if (!isFinite(targetZoom) || targetZoom < 1) targetZoom = 1;
+    if (targetZoom > 4) targetZoom = 4;
+
+    var shouldResumePump = !!this.data.ocrEnabled;
+    if (shouldResumePump) {
+      this._cancelOcrFramePump();
+    }
+
+    var self = this;
+    this.setData({
+      rois: rois,
+      cameraZoom: targetZoom,
+      cameraZoomDisplay: targetZoom.toFixed(1),
+      lastCameraZoom: targetZoom,
+      lastCameraZoomDisplay: targetZoom.toFixed(1)
+    }, function () {
+      self._syncZoomRestoreUi();
+      self._saveRois();
+      self._applyHardwareCameraZoom(targetZoom);
+      if (shouldResumePump && _vkSession) {
+        self._startOcrFramePump(_vkSession, _ocrSessionToken);
+      }
+      wx.showToast({ title: '预设已恢复', icon: 'success' });
+    });
   },
 
   // ─── ROI 整体拖动 ────────────────────────────────────
@@ -1365,20 +1738,32 @@ Page({
       }
       return out;
     };
-    var logs = (_collectorHealthLogs || []).slice(-60).map(function (it) {
+    var logs = (_collectorHealthLogs || []).slice(-100).map(function (it) {
       return { t: it.t, e: it.e, d: compactDetail(it.d) };
     });
     var payload = {
       at: Date.now(),
       device: _collectorHealthLogDevice || {},
       ws: getCollectorWsDiagnosticSnapshot(),
+      cfg: {
+        hb_ms: WS_HEARTBEAT_INTERVAL_MS,
+        hb_emerg_ms: WS_HEARTBEAT_EMERGENCY_MS,
+        hb_jitter_ms: WS_HEARTBEAT_JITTER_MS,
+        hb_emergency_on: !!_wsHeartbeatEmergency,
+        shortlived_streak: _wsShortLivedStreak || 0,
+        handshake_token_to_ms: WS_HANDSHAKE_TOKEN_TIMEOUT_MS,
+        handshake_socket_to_ms: WS_HANDSHAKE_SOCKET_TIMEOUT_MS,
+        send_stale_ms: WS_SEND_STALE_MS,
+        netchange_debounce_ms: WS_NETWORK_CHANGE_DEBOUNCE_MS,
+        last_net_type: _wsLastNetworkType || ''
+      },
       logs: logs
     };
     var text = '';
     try {
       text = JSON.stringify(payload);
       if (text.length > 900000) {
-        payload.logs = payload.logs.slice(-25);
+        payload.logs = payload.logs.slice(-40);
         text = JSON.stringify(payload);
       }
     } catch (eJson) {
@@ -1412,6 +1797,14 @@ Page({
     // 每次启动 OCR 前，彻底清空遗留脏数据，实现完全重新采集（不影响 WebSocket、不覆盖人工维护的 period / shotClock）。
     this._wipeOcrDirtyState();
     this._prepareCameraForOcrBoot(token, 'start');
+  },
+
+  _flushPendingWsStartAfterOcr: function () {
+    if (!this._pendingWsStartAfterOcr) return;
+    if (this.data.ocrTransitioning) return;
+    this._pendingWsStartAfterOcr = false;
+    if (_wsConnecting || this.data.wsState !== 'idle') return;
+    this._beginWsSyncNow();
   },
 
   /**
@@ -1607,6 +2000,7 @@ Page({
         self._restoreCameraPreview(function () {
           self.setData({ ocrEnabled: false, ocrTransitioning: false }, function () {
             self._commitLocalState();
+            self._flushPendingWsStartAfterOcr();
           });
         });
         if (!isSdkInternal) {
@@ -1617,6 +2011,7 @@ Page({
       }
       self.setData({ ocrEnabled: true, ocrTransitioning: false }, function () {
         self._commitLocalState();
+        self._flushPendingWsStartAfterOcr();
       });
       _ocrSessionBootAt = Date.now();
       self._startOcrHealthTimer();
@@ -1724,7 +2119,15 @@ Page({
     if (!parsedTime || _ocrOcclusionActive) return;
     var now = Date.now();
     var ocrSec = clockToTotalSec(parsedTime);
-    var realWorldSec = Math.max(0, ocrSec);
+    var captureTs = Number(frameCaptureTs) || now;
+    var pipelineDelaySec = Math.min(
+      OCR_CLOCK_PREDICT_MAX_LEAD_SEC,
+      Math.floor(Math.max(0, now - captureTs) / 1000)
+    );
+    var compensatePipelineDelay =
+      pipelineDelaySec > 0 &&
+      (_clockMode === 'running' || (_lastOcrClockSec >= 0 && ocrSec < _lastOcrClockSec));
+    var realWorldSec = Math.max(0, ocrSec - (compensatePipelineDelay ? pipelineDelaySec : 0));
 
     if (_lastOcrClockSec >= 0 && realWorldSec > 0 && realWorldSec < _lastOcrClockSec) {
       var dropFromLast = _lastOcrClockSec - realWorldSec;
@@ -1764,11 +2167,12 @@ Page({
       wallMs: now
     });
 
+    var publishedSecNow = getPublishedClockSecAt(now);
     if (
       _procState.clockRunning &&
-      _procState.published &&
+      publishedSecNow >= 0 &&
       !_ocrOcclusionActive &&
-      Math.abs(realWorldSec - _procState.published.t) >= OCR_SOFT_SYNC_DRIFT_SEC &&
+      Math.abs(realWorldSec - publishedSecNow) >= OCR_SOFT_SYNC_DRIFT_SEC &&
       now - (_lastSoftSyncWallTs || 0) >= OCR_SOFT_SYNC_DEBOUNCE_MS
     ) {
       _lastSoftSyncWallTs = now;
@@ -1828,7 +2232,7 @@ Page({
     if (_lastCommittedFrame) {
       prevSec = ocrFrameClockSec(_lastCommittedFrame);
     } else if (_procState.published && typeof _procState.published.t === 'number') {
-      prevSec = _procState.published.t;
+      prevSec = getPublishedClockSecAt(nowMs);
     }
     var looksRunning = prevSec > 0 && _ocrLastGoodClockSec >= 0 && _ocrLastGoodClockSec < prevSec;
     if (looksRunning) {
@@ -3061,8 +3465,7 @@ Page({
    * 点击「开启采集」：复用本场房间号（无则生成并持久化）→ HTTP 换 Token → WSS。
    * @returns {void}
    */
-  onStartTap: function () {
-    if (_wsConnecting || this.data.wsState !== 'idle') return;
+  _beginWsSyncNow: function () {
     var roomId = loadPersistedRoomId();
     if (!roomId) {
       roomId = generateRoomId();
@@ -3071,6 +3474,18 @@ Page({
     _wsRoomId = roomId;
     this.setData({ matchCode: roomId, wsStateText: '正在连接…' });
     this._connectWebSocket(roomId);
+  },
+
+  onStartTap: function () {
+    if (_wsConnecting || this.data.wsState !== 'idle') return;
+    if (this.data.ocrTransitioning) {
+      this._pendingWsStartAfterOcr = true;
+      this.setData({ wsStateText: '等待 OCR 启动…' });
+      wx.showToast({ title: 'OCR 启动中，稍后自动同步', icon: 'none', duration: 1200 });
+      return;
+    }
+    this._pendingWsStartAfterOcr = false;
+    this._beginWsSyncNow();
   },
 
   /**
@@ -3118,6 +3533,7 @@ Page({
    * @returns {void}
    */
   onStopTap: function () {
+    this._pendingWsStartAfterOcr = false;
     this._stopOcr(false);
     this._disconnectWebSocket(true);
     var savedCode = loadPersistedRoomId();
@@ -3139,6 +3555,15 @@ Page({
 
   /**
    * 建立 WebSocket 长连接（先取 Token 再 connectSocket）。
+   *
+   * 修复重点：
+   *   1) 整段加握手超时（WS_HANDSHAKE_TIMEOUT_MS）：Android 某些 wx 版本会出现
+   *      `connectSocket` 既不 success 也不 fail 的死锁，UI 永远停在「握手中…」；
+   *   2) `_wsReconnectAttempt` 不再在 onOpen 时立即清零，改为「稳定 N 秒」后才
+   *      清零，避免「连上 25s 即被 1006 关闭」的短命连接掩盖退避计数；
+   *   3) 短命连接计数（_wsShortLivedStreak）连续达阈值 → 进入紧急心跳模式（8s）。
+   *   4) token_fail 走 max(指数退避, WS_TOKEN_FAIL_MIN_DELAY_MS) 的更宽松退避。
+   *
    * @param {string} roomId 房间号
    * @returns {void}
    */
@@ -3150,17 +3575,20 @@ Page({
     this.setData({ wsState: 'connecting', wsStateText: '获取 Token…' });
 
     logCollectorWs('connect_request', { room: String(roomId || ''), attempt: _wsReconnectAttempt });
+    this._armHandshakeWatchdog('token');
 
     this._fetchWsToken(roomId).then(function (token) {
       logCollectorWs('token_ok', {});
       if (_wsManualClose) {
         _wsConnecting = false;
+        self._disarmHandshakeWatchdog();
         return;
       }
       var wsUrl = WS_BASE_URL + WS_SOCKET_PATH +
         '?roomId=' + encodeURIComponent(roomId) +
         '&token=' + encodeURIComponent(token);
       self.setData({ wsStateText: '握手中…' });
+      self._armHandshakeWatchdog('socket');
       try {
         if (_socketTask) {
           try { _socketTask.close({}); } catch (eClose) { }
@@ -3170,26 +3598,32 @@ Page({
           url: wsUrl,
           fail: function (err) {
             _wsConnecting = false;
-            self.setData({ wsState: 'idle', wsStateText: '连接失败' });
+            self._disarmHandshakeWatchdog();
+            self.setData({ wsState: 'reconnecting', wsStateText: '连接失败，重连中…' });
             logCollectorWs('connect_socket_fail', {
               msg: err && err.errMsg ? String(err.errMsg).slice(0, 120) : 'fail'
             });
-            wx.showToast({ title: 'WebSocket 连接失败', icon: 'none' });
+            if (!_wsManualClose && _wsRoomId) {
+              self._scheduleWsReconnect();
+            }
           }
         });
       } catch (errConnect) {
         _wsConnecting = false;
-        self.setData({ wsState: 'idle', wsStateText: '连接失败' });
-        wx.showToast({ title: 'WebSocket 连接失败', icon: 'none' });
+        self._disarmHandshakeWatchdog();
+        self.setData({ wsState: 'reconnecting', wsStateText: '连接失败，重连中…' });
         logCollectorWs('connect_socket_throw', {
           msg: errConnect && errConnect.message ? String(errConnect.message).slice(0, 120) : 'throw'
         });
+        if (!_wsManualClose && _wsRoomId) {
+          self._scheduleWsReconnect();
+        }
         return;
       }
 
       _socketTask.onOpen(function () {
         _wsConnecting = false;
-        _wsReconnectAttempt = 0;
+        self._disarmHandshakeWatchdog();
         if (_wsReconnectTimer) {
           clearTimeout(_wsReconnectTimer);
           _wsReconnectTimer = 0;
@@ -3197,9 +3631,28 @@ Page({
         _wsOpenedAt = Date.now();
         _wsLastSendOkAt = 0;
         _wsLastRecvAt = 0;
-        logCollectorWs('open', { room: String(roomId || '') });
+        logCollectorWs('open', {
+          room: String(roomId || ''),
+          emergency_heartbeat: !!_wsHeartbeatEmergency,
+          shortlived_streak: _wsShortLivedStreak
+        });
         self.setData({ wsState: 'connected', wsStateText: '云端已连接 ✓' });
         wx.vibrateShort({ type: 'medium' });
+        /* 稳定 WS_ATTEMPT_CLEAR_AFTER_MS 后才认为连接「真活了」，再清零退避计数；
+           这样 25s 被 1006 关闭这类短命场景也能正确推进退避 */
+        if (_wsAttemptClearTimer) {
+          clearTimeout(_wsAttemptClearTimer);
+          _wsAttemptClearTimer = 0;
+        }
+        _wsAttemptClearTimer = setTimeout(function () {
+          _wsAttemptClearTimer = 0;
+          _wsReconnectAttempt = 0;
+          _wsShortLivedStreak = 0;
+          if (_wsHeartbeatEmergency) {
+            _wsHeartbeatEmergency = false;
+            logCollectorWs('heartbeat_emergency_off', {});
+          }
+        }, WS_ATTEMPT_CLEAR_AFTER_MS);
         startCollectorHeartbeat();
         startCollectorWatchdog(function () { return self; });
         self._maybeBootstrapSnapshot();
@@ -3229,18 +3682,43 @@ Page({
 
       _socketTask.onClose(function (res) {
         _wsConnecting = false;
+        self._disarmHandshakeWatchdog();
+        var sinceOpen = _wsOpenedAt ? Date.now() - _wsOpenedAt : -1;
         var code = res && typeof res.code === 'number' ? res.code : -1;
+        /* 短命连接统计：onOpen 后 30s 内被关掉的连接累计 */
+        var wasOpen = _wsOpenedAt > 0;
+        if (wasOpen && sinceOpen >= 0 && sinceOpen < WS_SHORTLIVED_OPEN_MS && !_wsManualClose) {
+          _wsShortLivedStreak = (_wsShortLivedStreak || 0) + 1;
+          if (
+            !_wsHeartbeatEmergency &&
+            _wsShortLivedStreak >= WS_SHORTLIVED_TRIGGER_COUNT
+          ) {
+            _wsHeartbeatEmergency = true;
+            logCollectorWs('heartbeat_emergency_on', {
+              streak: _wsShortLivedStreak,
+              last_since_open_ms: sinceOpen,
+              code: code
+            });
+          }
+        }
+        if (_wsAttemptClearTimer) {
+          clearTimeout(_wsAttemptClearTimer);
+          _wsAttemptClearTimer = 0;
+        }
         logCollectorWs('close', {
           code: code,
           reason: res && res.reason ? String(res.reason).slice(0, 120) : '',
-          since_open_ms: _wsOpenedAt ? Date.now() - _wsOpenedAt : -1,
+          since_open_ms: sinceOpen,
           last_send_ok_ago_ms: _wsLastSendOkAt ? Date.now() - _wsLastSendOkAt : -1,
           last_recv_ago_ms: _wsLastRecvAt ? Date.now() - _wsLastRecvAt : -1,
-          manual: !!_wsManualClose
+          manual: !!_wsManualClose,
+          shortlived_streak: _wsShortLivedStreak,
+          emergency_heartbeat: !!_wsHeartbeatEmergency
         });
         stopCollectorHeartbeat();
         stopCollectorWatchdog();
         _socketTask = null;
+        _wsOpenedAt = 0;
         if (_wsManualClose) {
           self.setData({ wsState: 'idle', wsStateText: '未连接' });
           return;
@@ -3250,27 +3728,94 @@ Page({
       });
     }).catch(function (err) {
       _wsConnecting = false;
-      self.setData({ wsState: 'idle', wsStateText: 'Token 获取失败' });
-      wx.showToast({ title: 'Token 获取失败', icon: 'none' });
+      self._disarmHandshakeWatchdog();
+      self.setData({ wsState: 'reconnecting', wsStateText: 'Token 失败，重连中…' });
       logCollectorWs('token_fail', {
         msg: err && err.message ? String(err.message).slice(0, 120) : 'fail'
       });
       if (!_wsManualClose && _wsRoomId) {
-        self._scheduleWsReconnect();
+        self._scheduleWsReconnect({ minDelayMs: WS_TOKEN_FAIL_MIN_DELAY_MS });
       }
     });
   },
 
   /**
-   * 指数退避重连（3→6→12 秒，上限 15 秒）。
+   * 握手超时看门狗。
+   *
+   * 阶段隔离：
+   *   - 'token' 阶段（fetchWsToken 还没回）：超时 = WS_HANDSHAKE_TOKEN_TIMEOUT_MS（10s）；
+   *   - 'socket' 阶段（已 token_ok、等 onOpen）：超时 = WS_HANDSHAKE_SOCKET_TIMEOUT_MS（15s）。
+   *
+   * 关键防误杀：fire 时再次校验
+   *   1) `_wsOpenedAt > 0` —— 已经 onOpen 直接 bail（旧版踩过坑：14ms 之差把好连接关掉）；
+   *   2) `_wsManualClose` —— 用户已经主动断开，bail；
+   *   3) `_wsReconnectTimer` —— 已有重连在排程，bail，避免双调度。
+   *
+   * 解决 Android 某些 wx 版本 `connectSocket` 没有任何回调的死锁。
+   *
+   * @param {'token'|'socket'} stage 哪个阶段启动看门狗
    * @returns {void}
    */
-  _scheduleWsReconnect: function () {
+  _armHandshakeWatchdog: function (stage) {
+    var self = this;
+    this._disarmHandshakeWatchdog();
+    var timeout = stage === 'socket'
+      ? WS_HANDSHAKE_SOCKET_TIMEOUT_MS
+      : WS_HANDSHAKE_TOKEN_TIMEOUT_MS;
+    _wsHandshakeTimer = setTimeout(function () {
+      _wsHandshakeTimer = 0;
+      if (_wsManualClose) return;
+      /* 防止与 onOpen 同帧竞态：如果连接已经 open，直接 bail（不能误杀已建立的连接） */
+      if (_wsOpenedAt > 0) {
+        logCollectorWs('handshake_timeout_skip_open', {
+          stage: String(stage || ''),
+          since_open_ms: Date.now() - _wsOpenedAt
+        });
+        return;
+      }
+      logCollectorWs('handshake_timeout', {
+        stage: String(stage || ''),
+        has_socket: !!_socketTask,
+        attempt: _wsReconnectAttempt,
+        timeout_ms: timeout
+      });
+      var hadSocket = !!_socketTask;
+      _wsConnecting = false;
+      if (_socketTask) {
+        try { _socketTask.close({}); } catch (eClose) { /* ignore */ }
+        _socketTask = null;
+      }
+      if (!_wsManualClose && _wsRoomId && !_wsReconnectTimer) {
+        self.setData({ wsState: 'reconnecting', wsStateText: '握手超时，重连中…' });
+        self._scheduleWsReconnect();
+      }
+      /* 即便 hadSocket==true，我们也不依赖 onClose（Android 上它可能 60s+ 才到），
+         直接立刻 schedule 重连；onClose 真到来时 `_wsReconnectTimer` 已占位，会自动去重。 */
+    }, timeout);
+  },
+
+  /** 清除握手超时看门狗（onOpen / onClose / fail 时都要清）。 */
+  _disarmHandshakeWatchdog: function () {
+    if (_wsHandshakeTimer) {
+      clearTimeout(_wsHandshakeTimer);
+      _wsHandshakeTimer = 0;
+    }
+  },
+
+  /**
+   * 指数退避重连（3→6→12 秒，上限 15 秒）。
+   * @param {{ minDelayMs?: number }} [opts] 可指定最小延迟（如 token_fail 时）
+   * @returns {void}
+   */
+  _scheduleWsReconnect: function (opts) {
     var self = this;
     if (_wsManualClose || !_wsRoomId) return;
     if (_wsReconnectTimer) return;
     _wsReconnectAttempt += 1;
     var delay = getWsReconnectDelayMs(_wsReconnectAttempt);
+    if (opts && typeof opts.minDelayMs === 'number') {
+      delay = Math.max(delay, opts.minDelayMs);
+    }
     console.log('[Collector][WS] reconnect in %sms attempt=%s', delay, _wsReconnectAttempt);
     _wsReconnectTimer = setTimeout(function () {
       _wsReconnectTimer = 0;
@@ -3291,7 +3836,18 @@ Page({
       clearTimeout(_wsReconnectTimer);
       _wsReconnectTimer = 0;
     }
+    if (_wsHandshakeTimer) {
+      clearTimeout(_wsHandshakeTimer);
+      _wsHandshakeTimer = 0;
+    }
+    if (_wsAttemptClearTimer) {
+      clearTimeout(_wsAttemptClearTimer);
+      _wsAttemptClearTimer = 0;
+    }
     _wsReconnectAttempt = 0;
+    _wsShortLivedStreak = 0;
+    _wsHeartbeatEmergency = false;
+    _wsHeartbeatSeq = 0;
     stopCollectorHeartbeat();
     stopCollectorWatchdog();
     if (_socketTask) {
@@ -3310,19 +3866,13 @@ Page({
    * @returns {void}
    */
   _maybeBootstrapSnapshot: function () {
-    var snap = _lastCommittedFrame || {
-      homeScore: this.data.homeScore,
-      awayScore: this.data.awayScore,
-      period: this.data.period,
-      minutes: this.data.minutes,
-      seconds: this.data.seconds,
-      shotClock: this.data.shotClock
-    };
-    this._emitWsPacket('SYNC', {
-      t: clockToTotalSec(snap),
-      a: snap.homeScore,
-      b: snap.awayScore,
-      p: snap.period
+    var snap = buildCurrentCollectorSnapshot(this, Date.now());
+    if (!snap) return;
+    this._emitWsPacket(snap.running ? 'START' : 'SYNC', {
+      t: snap.t,
+      a: snap.a,
+      b: snap.b,
+      p: snap.p
     });
   },
 
@@ -3335,6 +3885,7 @@ Page({
   _emitWsPacket: function (act, payload) {
     if (!_socketTask || this.data.wsState !== 'connected') return;
     _globalSeq += 1;
+    var packetWallMs = Date.now();
     var packet = {
       type: 'COLLECTOR_UPDATE',
       act: act,
@@ -3343,7 +3894,7 @@ Page({
       b: Math.max(0, Math.floor(Number(payload.b) || 0)),
       p: Math.max(1, Math.floor(Number(payload.p) || 1)),
       seq: _globalSeq,
-      sys_t: Date.now(),
+      sys_t: packetWallMs,
       match_id: 'M_' + (_wsRoomId || this.data.matchCode || '')
     };
     var self = this;
@@ -3378,11 +3929,13 @@ Page({
       b: packet.b,
       p: packet.p,
       shotClock: this.data.shotClock,
-      running: act === 'START' || (act === 'SYNC' && _procState.clockRunning)
+      running: act === 'START' || (act === 'SYNC' && _procState.clockRunning),
+      wallMs: packetWallMs
     };
     if ((act === 'SCORE' || act === 'PERIOD') && prevPublished) {
       nextPublished.t = prevPublished.t;
       nextPublished.running = prevPublished.running;
+      nextPublished.wallMs = prevPublished.wallMs || packetWallMs;
     }
     _procState.published = nextPublished;
     if (act === 'START') {
@@ -3521,7 +4074,7 @@ Page({
     var t = timeInfo
       ? clockToTotalSec(timeInfo)
       : (_procState.published
-        ? _procState.published.t
+        ? getPublishedClockSecAt(now)
         : clockToTotalSec({ minutes: this.data.minutes, seconds: this.data.seconds }));
     var pub = _procState.published;
     var refT = _procState.lastOcrSec >= 0

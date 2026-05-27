@@ -11,6 +11,8 @@ const { API_BASE_URL } = require('../config/api.js');
 
 /** @type {string} */
 const WS_TOKEN_PATH = '/api/get_token';
+/** @type {number} */
+const WS_TOKEN_TIMEOUT_MS = 10000;
 
 /**
  * HTTP POST 换取 WebSocket 一次性 Token。
@@ -28,6 +30,7 @@ function fetchWsToken(roomId) {
     wx.request({
       url: url,
       method: 'POST',
+      timeout: WS_TOKEN_TIMEOUT_MS,
       header: {
         'Content-Type': 'application/json'
       },
@@ -58,5 +61,6 @@ function fetchWsToken(roomId) {
 }
 
 module.exports = {
-  fetchWsToken: fetchWsToken
+  fetchWsToken: fetchWsToken,
+  WS_TOKEN_TIMEOUT_MS: WS_TOKEN_TIMEOUT_MS
 };

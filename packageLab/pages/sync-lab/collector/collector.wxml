@@ -1,30 +1,38 @@
-<!-- 采集端横屏模式：相机全屏，所有控件用 cover-view 叠加 -->
+<!-- 采集端：暗黑数字控制台上下分屏布局 -->
 <!-- 登录 + 白名单双重门控：未授权用户页面内容完全不渲染 -->
 <view class="col-root">
   <canvas type="webgl" id="ocrVkCanvas" class="col-ocr-vk-canvas"></canvas>
 
-  <!-- ── 未授权占位 ── -->
   <view class="col-locked" wx:if="{{!isLogin || !isInWhitelist}}">
-    <view class="col-locked-icon">🔒</view>
+    <view class="col-locked-icon">LOCK</view>
     <view class="col-locked-text">需要登录或权限</view>
   </view>
 
-  <!-- ── 主界面（已授权）── -->
-  <camera
-    wx:if="{{isLogin && isInWhitelist && cameraMounted}}"
-    class="col-camera-full"
-    device-position="back"
-    flash="off"
-    zoom="{{cameraZoom}}"
-    mode="normal"
-    resolution="medium"
-    frame-size="medium"
-    binderror="onCameraError"
-    bindinitdone="onCameraInit"
-  ></camera>
+  <view wx:if="{{isLogin && isInWhitelist}}" class="col-shell">
+    <!-- 上半部分：取景与采集区 -->
+    <view class="col-viewfinder">
+      <camera
+        wx:if="{{cameraMounted}}"
+        class="col-camera-full"
+        device-position="back"
+        flash="off"
+        zoom="{{cameraZoom}}"
+        mode="normal"
+        resolution="medium"
+        frame-size="medium"
+        binderror="onCameraError"
+        bindinitdone="onCameraInit"
+      ></camera>
 
-  <view wx:if="{{isLogin && isInWhitelist}}" class="col-overlay-root">
-    <!-- ① ROI 选区框（可拖动 + 右下角可缩放）-->
+      <view class="col-ocr-hint" wx:if="{{ocrEnabled || ocrTransitioning}}">
+        OCR 调试中
+      </view>
+
+      <view class="col-debug-panel" wx:if="{{debugMode && debugText}}">
+        <view class="col-debug-text">{{debugText}}</view>
+      </view>
+    </view>
+
     <view class="col-roi-layer">
       <view
         wx:for="{{rois}}"
@@ -38,7 +46,7 @@
         catchtouchcancel="onRoiTouchEnd"
       >
         <view class="col-roi-tag">{{item.label}}</view>
-        <view class="col-roi-raw" wx:if="{{debugMode && item.rawText}}">{{item.rawText}}</view>
+        <text class="col-roi-raw">{{item.rawText}}</text>
         <view
           class="col-roi-handle-se"
           data-idx="{{index}}"
@@ -50,112 +58,92 @@
       </view>
     </view>
 
-    <!-- ② 顶部状态条（长按导出健康日志） -->
-    <view
-      class="col-top-bar"
-      bindlongpress="onExportCollectorLogs"
-      show-menu-by-longpress="{{false}}"
-    >
-      <view class="col-top-dot col-top-dot--{{wsState}}"></view>
-      <view class="col-top-state">{{wsStateText}}</view>
-      <view class="col-top-code" wx:if="{{matchCode}}">码 {{matchCode}}</view>
-      <view class="col-top-code col-top-code--muted" wx:else>码待生成</view>
-      <view class="col-top-hz" wx:if="{{ocrTransitioning}}">OCR 切换中</view>
-      <view class="col-top-hz" wx:elif="{{ocrEnabled}}">OCR 实时</view>
-    </view>
-
-    <!-- ③ 底部：缩放条（工具栏外上方）+ 控制条 -->
-    <view class="col-bottom-dock">
-      <view class="col-bottom-inner">
-        <view
-          class="col-score-strip"
-          bindlongpress="onToggleDebug"
-          show-menu-by-longpress="{{false}}"
-        >
-          <view class="col-score-home">{{homeScore}}</view>
-          <view class="col-score-sep">:</view>
-          <view class="col-score-away">{{awayScore}}</view>
-          <view class="col-score-remain">
-            <text class="col-score-remain-label">剩余</text>
-            <text class="col-score-remain-val">{{minutes < 10 ? '0' : ''}}{{minutes}}:{{seconds < 10 ? '0' : ''}}{{seconds}}</text>
-          </view>
+    <!-- 下半部分：纯黑数字控制台 -->
+    <view class="col-console">
+      <view
+        class="col-console-status"
+        bindlongpress="onExportCollectorLogs"
+        show-menu-by-longpress="{{false}}"
+      >
+        <view class="col-status-left">
+          <view class="col-status-dot{{wsState === 'connected' ? ' col-status-dot--ok' : ' col-status-dot--bad'}}"></view>
+          <text class="col-status-text">{{wsStateText}}</text>
+          <text class="col-status-ocr" wx:if="{{ocrTransitioning}}">OCR 切换中</text>
+          <text class="col-status-ocr" wx:elif="{{ocrEnabled}}">OCR 实时</text>
         </view>
-
-        <view class="col-tools-col">
-          <view class="col-zoom-strip">
-            <view class="col-zoom-row">
-              <view class="col-zoom-slider-wrap">
-                <text class="col-zoom-label">缩放 {{cameraZoomDisplay}}x</text>
-                <slider
-                  class="col-zoom-slider"
-                  min="1"
-                  max="4"
-                  step="0.1"
-                  value="{{cameraZoom}}"
-                  bindchange="onCameraZoomChange"
-                  show-value="{{false}}"
-                  backgroundColor="rgba(255,255,255,0.28)"
-                  activeColor="rgba(134,239,172,0.95)"
-                  block-size="18"
-                />
-              </view>
-              <view
-                class="col-zoom-restore{{canRestoreLastZoom ? ' col-zoom-restore--active' : ' col-zoom-restore--disabled'}}"
-                hover-class="{{canRestoreLastZoom ? 'col-zoom-restore--pressed' : ''}}"
-                hover-stay-time="80"
-                bindtap="onRestoreLastZoom"
-              >
-                <text class="col-zoom-restore-icon">↺</text>
-                <text class="col-zoom-restore-text">{{lastCameraZoomDisplay}}x</text>
-              </view>
-            </view>
-          </view>
-          <view class="col-toolbar">
-            <view class="col-action-strip">
-              <view
-                class="col-act-btn col-act-btn--ocr{{ocrEnabled?' col-act-btn--green':' col-act-btn--blue'}}"
-                hover-class="col-act-btn--pressed"
-                hover-stay-time="100"
-                hover-start-time="20"
-                bindtap="onToggleOcr"
-              >{{ocrTransitioning?'OCR切换中':(ocrEnabled?'关OCR':'开OCR')}}</view>
-              <view
-                wx:if="{{wsState === 'idle'}}"
-                class="col-act-btn col-act-btn--ble col-act-btn--blue"
-                hover-class="col-act-btn--pressed"
-                hover-stay-time="100"
-                hover-start-time="20"
-                bindtap="onStartTap"
-              >开启采集</view>
-              <view
-                wx:if="{{wsState !== 'idle'}}"
-                class="col-act-btn col-act-btn--ble col-act-btn--yellow"
-                hover-class="col-act-btn--pressed"
-                hover-stay-time="100"
-                hover-start-time="20"
-                bindtap="onNewRoomTap"
-              >新房间</view>
-              <view
-                wx:if="{{wsState !== 'idle'}}"
-                class="col-act-btn col-act-btn--ble col-act-btn--red"
-                hover-class="col-act-btn--pressed"
-                hover-stay-time="100"
-                hover-start-time="20"
-                bindtap="onStopTap"
-              >停止</view>
-            </view>
-          </view>
+        <view class="col-status-right">
+          <text class="col-status-code" wx:if="{{matchCode}}">房间码：{{matchCode}}</text>
+          <text class="col-status-code col-status-code--muted" wx:else>房间码：未生成</text>
+          <view
+            wx:if="{{wsState !== 'idle'}}"
+            class="col-status-new-room"
+            catchtap="onNewRoomTap"
+          >新房间</view>
         </view>
       </view>
-    </view>
 
-    <view class="col-ocr-hint" wx:if="{{ocrEnabled || ocrTransitioning}}">
-      OCR 调试中
-    </view>
+      <view class="col-zoom-section">
+        <view class="col-zoom-slider-wrap">
+          <slider
+            class="col-zoom-slider"
+            min="1"
+            max="4"
+            step="0.1"
+            value="{{cameraZoom}}"
+            bindchange="onCameraZoomChange"
+            show-value="{{false}}"
+            backgroundColor="#2b2b2b"
+            activeColor="#facc15"
+            block-size="20"
+          />
+        </view>
+      </view>
 
-    <view class="col-debug-panel" wx:if="{{debugMode && debugText}}">
-      <view class="col-debug-text">{{debugText}}</view>
+      <view
+        class="col-monitor"
+        bindlongpress="onToggleDebug"
+        show-menu-by-longpress="{{false}}"
+      >
+        <text class="col-monitor-text">主: {{ homeScore }} | 客: {{ awayScore }} | 倒计时: {{ minutes }}:{{ seconds < 10 ? '0' + seconds : seconds }}</text>
+      </view>
+
+      <view class="col-action-grid">
+        <view
+          class="col-console-btn col-console-btn--ocr{{ocrEnabled ? ' col-console-btn--danger' : ' col-console-btn--success'}}"
+          hover-class="col-console-btn--pressed"
+          hover-stay-time="80"
+          catchtap="onToggleOcr"
+        >{{ocrTransitioning ? 'OCR 切换中' : (ocrEnabled ? '关闭 OCR' : '开启 OCR')}}</view>
+
+        <view
+          class="col-console-btn col-console-btn--preset-save"
+          hover-class="col-console-btn--pressed"
+          hover-stay-time="80"
+          catchtap="onSavePreset"
+        >保存预设</view>
+
+        <view
+          wx:if="{{wsState === 'connected'}}"
+          class="col-console-btn col-console-btn--sync col-console-btn--warning"
+          hover-class="col-console-btn--pressed"
+          hover-stay-time="80"
+          catchtap="onStopTap"
+        >停止同步</view>
+        <view
+          wx:else
+          class="col-console-btn col-console-btn--sync col-console-btn--primary"
+          hover-class="col-console-btn--pressed"
+          hover-stay-time="80"
+          catchtap="onStartTap"
+        >开启同步</view>
+
+        <view
+          class="col-console-btn col-console-btn--preset-load"
+          hover-class="col-console-btn--pressed"
+          hover-stay-time="80"
+          catchtap="onLoadPreset"
+        >恢复预设</view>
+      </view>
     </view>
   </view>
-
 </view>

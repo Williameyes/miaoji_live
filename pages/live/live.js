@@ -1901,6 +1901,16 @@ Page({
 
       if (msg.type === 'DATA_BROADCAST') {
         var nested = msg.payload && typeof msg.payload === 'object' ? msg.payload : msg;
+        if (!nested || typeof nested.act !== 'string' || typeof nested.seq !== 'number') {
+          var nowIgnored = Date.now();
+          if (!this._liveWsLastIgnoredBroadcastLogAt || nowIgnored - this._liveWsLastIgnoredBroadcastLogAt > 10000) {
+            this._liveWsLastIgnoredBroadcastLogAt = nowIgnored;
+            this.appendHealthLog('ws_broadcast_ignored', {
+              type: nested && nested.type ? String(nested.type).slice(0, 40) : '',
+              keys: nested && typeof nested === 'object' ? Object.keys(nested).slice(0, 8).join(',') : ''
+            });
+          }
+        }
         this._consumeWsBroadcast(nested);
         return;
       }
@@ -1961,6 +1971,7 @@ Page({
     var rawSeconds = Math.max(0, Math.floor(Number(payload.t) || 0));
     var targetSeconds = rawSeconds;
     var nowMs = Date.now();
+    var mainAnchorMs = nowMs;
 
     var prevBundle = this.data.wxsClockBundle || {};
     var mainRunning = !!this._liveWsClockRunning;
@@ -1968,8 +1979,9 @@ Page({
     var shotAnchorMs = typeof prevBundle.shotAnchorMs === 'number' ? prevBundle.shotAnchorMs : nowMs;
 
     if (payload.act === 'START') {
-      var lagCompSec = Math.min(netLagMs, LIVE_WS_START_LAG_COMP_MAX_MS) / 1000;
-      targetSeconds = Math.max(0, rawSeconds - lagCompSec);
+      var lagCompMs = Math.min(netLagMs, LIVE_WS_START_LAG_COMP_MAX_MS);
+      targetSeconds = rawSeconds;
+      mainAnchorMs = nowMs - lagCompMs;
       mainRunning = true;
       this._liveWsClockRunning = true;
     } else if (payload.act === 'STOP') {
@@ -2007,7 +2019,7 @@ Page({
       patch.wxsClockBundle = {
         token: bundleToken,
         mainBaseSec: targetSeconds,
-        mainAnchorMs: nowMs,
+        mainAnchorMs: mainAnchorMs,
         mainRunning: mainRunning,
         shotBaseSec: shotBaseSec,
         shotAnchorMs: shotAnchorMs
@@ -2024,6 +2036,14 @@ Page({
         mainRunning,
         patch.wxsClockMainText
       );
+      this.appendHealthLog('ws_clock_act', {
+        act: String(payload.act || ''),
+        seq: payload.seq,
+        t: rawSeconds,
+        running: !!mainRunning,
+        text: patch.wxsClockMainText,
+        heartbeat: payload.heartbeat ? 1 : 0
+      });
     }
 
     if (this.data.isAutoMode && this.data.autoSyncWhitelisted) {
