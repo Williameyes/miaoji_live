@@ -2,7 +2,7 @@
  * @fileoverview 记分报表页：查看摘要、导出 Excel。
  */
 
-const { loadScoreExporterAsync } = require('../../utils/report-module-loader.js');
+const { exportScoreEventsToXlsx } = require('../../utils/score-excel-export.js');
 
 /** @const {string} 比赛列表 Storage 主键 */
 const STORAGE_KEY_MATCHES = 'MIAOXIE_MATCHES';
@@ -58,10 +58,7 @@ Page({
       return;
     }
     self.setData({ loading: true });
-    loadScoreExporterAsync()
-      .then(function (mod) {
-        return mod.exportScoreEventsToXlsx({ matchId: matchId });
-      })
+    exportScoreEventsToXlsx({ matchId: matchId })
       .then(function () {
         wx.showToast({ title: '导出成功', icon: 'success' });
       })

@@ -9,6 +9,7 @@ const {
   fetchMatchList
 } = require('../../../services/radar-api.js');
 const { formatStartTimeDisplay } = require('../../../utils/radar-datetime.js');
+const { parseMatchExcelBuffer } = require('../../../utils/radar-excel-parser.js');
 
 Page({
   data: {
@@ -18,24 +19,6 @@ Page({
     matchRows: [],
     submitting: false,
     loading: false
-  },
-
-  /** @type {Promise<{ parseMatchExcelBuffer: Function }>|null} */
-  _excelParserPromise: null,
-
-  /**
-   * 异步加载分包 Excel 解析器，避免 xlsx 打入主包。
-   * @returns {Promise<{ parseMatchExcelBuffer: Function }>}
-   */
-  _loadExcelParser: function () {
-    if (this._excelParserPromise) return this._excelParserPromise;
-    this._excelParserPromise = require
-      .async('../../../../packageReport/utils/radar-excel-parser.js')
-      .catch(function (err) {
-        this._excelParserPromise = null;
-        return Promise.reject(err);
-      }.bind(this));
-    return this._excelParserPromise;
   },
 
   /**
@@ -258,36 +241,35 @@ Page({
   _importExcelBuffer: function (buffer, fileName, tournamentId) {
     const self = this;
     wx.showLoading({ title: '解析表格…', mask: true });
-    self._loadExcelParser()
-      .then(function (mod) {
-        wx.hideLoading();
-        let rows;
-        try {
-          rows = mod.parseMatchExcelBuffer(buffer, fileName);
-        } catch (err) {
-          wx.showToast({ title: err.message || '解析失败', icon: 'none' });
-          return;
-        }
-        const tourName = self._currentFilterTournamentName();
-        wx.showModal({
-          title: '确认导入',
-          content: '将 ' + rows.length + ' 条场次导入到「' + tourName + '」，是否继续？',
-          success: function (modalRes) {
-            if (!modalRes.confirm) return;
-            self.setData({ submitting: true });
-            wx.showLoading({ title: '导入中…', mask: true });
-            oamUpsert({
-              action: 'batch_import_matches',
-              tournament_id: tournamentId,
-              matches_list: rows
-            })
-              .then(function () {
-                wx.hideLoading();
-                wx.showToast({ title: '已导入 ' + rows.length + ' 场', icon: 'success' });
-                const nextFilterIndex = self.data.filterOptions.findIndex(function (o) {
-                  return o.id === tournamentId;
-                });
-                self.setData({
+    let rows;
+    try {
+      rows = parseMatchExcelBuffer(buffer, fileName);
+    } catch (err) {
+      wx.hideLoading();
+      wx.showToast({ title: err.message || '解析失败', icon: 'none' });
+      return;
+    }
+    wx.hideLoading();
+    const tourName = self._currentFilterTournamentName();
+    wx.showModal({
+      title: '确认导入',
+      content: '将 ' + rows.length + ' 条场次导入到「' + tourName + '」，是否继续？',
+      success: function (modalRes) {
+        if (!modalRes.confirm) return;
+        self.setData({ submitting: true });
+        wx.showLoading({ title: '导入中…', mask: true });
+        oamUpsert({
+          action: 'batch_import_matches',
+          tournament_id: tournamentId,
+          matches_list: rows
+        })
+          .then(function () {
+            wx.hideLoading();
+            wx.showToast({ title: '已导入 ' + rows.length + ' 场', icon: 'success' });
+            const nextFilterIndex = self.data.filterOptions.findIndex(function (o) {
+              return o.id === tournamentId;
+            });
+            self.setData({
                   filterIndex: nextFilterIndex >= 0 ? nextFilterIndex : 0,
                   selectedTournamentId: tournamentId
                 });
@@ -302,13 +284,5 @@ Page({
               });
           }
         });
-      })
-      .catch(function (err) {
-        wx.hideLoading();
-        wx.showToast({
-          title: (err && err.errMsg) || 'Excel 模块加载失败',
-          icon: 'none'
-        });
-      });
   }
 });
