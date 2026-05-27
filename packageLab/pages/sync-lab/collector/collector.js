@@ -161,6 +161,8 @@ var OCR_SCORE_JUMP_STREAK_NORMAL = 3;
  * @type {number}
  */
 var OCR_SCORE_JUMP_STREAK_TRUNC = 5;
+/** 单场 OCR 比分 plausible 上限（篮球含加时；超过则在 parse 层丢弃）。 */
+var OCR_SCORE_MAX = 200;
 /** 长时运行：约 50 分钟温和重建 VK 会话，降低 session 僵死与内存爬升风险 */
 var OCR_SESSION_REBUILD_MS = 50 * 60 * 1000;
 var OCR_SESSION_ROTATE_MS = 18 * 60 * 1000;
@@ -1682,13 +1684,13 @@ Page({
     _ocrRoiTextSeq[roiIdx] = (_ocrRoiTextSeq[roiIdx] || 0) + 1;
     var nowTs = Date.now();
     if (roiIdx === 0) {
-      var parsedHomeScore = parseScore(text);
+      var parsedHomeScore = parseScore(text, 0);
       if (parsedHomeScore !== null) {
         _ocrLastHomeScoreSuccessTs = nowTs;
         _ocrLastGoodHomeScore = parsedHomeScore;
       }
     } else if (roiIdx === 1) {
-      var parsedAwayScore = parseScore(text);
+      var parsedAwayScore = parseScore(text, 1);
       if (parsedAwayScore !== null) {
         _ocrLastAwayScoreSuccessTs = nowTs;
         _ocrLastGoodAwayScore = parsedAwayScore;
@@ -2300,7 +2302,7 @@ Page({
     var state = _ocrRunState;
     if (!state || !state.currentVariants || state.currentVariants.length <= 1) return false;
     if (roiIdx === 0 || roiIdx === 1) {
-      return parseScore(text) === null;
+      return parseScore(text, roiIdx) === null;
     }
     if (roiIdx === 2) {
       return parseTime(text) === null;
@@ -3749,8 +3751,33 @@ function _withPctStyle(rois) {
   });
 }
 
-/** 从字符串中提取合法比分数字（0-999）。 */
-function parseScore(raw) {
+/**
+ * 比分 OCR 解析参考值：多候选时选最接近的一项（已发布 / 最近有效读数 / 本地提交）。
+ * @param {number} scoreIdx 0=主队, 1=客队
+ * @returns {number} 无参考时返回 -1
+ */
+function getScoreParseRef(scoreIdx) {
+  var pub = _procState.published;
+  if (scoreIdx === 0) {
+    if (_ocrLastGoodHomeScore >= 0) return _ocrLastGoodHomeScore;
+    if (pub) return Number(pub.a) || 0;
+    if (_lastCommittedFrame) return Number(_lastCommittedFrame.homeScore) || 0;
+    return -1;
+  }
+  if (_ocrLastGoodAwayScore >= 0) return _ocrLastGoodAwayScore;
+  if (pub) return Number(pub.b) || 0;
+  if (_lastCommittedFrame) return Number(_lastCommittedFrame.awayScore) || 0;
+  return -1;
+}
+
+/**
+ * 从 OCR 文本提取合法比分（0–OCR_SCORE_MAX）。
+ * 多数字候选时优先接近 scoreIdx 侧参考分，避免无脑选更长串（如 58 vs 558）。
+ * @param {string} raw OCR 原始文本
+ * @param {number} [scoreIdx] 0=主队, 1=客队；省略时不做邻近优选
+ * @returns {number|null}
+ */
+function parseScore(raw, scoreIdx) {
   if (!raw) return null;
   var text = String(raw);
   var re = /\d{1,3}/g;
@@ -3779,7 +3806,7 @@ function parseScore(raw) {
   var parsed = [];
   for (var i = 0; i < filtered.length; i++) {
     var n = parseInt(filtered[i].digits, 10);
-    if (!isNaN(n) && n >= 0 && n <= 999) {
+    if (!isNaN(n) && n >= 0 && n <= OCR_SCORE_MAX) {
       parsed.push({
         value: n,
         digits: filtered[i].digits,
@@ -3788,11 +3815,23 @@ function parseScore(raw) {
     }
   }
   if (!parsed.length) return null;
+  if (parsed.length === 1) return parsed[0].value;
 
-  parsed.sort(function (a, b) {
-    if (a.digits.length !== b.digits.length) return b.digits.length - a.digits.length;
-    return b.start - a.start;
-  });
+  var ref = typeof scoreIdx === 'number' ? getScoreParseRef(scoreIdx) : -1;
+  if (ref >= 0) {
+    parsed.sort(function (a, b) {
+      var da = Math.abs(a.value - ref);
+      var db = Math.abs(b.value - ref);
+      if (da !== db) return da - db;
+      if (a.digits.length !== b.digits.length) return a.digits.length - b.digits.length;
+      return b.start - a.start;
+    });
+  } else {
+    parsed.sort(function (a, b) {
+      if (a.digits.length !== b.digits.length) return a.digits.length - b.digits.length;
+      return b.start - a.start;
+    });
+  }
 
   return parsed[0].value;
 }
@@ -3903,8 +3942,8 @@ function maxScoreDeltaVsCommitted(prev, h, a) {
  */
 function resolveOcrScorePair(rois) {
   if (!rois || rois.length < 2) return null;
-  var homeScore = parseScore(rois[0] && rois[0].rawText ? rois[0].rawText : '');
-  var awayScore = parseScore(rois[1] && rois[1].rawText ? rois[1].rawText : '');
+  var homeScore = parseScore(rois[0] && rois[0].rawText ? rois[0].rawText : '', 0);
+  var awayScore = parseScore(rois[1] && rois[1].rawText ? rois[1].rawText : '', 1);
   if (homeScore === null && _ocrLastGoodHomeScore >= 0) {
     homeScore = _ocrLastGoodHomeScore;
   }
@@ -3938,6 +3977,9 @@ function getScoreConfirmNeedStreak(pub, h, a) {
   if (isLikelyTruncateGlitch(pub.a, h) || isLikelyTruncateGlitch(pub.b, a)) {
     return OCR_SCORE_TRUNC_STREAK;
   }
+  if (isLikelyDigitInflationGlitch(pub.a, h) || isLikelyDigitInflationGlitch(pub.b, a)) {
+    return OCR_SCORE_TRUNC_STREAK;
+  }
   var delta = maxScoreDeltaVsCommitted({ homeScore: pub.a, awayScore: pub.b }, h, a);
   if (delta >= OCR_SCORE_JUMP_CONFIRM_THRESHOLD) {
     if (isLargeScoreDrop({ homeScore: pub.a, awayScore: pub.b }, h, a)) {
@@ -3968,6 +4010,23 @@ function isLikelyTruncateGlitch(prev, next) {
   var ns = String(next);
   if (!ns.length) return false;
   return ps.indexOf(ns) === 0;
+}
+
+/**
+ * 判断新比分是否相对上一提交更像 OCR 多插 digit（如 58→558、25→258）。
+ * 与 isLikelyTruncateGlitch 对称：位数变多且子串命中；基线分≥10 以降低 9→19 误伤。
+ * @param {number} prev
+ * @param {number} next
+ * @returns {boolean}
+ */
+function isLikelyDigitInflationGlitch(prev, next) {
+  if (prev == null || next == null) return false;
+  if (next <= prev) return false;
+  if (prev < 10) return false;
+  var ps = String(prev);
+  var ns = String(next);
+  if (ns.length <= ps.length) return false;
+  return ns.indexOf(ps) >= 0;
 }
 
 /** 构造解析后比赛帧的去重 key（仅用于 OCR → setData 去重，非「N 帧一致」门禁）。 */
