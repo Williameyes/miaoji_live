@@ -1259,12 +1259,12 @@ Page({
   pingPongChunkDurationMs: 180000,
   /** 双轨重叠（毫秒）：B 在 A 结束前 8s 启动；并发编码占比约 4.4%。 */
   pingPongStaggerMs: 8000,
-  /** 后台 MediaRecorder 目标帧率。 */
-  pingPongRecordFps: 12,
-  /** 滚动目录最多保留母片数量（约 3×15MB≈45MB）。 */
-  pingPongRollingMaxFiles: 3,
+  /** 后台 MediaRecorder 目标帧率（进阶画质档：15fps）。 */
+  pingPongRecordFps: 15,
+  /** 滚动目录最多保留母片数量（约 2×60MB≈120MB 峰值，随码率/分辨率浮动）。 */
+  pingPongRollingMaxFiles: 2,
   /** 高光强制 flush 最小间隔（毫秒），抑制连按引发 iOS 601。 */
-  pingPongHighlightFlushMinIntervalMs: 15000,
+  pingPongHighlightFlushMinIntervalMs: 10000,
   segmentDurationMs: 180000,
   /** 用户点击保存后，回放时希望覆盖的精彩窗口长度（毫秒），可与物理切片时长解耦 */
   highlightPlaybackWindowMs: 8000,
@@ -6849,10 +6849,10 @@ Page({
         cameraContext: self.data.cameraContext,
         chunkDurationMs: self.pingPongChunkDurationMs || 180000,
         staggerMs: self.pingPongStaggerMs || 8000,
-        highlightFlushMinIntervalMs: self.pingPongHighlightFlushMinIntervalMs || 15000,
+        highlightFlushMinIntervalMs: self.pingPongHighlightFlushMinIntervalMs || 10000,
         recycleIntervalMs: 25 * 60 * 1000,
-        fps: self.pingPongRecordFps || 12,
-        maxFiles: self.pingPongRollingMaxFiles || 3
+        fps: self.pingPongRecordFps || 15,
+        maxFiles: self.pingPongRollingMaxFiles || 2
       });
     }).then(() => {
       self.appendHealthLog('preview_record_started', { source: source || 'startRollingRecording' });
@@ -9956,7 +9956,7 @@ Page({
         });
         self.tryStartRollingWhenCameraReady('highlight_request');
         const flushProgressMs = Math.min(
-          (self.pingPongHighlightFlushMinIntervalMs || 15000) + 6000,
+          (self.pingPongHighlightFlushMinIntervalMs || 10000) + 6000,
           22000
         );
         self.startHighlightSaveProgressAnim(

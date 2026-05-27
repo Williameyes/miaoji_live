@@ -34,7 +34,7 @@ function createPreviewRecordPipeline(page) {
   let pingPong = null;
   let active = false;
   let lastFrameAt = 0;
-  let frameInterval = frameIntervalMs(12);
+  let frameInterval = frameIntervalMs(15);
   let feeding = false;
   /** 最近一次帧/轨道活动，供 segment watchdog 识别乒乓假死。 */
   let lastPipelineHeartbeatAt = 0;
@@ -133,7 +133,7 @@ function createPreviewRecordPipeline(page) {
     const ensureRollingDir = typeof page.ensureRollingDir === 'function'
       ? () => page.ensureRollingDir()
       : () => Promise.resolve(rollingDir);
-    const fps = options.fps || 12;
+    const fps = options.fps || 15;
     frameInterval = frameIntervalMs(fps);
     pingPong = new PingPongRecorder({
       onLog: log,
@@ -149,13 +149,13 @@ function createPreviewRecordPipeline(page) {
       ensureRollingDir,
       chunkDurationMs: options.chunkDurationMs || 180000,
       staggerMs: options.staggerMs || 8000,
-      highlightFlushMinIntervalMs: options.highlightFlushMinIntervalMs || 15000,
+      highlightFlushMinIntervalMs: options.highlightFlushMinIntervalMs || 10000,
       fps,
       stopToStartGapMs: options.stopToStartGapMs || 400,
       recycleIntervalMs: options.recycleIntervalMs || 25 * 60 * 1000,
-      maxFiles: options.maxFiles || 3,
-      canvasWidth: options.canvasWidth || 640,
-      canvasHeight: options.canvasHeight || 360
+      maxFiles: options.maxFiles || 2,
+      canvasWidth: options.canvasWidth || 854,
+      canvasHeight: options.canvasHeight || 480
     });
     return pingPong.init().then(() => {
       frameSource = frameSourceMod.createNativeFrameSource({

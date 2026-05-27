@@ -12,7 +12,7 @@
       wx:if="{{cameraMounted && liveStreamAllowed}}"
       device-position="back"
       flash="off"
-      frame-size="small"
+      frame-size="medium"
       resolution="high"
       class="camera-bg"
       mode="normal"

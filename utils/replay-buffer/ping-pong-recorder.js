@@ -146,14 +146,14 @@ function requestFrameRecorder(recorder, onDraw) {
  */
 function resolveRecorderVideoBitsPerSecond() {
   if (typeof wx === 'undefined' || typeof wx.getSystemInfoSync !== 'function') {
-    return 2600;
+    return 3000;
   }
   try {
     const platform = String(wx.getSystemInfoSync().platform || '').toLowerCase();
-    if (platform === 'android') return 3200;
-    if (platform === 'ios') return 2600;
+    if (platform === 'android') return 3600;
+    if (platform === 'ios') return 3000;
   } catch (eSys) { }
-  return 2200;
+  return 2800;
 }
 
 /**
@@ -217,14 +217,14 @@ class PingPongRecorder {
     this.overlapMs = options.overlapMs || this.staggerMs || 8000;
     this.stopToStartGapMs = options.stopToStartGapMs || 400;
     this.recycleIntervalMs = options.recycleIntervalMs || 25 * 60 * 1000;
-    this.maxFiles = options.maxFiles || 3;
-    this.fps = Math.max(5, Math.min(24, options.fps || 12));
-    this.canvasWidth = options.canvasWidth || 640;
-    this.canvasHeight = options.canvasHeight || 360;
+    this.maxFiles = options.maxFiles || 2;
+    this.fps = Math.max(5, Math.min(24, options.fps || 15));
+    this.canvasWidth = options.canvasWidth || 854;
+    this.canvasHeight = options.canvasHeight || 480;
     /** 高光强制 flush 最小间隔（毫秒），抑制 1 分钟内频繁启停管线。 */
     this.highlightFlushMinIntervalMs = Math.max(
       8000,
-      options.highlightFlushMinIntervalMs || 15000
+      options.highlightFlushMinIntervalMs || 10000
     );
 
     /** @type {Record<string, Object>} */
