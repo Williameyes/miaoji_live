@@ -50,8 +50,12 @@
       </view>
     </view>
 
-    <!-- ② 顶部状态条 -->
-    <view class="col-top-bar">
+    <!-- ② 顶部状态条（长按导出健康日志） -->
+    <view
+      class="col-top-bar"
+      bindlongpress="onExportCollectorLogs"
+      show-menu-by-longpress="{{false}}"
+    >
       <view class="col-top-dot col-top-dot--{{wsState}}"></view>
       <view class="col-top-state">{{wsStateText}}</view>
       <view class="col-top-code" wx:if="{{matchCode}}">码 {{matchCode}}</view>

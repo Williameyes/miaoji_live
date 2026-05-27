@@ -1667,8 +1667,36 @@ Page({
       },
       onPhase: function (phase, detail) {
         self._liveWsOnPhase(phase, detail);
+      },
+      logger: function (event, detail) {
+        if (typeof self.appendHealthLog === 'function') {
+          self.appendHealthLog('ws_' + event, detail || {});
+        }
       }
     });
+  },
+
+  /**
+   * onShow / 网络变化时的 WSS 健康自检。
+   * 仅在白名单 + 自动模式 + 已记录上次房间号时尝试恢复，避免无差别打扰用户。
+   * @returns {void}
+   */
+  _liveWsHealthCheckOnShow: function () {
+    if (!this.data.autoSyncWhitelisted) return;
+    if (this._liveWsIsManualScoringMode()) return;
+    this._liveWsEnsureClient();
+    if (!this._liveWsClient) return;
+    var connected = !!this._liveWsClient.isConnected();
+    var roomId = '';
+    try {
+      roomId = String(this._liveWsClient.getRoomId() || '').replace(/\D/g, '').slice(0, 6);
+    } catch (eRoom) { /* ignore */ }
+    if (!connected && roomId.length === 6) {
+      this.appendHealthLog('ws_app_show_resync', { room: roomId });
+      try {
+        this._liveWsClient.signalTransientFailure();
+      } catch (eSig) { /* ignore */ }
+    }
   },
 
   /**
@@ -2375,10 +2403,19 @@ Page({
     } catch (eMid) {
       matchId = '';
     }
+    let wsSnap = null;
+    try {
+      if (this._liveWsClient && typeof this._liveWsClient.getDiagnosticSnapshot === 'function') {
+        wsSnap = this._liveWsClient.getDiagnosticSnapshot();
+      }
+    } catch (eWsSnap) {
+      wsSnap = null;
+    }
     const base = {
       v: 1,
       matchId,
       pageVisible: !!this._livePageVisible,
+      ws: wsSnap || {},
       rollingActive: !!this.rollingActive,
       rollingSessionId: this.rollingSessionId,
       segmentCounter: this.segmentCounter,
@@ -4812,6 +4849,9 @@ Page({
       this._liveWsSyncChipConnected();
     } catch (eBleChip) {}
     try {
+      this._liveWsHealthCheckOnShow();
+    } catch (eHealth) {}
+    try {
       const cid =
         wx.getStorageSync('currentMatchId') || (app.globalData && app.globalData.currentMatchId) || '';
       clipsStorage.mergeDefaultClipBucketIfTargetEmpty(String(cid || '').trim());
@@ -5512,6 +5552,13 @@ Page({
     try {
       this._liveWsTeardownForManualMode();
     } catch (eWsU2) {}
+    /* 页面真正卸载时摘除 WS 客户端的网络监听 + 全部定时器，避免泄漏 */
+    try {
+      if (this._liveWsClient && typeof this._liveWsClient.destroy === 'function') {
+        this._liveWsClient.destroy();
+      }
+    } catch (eWsDestroy) { /* ignore */ }
+    this._liveWsClient = null;
     wx.setKeepScreenOn({ keepScreenOn: false });
     if (this._vkEnvironmentSampler && typeof this._vkEnvironmentSampler.destroy === 'function') {
       this._vkEnvironmentSampler.destroy();

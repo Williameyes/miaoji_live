@@ -50,6 +50,26 @@ var OCR_CLOCK_PREDICT_MAX_LEAD_SEC = 1;
 var OCR_SCORE_TRUNC_STREAK = 6;
 /** WebSocket 断线重连退避序列（毫秒），上限 15 秒 */
 var WS_RECONNECT_DELAYS_MS = [3000, 6000, 12000, 15000];
+/**
+ * 应用层心跳间隔（25s < 移动 NAT 60-90s 老化窗口 / Nginx idle）。
+ * @type {number}
+ */
+var WS_HEARTBEAT_INTERVAL_MS = 25000;
+/** 看门狗检查间隔。 */
+var WS_WATCHDOG_INTERVAL_MS = 10000;
+/**
+ * 心跳累计未成功发送的最大间隔；超过即视为底层链路死、强制 reconnect。
+ * 采集端不依赖服务端下行（除错误码），所以采用「send 健康度」作为存活判据：
+ * 25s 心跳 + 10s 看门狗，60s 内若没有任何成功 send（包括心跳）即认定假死。
+ */
+var WS_SEND_STALE_MS = 60000;
+
+/** 采集端健康日志 Storage Key */
+var COLLECTOR_HEALTH_LOG_STORAGE_KEY = 'SYNC_LAB_COLLECTOR_HEALTH_LOGS_V1';
+/** 内存环形缓冲上限 */
+var COLLECTOR_HEALTH_LOG_MAX = 120;
+/** 落盘节流（毫秒） */
+var COLLECTOR_HEALTH_LOG_FLUSH_DELAY_MS = 1800;
 
 var STORAGE_KEY_ROIS = 'sync_lab_rois_v1';
 /** 本场稳定房间号（除非用户点「新房间」） */
@@ -166,6 +186,26 @@ var _wsReconnectAttempt = 0;
 var _wsReconnectTimer = 0;
 /** 全局单调递增发包序列号 */
 var _globalSeq = 0;
+/** 心跳定时器句柄 */
+var _wsHeartbeatTimer = 0;
+/** 看门狗定时器句柄 */
+var _wsWatchdogTimer = 0;
+/** 当前 socket onOpen 时间戳（诊断用） */
+var _wsOpenedAt = 0;
+/** 最近一次 send.success 时间戳（含心跳与业务发包） */
+var _wsLastSendOkAt = 0;
+/** 最近一次收到下行（业务广播或错误消息）时间戳 */
+var _wsLastRecvAt = 0;
+/** wx.onNetworkStatusChange 已安装的回调，供 destroy 时摘除 */
+var _wsNetworkChangeHandler = null;
+/** 采集端健康日志环形缓冲 */
+var _collectorHealthLogs = null;
+/** 健康日志落盘节流定时器 */
+var _collectorHealthLogFlushTimer = 0;
+/** 设备信息一次性采集，用于日志 header */
+var _collectorHealthLogDevice = null;
+/** 是否已初始化健康日志（onLoad 兜底防重复） */
+var _collectorHealthLogInitialized = false;
 /**
  * processOcrFrame 状态机（5 大防抖阀门 + 已发布快照）
  * @type {{
@@ -596,6 +636,252 @@ function filterClockByMode(clock) {
   return clock;
 }
 
+// ─── 健康日志（轻量版：内存环形缓冲 + 节流落盘 + 一键导出） ─────────────────────
+
+/**
+ * 一次性初始化采集端健康日志：恢复上次缓冲、采集设备信息。
+ * @returns {void}
+ */
+function initCollectorHealthLogs() {
+  if (_collectorHealthLogInitialized) return;
+  _collectorHealthLogInitialized = true;
+  try {
+    var raw = wx.getStorageSync(COLLECTOR_HEALTH_LOG_STORAGE_KEY);
+    _collectorHealthLogs = Array.isArray(raw) ? raw.slice(-COLLECTOR_HEALTH_LOG_MAX) : [];
+  } catch (eLoad) {
+    _collectorHealthLogs = [];
+  }
+  try {
+    var sys = wx.getSystemInfoSync();
+    _collectorHealthLogDevice = {
+      model: String(sys.model || ''),
+      brand: String(sys.brand || ''),
+      platform: String(sys.platform || ''),
+      wxVersion: String(sys.version || ''),
+      system: String(sys.system || ''),
+      libVersion: String(sys.SDKVersion || '')
+    };
+  } catch (eDev) {
+    _collectorHealthLogDevice = {};
+  }
+  appendCollectorHealthLog('page_load', {});
+}
+
+/**
+ * 节流落盘：1.8 秒批量写入 storage，避免频繁 IO 干扰 OCR。
+ * @returns {void}
+ */
+function scheduleCollectorHealthLogFlush() {
+  if (_collectorHealthLogFlushTimer) return;
+  _collectorHealthLogFlushTimer = setTimeout(function () {
+    _collectorHealthLogFlushTimer = 0;
+    try {
+      var snapshot = (_collectorHealthLogs || []).slice(-COLLECTOR_HEALTH_LOG_MAX);
+      wx.setStorageSync(COLLECTOR_HEALTH_LOG_STORAGE_KEY, snapshot);
+    } catch (eFlush) { /* ignore */ }
+  }, COLLECTOR_HEALTH_LOG_FLUSH_DELAY_MS);
+}
+
+/**
+ * 追加一条采集端健康日志，自动加 `ws_` 前缀（事件名）。
+ * @param {string} event 事件名（无前缀）
+ * @param {Record<string, unknown>} [detail] 附加字段
+ * @returns {void}
+ */
+function appendCollectorHealthLog(event, detail) {
+  if (!_collectorHealthLogInitialized) initCollectorHealthLogs();
+  if (!_collectorHealthLogs) _collectorHealthLogs = [];
+  var item = {
+    t: Date.now(),
+    e: String(event || '?'),
+    d: detail && typeof detail === 'object' ? detail : {}
+  };
+  _collectorHealthLogs.push(item);
+  if (_collectorHealthLogs.length > COLLECTOR_HEALTH_LOG_MAX) {
+    _collectorHealthLogs.splice(0, _collectorHealthLogs.length - COLLECTOR_HEALTH_LOG_MAX);
+  }
+  scheduleCollectorHealthLogFlush();
+}
+
+/**
+ * 采集端 WS 维度日志快捷封装：所有事件名自动加 `ws_` 前缀。
+ * @param {string} event 事件名（无 ws_ 前缀）
+ * @param {Record<string, unknown>} [detail]
+ * @returns {void}
+ */
+function logCollectorWs(event, detail) {
+  appendCollectorHealthLog('ws_' + event, detail || {});
+}
+
+/**
+ * 构造采集端 WS 诊断快照（导出与日志通用）。
+ * @returns {Record<string, unknown>}
+ */
+function getCollectorWsDiagnosticSnapshot() {
+  var now = Date.now();
+  return {
+    hasSocket: !!_socketTask,
+    connecting: !!_wsConnecting,
+    manualClose: !!_wsManualClose,
+    reconnectAttempt: _wsReconnectAttempt || 0,
+    roomId: _wsRoomId || '',
+    since_open_ms: _wsOpenedAt ? now - _wsOpenedAt : -1,
+    last_send_ok_ago_ms: _wsLastSendOkAt ? now - _wsLastSendOkAt : -1,
+    last_recv_ago_ms: _wsLastRecvAt ? now - _wsLastRecvAt : -1
+  };
+}
+
+// ─── WS 心跳 / 看门狗 / 网络监听 ───────────────────────────────────────────────
+
+/**
+ * 启动应用层心跳：每 25 秒发一次 PING 包，制造上行流量保活 NAT/网关。
+ * @returns {void}
+ */
+function startCollectorHeartbeat() {
+  stopCollectorHeartbeat();
+  _wsHeartbeatTimer = setInterval(function () {
+    if (!_socketTask || _wsManualClose) return;
+    var pkt = JSON.stringify({ type: 'PING', ts: Date.now() });
+    try {
+      _socketTask.send({
+        data: pkt,
+        success: function () {
+          _wsLastSendOkAt = Date.now();
+        },
+        fail: function (err) {
+          logCollectorWs('heartbeat_send_fail', {
+            msg: err && err.errMsg ? String(err.errMsg).slice(0, 120) : 'fail',
+            since_open_ms: _wsOpenedAt ? Date.now() - _wsOpenedAt : -1
+          });
+          _handleCollectorWsSendFailure('heartbeat_fail');
+        }
+      });
+      /* 心跳成功路径不打日志，避免日志环形缓冲被刷爆 */
+    } catch (eHb) {
+      logCollectorWs('heartbeat_throw', {
+        msg: eHb && eHb.message ? String(eHb.message).slice(0, 120) : 'throw'
+      });
+      _handleCollectorWsSendFailure('heartbeat_throw');
+    }
+  }, WS_HEARTBEAT_INTERVAL_MS);
+}
+
+/**
+ * 停止心跳定时器。
+ * @returns {void}
+ */
+function stopCollectorHeartbeat() {
+  if (_wsHeartbeatTimer) {
+    clearInterval(_wsHeartbeatTimer);
+    _wsHeartbeatTimer = 0;
+  }
+}
+
+/**
+ * 启动看门狗：每 10 秒检查「最近一次成功 send」距今多久；超 60 秒视为假死。
+ * 服务端不主动下行（除错误消息），所以采集端用 send 健康度作为存活判据。
+ * @returns {(self: WechatMiniprogram.Page.Instance<any, any>) => void} 由调用方传入页面实例触发重连
+ */
+function startCollectorWatchdog(getPageInstance) {
+  stopCollectorWatchdog();
+  _wsWatchdogTimer = setInterval(function () {
+    if (!_socketTask || _wsManualClose) return;
+    var now = Date.now();
+    var sendAge = _wsLastSendOkAt > 0 ? now - _wsLastSendOkAt : (_wsOpenedAt ? now - _wsOpenedAt : 0);
+    if (sendAge > WS_SEND_STALE_MS) {
+      logCollectorWs('send_stale_kick', {
+        send_age_ms: sendAge,
+        last_recv_ago_ms: _wsLastRecvAt ? now - _wsLastRecvAt : -1,
+        since_open_ms: _wsOpenedAt ? now - _wsOpenedAt : -1,
+        threshold_ms: WS_SEND_STALE_MS
+      });
+      var page = typeof getPageInstance === 'function' ? getPageInstance() : null;
+      _handleCollectorWsSendFailure('send_stale', page);
+    }
+  }, WS_WATCHDOG_INTERVAL_MS);
+}
+
+/**
+ * 停止看门狗定时器。
+ * @returns {void}
+ */
+function stopCollectorWatchdog() {
+  if (_wsWatchdogTimer) {
+    clearInterval(_wsWatchdogTimer);
+    _wsWatchdogTimer = 0;
+  }
+}
+
+/**
+ * send 失败 / 看门狗触发的统一处理：close 当前 socket 并退避重连。
+ * @param {string} reason 触发原因
+ * @param {WechatMiniprogram.Page.Instance<any, any>} [pageInstance] 页面实例（用于触发 setData 与重连）
+ * @returns {void}
+ */
+function _handleCollectorWsSendFailure(reason, pageInstance) {
+  if (_wsManualClose || !_wsRoomId) return;
+  logCollectorWs('transient_failure', { reason: String(reason || 'unknown') });
+  stopCollectorHeartbeat();
+  stopCollectorWatchdog();
+  _wsConnecting = false;
+  if (_socketTask) {
+    try { _socketTask.close({}); } catch (eClose) { /* ignore */ }
+    _socketTask = null;
+  }
+  /* onClose 回调会调用 _scheduleWsReconnect；如果 close 没触发回调（极端情况），
+     通过页面实例兜底调度重连。 */
+  if (pageInstance && typeof pageInstance._scheduleWsReconnect === 'function') {
+    setTimeout(function () {
+      try {
+        if (pageInstance.data && pageInstance.data.wsState !== 'connected') {
+          pageInstance.setData({ wsState: 'reconnecting', wsStateText: '断线重连中…' });
+          pageInstance._scheduleWsReconnect();
+        }
+      } catch (eR) { /* ignore */ }
+    }, 250);
+  }
+}
+
+/**
+ * 安装网络变化监听：从无网→有网或网络类型切换时触发主动 reconnect 自检。
+ * @param {() => WechatMiniprogram.Page.Instance<any, any>} getPageInstance
+ * @returns {void}
+ */
+function installCollectorNetworkListener(getPageInstance) {
+  if (_wsNetworkChangeHandler) return;
+  if (typeof wx === 'undefined' || typeof wx.onNetworkStatusChange !== 'function') return;
+  _wsNetworkChangeHandler = function (res) {
+    if (_wsManualClose || !_wsRoomId) return;
+    logCollectorWs('network_change', {
+      net_type: res && res.networkType ? String(res.networkType) : '',
+      is_connected: !!(res && res.isConnected)
+    });
+    if (res && res.isConnected) {
+      var page = typeof getPageInstance === 'function' ? getPageInstance() : null;
+      _handleCollectorWsSendFailure('network_change', page);
+    }
+  };
+  try {
+    wx.onNetworkStatusChange(_wsNetworkChangeHandler);
+  } catch (eNet) {
+    _wsNetworkChangeHandler = null;
+  }
+}
+
+/**
+ * 卸载网络变化监听。
+ * @returns {void}
+ */
+function uninstallCollectorNetworkListener() {
+  if (!_wsNetworkChangeHandler) return;
+  try {
+    if (typeof wx !== 'undefined' && typeof wx.offNetworkStatusChange === 'function') {
+      wx.offNetworkStatusChange(_wsNetworkChangeHandler);
+    }
+  } catch (eNet) { /* ignore */ }
+  _wsNetworkChangeHandler = null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 Page({
@@ -654,6 +940,10 @@ Page({
     _cameraContext = wx.createCameraContext(this);
     _cameraReadyAt = Date.now();
     wx.setKeepScreenOn({ keepScreenOn: true });
+    /* 健康日志与网络监听一次性安装；与原有 OCR/相机链路完全解耦 */
+    initCollectorHealthLogs();
+    var self = this;
+    installCollectorNetworkListener(function () { return self; });
     this._checkAccess();
     this._loadRois();
   },
@@ -772,7 +1062,9 @@ Page({
   onUnload: function () {
     this._stopOcr(true);
     this._disconnectWebSocket(true);
+    uninstallCollectorNetworkListener();
     wx.setKeepScreenOn({ keepScreenOn: false });
+    appendCollectorHealthLog('page_unload', {});
   },
 
   /**
@@ -780,6 +1072,7 @@ Page({
    * 不销毁 VK，回到前台后由 onShow 恢复泵（手动 OCR 模式）。
    */
   onHide: function () {
+    appendCollectorHealthLog('page_hide', { ws: getCollectorWsDiagnosticSnapshot() });
     if (!this.data.ocrEnabled) return;
     _ocrPausedForBackground = true;
     this._cancelOcrFramePump();
@@ -787,9 +1080,16 @@ Page({
   },
 
   /**
-   * 回到前台：若 OCR 仍开启且此前因后台暂停了帧泵，在手动模式下重新挂载监听。
+   * 回到前台：恢复 OCR 帧泵 + WS 健康自检（前台后链路常因 NAT/系统挂起而假死）。
    */
   onShow: function () {
+    appendCollectorHealthLog('page_show', { ws: getCollectorWsDiagnosticSnapshot() });
+    /* WS 健康自检：曾经连过 + 当前不在 connected 状态 → 立即调度一次重连 */
+    if (_wsRoomId && !_wsManualClose && this.data.wsState !== 'connected' && this.data.wsState !== 'connecting') {
+      logCollectorWs('app_show_resync', { ws_state: this.data.wsState || '' });
+      this.setData({ wsState: 'reconnecting', wsStateText: '断线重连中…' });
+      this._scheduleWsReconnect();
+    }
     if (!_ocrPausedForBackground || !this.data.ocrEnabled) return;
     _ocrPausedForBackground = false;
     var session = _vkSession;
@@ -1040,6 +1340,67 @@ Page({
    */
   onToggleDebug: function () {
     this.setData({ debugMode: !this.data.debugMode });
+  },
+
+  /**
+   * 长按顶部状态条：导出采集端健康日志到剪贴板，供现场排障粘贴回传。
+   * 体积控制：最多 60 条 + 设备 header + 当前 WS 快照；包含截断保护避免剪贴板写入超限。
+   * @returns {void}
+   */
+  onExportCollectorLogs: function () {
+    initCollectorHealthLogs();
+    var compactDetail = function (detail) {
+      if (!detail || typeof detail !== 'object') return detail;
+      var out = {};
+      var keys = Object.keys(detail).slice(0, 28);
+      for (var i = 0; i < keys.length; i++) {
+        var key = keys[i];
+        var val = detail[key];
+        if (typeof val === 'string' && val.length > 200) {
+          val = val.slice(-200);
+        }
+        out[key] = val;
+      }
+      return out;
+    };
+    var logs = (_collectorHealthLogs || []).slice(-60).map(function (it) {
+      return { t: it.t, e: it.e, d: compactDetail(it.d) };
+    });
+    var payload = {
+      at: Date.now(),
+      device: _collectorHealthLogDevice || {},
+      ws: getCollectorWsDiagnosticSnapshot(),
+      logs: logs
+    };
+    var text = '';
+    try {
+      text = JSON.stringify(payload);
+      if (text.length > 900000) {
+        payload.logs = payload.logs.slice(-25);
+        text = JSON.stringify(payload);
+      }
+    } catch (eJson) {
+      wx.showToast({ title: '日志序列化失败', icon: 'none' });
+      return;
+    }
+    if (!text || logs.length === 0) {
+      wx.showToast({ title: '暂无健康日志', icon: 'none' });
+      return;
+    }
+    wx.setClipboardData({
+      data: text,
+      success: function () {
+        wx.showModal({
+          title: '采集端日志已复制',
+          content: '已复制 ' + logs.length + ' 条日志到剪贴板，可粘贴回传给开发同学排查。',
+          showCancel: false,
+          confirmText: '知道了'
+        });
+      },
+      fail: function () {
+        wx.showToast({ title: '剪贴板写入失败', icon: 'none' });
+      }
+    });
   },
 
   _startOcr: function () {
@@ -2786,19 +3147,17 @@ Page({
     _wsManualClose = false;
     this.setData({ wsState: 'connecting', wsStateText: '获取 Token…' });
 
-    console.log('【WS追踪 1】开始获取 Token，roomId:', roomId);
+    logCollectorWs('connect_request', { room: String(roomId || ''), attempt: _wsReconnectAttempt });
 
     this._fetchWsToken(roomId).then(function (token) {
-      console.log('【WS追踪 2】获取 Token 成功，结果是:', token);
+      logCollectorWs('token_ok', {});
       if (_wsManualClose) {
         _wsConnecting = false;
-        console.warn('【WS追踪】Token 已到手但连接已被手动取消，跳过 WS');
         return;
       }
       var wsUrl = WS_BASE_URL + WS_SOCKET_PATH +
         '?roomId=' + encodeURIComponent(roomId) +
         '&token=' + encodeURIComponent(token);
-      console.log('【WS追踪 3】准备发起 WS 连接，完整 URL:', wsUrl);
       self.setData({ wsStateText: '握手中…' });
       try {
         if (_socketTask) {
@@ -2810,7 +3169,9 @@ Page({
           fail: function (err) {
             _wsConnecting = false;
             self.setData({ wsState: 'idle', wsStateText: '连接失败' });
-            console.error('【WS追踪 4】WS 连结触发 fail 回调:', err);
+            logCollectorWs('connect_socket_fail', {
+              msg: err && err.errMsg ? String(err.errMsg).slice(0, 120) : 'fail'
+            });
             wx.showToast({ title: 'WebSocket 连接失败', icon: 'none' });
           }
         });
@@ -2818,7 +3179,9 @@ Page({
         _wsConnecting = false;
         self.setData({ wsState: 'idle', wsStateText: '连接失败' });
         wx.showToast({ title: 'WebSocket 连接失败', icon: 'none' });
-        console.error('【WS追踪 致命错误】连接流程中断:', errConnect);
+        logCollectorWs('connect_socket_throw', {
+          msg: errConnect && errConnect.message ? String(errConnect.message).slice(0, 120) : 'throw'
+        });
         return;
       }
 
@@ -2829,35 +3192,53 @@ Page({
           clearTimeout(_wsReconnectTimer);
           _wsReconnectTimer = 0;
         }
-        console.log('【WS追踪 5】WS onOpen 成功，roomId:', roomId);
+        _wsOpenedAt = Date.now();
+        _wsLastSendOkAt = 0;
+        _wsLastRecvAt = 0;
+        logCollectorWs('open', { room: String(roomId || '') });
         self.setData({ wsState: 'connected', wsStateText: '云端已连接 ✓' });
         wx.vibrateShort({ type: 'medium' });
-        console.log('[Collector][WS] connected room=%s', roomId);
+        startCollectorHeartbeat();
+        startCollectorWatchdog(function () { return self; });
         self._maybeBootstrapSnapshot();
       });
 
       _socketTask.onMessage(function (msg) {
         if (!msg || !msg.data) return;
+        _wsLastRecvAt = Date.now();
         try {
           var payload = typeof msg.data === 'string' ? JSON.parse(msg.data) : msg.data;
           if (payload && payload.type === 'COLLECTOR_EXIST') {
+            logCollectorWs('collector_exist', {});
             wx.showToast({ title: '房间已有采集端', icon: 'none' });
             self._disconnectWebSocket(true);
           }
         } catch (eParse) {
-          console.warn('[Collector][WS] message parse fail', eParse);
+          /* 收到无法解析的下行（含未来可能的 PONG 等）：保持静默，仅刷新 lastRecvAt 即可 */
         }
       });
 
       _socketTask.onError(function (err) {
-        console.error('【WS追踪 7】WS onError:', err);
-        console.warn('[Collector][WS] error', err);
+        logCollectorWs('error', {
+          msg: err && err.errMsg ? String(err.errMsg).slice(0, 120) : 'unknown',
+          since_open_ms: _wsOpenedAt ? Date.now() - _wsOpenedAt : -1
+        });
       });
 
       _socketTask.onClose(function (res) {
         _wsConnecting = false;
+        var code = res && typeof res.code === 'number' ? res.code : -1;
+        logCollectorWs('close', {
+          code: code,
+          reason: res && res.reason ? String(res.reason).slice(0, 120) : '',
+          since_open_ms: _wsOpenedAt ? Date.now() - _wsOpenedAt : -1,
+          last_send_ok_ago_ms: _wsLastSendOkAt ? Date.now() - _wsLastSendOkAt : -1,
+          last_recv_ago_ms: _wsLastRecvAt ? Date.now() - _wsLastRecvAt : -1,
+          manual: !!_wsManualClose
+        });
+        stopCollectorHeartbeat();
+        stopCollectorWatchdog();
         _socketTask = null;
-        console.warn('【WS追踪 6】WS onClose:', res);
         if (_wsManualClose) {
           self.setData({ wsState: 'idle', wsStateText: '未连接' });
           return;
@@ -2869,7 +3250,12 @@ Page({
       _wsConnecting = false;
       self.setData({ wsState: 'idle', wsStateText: 'Token 获取失败' });
       wx.showToast({ title: 'Token 获取失败', icon: 'none' });
-      console.error('【WS追踪 致命错误】连接流程中断:', err);
+      logCollectorWs('token_fail', {
+        msg: err && err.message ? String(err.message).slice(0, 120) : 'fail'
+      });
+      if (!_wsManualClose && _wsRoomId) {
+        self._scheduleWsReconnect();
+      }
     });
   },
 
@@ -2904,11 +3290,14 @@ Page({
       _wsReconnectTimer = 0;
     }
     _wsReconnectAttempt = 0;
+    stopCollectorHeartbeat();
+    stopCollectorWatchdog();
     if (_socketTask) {
       try { _socketTask.close({}); } catch (e) { }
       _socketTask = null;
     }
     if (manual) {
+      logCollectorWs('disconnect_manual', {});
       _wsRoomId = '';
       resetProcessOcrState();
     }
@@ -2955,11 +3344,29 @@ Page({
       sys_t: Date.now(),
       match_id: 'M_' + (_wsRoomId || this.data.matchCode || '')
     };
+    var self = this;
     try {
-      _socketTask.send({ data: JSON.stringify(packet) });
-      console.log('[Collector][WS] send act=%s seq=%s t=%s', act, packet.seq, packet.t);
+      _socketTask.send({
+        data: JSON.stringify(packet),
+        success: function () {
+          _wsLastSendOkAt = Date.now();
+        },
+        fail: function (errSend) {
+          logCollectorWs('send_fail', {
+            act: String(act || ''),
+            seq: packet.seq,
+            msg: errSend && errSend.errMsg ? String(errSend.errMsg).slice(0, 120) : 'fail'
+          });
+          _handleCollectorWsSendFailure('send_fail', self);
+        }
+      });
+      logCollectorWs('send_act', { act: String(act || ''), seq: packet.seq, t: packet.t });
     } catch (errSend) {
-      console.warn('[Collector][WS] send fail act=%s err=%o', act, errSend);
+      logCollectorWs('send_throw', {
+        act: String(act || ''),
+        msg: errSend && errSend.message ? String(errSend.message).slice(0, 120) : 'throw'
+      });
+      _handleCollectorWsSendFailure('send_throw', self);
       return;
     }
     var prevPublished = _procState.published;
