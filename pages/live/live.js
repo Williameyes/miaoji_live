@@ -7218,7 +7218,14 @@ Page({
       if (finishOnce) return;
       finishOnce = true;
       this.lastRecordStartAt = 0;
+      /**
+       * setData 回调与 120ms 兜底超时会重复调用 runStopped，必须 dedupe，
+       * 否则 onStopped 二次回调会让 watchdog kick / rollingSessionId += 1 多执行一次。
+       */
+      let stoppedOnce = false;
       const runStopped = () => {
+        if (stoppedOnce) return;
+        stoppedOnce = true;
         if (typeof onStopped !== 'function') return;
         if (wx.nextTick) wx.nextTick(onStopped);
         else setTimeout(onStopped, 0);
@@ -7484,10 +7491,19 @@ Page({
    */
   _resetRollingPipelineForMatchSwitch: function (source) {
     const prevSessionId = this.rollingSessionId;
+    const prevSegmentCounter = this.segmentCounter || 0;
     this.rollingSessionId += 1;
     this._rollingTempMissingStreak = 0;
     this._rollingTempTerminalFailStreak = 0;
     this._lastSuccessfulChunkAt = 0;
+    /**
+     * 切场次时一并清零监控字段，避免 prev session 的 lastSegmentAt / heartbeat
+     * 让 watchdog 的 segmentGap 计算出现"刚切换就异常老化"假象，
+     * 也避免 prev session segmentCounter 残留误导后续诊断/UI。
+     */
+    this.segmentCounter = 0;
+    this.lastSegmentAt = 0;
+    this._previewRecordLastHeartbeatAt = 0;
     if (this._replayBuffer && typeof this._replayBuffer.clear === 'function') {
       this._replayBuffer.clear();
     }
@@ -7506,6 +7522,7 @@ Page({
       prevSessionId,
       rollingSessionId: this.rollingSessionId,
       rollingActive: !!this.rollingActive,
+      prevSegmentCounter,
       segmentCounter: this.segmentCounter || 0
     });
     /**

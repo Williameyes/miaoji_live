@@ -38,6 +38,14 @@ function createPreviewRecordPipeline(page) {
   let feeding = false;
   /** 最近一次帧/轨道活动，供 segment watchdog 识别乒乓假死。 */
   let lastPipelineHeartbeatAt = 0;
+  /**
+   * 每次 start() 自增；stop() 时归 0；start() 时分配给当前 pingPong 实例。
+   * 切换场次时 pipeline.stop() 触发 pingPong 内部的强制收尾，
+   * 由旧 pingPong 闭包发出的 onSegmentReady 必须能识别为"过期"并丢弃，
+   * 否则上一场次的 chunk 会回写到刚被 reset 清空的 page.rollingSegments，
+   * 污染 segmentCounter、_lastSuccessfulChunkAt 等状态，并误触 _tryGenerateHighlight。
+   */
+  let activeSessionId = 0;
 
   /**
    * @param {string} eventName
@@ -84,9 +92,10 @@ function createPreviewRecordPipeline(page) {
   }
 
   /**
+   * 真正写回 page 状态的 segment 处理；调用方负责保证 segment 来自当前会话。
    * @param {Object} segment
    */
-  function onSegmentReady(segment) {
+  function applySegmentToPage(segment) {
     if (!page) return;
     const now = Date.now();
     page.lastSegmentAt = now;
@@ -135,9 +144,34 @@ function createPreviewRecordPipeline(page) {
       : () => Promise.resolve(rollingDir);
     const fps = options.fps || 15;
     frameInterval = frameIntervalMs(fps);
+    /**
+     * 给本次 pingPong 实例分配独立 sessionId；绑定到 boundOnSegmentReady 闭包内，
+     * stop() 后再有同一实例的迟到 segment 时，sessionId 已不匹配，自动丢弃。
+     */
+    activeSessionId += 1;
+    const instanceSessionId = activeSessionId;
+    /**
+     * @param {Object} segment
+     */
+    const boundOnSegmentReady = (segment) => {
+      if (!active || instanceSessionId !== activeSessionId) {
+        log('preview_record_stale_segment_dropped', {
+          path: segment && segment.path ? segment.path : '',
+          trackId: segment && segment.trackId ? segment.trackId : '',
+          instanceSessionId,
+          activeSessionId,
+          active,
+          startTime: segment && segment.startTime ? segment.startTime : 0,
+          endTime: segment && segment.endTime ? segment.endTime : 0,
+          sizeBytes: segment && segment.sizeBytes ? segment.sizeBytes : 0
+        });
+        return;
+      }
+      applySegmentToPage(segment);
+    };
     pingPong = new PingPongRecorder({
       onLog: log,
-      onSegmentReady,
+      onSegmentReady: boundOnSegmentReady,
       onTrackActivity: () => touchPipelineHeartbeat('track_start'),
       onStoragePressure: (reason) => {
         if (page && typeof page.freeRollingFileStorageAggressive === 'function') {
@@ -171,7 +205,7 @@ function createPreviewRecordPipeline(page) {
         page.lastRecordStartAt = Date.now();
         page.setData({ isRecording: true });
       }
-      log('preview_record_pipeline_start', { fps });
+      log('preview_record_pipeline_start', { fps, sessionId: instanceSessionId });
     });
   }
 
@@ -179,6 +213,11 @@ function createPreviewRecordPipeline(page) {
    * @returns {Promise<void>}
    */
   function stop() {
+    /**
+     * 先 active=false：pp.stop() 内部会让正在录的轨走 _stopTrack('shutdown') → finalize → onSegmentReady，
+     * 这些迟到 segment 通过 boundOnSegmentReady 的 active/sessionId 校验被丢弃，
+     * 不再污染新场次的 page.rollingSegments / segmentCounter / _lastSuccessfulChunkAt。
+     */
     active = false;
     if (frameSource) {
       frameSource.stop();
