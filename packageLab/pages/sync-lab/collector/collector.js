@@ -105,6 +105,8 @@ var WS_NETWORK_CHANGE_OPEN_GRACE_MS = 8000;
 var WS_ATTEMPT_CLEAR_AFTER_MS = 8000;
 /** token_fail 时的最小退避（毫秒）。 */
 var WS_TOKEN_FAIL_MIN_DELAY_MS = 5000;
+/** OCR/VK 重启期间保护 WS 的最长窗口，避免 native 重载造成一次心跳误杀长连接。 */
+var OCR_WS_RESTART_GUARD_MS = 12000;
 
 /** 采集端健康日志 Storage Key */
 var COLLECTOR_HEALTH_LOG_STORAGE_KEY = 'SYNC_LAB_COLLECTOR_HEALTH_LOGS_V1';
@@ -245,6 +247,13 @@ var _wsHandshakeTimer = 0;
 var _wsAttemptClearTimer = 0;
 /** 网络变化重连的防抖定时器 */
 var _wsNetworkChangeTimer = 0;
+/** OCR 重启期间暂缓 WS 主动断开/退避重连的保护窗口。 */
+var _ocrWsRestartGuardUntil = 0;
+var _ocrWsRestartGuardReason = '';
+var _ocrWsReconnectPendingAfterRestart = false;
+var _ocrWsImmediateReconnectUsed = false;
+var _ocrForceSyncAfterPump = false;
+var _ocrPreserveSnapshotOnBoot = false;
 /** 当前 socket onOpen 时间戳（诊断用） */
 var _wsOpenedAt = 0;
 /** 最近一次 send.success 时间戳（含心跳与业务发包） */
@@ -390,6 +399,7 @@ var _sameOcrClockSince = 0;
 var _clockPauseCandidateUntil = 0;
 var _clockResumeCandidateSec = -1;
 var _clockResumeCandidateSince = 0;
+var _clockResumeCandidateStreak = 0;
 /** JUMP 候选：异常跳跃需连续 OCR_CLOCK_JUMP_HOLD_MS 维持同值才确认 */
 var _clockJumpCandidateSec = -1;
 var _clockJumpCandidateSince = 0;
@@ -879,6 +889,36 @@ function getCollectorWsDiagnosticSnapshot() {
 
 // ─── WS 心跳 / 看门狗 / 网络监听 ───────────────────────────────────────────────
 
+function isOcrWsRestartGuardActive() {
+  return _ocrWsRestartGuardUntil > Date.now();
+}
+
+function beginOcrWsRestartGuard(reason) {
+  _ocrWsRestartGuardUntil = Date.now() + OCR_WS_RESTART_GUARD_MS;
+  _ocrWsRestartGuardReason = String(reason || 'ocr-restart');
+  _ocrWsReconnectPendingAfterRestart = false;
+  _ocrWsImmediateReconnectUsed = false;
+  _ocrForceSyncAfterPump = true;
+  _ocrPreserveSnapshotOnBoot = true;
+  logCollectorWs('ocr_ws_guard_on', {
+    reason: _ocrWsRestartGuardReason,
+    guard_ms: OCR_WS_RESTART_GUARD_MS
+  });
+}
+
+function clearOcrWsRestartGuard(reason) {
+  if (!_ocrWsRestartGuardUntil && !_ocrForceSyncAfterPump) return;
+  logCollectorWs('ocr_ws_guard_off', {
+    reason: String(reason || _ocrWsRestartGuardReason || ''),
+    pending_reconnect: !!_ocrWsReconnectPendingAfterRestart,
+    has_socket: !!_socketTask
+  });
+  _ocrWsRestartGuardUntil = 0;
+  _ocrWsRestartGuardReason = '';
+  _ocrForceSyncAfterPump = false;
+  _ocrPreserveSnapshotOnBoot = false;
+}
+
 /**
  * 构造一条「快照型心跳包」。
  *
@@ -1067,6 +1107,15 @@ function stopCollectorWatchdog() {
  */
 function _handleCollectorWsSendFailure(reason, pageInstance) {
   if (_wsManualClose || !_wsRoomId) return;
+  if (isOcrWsRestartGuardActive()) {
+    _ocrWsReconnectPendingAfterRestart = true;
+    logCollectorWs('transient_failure_deferred', {
+      reason: String(reason || 'unknown'),
+      guard_reason: _ocrWsRestartGuardReason,
+      guard_left_ms: Math.max(0, _ocrWsRestartGuardUntil - Date.now())
+    });
+    return;
+  }
   logCollectorWs('transient_failure', { reason: String(reason || 'unknown') });
   stopCollectorHeartbeat();
   stopCollectorWatchdog();
@@ -1927,10 +1976,14 @@ Page({
   _bootOcrSessionWithGl: function (token) {
     var self = this;
     if (token !== _ocrSessionToken) return;
+    var shouldPreserveSnapshot = !!_ocrPreserveSnapshotOnBoot;
+    _ocrPreserveSnapshotOnBoot = false;
     _lastHandleTs = 0;
     _pendingOcrFrame = null;
     _lastCommittedFrameKey = '';
-    _lastCommittedFrame = null;
+    if (!shouldPreserveSnapshot) {
+      _lastCommittedFrame = null;
+    }
     _lastRejectedStableFrameKey = '';
     _lastRejectedStableFrameCount = 0;
     _ocrAnchorEventCount = 0;
@@ -1972,6 +2025,7 @@ Page({
           session = wx.createVKSession({ track: { OCR: { mode: 2 } }, gl: _ocrVkGl });
           console.warn('[Collector][OCR] createVKSession fallback with hidden gl');
         } catch (eCreateWithGl) {
+          clearOcrWsRestartGuard('boot-create-fail');
           self._stopOcrSession();
           self._restoreCameraPreview(function () {
             self.setData({ ocrEnabled: false, ocrTransitioning: false }, function () {
@@ -1996,6 +2050,7 @@ Page({
         var msg = (err.errMsg || '').toLowerCase();
         // 过滤 SDK 内部底层报错（saaa_config / node js），不暴露给用户
         var isSdkInternal = msg.indexOf('node js') !== -1 || msg.indexOf('saaa') !== -1;
+        clearOcrWsRestartGuard('boot-start-fail');
         self._stopOcrSession();
         self._restoreCameraPreview(function () {
           self.setData({ ocrEnabled: false, ocrTransitioning: false }, function () {
@@ -2128,6 +2183,36 @@ Page({
       pipelineDelaySec > 0 &&
       (_clockMode === 'running' || (_lastOcrClockSec >= 0 && ocrSec < _lastOcrClockSec));
     var realWorldSec = Math.max(0, ocrSec - (compensatePipelineDelay ? pipelineDelaySec : 0));
+    var shouldWakePausedClock = false;
+
+    if (_clockMode === 'paused') {
+      var resumeDropSec = _lastOcrClockSec >= 0 ? (_lastOcrClockSec - realWorldSec) : 0;
+      var hasResumeFlow = resumeDropSec > 0 && resumeDropSec <= OCR_CLOCK_CATCHUP_MAX_DROP_SEC;
+      if (hasResumeFlow) {
+        if (!_clockResumeCandidateSince || now - _clockResumeCandidateSince > OCR_CLOCK_RESUME_CONFIRM_MS * 2) {
+          _clockResumeCandidateStreak = 1;
+        } else {
+          _clockResumeCandidateStreak += 1;
+        }
+        _clockResumeCandidateSec = realWorldSec;
+        _clockResumeCandidateSince = now;
+      } else if (
+        _clockResumeCandidateStreak > 0 &&
+        _clockResumeCandidateSince &&
+        now - _clockResumeCandidateSince <= OCR_CLOCK_RESUME_CONFIRM_MS
+      ) {
+        _clockResumeCandidateStreak += 1;
+      } else {
+        _clockResumeCandidateSec = -1;
+        _clockResumeCandidateSince = 0;
+        _clockResumeCandidateStreak = 0;
+      }
+      shouldWakePausedClock = _clockResumeCandidateStreak >= OCR_START_CONFIRM_STREAK;
+    } else {
+      _clockResumeCandidateSec = -1;
+      _clockResumeCandidateSince = 0;
+      _clockResumeCandidateStreak = 0;
+    }
 
     if (_lastOcrClockSec >= 0 && realWorldSec > 0 && realWorldSec < _lastOcrClockSec) {
       var dropFromLast = _lastOcrClockSec - realWorldSec;
@@ -2166,6 +2251,16 @@ Page({
       timeValid: true,
       wallMs: now
     });
+
+    if (shouldWakePausedClock && !_procState.clockRunning) {
+      console.log('[Collector][OCR] watchdog self-heal: valid clock flow recovered, force immediate sync');
+      _clockMode = 'running';
+      _procState.pauseConfirmed = false;
+      _clockResumeCandidateSec = -1;
+      _clockResumeCandidateSince = 0;
+      _clockResumeCandidateStreak = 0;
+      this._forcePushImmediateSync();
+    }
 
     var publishedSecNow = getPublishedClockSecAt(now);
     if (
@@ -2481,8 +2576,46 @@ Page({
         }
       });
       _cameraFrameListener.start();
+      if (_ocrForceSyncAfterPump || _ocrWsReconnectPendingAfterRestart || isOcrWsRestartGuardActive()) {
+        setTimeout(function () {
+          self._onOcrFramePumpReadyAfterRestart();
+        }, 0);
+      }
     } catch (eStart) {
       console.error('[Collector][OCR] onCameraFrame start fail', eStart);
+    }
+  },
+
+  _onOcrFramePumpReadyAfterRestart: function () {
+    var guardReason = _ocrWsRestartGuardReason || 'ocr-restart';
+    var shouldForceSync = !!(_ocrForceSyncAfterPump || isOcrWsRestartGuardActive());
+    var self = this;
+
+    if (_socketTask && this.data.wsState === 'connected') {
+      startCollectorHeartbeat();
+      startCollectorWatchdog(function () { return self; });
+      if (shouldForceSync) {
+        var pushed = this._forcePushImmediateSync();
+        logCollectorWs('ocr_restart_force_sync', {
+          reason: guardReason,
+          pushed: pushed ? 1 : 0
+        });
+      }
+      _ocrWsReconnectPendingAfterRestart = false;
+      clearOcrWsRestartGuard('pump-ready');
+      return;
+    }
+
+    clearOcrWsRestartGuard('pump-ready-missing-socket');
+
+    if (!_wsManualClose && _wsRoomId && !_wsConnecting && !_socketTask && !_ocrWsImmediateReconnectUsed) {
+      _ocrWsImmediateReconnectUsed = true;
+      _ocrWsReconnectPendingAfterRestart = false;
+      this.setData({ wsState: 'reconnecting', wsStateText: 'OCR 已恢复，立即重连…' });
+      this._scheduleWsReconnect({
+        immediateOnce: true,
+        reason: 'ocr_restart_socket_missing'
+      });
     }
   },
 
@@ -2891,12 +3024,16 @@ Page({
       _clockPauseCandidateUntil = 0;
       _clockResumeCandidateSec = -1;
       _clockResumeCandidateSince = 0;
+      _clockResumeCandidateStreak = 0;
       _clockJumpCandidateSec = -1;
       _clockJumpCandidateSince = 0;
       this._clearClockPredictTimer();
       _lastNotifyWallAt = 0;
       _lastCommittedFrame = null;
     }
+    _clockResumeCandidateSec = -1;
+    _clockResumeCandidateSince = 0;
+    _clockResumeCandidateStreak = 0;
     _timeJumpHoldFrame = null;
     _scoreJumpHold = null;
     _manualScoreEditAt = 0;
@@ -2918,6 +3055,17 @@ Page({
       try { session.stop(); } catch (e) { }
       try { session.destroy && session.destroy(); } catch (eDestroy) { }
       _vkSession = null;
+    }
+    if (_ocrVkGl) {
+      var gl = _ocrVkGl;
+      try { gl.bindTexture(gl.TEXTURE_2D, null); } catch (eTexture) { }
+      try { gl.bindBuffer(gl.ARRAY_BUFFER, null); } catch (eBuffer) { }
+      try { gl.bindFramebuffer(gl.FRAMEBUFFER, null); } catch (eFramebuffer) { }
+      try { gl.bindRenderbuffer && gl.bindRenderbuffer(gl.RENDERBUFFER, null); } catch (eRenderbuffer) { }
+      try { gl.flush && gl.flush(); } catch (eFlush) { }
+      _ocrVkGl = null;
+      _ocrVkCanvas = null;
+      console.log('[Collector][OCR] session stopped, WebGL resources unbound');
     }
     _lastHandleTs = 0;
     _pendingOcrFrame = null;
@@ -3011,6 +3159,7 @@ Page({
   _softRestartOcrSession: function (reason) {
     if (!this.data.ocrEnabled || this.data.ocrTransitioning) return;
     console.warn('[Collector][OCR] soft VK session rebuild reason=%s', reason || '');
+    beginOcrWsRestartGuard('soft-restart:' + (reason || 'unknown'));
     var token = ++_ocrSessionToken;
     this._clearOcrHealthTimer();
     this._stopOcrSession(true);
@@ -3023,6 +3172,7 @@ Page({
     this._ocrRotatePending = true;
     _ocrStats.rotate += 1;
     console.warn('[Collector][OCR] rotate begin reason=%s', reason || '');
+    beginOcrWsRestartGuard('rotate:' + (reason || 'unknown'));
     this._cancelOcrFramePump();
     if (_ocrRunTimeout) {
       clearTimeout(_ocrRunTimeout);
@@ -3723,6 +3873,16 @@ Page({
           self.setData({ wsState: 'idle', wsStateText: '未连接' });
           return;
         }
+        if (isOcrWsRestartGuardActive()) {
+          _ocrWsReconnectPendingAfterRestart = true;
+          self.setData({ wsState: 'reconnecting', wsStateText: 'OCR 重启中，稍后恢复连接…' });
+          logCollectorWs('close_deferred_by_ocr_restart', {
+            code: code,
+            guard_reason: _ocrWsRestartGuardReason,
+            guard_left_ms: Math.max(0, _ocrWsRestartGuardUntil - Date.now())
+          });
+          return;
+        }
         self.setData({ wsState: 'reconnecting', wsStateText: '断线重连中…' });
         self._scheduleWsReconnect();
       });
@@ -3804,19 +3964,22 @@ Page({
 
   /**
    * 指数退避重连（3→6→12 秒，上限 15 秒）。
-   * @param {{ minDelayMs?: number }} [opts] 可指定最小延迟（如 token_fail 时）
+   * @param {{ minDelayMs?: number, immediateOnce?: boolean, reason?: string }} [opts] 可指定最小延迟（如 token_fail 时）
    * @returns {void}
    */
   _scheduleWsReconnect: function (opts) {
     var self = this;
     if (_wsManualClose || !_wsRoomId) return;
     if (_wsReconnectTimer) return;
-    _wsReconnectAttempt += 1;
-    var delay = getWsReconnectDelayMs(_wsReconnectAttempt);
-    if (opts && typeof opts.minDelayMs === 'number') {
+    var immediateOnce = !!(opts && opts.immediateOnce);
+    if (!immediateOnce) {
+      _wsReconnectAttempt += 1;
+    }
+    var delay = immediateOnce ? 0 : getWsReconnectDelayMs(_wsReconnectAttempt);
+    if (!immediateOnce && opts && typeof opts.minDelayMs === 'number') {
       delay = Math.max(delay, opts.minDelayMs);
     }
-    console.log('[Collector][WS] reconnect in %sms attempt=%s', delay, _wsReconnectAttempt);
+    console.log('[Collector][WS] reconnect in %sms attempt=%s reason=%s', delay, _wsReconnectAttempt, opts && opts.reason ? opts.reason : '');
     _wsReconnectTimer = setTimeout(function () {
       _wsReconnectTimer = 0;
       if (_wsManualClose || !_wsRoomId) return;
@@ -3855,6 +4018,9 @@ Page({
       _socketTask = null;
     }
     if (manual) {
+      clearOcrWsRestartGuard('ws-manual-disconnect');
+      _ocrWsReconnectPendingAfterRestart = false;
+      _ocrWsImmediateReconnectUsed = false;
       logCollectorWs('disconnect_manual', {});
       _wsRoomId = '';
       resetProcessOcrState();
@@ -3874,6 +4040,23 @@ Page({
       b: snap.b,
       p: snap.p
     });
+  },
+
+  /**
+   * 立即向云端推送当前快照；用于 OCR/时钟看门狗恢复后主动唤醒直播端。
+   * @returns {boolean} 是否找到可发送快照
+   */
+  _forcePushImmediateSync: function () {
+    if (!_socketTask || this.data.wsState !== 'connected') return false;
+    var snap = buildCurrentCollectorSnapshot(this, Date.now());
+    if (!snap) return false;
+    this._emitWsPacket(snap.running ? 'START' : 'SYNC', {
+      t: snap.t,
+      a: snap.a,
+      b: snap.b,
+      p: snap.p
+    });
+    return true;
   },
 
   /**

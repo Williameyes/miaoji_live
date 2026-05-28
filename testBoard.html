@@ -1,288 +1,692 @@
 <!DOCTYPE html>
-<!-- saved from url=(0053)file:///Users/zan/projects/miaoji_live/testboard.html -->
-<html lang="zh-CN"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
-    
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>高光记分 - 模拟电子记分牌</title>
+    <title>高光记分 - 自动测试记分牌</title>
     <style>
+        :root {
+            --red: #ff3b30;
+            --green: #4cd964;
+            --yellow: #ffcc00;
+            --cyan: #2fd8ff;
+            --panel: #101010;
+            --line: #383838;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
         body {
-            background-color: #000;
+            background: #000;
             color: #fff;
-            font-family: 'Courier New', Courier, monospace;
+            font-family: "Courier New", Courier, monospace;
             display: flex;
             justify-content: center;
             align-items: center;
-            height: 100vh;
+            min-height: 100vh;
             margin: 0;
             overflow: hidden;
         }
 
-        .scoreboard {
-            width: 90vw;
-            max-width: 1000px;
-            background: #111;
-            border: 10px solid #333;
-            border-radius: 20px;
-            padding: 40px;
-            box-shadow: 0 0 50px rgba(255, 0, 0, 0.2);
+        .stage {
+            width: min(94vw, 1120px);
             position: relative;
         }
 
-        /* LED 颜色与发光效果 */
+        .scoreboard {
+            width: 100%;
+            background: var(--panel);
+            border: 10px solid #333;
+            border-radius: 20px;
+            padding: 32px 38px 30px;
+            box-shadow: 0 0 50px rgba(255, 0, 0, 0.22);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .scoreboard::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            background:
+                linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+            background-size: 28px 28px;
+            opacity: 0.25;
+        }
+
         .led-red {
-            color: #ff3b30;
+            color: var(--red);
             text-shadow: 0 0 15px rgba(255, 59, 48, 0.8);
         }
 
         .led-green {
-            color: #4cd964;
+            color: var(--green);
             text-shadow: 0 0 15px rgba(76, 217, 100, 0.8);
         }
 
         .led-yellow {
-            color: #ffcc00;
+            color: var(--yellow);
             text-shadow: 0 0 15px rgba(255, 204, 0, 0.8);
         }
 
-        /* 顶部队伍名 */
+        .led-cyan {
+            color: var(--cyan);
+            text-shadow: 0 0 14px rgba(47, 216, 255, 0.75);
+        }
+
         .header {
-            display: flex;
-            justify-content: space-between;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+            gap: 20px;
             align-items: center;
-            margin-bottom: 30px;
+            margin-bottom: 26px;
+            position: relative;
+            z-index: 1;
         }
 
         .team-box {
-            border: 3px solid #ff3b30;
-            padding: 10px 30px;
-            font-size: 2.5rem;
+            border: 3px solid var(--red);
+            padding: 10px 22px;
+            font-size: clamp(1.6rem, 4vw, 2.6rem);
             font-weight: bold;
-            color: #ff3b30;
+            color: var(--red);
+            text-align: center;
+            white-space: nowrap;
         }
 
         .vs {
             font-size: 2rem;
-            color: #666;
+            color: #777;
             font-style: italic;
         }
 
-        /* 中间核心数据 */
         .main-display {
-            display: flex;
-            justify-content: space-between;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(260px, 0.8fr) minmax(0, 1fr);
+            gap: 24px;
             align-items: center;
-            margin: 40px 0;
+            margin: 34px 0;
+            position: relative;
+            z-index: 1;
         }
 
         .score {
-            font-size: 10rem;
+            font-size: clamp(5.5rem, 13vw, 10rem);
+            line-height: 1;
             font-weight: bold;
-            min-width: 250px;
+            min-width: 0;
             text-align: center;
+            font-variant-numeric: tabular-nums;
         }
 
         .center-info {
             text-align: center;
-            flex-grow: 1;
+            min-width: 0;
         }
 
         .period {
-            font-size: 2.5rem;
+            font-size: clamp(1.8rem, 4vw, 2.7rem);
             margin-bottom: 15px;
         }
 
         .timer {
-            font-size: 5rem;
-            border: 4px solid #4cd964;
-            padding: 5px 20px;
+            font-size: clamp(3.2rem, 7vw, 5.5rem);
+            border: 4px solid var(--green);
+            padding: 5px 18px;
             display: inline-block;
             border-radius: 10px;
+            min-width: 240px;
+            font-variant-numeric: tabular-nums;
         }
 
-        /* 底部辅助数据 */
         .footer {
-            display: flex;
-            justify-content: space-around;
-            align-items: flex-end;
-            margin-top: 40px;
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            gap: 24px;
+            align-items: end;
+            margin-top: 36px;
+            position: relative;
+            z-index: 1;
         }
 
-        .foul-box {
-            text-align: center;
-        }
-
-        .foul-label {
-            font-size: 1.2rem;
-            color: #888;
-            margin-bottom: 5px;
-        }
-
-        .foul-val {
-            font-size: 4rem;
-            border: 2px solid #ff3b30;
-            padding: 5px 25px;
-            border-radius: 5px;
-        }
-
+        .foul-box,
         .shot-clock-box {
             text-align: center;
         }
 
-        .shot-clock {
-            font-size: 6rem;
-            border: 5px solid #ff3b30;
-            padding: 10px 30px;
-            border-radius: 15px;
+        .foul-label,
+        .meta-label {
+            font-size: 1.05rem;
+            color: #999;
+            margin-bottom: 6px;
+        }
+
+        .foul-val {
+            font-size: clamp(2.8rem, 6vw, 4rem);
+            border: 2px solid var(--red);
+            padding: 5px 25px;
+            border-radius: 5px;
+            min-width: 96px;
             display: inline-block;
         }
 
-        /* 控制按钮 */
+        .shot-clock {
+            font-size: clamp(4.2rem, 8vw, 6rem);
+            border: 5px solid var(--red);
+            padding: 10px 30px;
+            border-radius: 15px;
+            display: inline-block;
+            min-width: 150px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .status-bar {
+            margin-top: 16px;
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 16px;
+            align-items: center;
+            position: relative;
+            z-index: 2;
+        }
+
+        .event-text {
+            color: var(--cyan);
+            font-size: 1rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .run-text {
+            color: #aaa;
+            font-size: 0.95rem;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+
         .controls {
-            position: absolute;
-            bottom: -100px;
-            left: 50%;
-            transform: translateX(-50%);
+            margin-top: 18px;
             display: flex;
-            gap: 15px;
-            width: 100%;
+            flex-wrap: wrap;
+            gap: 10px;
             justify-content: center;
         }
 
         button {
-            padding: 10px 20px;
+            padding: 10px 16px;
             font-size: 0.9rem;
             cursor: pointer;
-            background: #333;
+            background: #272727;
             color: #fff;
-            border: 1px solid #444;
+            border: 1px solid #555;
             border-radius: 5px;
-            transition: background 0.2s;
         }
 
         button:hover {
-            background: #555;
+            background: #3a3a3a;
+        }
+
+        .btn-primary {
+            border-color: var(--green);
+            color: var(--green);
         }
 
         .btn-reset {
-            border-color: #ffcc00;
-            color: #ffcc00;
+            border-color: var(--yellow);
+            color: var(--yellow);
+        }
+
+        .occluder {
+            display: none;
+            position: absolute;
+            z-index: 5;
+            background: #050505;
+            border: 2px solid #222;
+            box-shadow: 0 0 22px rgba(0, 0, 0, 0.85);
+        }
+
+        .occluding .occluder {
+            display: block;
+        }
+
+        .occ-time {
+            width: 270px;
+            height: 105px;
+            left: 50%;
+            top: 42%;
+            transform: translate(-50%, -50%);
+        }
+
+        .occ-home {
+            width: 230px;
+            height: 150px;
+            left: 7%;
+            top: 34%;
+        }
+
+        .occ-away {
+            width: 230px;
+            height: 150px;
+            right: 7%;
+            top: 34%;
+        }
+
+        .fault .score,
+        .fault .timer,
+        .fault .shot-clock,
+        .fault .foul-val {
+            animation: flicker 0.16s steps(2, end) infinite;
+        }
+
+        .rollback .timer {
+            border-color: var(--yellow);
+            color: var(--yellow);
+            text-shadow: 0 0 16px rgba(255, 204, 0, 0.85);
+        }
+
+        .paused .timer {
+            color: var(--yellow);
+            border-color: var(--yellow);
+        }
+
+        @keyframes flicker {
+            0% { opacity: 1; }
+            50% { opacity: 0.25; }
+            100% { opacity: 0.92; }
+        }
+
+        @media (max-width: 760px) {
+            .scoreboard {
+                padding: 22px 18px;
+                border-width: 7px;
+            }
+
+            .main-display {
+                grid-template-columns: 1fr 1fr;
+                gap: 16px;
+            }
+
+            .center-info {
+                grid-column: 1 / -1;
+                grid-row: 1;
+            }
+
+            .timer {
+                min-width: 0;
+                width: 100%;
+            }
+
+            .footer {
+                gap: 12px;
+            }
+
+            .shot-clock {
+                min-width: 105px;
+                padding: 8px 18px;
+            }
         }
     </style>
 </head>
 
 <body>
+    <div class="stage">
+        <div id="scoreboard" class="scoreboard">
+            <div id="occTime" class="occluder occ-time"></div>
+            <div id="occHome" class="occluder occ-home"></div>
+            <div id="occAway" class="occluder occ-away"></div>
 
-    <div class="scoreboard">
-        <div class="header">
-            <div class="team-box">成都 1 队</div>
-            <div class="vs">VS</div>
-            <div class="team-box">北京 2 队</div>
-        </div>
+            <div class="header">
+                <div class="team-box">成都 1 队</div>
+                <div class="vs">VS</div>
+                <div class="team-box">北京 2 队</div>
+            </div>
 
-        <div class="main-display">
-            <div id="homeScore" class="score led-red">99</div>
-            <div class="center-info">
-                <div id="period" class="period led-yellow">第 3 节</div>
-                <div id="timer" class="timer led-green">10:00</div>
+            <div class="main-display">
+                <div id="homeScore" class="score led-red">0</div>
+                <div class="center-info">
+                    <div id="period" class="period led-yellow">第 1 节</div>
+                    <div id="timer" class="timer led-green">10:00</div>
+                </div>
+                <div id="guestScore" class="score led-red">0</div>
             </div>
-            <div id="guestScore" class="score led-red">103</div>
-        </div>
 
-        <div class="footer">
-            <div class="foul-box">
-                <div class="foul-label">犯规</div>
-                <div id="homeFoul" class="foul-val led-red">8</div>
+            <div class="footer">
+                <div class="foul-box">
+                    <div class="foul-label">主队犯规</div>
+                    <div id="homeFoul" class="foul-val led-red">0</div>
+                </div>
+                <div class="shot-clock-box">
+                    <div class="meta-label">24 秒</div>
+                    <div id="shotClock" class="shot-clock led-red">24</div>
+                </div>
+                <div class="foul-box">
+                    <div class="foul-label">客队犯规</div>
+                    <div id="guestFoul" class="foul-val led-red">0</div>
+                </div>
             </div>
-            <div class="shot-clock-box">
-                <div id="shotClock" class="shot-clock led-red">24</div>
-            </div>
-            <div class="foul-box">
-                <div class="foul-label">犯规</div>
-                <div id="guestFoul" class="foul-val led-red">0</div>
+
+            <div class="status-bar">
+                <div id="eventText" class="event-text">待机：点击“开始 1 小时自动测试”</div>
+                <div id="runText" class="run-text">00:00 / 60:00</div>
             </div>
         </div>
 
         <div class="controls">
-            <button onclick="startSimulation()">开始模拟</button>
-            <button onclick="pauseSimulation()">暂停</button>
-            <button class="btn-reset" onclick="resetTimer()">重置时间</button>
-            <button class="btn-reset" onclick="resetScores()">重置比分</button>
+            <button class="btn-primary" onclick="startSimulation()">开始 1 小时自动测试</button>
+            <button onclick="pauseSimulation()">暂停模拟</button>
+            <button onclick="resumeSimulation()">继续模拟</button>
+            <button class="btn-reset" onclick="resetSimulation()">重置测试</button>
+            <button class="btn-reset" onclick="triggerRandomChaos()">立即触发异常</button>
         </div>
     </div>
 
     <script>
-        // 初始数据设置为要求的重置值
-        let homeScore = 99;
-        let guestScore = 103;
-        let shotClock = 24;
-        let minutes = 10;
-        let seconds = 0;
+        const TOTAL_PERIODS = 4;
+        const PERIOD_SECONDS = 10 * 60;
+        const TEST_SECONDS = 60 * 60;
+        const TICK_MS = 1000;
+
+        let state;
         let interval = null;
+        let lastWallTick = 0;
+
+        const scenarios = [
+            { at: 35, type: 'scoreBurst', msg: '快攻连得 5 分' },
+            { at: 80, type: 'pause', duration: 12, msg: '暂停停表 12 秒' },
+            { at: 145, type: 'occludeTime', duration: 9, msg: '大表被人员遮挡' },
+            { at: 210, type: 'rollback', value: 5, msg: '裁判回表 +5 秒' },
+            { at: 300, type: 'scoreReset', msg: '比分误清零后恢复' },
+            { at: 420, type: 'fault', duration: 8, msg: 'LED 闪烁故障' },
+            { at: 540, type: 'timeReset', msg: '时间被误重置到 10:00 后恢复' },
+            { at: 675, type: 'occludeScore', duration: 12, msg: '比分区域遮挡' },
+            { at: 790, type: 'shotReset', msg: '24 秒回表' },
+            { at: 940, type: 'pause', duration: 18, msg: '长暂停停表' },
+            { at: 1120, type: 'fault', duration: 10, msg: '显示屏瞬断恢复' },
+            { at: 1320, type: 'rollback', value: 8, msg: '末段回表 +8 秒' },
+            { at: 1550, type: 'scoreBurst', msg: '双方连续得分' },
+            { at: 1840, type: 'occludeMixed', duration: 14, msg: '遮挡比分与时间' },
+            { at: 2160, type: 'timeReset', msg: '第三节误调表恢复' },
+            { at: 2440, type: 'scoreReset', msg: '第四节比分短暂归零' },
+            { at: 2840, type: 'fault', duration: 9, msg: 'OCR 压测：屏幕闪烁' },
+            { at: 3180, type: 'pause', duration: 20, msg: '最后阶段暂停' },
+            { at: 3420, type: 'rollback', value: 12, msg: '终场前回表 +12 秒' }
+        ];
+
+        function createInitialState() {
+            return {
+                homeScore: 0,
+                guestScore: 0,
+                homeFoul: 0,
+                guestFoul: 0,
+                shotClock: 24,
+                period: 1,
+                periodRemaining: PERIOD_SECONDS,
+                elapsed: 0,
+                running: false,
+                pausedByScenarioUntil: 0,
+                scenarioIndex: 0,
+                activeVisuals: [],
+                savedSnapshot: null,
+                eventText: '待机：点击“开始 1 小时自动测试”',
+                finished: false
+            };
+        }
+
+        function formatClock(totalSeconds) {
+            const sec = Math.max(0, Math.floor(totalSeconds));
+            const m = Math.floor(sec / 60);
+            const s = sec % 60;
+            return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+        }
+
+        function randomInt(min, max) {
+            return Math.floor(Math.random() * (max - min + 1)) + min;
+        }
 
         function updateDisplay() {
-            document.getElementById('homeScore').innerText = homeScore;
-            document.getElementById('guestScore').innerText = guestScore;
-            document.getElementById('shotClock').innerText = shotClock < 10 ? '0' + shotClock : shotClock;
-            document.getElementById('timer').innerText =
-                (minutes < 10 ? '0' + minutes : minutes) + ':' +
-                (seconds < 10 ? '0' + seconds : seconds);
+            const board = document.getElementById('scoreboard');
+            board.classList.toggle('paused', !state.running || state.elapsed < state.pausedByScenarioUntil);
+            board.classList.toggle('fault', hasVisual('fault'));
+            board.classList.toggle('rollback', hasVisual('rollback'));
+            board.classList.toggle('occluding', hasAnyOcclusion());
+
+            document.getElementById('homeScore').innerText = state.homeScore;
+            document.getElementById('guestScore').innerText = state.guestScore;
+            document.getElementById('homeFoul').innerText = state.homeFoul;
+            document.getElementById('guestFoul').innerText = state.guestFoul;
+            document.getElementById('shotClock').innerText = String(state.shotClock).padStart(2, '0');
+            document.getElementById('period').innerText = '第 ' + state.period + ' 节';
+            document.getElementById('timer').innerText = formatClock(state.periodRemaining);
+            document.getElementById('eventText').innerText = state.eventText;
+            document.getElementById('runText').innerText = formatClock(state.elapsed) + ' / 60:00';
+
+            document.getElementById('occTime').style.display = hasVisual('occludeTime') || hasVisual('occludeMixed') ? 'block' : '';
+            document.getElementById('occHome').style.display = hasVisual('occludeScore') || hasVisual('occludeMixed') ? 'block' : '';
+            document.getElementById('occAway').style.display = hasVisual('occludeScore') || hasVisual('occludeMixed') ? 'block' : '';
+        }
+
+        function hasVisual(type) {
+            return state.activeVisuals.some(item => item.type === type);
+        }
+
+        function hasAnyOcclusion() {
+            return hasVisual('occludeTime') || hasVisual('occludeScore') || hasVisual('occludeMixed');
+        }
+
+        function addVisual(type, duration) {
+            state.activeVisuals.push({ type, until: state.elapsed + duration });
+        }
+
+        function expireVisuals() {
+            state.activeVisuals = state.activeVisuals.filter(item => item.until > state.elapsed);
         }
 
         function startSimulation() {
-            if (interval) return;
-            interval = setInterval(() => {
-                // 时间倒计时
-                if (seconds === 0) {
-                    if (minutes > 0) {
-                        minutes--;
-                        seconds = 59;
-                    } else {
-                        pauseSimulation();
-                    }
-                } else {
-                    seconds--;
-                }
-
-                // 24秒倒计时
-                if (shotClock > 0) {
-                    shotClock--;
-                } else {
-                    shotClock = 24; 
-                }
-
-                // 随机模拟进球
-                if (Math.random() > 0.98) {
-                    homeScore += Math.floor(Math.random() * 3) + 1;
-                }
-                if (Math.random() > 0.98) {
-                    guestScore += Math.floor(Math.random() * 3) + 1;
-                }
-
-                updateDisplay();
-            }, 1000);
+            resetSimulation(false);
+            state.running = true;
+            state.eventText = '自动测试运行中：4 节 x 10 分钟，覆盖 1 小时现场场景';
+            lastWallTick = Date.now();
+            if (interval) clearInterval(interval);
+            interval = setInterval(tick, TICK_MS);
+            updateDisplay();
         }
 
         function pauseSimulation() {
-            clearInterval(interval);
-            interval = null;
-        }
-
-        // 功能 1: 重置时间为 10:00，并重置24秒
-        function resetTimer() {
-            pauseSimulation();
-            minutes = 10;
-            seconds = 0;
-            shotClock = 24;
+            state.running = false;
+            state.eventText = '人工暂停模拟';
             updateDisplay();
         }
 
-        // 功能 2: 重置比分为 99:103
-        function resetScores() {
-            homeScore = 99;
-            guestScore = 103;
+        function resumeSimulation() {
+            if (state.finished) return;
+            state.running = true;
+            state.eventText = '继续自动测试';
+            lastWallTick = Date.now();
+            if (!interval) interval = setInterval(tick, TICK_MS);
             updateDisplay();
         }
+
+        function resetSimulation(showText = true) {
+            if (interval) {
+                clearInterval(interval);
+                interval = null;
+            }
+            state = createInitialState();
+            if (showText) updateDisplay();
+        }
+
+        function tick() {
+            if (!state.running || state.finished) return;
+            const now = Date.now();
+            lastWallTick = now;
+            state.elapsed += 1;
+
+            runScheduledScenarios();
+            expireVisuals();
+
+            if (state.elapsed < state.pausedByScenarioUntil) {
+                updateDisplay();
+                return;
+            }
+
+            simulateGameSecond();
+            updateDisplay();
+
+            if (state.elapsed >= TEST_SECONDS) {
+                finishSimulation();
+            }
+        }
+
+        function simulateGameSecond() {
+            state.periodRemaining -= 1;
+            state.shotClock = Math.max(0, state.shotClock - 1);
+
+            if (state.shotClock === 0 || Math.random() > 0.965) {
+                state.shotClock = 24;
+            }
+
+            if (Math.random() > 0.94) {
+                scoreTeam(Math.random() > 0.48 ? 'home' : 'guest', randomInt(1, 3));
+            }
+
+            if (Math.random() > 0.985) {
+                if (Math.random() > 0.5) state.homeFoul = Math.min(9, state.homeFoul + 1);
+                else state.guestFoul = Math.min(9, state.guestFoul + 1);
+            }
+
+            if (state.periodRemaining <= 0) {
+                nextPeriod();
+            }
+        }
+
+        function scoreTeam(team, points) {
+            if (team === 'home') state.homeScore += points;
+            else state.guestScore += points;
+        }
+
+        function nextPeriod() {
+            if (state.period < TOTAL_PERIODS) {
+                state.period += 1;
+                state.periodRemaining = PERIOD_SECONDS;
+                state.shotClock = 24;
+                state.homeFoul = 0;
+                state.guestFoul = 0;
+                state.pausedByScenarioUntil = state.elapsed + 15;
+                state.eventText = '节间休息：进入第 ' + state.period + ' 节';
+            } else {
+                state.periodRemaining = 0;
+                state.eventText = '比赛时间已结束，继续保留画面做 OCR 稳定性观察';
+            }
+        }
+
+        function runScheduledScenarios() {
+            while (state.scenarioIndex < scenarios.length && state.elapsed >= scenarios[state.scenarioIndex].at) {
+                applyScenario(scenarios[state.scenarioIndex]);
+                state.scenarioIndex += 1;
+            }
+        }
+
+        function applyScenario(scenario) {
+            state.eventText = scenario.msg;
+            switch (scenario.type) {
+                case 'scoreBurst':
+                    scoreTeam('home', randomInt(2, 5));
+                    scoreTeam('guest', randomInt(1, 4));
+                    state.shotClock = 24;
+                    break;
+                case 'pause':
+                    state.pausedByScenarioUntil = state.elapsed + scenario.duration;
+                    break;
+                case 'occludeTime':
+                case 'occludeScore':
+                case 'occludeMixed':
+                    addVisual(scenario.type, scenario.duration);
+                    break;
+                case 'rollback':
+                    state.periodRemaining = Math.min(PERIOD_SECONDS, state.periodRemaining + scenario.value);
+                    state.shotClock = Math.min(24, state.shotClock + randomInt(3, 8));
+                    addVisual('rollback', 6);
+                    break;
+                case 'scoreReset':
+                    temporaryResetScores();
+                    break;
+                case 'timeReset':
+                    temporaryResetTime();
+                    break;
+                case 'shotReset':
+                    state.shotClock = 24;
+                    addVisual('rollback', 4);
+                    break;
+                case 'fault':
+                    addVisual('fault', scenario.duration);
+                    break;
+            }
+        }
+
+        function temporaryResetScores() {
+            const snapshot = {
+                homeScore: state.homeScore,
+                guestScore: state.guestScore
+            };
+            state.homeScore = 0;
+            state.guestScore = 0;
+            addVisual('fault', 5);
+            setTimeout(() => {
+                if (!state || state.finished) return;
+                state.homeScore = snapshot.homeScore;
+                state.guestScore = snapshot.guestScore;
+                state.eventText = '比分误清零已恢复';
+                updateDisplay();
+            }, 5000);
+        }
+
+        function temporaryResetTime() {
+            const snapshot = {
+                periodRemaining: state.periodRemaining,
+                shotClock: state.shotClock
+            };
+            state.periodRemaining = PERIOD_SECONDS;
+            state.shotClock = 24;
+            addVisual('fault', 5);
+            setTimeout(() => {
+                if (!state || state.finished) return;
+                state.periodRemaining = snapshot.periodRemaining;
+                state.shotClock = snapshot.shotClock;
+                state.eventText = '误调表已恢复';
+                updateDisplay();
+            }, 5000);
+        }
+
+        function triggerRandomChaos() {
+            const chaos = [
+                { type: 'occludeMixed', duration: 10, msg: '手动触发：混合遮挡' },
+                { type: 'fault', duration: 8, msg: '手动触发：显示故障' },
+                { type: 'rollback', value: randomInt(4, 15), msg: '手动触发：回表' },
+                { type: 'scoreReset', msg: '手动触发：比分重置' },
+                { type: 'timeReset', msg: '手动触发：时间重置' },
+                { type: 'pause', duration: 10, msg: '手动触发：暂停停表' }
+            ];
+            applyScenario(chaos[randomInt(0, chaos.length - 1)]);
+            updateDisplay();
+        }
+
+        function finishSimulation() {
+            state.finished = true;
+            state.running = false;
+            state.eventText = '1 小时自动测试完成';
+            if (interval) {
+                clearInterval(interval);
+                interval = null;
+            }
+            updateDisplay();
+        }
+
+        resetSimulation(true);
     </script>
-
-
-</body></html>
+</body>
+</html>

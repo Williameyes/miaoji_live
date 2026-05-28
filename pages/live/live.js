@@ -1409,6 +1409,7 @@ Page({
 
     // WebSocket 云端同步：见 _liveWsEnsureClient / _consumeWsBroadcast。
     this._liveWsCurrentSeq = 0;
+    this._liveWsSessionId = '';
     /** 大表跑停态：仅由 START/STOP 翻转，SYNC 校准时间但不擅自开表 */
     this._liveWsClockRunning = false;
     this._liveWsClockTickTimer = null;
@@ -1955,12 +1956,26 @@ Page({
    *   p?: number,
    *   seq: number,
    *   sys_t: number,
+   *   session_id?: string,
    *   sc?: number
    * }} payload 广播包
    * @returns {void}
    */
   _consumeWsBroadcast: function (payload) {
     if (!payload || typeof payload.act !== 'string') return;
+
+    if (typeof payload.session_id === 'string' && payload.session_id && this._liveWsSessionId !== payload.session_id) {
+      console.log(
+        '[Live][WS] collector session changed %s -> %s, reset seq',
+        this._liveWsSessionId || 'none',
+        payload.session_id
+      );
+      this._liveWsSessionId = payload.session_id;
+      this._liveWsCurrentSeq = 0;
+      this.appendHealthLog('ws_collector_session_changed', {
+        session: String(payload.session_id || '').slice(0, 40)
+      });
+    }
 
     var currentSeq = this._liveWsCurrentSeq || 0;
     if (payload.seq <= currentSeq) return;
@@ -2104,6 +2119,7 @@ Page({
       wxsClockShotWarn: false
     });
     this._liveWsCurrentSeq = 0;
+    this._liveWsSessionId = '';
     this._liveWsClockRunning = false;
   },
 
@@ -2136,6 +2152,7 @@ Page({
     }
     if (manual) {
       this._liveWsCurrentSeq = 0;
+      this._liveWsSessionId = '';
       this._liveWsClockRunning = false;
     }
   },
