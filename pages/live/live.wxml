@@ -1,12 +1,18 @@
 <page-meta background-color="#000000" background-color-top="#000000" background-color-bottom="#000000" page-style="background: #000000;"></page-meta>
 <wxs module="c" src="./live.wxs"></wxs>
 <view class="container landscape {{isRecording ? 'container--rec-performance' : ''}}">
-  <!-- 背景层：双缓冲模糊背景填充左右黑边 -->
-  <view wx:if="{{liveStreamAllowed && cameraMounted}}" class="bg-layer">
-    <image wx:if="{{bgLayerSrcA}}" class="bg-layer-image bg-layer-image-a" src="{{bgLayerSrcA}}" mode="aspectFill" style="opacity: {{bgOpacityA}};" />
-    <image wx:if="{{bgLayerSrcB}}" class="bg-layer-image bg-layer-image-b" src="{{bgLayerSrcB}}" mode="aspectFill" style="opacity: {{bgOpacityB}};" />
-    <!-- 暗角层 -->
-    <view class="bg-vignette"></view>
+  <!-- 左侧边缘扩散层 -->
+  <view wx:if="{{liveStreamAllowed && cameraMounted}}" class="ambient-layer ambient-left">
+    <image wx:if="{{bgLayerSrcA}}" class="ambient-image" src="{{bgLayerSrcA}}" style="opacity: {{bgOpacityA}};" />
+    <image wx:if="{{bgLayerSrcB}}" class="ambient-image" src="{{bgLayerSrcB}}" style="opacity: {{bgOpacityB}};" />
+    <view class="ambient-mask"></view>
+  </view>
+
+  <!-- 右侧边缘扩散层 -->
+  <view wx:if="{{liveStreamAllowed && cameraMounted}}" class="ambient-layer ambient-right">
+    <image wx:if="{{bgLayerSrcA}}" class="ambient-image" src="{{bgLayerSrcA}}" style="opacity: {{bgOpacityA}};" />
+    <image wx:if="{{bgLayerSrcB}}" class="ambient-image" src="{{bgLayerSrcB}}" style="opacity: {{bgOpacityB}};" />
+    <view class="ambient-mask"></view>
   </view>
   <!-- Level 0: 16:9 内接取景框（与 computeLiveStage16x9 一致），避免全屏与相机典型 16:9 输出比例差导致的非等比拉伸感 -->
   <view
