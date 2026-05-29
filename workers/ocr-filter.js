@@ -17,8 +17,10 @@ var BASELINE_STABLE_FRAMES = 5;
 /** 单格灰度均值差阈值 */
 var CELL_DIFF_THRESHOLD = 10;
 
-/** 判定 ROI 结构变化的最少格数 */
+/** 判定 ROI 结构变化的最少格数（比分区提高以减少误触发） */
 var CHANGED_CELLS_MIN = 2;
+/** 主/客分 patch 判定变化的最少格数 */
+var SCORE_CHANGED_CELLS_MIN = 4;
 
 /** @type {Array<{ x: number, y: number, w: number, h: number }>} */
 var rois = [];
@@ -105,7 +107,7 @@ function extractSparseGridFeature(rgba, frameW, frameH, roi) {
  */
 function isFeatureChanged(current, baseline, roiIndex) {
   if (!baseline || baseline.length !== current.length) return true;
-  var minCells = roiIndex === 2 ? 1 : CHANGED_CELLS_MIN;
+  var minCells = roiIndex === 2 ? 1 : SCORE_CHANGED_CELLS_MIN;
   var changedCells = 0;
   for (var i = 0; i < current.length; i++) {
     if (Math.abs(current[i] - baseline[i]) > CELL_DIFF_THRESHOLD) {
@@ -163,28 +165,31 @@ function initRois(nextRois) {
   frameSeq = 0;
 }
 
+/** 已裁剪 patch 视为满幅 ROI（仅主/客分，时间由主线程轮询） */
+var FULL_PATCH_ROI = { x: 0, y: 0, w: 1, h: 1 };
+
 /**
- * 处理单帧：提取特征、diff、返回 OCR_TRIGGER。
- * @param {ArrayBuffer} buffer 帧 buffer
- * @param {number} width 帧宽
- * @param {number} height 帧高
+ * 处理主/客分 ROI 小图 patch：提取特征、diff、返回 OCR_TRIGGER。
+ * @param {Array<{ roiIndex: number, buffer: ArrayBuffer, width: number, height: number }>} patches
  * @param {number} seq 帧序号
  * @returns {void}
  */
-function handleFrame(buffer, width, height, seq) {
-  if (!buffer || !buffer.byteLength || width <= 0 || height <= 0 || !rois.length) return;
+function handleFramePatches(patches, seq) {
+  if (!patches || !patches.length) return;
 
   frameSeq = typeof seq === 'number' ? seq : frameSeq + 1;
   if (frameSeq % FRAME_SKIP !== 0) return;
 
-  var rgba = new Uint8Array(buffer);
   var changedRois = [];
 
-  for (var i = 0; i < rois.length && i < 3; i++) {
-    var roi = rois[i];
-    if (!roi || roi.w <= 0 || roi.h <= 0) continue;
+  for (var p = 0; p < patches.length; p++) {
+    var patch = patches[p];
+    var i = patch.roiIndex;
+    if (i !== 0 && i !== 1) continue;
+    if (!patch.buffer || !patch.buffer.byteLength || patch.width <= 0 || patch.height <= 0) continue;
 
-    var feature = extractSparseGridFeature(rgba, width, height, roi);
+    var rgba = new Uint8Array(patch.buffer);
+    var feature = extractSparseGridFeature(rgba, patch.width, patch.height, FULL_PATCH_ROI);
 
     if (baselinePending[i]) {
       if (!baselineTargets[i]) {
@@ -238,6 +243,19 @@ function handleFrame(buffer, width, height, seq) {
 }
 
 /**
+ * @deprecated 整帧入口已废弃，请使用 handleFramePatches
+ * @param {ArrayBuffer} buffer
+ * @param {number} width
+ * @param {number} height
+ * @param {number} seq
+ * @returns {void}
+ */
+function handleFrame(buffer, width, height, seq) {
+  if (!buffer || !buffer.byteLength || width <= 0 || height <= 0) return;
+  handleFramePatches([{ roiIndex: 0, buffer: buffer, width: width, height: height }], seq);
+}
+
+/**
  * 标记 ROI baseline 进入稳定确认流程（OCR 成功后由主线程触发）。
  * 下一帧起采集新特征作为 target，连续稳定 N 帧后才替换 baseline。
  * @param {number[]} roiIndices ROI 索引列表
@@ -281,6 +299,11 @@ worker.onMessage(function (res) {
   if (type === 'RESET') {
     resetState();
     worker.postMessage({ type: 'READY', roiCount: 0 });
+    return;
+  }
+
+  if (type === 'FRAME_PATCHES') {
+    handleFramePatches(msg.patches || [], msg.seq);
     return;
   }
 
