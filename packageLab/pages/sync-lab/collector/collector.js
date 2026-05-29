@@ -588,7 +588,7 @@ var _ocrV5ScorePumpCursor = 0;
 /** 进入遮挡前是否在走表（用于 holdSec===clockSec 时恢复走表） */
 var _ocrOcclusionWasRunning = false;
 /** 上次时间 OCR 刚结束后的短冷却，避免同帧抢 VK（毫秒） */
-var OCR_V5_SCORE_COOLDOWN_AFTER_TIME_MS = 280;
+var OCR_V5_SCORE_COOLDOWN_AFTER_TIME_MS = 120;
 /** 待触发比分排队超过该毫秒则强制跑一次（防止永久 pending） */
 var OCR_V5_SCORE_PENDING_FORCE_MS = 700;
 /** V5 主分 OCR 成功墙钟（仅真实 OCR，供 heartbeat 判定） */
@@ -599,15 +599,19 @@ var _ocrV5LastTimeOcrOkTs = Date.now();
 var _ocrScoreBootstrapRejectStreak = [0, 0];
 /**
  * 比分二次确认缓冲 [主, 客]：新值（不等于当前 good）必须连续命中
- * OCR_SCORE_ACCEPT_STREAK 次相同读数才被采纳，杜绝单帧误读直接落地/上屏。
+ * 按分差阶梯确认相同读数后才采纳，杜绝单帧误读直接落地/上屏。
  * @type {Array<{ value: number, streak: number }>}
  */
 var _ocrScoreConfirmBuf = [
   { value: -1, streak: 0 },
   { value: -1, streak: 0 }
 ];
-/** 新比分采纳所需连续相同读数（含本次）。等于旧 good 的读数不受此限。 */
-var OCR_SCORE_ACCEPT_STREAK = 2;
+/** 小分差(+1~+4)采纳所需连续相同读数 */
+var OCR_SCORE_ACCEPT_STREAK_SMALL = 1;
+/** 中等分差采纳所需连续相同读数 */
+var OCR_SCORE_ACCEPT_STREAK_MED = 2;
+/** 大跳分采纳所需连续相同读数 */
+var OCR_SCORE_ACCEPT_STREAK_LARGE = 3;
 /** 最近一次软 SYNC 墙钟（防抖） */
 var _lastSoftSyncWallTs = 0;
 /** 是否进入最后一分钟极限调度模式（minutes===0 && seconds<=60） */
@@ -1325,7 +1329,8 @@ function getClockRefSec() {
 function isLikelyPeriodClockReset(refSec, ocrSec) {
   if (ocrSec < OCR_PERIOD_RESET_MIN_SEC) return false;
   if (refSec < 0) return true;
-  if (refSec < 60) return false;
+  // 末节归零(0:xx)后大屏回到 8:00+（含 10:00）——此前 ref<60 直接 return false 导致永远进不了新节
+  if (refSec < 60) return true;
   return refSec <= OCR_PERIOD_RESET_REF_MAX_SEC;
 }
 
@@ -3461,6 +3466,12 @@ Page({
     if (!_ocrOcclusionActive) {
       this._applyPartialOcrPreview(state.rawTexts, roiIdx);
     }
+    if (parsedOkForBaseline && (roiIdx === 0 || roiIdx === 1) && state.rawTexts) {
+      var notifyRois = this.data.rois.map(function (roi, idx) {
+        return Object.assign({}, roi, { rawText: state.rawTexts[idx] || '' });
+      });
+      this._parseAndMaybeNotify(notifyRois, roiIdx);
+    }
 
     if (state.queue) {
       state.queuePos += 1;
@@ -3518,9 +3529,10 @@ Page({
    * 将比赛时钟一次性对齐到 OCR 读数并按走表推进（恢复/重启窗口专用，不追赶）。
    * @param {number} ocrSec OCR 读到的比赛时钟总秒数
    * @param {number} now 当前墙钟
+   * @param {boolean} [isPeriodReset] 是否为节间复位（0:xx→10:00），自动进下一节
    * @returns {void}
    */
-  _snapClockToOcr: function (ocrSec, now) {
+  _snapClockToOcr: function (ocrSec, now, isPeriodReset) {
     if (ocrSec < 0) return;
     var prevSec = _lastOcrClockSec;
     _lastOcrClockSec = ocrSec;
@@ -3544,23 +3556,51 @@ Page({
 
     var homeScore = _lastCommittedFrame ? _lastCommittedFrame.homeScore : this.data.homeScore;
     var awayScore = _lastCommittedFrame ? _lastCommittedFrame.awayScore : this.data.awayScore;
+    var period = this.data.period;
+    if (isPeriodReset && period < 8) {
+      period += 1;
+      this.setData({ period: period });
+      logOcrV5Diag('period_auto_advance', { period: period, ocrSec: ocrSec });
+    }
     var clk = clockFromTotalSec(ocrSec);
     this._commitLocalState({
       homeScore: homeScore,
       awayScore: awayScore,
-      period: this.data.period,
+      period: period,
       minutes: clk.minutes,
       seconds: clk.seconds,
       shotClock: this.data.shotClock
     });
-    if (prevSec !== ocrSec) {
+    _procState.lastOcrSec = ocrSec;
+    _procState.syncObserve = null;
+    _procState.sameSecStreak = 0;
+    _procState.sameSecFirstSeen = now;
+    if (isPeriodReset) {
+      this._emitWsPacket('PERIOD', {
+        t: ocrSec,
+        a: homeScore,
+        b: awayScore,
+        p: period
+      });
+    }
+    if (prevSec !== ocrSec || isPeriodReset) {
       this._emitWsPacket('SYNC', {
         t: ocrSec,
         a: homeScore,
         b: awayScore,
-        p: this.data.period
+        p: period
       });
-      logOcrV5Diag('clock_snap_to_ocr', { ocrSec: ocrSec, prevSec: prevSec });
+      this._emitWsPacket('START', {
+        t: ocrSec,
+        a: homeScore,
+        b: awayScore,
+        p: period
+      });
+      logOcrV5Diag('clock_snap_to_ocr', {
+        ocrSec: ocrSec,
+        prevSec: prevSec,
+        periodReset: !!isPeriodReset
+      });
     }
   },
 
@@ -3600,6 +3640,8 @@ Page({
       _isFinalMinuteMode = false;
       TIME_PUMP_INTERVAL = TIME_PUMP_INTERVAL_BASE_MS;
       OCR_CLOCK_PREDICT_TICK_MS = OCR_CLOCK_PREDICT_TICK_BASE_MS;
+      this._snapClockToOcr(ocrSec, now, true);
+      return;
     }
     var captureTs = Number(frameCaptureTs) || now;
     var pipelineDelaySec = Math.min(
@@ -4273,7 +4315,7 @@ Page({
     }
     if (!triggerRois.length) return false;
 
-    if (triggerReason === 'worker' && getPendingScoreAgeMs(now) < 350) {
+    if (triggerReason === 'worker' && getPendingScoreAgeMs(now) < 180) {
       return false;
     }
 
@@ -6553,21 +6595,29 @@ Page({
     if (timeInfo && refT >= 0) {
       var jump = Math.abs(t - refT);
       if (jump > OCR_SYNC_JUMP_THRESHOLD_SEC) {
-        if (input.resumeSnap) {
-          this._emitWsPacket('SYNC', payloadBase);
-          if (!_procState.clockRunning) {
-            this._emitWsPacket('START', payloadBase);
+        if (input.resumeSnap || isLikelyPeriodClockReset(refT, t)) {
+          var snapPeriod = period;
+          if (isLikelyPeriodClockReset(refT, t) && snapPeriod < 8) {
+            snapPeriod += 1;
+            period = snapPeriod;
+            this.setData({ period: snapPeriod });
+            payloadBase.p = snapPeriod;
+            this._emitWsPacket('PERIOD', payloadBase);
+            logOcrV5Diag('period_auto_advance', { period: snapPeriod, ocrSec: t });
           }
+          this._emitWsPacket('SYNC', payloadBase);
+          this._emitWsPacket('START', payloadBase);
           _procState.syncObserve = null;
           _procState.sameSecStreak = 0;
           _procState.sameSecFirstSeen = 0;
           _procState.lastOcrSec = t;
           _clockMode = 'running';
           _procState.pauseConfirmed = false;
+          _procState.clockRunning = true;
           this._commitLocalState({
             homeScore: h,
             awayScore: a,
-            period: period,
+            period: snapPeriod,
             minutes: timeInfo.minutes,
             seconds: timeInfo.seconds,
             shotClock: shotClock
@@ -6800,13 +6850,23 @@ function _withPctStyle(rois) {
 /**
  * 比分二次确认：返回本次读数是否可被采纳为新的有效比分。
  * - 等于当前 good：直接采纳（仅刷新新鲜度），并清空确认缓冲。
- * - 不等于当前 good：需连续 OCR_SCORE_ACCEPT_STREAK 次读到同一新值才采纳。
+ * - 不等于当前 good：按分差决定连续确认次数（小分 1 次、大跳 3 次）。
  * @param {number} scoreIdx 0=主队, 1=客队
  * @param {number} value 本次解析出的比分
  * @returns {boolean} 是否采纳
  */
+function getScoreAcceptStreakNeeded(scoreIdx, value) {
+  var good = scoreIdx === 0 ? _ocrLastGoodHomeScore : _ocrLastGoodAwayScore;
+  if (good < 0) return OCR_SCORE_ACCEPT_STREAK_SMALL;
+  var delta = Math.abs(value - good);
+  if (delta <= 4) return OCR_SCORE_ACCEPT_STREAK_SMALL;
+  if (delta < OCR_SCORE_JUMP_CONFIRM_THRESHOLD) return OCR_SCORE_ACCEPT_STREAK_MED;
+  return OCR_SCORE_ACCEPT_STREAK_LARGE;
+}
+
 function confirmScoreSample(scoreIdx, value) {
   var good = scoreIdx === 0 ? _ocrLastGoodHomeScore : _ocrLastGoodAwayScore;
+  var need = getScoreAcceptStreakNeeded(scoreIdx, value);
   if (good < 0 || value === good) {
     _ocrScoreConfirmBuf[scoreIdx] = { value: value, streak: 0 };
     return true;
@@ -6818,7 +6878,7 @@ function confirmScoreSample(scoreIdx, value) {
     _ocrScoreConfirmBuf[scoreIdx] = { value: value, streak: 1 };
     buf = _ocrScoreConfirmBuf[scoreIdx];
   }
-  if (buf.streak >= OCR_SCORE_ACCEPT_STREAK) {
+  if (buf.streak >= need) {
     _ocrScoreConfirmBuf[scoreIdx] = { value: value, streak: 0 };
     return true;
   }
