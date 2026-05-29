@@ -1154,10 +1154,10 @@ button.live-ble-btn::after {
   pointer-events: auto;
 }
 
-/* 抽屉顶部相机设置面板 */
-.drawer-camera-settings-panel {
+/* 抽屉顶部控制区容器 */
+.drawer-top-controls {
   position: fixed;
-  top: calc(24rpx + env(safe-area-inset-top));
+  top: calc(16rpx + env(safe-area-inset-top));
   left: 50%;
   transform: translateX(-50%);
   z-index: 210;
@@ -1166,7 +1166,17 @@ button.live-ble-btn::after {
   align-items: center;
   justify-content: center;
   gap: 12rpx;
-  padding: 8rpx 16rpx;
+  pointer-events: none; /* 让子元素响应事件 */
+}
+
+/* 抽屉顶部相机设置面板及影院模式面板公共基础 */
+.drawer-camera-settings-panel {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 8rpx;
+  padding: 6rpx 12rpx;
   background: rgba(0, 0, 0, 0.55);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
@@ -1176,10 +1186,10 @@ button.live-ble-btn::after {
 }
 
 .drawer-camera-pill {
-  min-height: 40rpx;
-  padding: 0 16rpx;
+  min-height: 36rpx;
+  padding: 0 12rpx;
   border-radius: 999rpx;
-  font-size: 16rpx;
+  font-size: 14rpx;
   font-weight: 500;
   line-height: 1.1;
   color: rgba(255, 255, 255, 0.8);
@@ -3079,4 +3089,35 @@ button.live-ble-btn::after {
 @keyframes shotClockPulse {
   from { opacity: 1; }
   to { opacity: 0.7; }
+}
+
+/* 影院模式开关 */
+.cinema-mode-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  font-size: 14rpx;
+  font-weight: 500;
+}
+
+.cinema-mode-text {
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  letter-spacing: 1rpx;
+}
+
+.cinema-mode-dot {
+  width: 6rpx;
+  height: 6rpx;
+  background-color: #4ade80;
+  border-radius: 50%;
+  margin-left: 8rpx;
+  box-shadow: 0 0 6rpx #4ade80;
+  animation: cinemaPulse 2s infinite;
+}
+
+@keyframes cinemaPulse {
+  0% { opacity: 0.4; }
+  50% { opacity: 1; }
+  100% { opacity: 0.4; }
 }

@@ -675,6 +675,7 @@ Page({
     
     // --- 自动模式相关（V2 WebSocket 云端同步） ---
     isAutoMode: false,
+    isCinemaMode: false,
     /** 时钟束：收包时更新锚点，走表由逻辑层 tick 渲染 */
     wxsClockBundle: null,
     /** WXS 回写的大表 MM:SS 文案 */
@@ -3042,6 +3043,7 @@ Page({
    * - 左右交替更新，单次更新成本减半，配合高频 2200ms 定时器产生连续流动感。
    */
   _updateBgLayer: function () {
+    if (!this.data.isCinemaMode) return;
     // 【稳定性熔断拦截】
     // 当系统处于高光保存、或者存储压力严重锁定、或相机未就绪时，直接跳过背景更新，让出所有 CPU 给主流程
     if (!this.data.cameraMounted || !this._previewRecordPipeline || this.data.isSavingHighlight || this.data.storageSevereLock) {
@@ -10532,6 +10534,16 @@ Page({
   onBackgroundLongPress: function () {
     if (this.isMultiTouch) return;
     this.openDrawerMode1();
+  },
+
+  onToggleCinemaMode: function () {
+    const nextMode = !this.data.isCinemaMode;
+    this.setData({ isCinemaMode: nextMode });
+    wx.showToast({
+      title: nextMode ? '影院模式（黑边处理）已开启' : '原生模式已恢复，发热已降低',
+      icon: 'none',
+      duration: 2000
+    });
   },
 
   _applyVkStableConfigToPipeline: function () {

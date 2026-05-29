@@ -591,19 +591,29 @@
   <!-- Level 3: 管理抽屉 (drawerMode 0=隐藏 1=打开) -->
   <view wx:if="{{drawerMode === 1}}">
 
-    <!-- 顶部相机设置面板 -->
-    <view
-      class="drawer-camera-settings-panel"
-      wx:if="{{cameraMounted && liveStreamAllowed && !isReplaying}}"
-    >
+    <!-- 顶部控制区（包含相机设置与影院模式） -->
+    <view class="drawer-top-controls">
+      <!-- 顶部相机设置面板 -->
       <view
-        wx:for="{{cameraViewModeStops}}"
-        wx:key="mode"
-        class="drawer-camera-pill {{cameraViewMode === item.mode ? 'drawer-camera-pill--active' : ''}}"
-        catchtap="onCameraViewModeTap"
-        data-mode="{{item.mode}}"
-      >{{item.label}}</view>
-      <view class="drawer-camera-pill drawer-camera-pill--focus" catchtap="onCameraFocusControlTap">锁焦</view>
+        class="drawer-camera-settings-panel"
+        wx:if="{{cameraMounted && liveStreamAllowed && !isReplaying}}"
+      >
+        <view
+          wx:for="{{cameraViewModeStops}}"
+          wx:key="mode"
+          class="drawer-camera-pill {{cameraViewMode === item.mode ? 'drawer-camera-pill--active' : ''}}"
+          catchtap="onCameraViewModeTap"
+          data-mode="{{item.mode}}"
+        >{{item.label}}</view>
+        <view class="drawer-camera-pill drawer-camera-pill--focus" catchtap="onCameraFocusControlTap">锁焦</view>
+      </view>
+
+      <!-- 影院模式开关面板 -->
+      <view class="drawer-camera-settings-panel cinema-mode-panel" catchtap="onToggleCinemaMode">
+        <text wx:if="{{isCinemaMode}}" class="cinema-mode-text">[ 🎬 影院模式 ]</text>
+        <text wx:else class="cinema-mode-text">[ 📱 原生模式 ]</text>
+        <view wx:if="{{isCinemaMode}}" class="cinema-mode-dot"></view>
+      </view>
     </view>
 
     <!-- 遮罩：点击关闭（z-index 低于面板，不拦截面板内点击） -->
