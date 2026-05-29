@@ -21,6 +21,46 @@ page {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
+/* 背景层：双缓冲模糊背景填充左右黑边 */
+.bg-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.bg-layer-canvas {
+  position: absolute;
+  left: -9999px;
+  top: -9999px;
+  width: 240px;
+  height: 135px;
+}
+
+.bg-layer-image {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scale(1.45);
+  filter: blur(48rpx) brightness(0.82) saturate(1.35);
+  opacity: 0.42;
+  transition: opacity 600ms ease;
+}
+
+.bg-vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    circle at center,
+    transparent 48%,
+    rgba(0,0,0,0.38) 100%
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+
 /* 全屏时相机/画布（无 .live-stage 包裹的旧路径保留）：用 cover 等比裁切。 */
 .camera-bg {
   width: 100vw;

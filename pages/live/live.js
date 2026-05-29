@@ -6,6 +6,7 @@ const { parseExpireAtToMs } = require('../../utils/referral.js');
 const storageEst = require('../../utils/file-storage-estimate.js');
 const clipsStorage = require('../../utils/miaoxie-clips-storage.js');
 const replayBufferMod = require('../../utils/replay-buffer/index.js');
+const { createCameraBlitRenderer } = require('../../utils/render/camera-blit-renderer.js');
 
 /** 视录分离重构后保留空壳，避免遗留 VK/增强引用导致运行时错误。 */
 const renderPipelineMod = {
@@ -394,6 +395,13 @@ Page({
     /** 硬恢复相机卸载间隙：静态遮罩（无 Toast、无循环 video），减轻黑屏与推流观感问题。 */
     showRecoveryVeil: false,
     recoveryVeilSrc: '',
+    /** 背景层：双缓冲模糊背景 */
+    bgLayerSrcA: '',
+    bgLayerSrcB: '',
+    bgOpacityA: 0,
+    bgOpacityB: 0,
+    /** 当前活动的背景层（true=A, false=B） */
+    _bgIsActiveA: true,
     pipelineHealth: 'ok',
     opsControlText: 'PAUSE',
     opsControlActionable: false,
@@ -2964,6 +2972,194 @@ Page({
       this._recorderCore.markReady('camera_init');
     }
     this.tryStartRollingWhenCameraReady('camera_init');
+    // 启动背景层更新定时器
+    this._startBgLayerTimer();
+  },
+
+  /**
+   * 启动背景层更新定时器（每6秒更新一次，双缓冲交叉渐变）
+   */
+  _startBgLayerTimer: function () {
+    // 先清理可能存在的旧定时器
+    this._stopBgLayerTimer();
+    // 立即更新一次背景
+    this._updateBgLayer();
+    // 设置定时器每6秒更新一次
+    this._bgLayerTimer = setInterval(() => {
+      if (this._livePageVisible && this.data.liveStreamAllowed && this.data.cameraMounted) {
+        this._updateBgLayer();
+      }
+    }, 6000);
+  },
+
+  /**
+   * 停止背景层更新定时器
+   */
+  _stopBgLayerTimer: function () {
+    if (this._bgLayerTimer) {
+      clearInterval(this._bgLayerTimer);
+      this._bgLayerTimer = null;
+    }
+  },
+
+  /**
+   * 初始化背景层 2D 离屏 Canvas
+   */
+  _initBgLayerCanvas: function() {
+    if (this._bgOffscreenCanvas) return Promise.resolve();
+    try {
+      if (typeof wx.createOffscreenCanvas === 'function') {
+        const canvas = wx.createOffscreenCanvas({
+          type: '2d',
+          width: 240,
+          height: 135
+        });
+        this._bgOffscreenCanvas = canvas;
+        this._bgCanvasCtx = canvas.getContext('2d');
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error('wx.createOffscreenCanvas not supported'));
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  },
+
+  /**
+   * 销毁背景层离屏 Canvas
+   */
+  _destroyBgLayerCanvas: function() {
+    this._bgOffscreenCanvas = null;
+    this._bgCanvasCtx = null;
+  },
+
+  /**
+   * 更新背景层：从 _previewRecordPipeline 获取当前帧，利用离屏 2D Canvas 降采样，生成低频双缓冲背景
+   */
+  _updateBgLayer: function () {
+    if (!this.data.cameraMounted || !this._previewRecordPipeline) {
+      return;
+    }
+    const frame = typeof this._previewRecordPipeline.getLastCameraFrame === 'function' 
+      ? this._previewRecordPipeline.getLastCameraFrame() 
+      : null;
+    if (!frame || !frame.data) return;
+
+    this._initBgLayerCanvas().then(() => {
+      const canvas = this._bgOffscreenCanvas;
+      const ctx = this._bgCanvasCtx;
+      if (!canvas || !ctx) return;
+
+      const fw = Math.max(1, Number(frame.width) || 1);
+      const fh = Math.max(1, Number(frame.height) || 1);
+      
+      // 创建 ImageData 对象
+      let imgData = null;
+      try {
+        const u8Arr = new Uint8ClampedArray(frame.data);
+        imgData = canvas.createImageData(u8Arr, fw, fh);
+      } catch (e) {
+        // 兼容某些基础库可能不支持 createImageData(u8Arr, w, h) 的情况
+        try {
+          imgData = ctx.createImageData(fw, fh);
+          imgData.data.set(new Uint8ClampedArray(frame.data));
+        } catch (e2) {
+          console.error('bgLayer createImageData failed:', e2);
+          return;
+        }
+      }
+
+      // 为了实现降采样，我们需要一个临时的大 canvas 来画原图，再 drawImage 到小的上面
+      // 但小程序 OffscreenCanvas 数量受限且性能敏感。
+      // 最简单粗暴的降采样：直接丢弃像素 (Nearest Neighbor)
+      const targetW = 240;
+      const targetH = 135;
+      
+      const smallImgData = ctx.createImageData(targetW, targetH);
+      const srcData = imgData.data;
+      const dstData = smallImgData.data;
+      
+      const ratioW = fw / targetW;
+      const ratioH = fh / targetH;
+      
+      for (let y = 0; y < targetH; y++) {
+        const srcY = Math.floor(y * ratioH);
+        for (let x = 0; x < targetW; x++) {
+          const srcX = Math.floor(x * ratioW);
+          const srcIdx = (srcY * fw + srcX) * 4;
+          const dstIdx = (y * targetW + x) * 4;
+          
+          dstData[dstIdx] = srcData[srcIdx];         // R
+          dstData[dstIdx + 1] = srcData[srcIdx + 1]; // G
+          dstData[dstIdx + 2] = srcData[srcIdx + 2]; // B
+          dstData[dstIdx + 3] = srcData[srcIdx + 3]; // A
+        }
+      }
+
+      ctx.putImageData(smallImgData, 0, 0);
+
+      // 导出为临时文件
+      try {
+        const tempFilePath = canvas.toDataURL('image/jpeg', 0.5);
+        // OffscreenCanvas 的 toDataURL 返回的是 base64
+        this._crossFadeBg(tempFilePath);
+      } catch (e) {
+        console.error('bgLayer toDataURL failed:', e);
+      }
+    }).catch((err) => {
+      console.error('bgLayer init canvas failed:', err);
+    });
+  },
+
+  /**
+   * 双缓冲交叉渐变：新背景
+   */
+  _crossFadeBg: function (newImagePath) {
+    const isActiveA = this._bgIsActiveA;
+    const hasBgA = !!this.data.bgLayerSrcA;
+    const hasBgB = !!this.data.bgLayerSrcB;
+    const isFirstInit = !hasBgA && !hasBgB;
+
+    if (isFirstInit) {
+      // 第一次初始化，直接显示在A层
+      this.setData({
+        bgLayerSrcA: newImagePath,
+        bgOpacityA: 0.42,
+        bgOpacityB: 0
+      });
+      this._bgIsActiveA = true;
+      return;
+    }
+
+    if (isActiveA) {
+      // 当前A是活动层，将新图放到B，让B淡入，A淡出
+      this.setData({
+        bgLayerSrcB: newImagePath,
+        bgOpacityB: 0
+      }, () => {
+        // 延迟一小会儿让图片加载，然后渐变
+        setTimeout(() => {
+          this.setData({
+            bgOpacityA: 0,
+            bgOpacityB: 0.42
+          });
+          this._bgIsActiveA = false;
+        }, 50);
+      });
+    } else {
+      // 当前B是活动层，将新图放到A，让A淡入，B淡出
+      this.setData({
+        bgLayerSrcA: newImagePath,
+        bgOpacityA: 0
+      }, () => {
+        setTimeout(() => {
+          this.setData({
+            bgOpacityA: 0.42,
+            bgOpacityB: 0
+          });
+          this._bgIsActiveA = true;
+        }, 50);
+      });
+    }
   },
 
   /**
@@ -4933,10 +5129,14 @@ Page({
 
     if (this._entitlementEverAllowedInSession) {
       this._ensureLiveCameraReady(() => this._liveCoreOnShowAfterEntitlement());
+      // 重新启动背景层定时器
+      this._startBgLayerTimer();
       return;
     }
     this.refreshLiveEntitlementAndResume(() => {
       this._liveCoreOnShowAfterEntitlement();
+      // 重新启动背景层定时器
+      this._startBgLayerTimer();
     });
   },
 
@@ -5584,6 +5784,9 @@ Page({
   },
 
   onUnload: function () {
+    // 停止背景层定时器
+    this._stopBgLayerTimer();
+    this._destroyBgLayerCanvas();
     try {
       this._liveWsFlushScorePersist();
     } catch (eWsU0) {}
@@ -5731,6 +5934,8 @@ Page({
   },
 
   onHide: function () {
+    // 停止背景层定时器
+    this._stopBgLayerTimer();
     if (this._vkEnvironmentSampler && typeof this._vkEnvironmentSampler.stop === 'function') {
       this._vkEnvironmentSampler.stop({ silent: false, keepCompletedState: false });
     }
