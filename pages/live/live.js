@@ -2988,12 +2988,12 @@ Page({
     this._bgUpdateSide = 'left';
     // 立即更新一次背景
     this._updateBgLayer();
-    // 设置定时器每 900ms 更新一次（高频小幅度）
+    // 设置定时器每 2200ms 更新一次（降低频率换取稳定性）
     this._bgLayerTimer = setInterval(() => {
       if (this._livePageVisible && this.data.liveStreamAllowed && this.data.cameraMounted) {
         this._updateBgLayer();
       }
-    }, 900);
+    }, 2200);
   },
 
   /**
@@ -3015,8 +3015,8 @@ Page({
       if (typeof wx.createOffscreenCanvas === 'function') {
         const canvas = wx.createOffscreenCanvas({
           type: '2d',
-          width: 120, // 仅截取原视频较小的比例作为边缘，这里设小一点加速渲染
-          height: 135
+          width: 32, // 极低分辨率采样，避免爆内存
+          height: 18
         });
         this._bgOffscreenCanvas = canvas;
         this._bgCanvasCtx = canvas.getContext('2d');
@@ -3039,10 +3039,12 @@ Page({
   /**
    * 更新背景层：从 _previewRecordPipeline 获取当前帧，利用离屏 2D Canvas 降采样，生成低频双缓冲背景
    * - 不再整图缩放，而是只采样原视频的左右 8% 区域，作为真正的「边缘延展」素材。
-   * - 左右交替更新，单次更新成本减半，配合高频 900ms 定时器产生连续流动感。
+   * - 左右交替更新，单次更新成本减半，配合高频 2200ms 定时器产生连续流动感。
    */
   _updateBgLayer: function () {
-    if (!this.data.cameraMounted || !this._previewRecordPipeline) {
+    // 【稳定性熔断拦截】
+    // 当系统处于高光保存、或者存储压力严重锁定、或相机未就绪时，直接跳过背景更新，让出所有 CPU 给主流程
+    if (!this.data.cameraMounted || !this._previewRecordPipeline || this.data.isSavingHighlight || this.data.storageSevereLock) {
       return;
     }
     const frame = typeof this._previewRecordPipeline.getLastCameraFrame === 'function' 
@@ -3074,8 +3076,8 @@ Page({
 
       // 截取 8% 的宽度
       const sliceW = Math.max(1, Math.floor(fw * 0.08));
-      const targetW = 160;
-      const targetH = 90;
+      const targetW = 32;
+      const targetH = 18;
       const ratioW = sliceW / targetW;
       const ratioH = fh / targetH;
       const srcData = imgData.data;

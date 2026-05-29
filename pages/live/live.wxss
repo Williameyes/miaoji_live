@@ -56,7 +56,7 @@ page {
   object-fit: cover;
   filter: blur(12rpx) brightness(1.18) saturate(1.65) drop-shadow(0 0 24rpx rgba(255,255,255,0.08));
   opacity: 0.78;
-  transition: opacity 900ms ease;
+  transition: opacity 1000ms ease-in-out;
   animation: ambientBreath 8s ease-in-out infinite alternate;
 }
 
