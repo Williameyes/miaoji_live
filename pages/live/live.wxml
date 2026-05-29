@@ -124,26 +124,12 @@
       </view>
     </view>
 
-    <!-- 相机设置 ◎：与 REC 角对称，落在黑边；自动记分开启时在其上方叠 BLE 快连（REC 同款圆钮） -->
+    <!-- 相机设置 ◎：与 REC 角对称，落在黑边；默认隐藏 -->
     <view
       class="left-camera-fab-stack"
       style="{{leftCameraFabStyle}}"
-      wx:if="{{cameraMounted && liveStreamAllowed && !isReplaying && drawerMode === 0}}"
+      wx:if="{{false}}"
     >
-      <view
-        wx:if="{{isAutoMode && autoSyncWhitelisted}}"
-        class="recover-fab recover-fab--ok live-ble-fab {{liveWsConnected ? '' : 'live-ble-fab--muted'}}"
-        catchtap="onLiveWsChipTap"
-      >
-        <view class="recover-fab-ring">
-          <view
-            class="recover-fab-progress {{liveWsConnected ? 'live-ble-fab-progress--on' : 'live-ble-fab-progress--off'}}"
-          ></view>
-          <view class="recover-fab-inner live-ble-fab-inner">
-            <text class="recover-fab-text live-ble-fab-text">同步</text>
-          </view>
-        </view>
-      </view>
       <view class="recover-fab recover-fab--ok left-cam-fab" catchtap="onCameraSettingsFabTap">
         <view class="recover-fab-ring">
           <view class="recover-fab-progress left-cam-fab-progress"></view>
@@ -591,6 +577,21 @@
 
   <!-- Level 3: 管理抽屉 (drawerMode 0=隐藏 1=打开) -->
   <view wx:if="{{drawerMode === 1}}">
+
+    <!-- 顶部相机设置面板 -->
+    <view
+      class="drawer-camera-settings-panel"
+      wx:if="{{cameraMounted && liveStreamAllowed && !isReplaying}}"
+    >
+      <view
+        wx:for="{{cameraViewModeStops}}"
+        wx:key="mode"
+        class="drawer-camera-pill {{cameraViewMode === item.mode ? 'drawer-camera-pill--active' : ''}}"
+        catchtap="onCameraViewModeTap"
+        data-mode="{{item.mode}}"
+      >{{item.label}}</view>
+      <view class="drawer-camera-pill drawer-camera-pill--focus" catchtap="onCameraFocusControlTap">锁焦</view>
+    </view>
 
     <!-- 遮罩：点击关闭（z-index 低于面板，不拦截面板内点击） -->
     <view class="drawer-mode-backdrop" catchtap="closeAllDrawers"></view>

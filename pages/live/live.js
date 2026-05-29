@@ -4187,7 +4187,6 @@ Page({
       } catch (eT) { }
       return;
     }
-    if (this.data.drawerMode !== 0) return;
     if (!this.data.cameraMounted || !this.data.cameraContext || !this._cameraInitDone) return;
     var stop = null;
     var i;
@@ -4388,7 +4387,6 @@ Page({
    * @returns {void}
    */
   onCameraViewModeTap: function (e) {
-    if (this.data.drawerMode !== 0) return;
     var mode = e.currentTarget && e.currentTarget.dataset
       ? e.currentTarget.dataset.mode
       : '';
@@ -4402,10 +4400,13 @@ Page({
    * @returns {void}
    */
   onCameraFocusControlTap: function () {
-    if (this.data.drawerMode !== 0) return;
     if (!this.data.cameraMounted || !this.data.cameraContext || !this._cameraInitDone) return;
     this.setData({ cameraSettingsOpen: false });
     this.wakeLiveAeControls();
+    // 关闭抽屉，让用户能看到对焦/曝光控件
+    if (this.data.drawerMode === 1) {
+      this.setData({ drawerMode: 0 });
+    }
   },
 
   getDistance: function (p1, p2) {
