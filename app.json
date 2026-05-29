@@ -72,6 +72,7 @@
       }
     ]
   },
+  "workers": "workers",
   "sitemapLocation": "sitemap.json",
   "permission": {
     "scope.camera": {

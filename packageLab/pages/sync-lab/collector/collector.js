@@ -1,10 +1,11 @@
 /**
  * @fileoverview 采集端 (WebSocket 云端同步 + VisionKit OCR)
  *
- * V2 架构：
- *   - HTTP 换取 Token → WSS 长连接，仅在状态翻转时发包（信号灯模式）
- *   - processOcrFrame：时间阀门（假停表 / SYNC 观察室）与比分阀门（_applyScoreValve）解耦
- *   - OCR pump 节流 + 单 ROI 轮询；ROI 拖动/缩放；登录 + 白名单双重门控
+ * V5 架构（视觉感知层）：
+ *   - Worker 稀疏网格 diff 驱动 OCR（异动触发，非轮询）
+ *   - Transferable 零拷贝传帧，避免高频 RGBA 深拷贝 OOM
+ *   - 保留 V2 状态机（predictClock / processOcrFrame / starvation 等）不变
+ *   - Worker 崩溃时自动 fallback 至 legacy 双泵模式
  *
  * ROI 选区数据结构（归一化坐标，相对于相机预览区）：
  *   { x: 0-1, y: 0-1, w: 0-1, h: 0-1, label: string, rawText: string, pctStyle: string }
@@ -21,9 +22,13 @@ var WS_TOKEN_PATH = '/api/get_token';
 /** WebSocket 握手路径 */
 var WS_SOCKET_PATH = '/gaoguang-ws';
 /** 假停表防御：同一秒持续超过该毫秒才发 STOP */
-var OCR_FAKE_STOP_HOLD_MS = 1200;
+var OCR_FAKE_STOP_HOLD_MS = 2000;
 /** 假停表：同一秒需连续 OCR 样本次数（防走表 OCR 慢读误触） */
-var OCR_FAKE_STOP_STREAK = 3;
+var OCR_FAKE_STOP_STREAK = 4;
+/** 篮球单节比赛时钟分钟 plausible 上限（含 CBA 12 分钟节） */
+var OCR_GAME_CLOCK_MAX_MINUTES = 15;
+/** 停表恢复后 OCR 落差超过该秒数则一次性 snap 校准（避免 capSync 逐秒追 20s） */
+var OCR_PAUSE_RESUME_SNAP_MIN_SEC = 3;
 /** 开表恢复：连续读到同一更低秒数才发 START（防停表 OCR 误读） */
 var OCR_START_CONFIRM_STREAK = 2;
 /** 遮挡判定：时间/主分/客分均无法识别超过该毫秒 */
@@ -68,6 +73,16 @@ var OCR_PERIOD_RESET_REF_MAX_SEC = 420;
 var OCR_PERIOD_RESET_MIN_SEC = 480;
 /** 参考时钟仍 >2min 时，拒绝 0:xx（防 24s 进攻时间被 SS.m 误当比赛时钟） */
 var OCR_SHOT_CLOCK_MASK_REF_MIN_SEC = 120;
+/** 分钟十位 3↔8、5↔9 误读：相对参考正向跳变秒数下限 */
+var OCR_CLOCK_TENS_GLITCH_MIN_DELTA_SEC = 180;
+/** 分钟十位误读：相对参考正向跳变秒数上限 */
+var OCR_CLOCK_TENS_GLITCH_MAX_DELTA_SEC = 420;
+/** 分钟十位误读：分钟差下限（如 5:23→9:23 差 4） */
+var OCR_CLOCK_TENS_GLITCH_MINUTE_DIFF = 4;
+/** 分钟十位误读：分钟差上限（如 3:38→8:38 差 5） */
+var OCR_CLOCK_TENS_GLITCH_MAX_MINUTE_DIFF = 6;
+/** 0:xx 误锚恢复：参考至少为该秒数（排除 ref=0 误放行 9:50 等） */
+var OCR_CLOCK_SUBMINUTE_RECOVERY_MIN_REF_SEC = 10;
 /** 遮挡恢复：连续多少次检测到三项均可读才退出遮挡 */
 var OCR_OCCLUSION_RECOVER_STREAK = 2;
 /** 遮挡状态评估最小间隔（毫秒） */
@@ -187,6 +202,26 @@ var OCR_TIMEOUT_SETTLE_MS = 350;
 var OCR_MAX_VARIANTS_PER_RUN = 3;
 var OCR_SCORE_TICK_INTERVAL = 8;
 var OCR_TIME_PREDICT_MAX_STALE_MS = 5000;
+/** V5 视觉门禁：全局 OCR cooldown（毫秒） */
+var OCR_V5_COOLDOWN_MS = 200;
+/** V5 视觉门禁：单 ROI cooldown（毫秒） */
+var OCR_V5_ROI_COOLDOWN_MS = 200;
+/** V5 Worker 降帧：每 N 帧检测 1 次（30fps → 10fps） */
+var OCR_V5_FRAME_SKIP = 3;
+/** V5 Worker baseline 稳定帧数 */
+var OCR_V5_BASELINE_STABLE_FRAMES = 5;
+/** V5 走表时时间 OCR 心跳间隔（毫秒，保证 predictClock 有锚点） */
+var OCR_V5_TIME_HEARTBEAT_MS = 900;
+/** V5 停表时时间 OCR 心跳间隔（毫秒） */
+var OCR_V5_TIME_HEARTBEAT_PAUSED_MS = 1200;
+/** V5 待触发比分 ROI 优先于时间心跳的等待阈值（毫秒） */
+var OCR_V5_SCORE_PRIORITY_MS = 400;
+/** V5 比分 OCR 心跳：超过该毫秒未成功则主动补采样 */
+var OCR_V5_SCORE_HEARTBEAT_MS = 5000;
+/** V5 走表时时间 OCR 节拍（毫秒，≈1 秒一次，避免 1800ms 饥饿导致跳 2 秒） */
+var OCR_V5_TIME_TICK_MS = 1050;
+/** V5 诊断摘要输出间隔（毫秒） */
+var OCR_V5_DIAG_SUMMARY_MS = 30000;
 /** 预测补秒定时器基准 / 最后一分钟激进值 */
 var OCR_CLOCK_PREDICT_TICK_BASE_MS = 250;
 var OCR_CLOCK_PREDICT_TICK_FINAL_MS = 100;
@@ -195,7 +230,7 @@ var OCR_CLOCK_PREDICT_TICK_MS = OCR_CLOCK_PREDICT_TICK_BASE_MS;
 var OCR_CLOCK_PREDICT_ACTIVE_MS = 4500;
 var OCR_CLOCK_CATCHUP_MAX_DROP_SEC = 20;
 var OCR_CLOCK_CATCHUP_FAST_INTERVAL_MS = 520;
-var OCR_CLOCK_NORMAL_INTERVAL_MS = 900;
+var OCR_CLOCK_NORMAL_INTERVAL_MS = 1000;
 /** 状态机：PAUSE 持续阈值（同一 realWorldSec 持续这么久即认定停表） */
 var OCR_CLOCK_PAUSE_HOLD_MS = 800;
 /** 状态机：JUMP 持续阈值（异常跳跃维持这么久即视为人工改表） */
@@ -401,6 +436,8 @@ var _ocrLastAwayScoreSuccessTs = 0;
 var _ocrOcclusionActive = false;
 /** 遮挡开始墙钟戳 */
 var _ocrOcclusionSince = 0;
+/** 遮挡期间最近一次成功 OCR 的比赛时钟总秒数（用于遮挡解除 snap） */
+var _ocrOcclusionBestClockSec = -1;
 /** 遮挡恢复连续确认计数 */
 var _ocrOcclusionRecoverStreak = 0;
 /** 上次遮挡评估墙钟戳 */
@@ -468,6 +505,30 @@ var _lastTimePumpTs = 0;
 var _lastScorePumpTs = 0;
 /** 比分泵 round-robin 游标（0=主队分, 1=客队分） */
 var _scorePumpCursor = 0;
+/** V5 OCR Filter Worker 实例 */
+var _ocrFilterWorker = null;
+/** V5 Worker 是否已就绪 */
+var _ocrFilterWorkerReady = false;
+/** V5 Worker 是否已 fallback 至 legacy 双泵 */
+var _ocrFilterFallback = false;
+/** V5 待处理的 Worker OCR 触发 */
+var _ocrPendingTrigger = null;
+/** V5 全局 OCR 触发 cooldown 截止墙钟 */
+var _ocrV5GlobalCooldownUntil = 0;
+/** V5 各 ROI OCR cooldown 截止墙钟 */
+var _ocrV5RoiCooldownUntil = [0, 0, 0];
+/** V5 当前帧泵模式：'v5' | 'legacy' | '' */
+var _ocrFramePumpMode = '';
+/** V5 Worker 传帧模式：'transfer' | 'copy' */
+var _ocrFilterPostMode = 'transfer';
+/** V5 诊断计数器 */
+var _ocrV5Diag = null;
+/** V5 比分 ROI 轮询游标（0=主队, 1=客队） */
+var _ocrV5ScorePumpCursor = 0;
+/** V5 主分 OCR 成功墙钟（仅真实 OCR，供 heartbeat 判定） */
+var _ocrV5LastHomeOcrTs = 0;
+/** V5 客分 OCR 成功墙钟（仅真实 OCR，供 heartbeat 判定） */
+var _ocrV5LastAwayOcrTs = 0;
 /** 最近一次软 SYNC 墙钟（防抖） */
 var _lastSoftSyncWallTs = 0;
 /** 是否进入最后一分钟极限调度模式（minutes===0 && seconds<=60） */
@@ -524,6 +585,352 @@ function _getCameraRemountDelayMs() {
 function bumpManualScoreEditGate() {
   _manualScoreEditAt = Date.now();
   _scoreJumpHold = null;
+}
+
+/**
+ * 重置 V5 Worker 触发状态。
+ * @returns {void}
+ */
+function resetOcrV5TriggerState() {
+  _ocrPendingTrigger = null;
+  _ocrV5GlobalCooldownUntil = 0;
+  _ocrV5RoiCooldownUntil = [0, 0, 0];
+  _ocrV5ScorePumpCursor = 0;
+  _ocrV5LastHomeOcrTs = 0;
+  _ocrV5LastAwayOcrTs = 0;
+}
+
+/**
+ * 仅清空 V5 待触发队列（保留比分 heartbeat 时间戳，避免遮挡恢复后重复 bootstrap）。
+ * @returns {void}
+ */
+function resetOcrV5PendingOnly() {
+  _ocrPendingTrigger = null;
+  _ocrV5GlobalCooldownUntil = 0;
+  _ocrV5RoiCooldownUntil = [0, 0, 0];
+}
+
+/**
+ * 待触发列表中是否含比分 ROI。
+ * @param {number[]} roiList ROI 索引列表
+ * @returns {boolean}
+ */
+function hasPendingScoreRois(roiList) {
+  if (!roiList || !roiList.length) return false;
+  for (var i = 0; i < roiList.length; i++) {
+    if (roiList[i] === 0 || roiList[i] === 1) return true;
+  }
+  return false;
+}
+
+/**
+ * 待触发比分 ROI 的最长等待时间（毫秒）。
+ * @param {number} nowMs 当前墙钟
+ * @returns {number}
+ */
+function getPendingScoreAgeMs(nowMs) {
+  if (!_ocrPendingTrigger || !_ocrPendingTrigger.roiFirstSeen) return 0;
+  var fs = _ocrPendingTrigger.roiFirstSeen;
+  var maxAge = 0;
+  if (fs[0] && nowMs - fs[0] > maxAge) maxAge = nowMs - fs[0];
+  if (fs[1] && nowMs - fs[1] > maxAge) maxAge = nowMs - fs[1];
+  return maxAge;
+}
+
+/**
+ * V5 模式下是否允许执行比分 OCR（不受 legacy 比分泵熔断影响）。
+ * @param {number} nowMs 当前墙钟
+ * @returns {boolean}
+ */
+function isScoreOcrAllowedForV5(nowMs) {
+  if (!_ocrTimeBaselineReady) return false;
+  if (isOcrSdkDegraded(nowMs)) return false;
+  if (nowMs < (_ocrScorePumpQuiesceUntil || 0)) return false;
+  return true;
+}
+
+/**
+ * V5 Worker 异动触发时是否允许比分 OCR（不要求时间基线，仅防抖/熔断）。
+ * @param {number} nowMs 当前墙钟
+ * @returns {boolean}
+ */
+function isScoreOcrAllowedForWorker(nowMs) {
+  if (isOcrSdkDegraded(nowMs)) return false;
+  if (nowMs < (_ocrScorePumpQuiesceUntil || 0)) return false;
+  return true;
+}
+
+/**
+ * 合并 Worker OCR 触发 ROI 列表。
+ * @param {number[]} changedRois 变化的 ROI 索引
+ * @returns {void}
+ */
+function mergeOcrV5Trigger(changedRois) {
+  if (!changedRois || !changedRois.length) return;
+  var now = Date.now();
+  if (!_ocrPendingTrigger) {
+    _ocrPendingTrigger = {
+      changedRois: changedRois.slice(),
+      reason: 'worker',
+      ts: now,
+      roiFirstSeen: {}
+    };
+    for (var j = 0; j < changedRois.length; j++) {
+      _ocrPendingTrigger.roiFirstSeen[changedRois[j]] = now;
+    }
+    return;
+  }
+  var merged = _ocrPendingTrigger.changedRois.slice();
+  var fs = _ocrPendingTrigger.roiFirstSeen || {};
+  for (var i = 0; i < changedRois.length; i++) {
+    var r = changedRois[i];
+    if (merged.indexOf(r) < 0) merged.push(r);
+    if (!fs[r]) fs[r] = now;
+  }
+  _ocrPendingTrigger.changedRois = merged;
+  _ocrPendingTrigger.roiFirstSeen = fs;
+  _ocrPendingTrigger.reason = 'worker';
+  _ocrPendingTrigger.ts = now;
+}
+
+/**
+ * 从待触发 ROI 中选取优先级最高的一个。
+ * @param {number[]} changedRois 变化的 ROI 索引
+ * @param {number} nowMs 当前墙钟
+ * @returns {number} ROI 索引，-1 表示无
+ */
+function pickTriggeredRoi(changedRois, nowMs, triggerReason) {
+  if (_ocrOcclusionActive) {
+    return pickStalestOcrField(nowMs, changedRois);
+  }
+  if (!changedRois || !changedRois.length) return -1;
+
+  if (triggerReason === 'worker') {
+    if (changedRois.indexOf(0) >= 0 && changedRois.indexOf(1) >= 0) {
+      var workerPick = (_ocrV5ScorePumpCursor % 2 === 0) ? 0 : 1;
+      _ocrV5ScorePumpCursor += 1;
+      return workerPick;
+    }
+    if (changedRois.indexOf(0) >= 0) return 0;
+    if (changedRois.indexOf(1) >= 0) return 1;
+    if (changedRois.indexOf(2) >= 0) return 2;
+  }
+
+  var sinceTimeOk = nowMs - (_ocrLastTimeSuccessTs || 0);
+  var timeTickDue = _clockMode === 'running' && sinceTimeOk >= OCR_V5_TIME_TICK_MS;
+  if (timeTickDue &&
+    changedRois.indexOf(2) >= 0 &&
+    triggerReason !== 'score_bootstrap' &&
+    triggerReason !== 'occlusion' &&
+    triggerReason !== 'worker') {
+    return 2;
+  }
+
+  if (triggerReason === 'score_bootstrap' || triggerReason === 'score_heartbeat') {
+    var homeStale = nowMs - (_ocrV5LastHomeOcrTs || 0);
+    var awayStale = nowMs - (_ocrV5LastAwayOcrTs || 0);
+    if (changedRois.indexOf(0) >= 0 && changedRois.indexOf(1) >= 0) {
+      if (awayStale >= homeStale && changedRois.indexOf(1) >= 0) return 1;
+      return 0;
+    }
+    if (changedRois.indexOf(1) >= 0) return 1;
+    if (changedRois.indexOf(0) >= 0) return 0;
+  }
+
+  if (triggerReason === 'time_tick' || triggerReason === 'heartbeat') {
+    if (changedRois.indexOf(2) >= 0) return 2;
+  }
+
+  if (triggerReason === 'starve' && changedRois.indexOf(2) >= 0) {
+    return 2;
+  }
+
+  var scoreRois = [];
+  for (var si = 0; si < changedRois.length; si++) {
+    if (changedRois[si] === 0 || changedRois[si] === 1) scoreRois.push(changedRois[si]);
+  }
+  var scoreAge = getPendingScoreAgeMs(nowMs);
+  var timeAlsoPending = changedRois.indexOf(2) >= 0;
+  var workerScoreOnly = triggerReason === 'worker' && scoreRois.length > 0 && !timeAlsoPending;
+
+  if (workerScoreOnly || (scoreRois.length > 0 && (scoreAge >= OCR_V5_SCORE_PRIORITY_MS || !timeAlsoPending))) {
+    if (scoreRois.indexOf(0) >= 0 && scoreRois.indexOf(1) >= 0) {
+      var pickBoth = (_ocrV5ScorePumpCursor % 2 === 0) ? 0 : 1;
+      _ocrV5ScorePumpCursor += 1;
+      return pickBoth;
+    }
+    return scoreRois[0];
+  }
+
+  if (changedRois.indexOf(2) >= 0) return 2;
+  if (changedRois.indexOf(0) >= 0) return 0;
+  if (changedRois.indexOf(1) >= 0) return 1;
+  return changedRois[0];
+}
+
+/**
+ * 遮挡恢复时选取最久未成功 OCR 的字段。
+ * @param {number} nowMs 当前墙钟
+ * @param {number[]} [changedRois] 待触发 ROI
+ * @returns {number}
+ */
+function pickStalestOcrField(nowMs, changedRois) {
+  var candidates = [0, 1, 2];
+  if (changedRois && changedRois.length) {
+    candidates = changedRois.slice();
+  }
+  var bestIdx = candidates[0];
+  var bestStale = -1;
+  for (var i = 0; i < candidates.length; i++) {
+    var idx = candidates[i];
+    var lastTs = idx === 0
+      ? (_ocrLastHomeScoreSuccessTs || 0)
+      : (idx === 1 ? (_ocrLastAwayScoreSuccessTs || 0) : (_ocrLastTimeSuccessTs || 0));
+    var stale = nowMs - lastTs;
+    if (stale > bestStale) {
+      bestStale = stale;
+      bestIdx = idx;
+    }
+  }
+  return bestIdx;
+}
+
+/**
+ * 检查 ROI 是否处于 V5 cooldown。
+ * @param {number} roiIdx ROI 索引
+ * @param {number} nowMs 当前墙钟
+ * @returns {boolean}
+ */
+function isOcrV5RoiCooling(roiIdx, nowMs) {
+  return nowMs < (_ocrV5RoiCooldownUntil[roiIdx] || 0);
+}
+
+/**
+ * 标记 ROI 进入 V5 cooldown。
+ * @param {number} roiIdx ROI 索引
+ * @param {number} nowMs 当前墙钟
+ * @returns {void}
+ */
+function markOcrV5RoiCooldown(roiIdx, nowMs) {
+  _ocrV5RoiCooldownUntil[roiIdx] = nowMs + OCR_V5_ROI_COOLDOWN_MS;
+  _ocrV5GlobalCooldownUntil = nowMs + OCR_V5_COOLDOWN_MS;
+}
+
+/**
+ * 创建 V5 诊断计数器初始结构。
+ * @returns {Object}
+ */
+function createEmptyOcrV5Diag() {
+  return {
+    mode: '',
+    startedAt: 0,
+    framesIn: 0,
+    framesPosted: 0,
+    framesSkippedEmpty: 0,
+    framesSkippedBusy: 0,
+    framesSkippedNotReady: 0,
+    framesSkippedCopyThrottle: 0,
+    postTransferOk: 0,
+    postCopyOk: 0,
+    postFail: 0,
+    workerTriggers: 0,
+    ocrTriggeredWorker: 0,
+    ocrTriggeredStarve: 0,
+    ocrTriggeredOcclusion: 0,
+    ocrTriggeredHeartbeat: 0,
+    ocrTriggeredScoreHeartbeat: 0,
+    ocrTriggeredTimeTick: 0,
+    ocrTriggeredScoreBootstrap: 0,
+    ocrSkippedBusy: 0,
+    ocrSkippedCooldown: 0,
+    ocrSkippedSettle: 0,
+    ocrSkippedScorePump: 0,
+    ocrRunOk: 0,
+    ocrRunTimeout: 0,
+    baselineRequested: 0,
+    baselineUpdated: 0,
+    switchToCopy: 0,
+    switchToLegacy: 0,
+    lastSummaryTs: 0
+  };
+}
+
+/**
+ * 重置 V5 诊断计数器。
+ * @param {string} [mode] 当前模式标签
+ * @returns {void}
+ */
+function resetOcrV5Diag(mode) {
+  _ocrV5Diag = createEmptyOcrV5Diag();
+  _ocrV5Diag.mode = mode || '';
+  _ocrV5Diag.startedAt = Date.now();
+}
+
+/**
+ * 输出 V5 诊断单行日志（固定前缀，便于测试时 grep）。
+ * @param {string} event 事件名
+ * @param {Object} [detail] 详情
+ * @returns {void}
+ */
+function logOcrV5Diag(event, detail) {
+  try {
+    console.log('[Collector][OCR-V5][diag] ' + event + ' ' + JSON.stringify(detail || {}));
+  } catch (eLog) {
+    console.log('[Collector][OCR-V5][diag]', event, detail || {});
+  }
+}
+
+/**
+ * 周期性输出 V5 诊断摘要到控制台与健康日志。
+ * @returns {void}
+ */
+function maybeEmitOcrV5DiagSummary() {
+  if (!_ocrV5Diag) return;
+  var now = Date.now();
+  if (now - _ocrV5Diag.lastSummaryTs < OCR_V5_DIAG_SUMMARY_MS) return;
+  _ocrV5Diag.lastSummaryTs = now;
+  var snap = {
+    mode: _ocrV5Diag.mode,
+    pumpMode: _ocrFramePumpMode,
+    postMode: _ocrFilterPostMode,
+    fallback: _ocrFilterFallback,
+    workerReady: _ocrFilterWorkerReady,
+    framesIn: _ocrV5Diag.framesIn,
+    framesPosted: _ocrV5Diag.framesPosted,
+    postTransferOk: _ocrV5Diag.postTransferOk,
+    postCopyOk: _ocrV5Diag.postCopyOk,
+    postFail: _ocrV5Diag.postFail,
+    workerTriggers: _ocrV5Diag.workerTriggers,
+    ocrTriggeredWorker: _ocrV5Diag.ocrTriggeredWorker,
+    ocrTriggeredStarve: _ocrV5Diag.ocrTriggeredStarve,
+    ocrTriggeredOcclusion: _ocrV5Diag.ocrTriggeredOcclusion,
+    ocrTriggeredHeartbeat: _ocrV5Diag.ocrTriggeredHeartbeat,
+    ocrTriggeredScoreHeartbeat: _ocrV5Diag.ocrTriggeredScoreHeartbeat,
+    ocrTriggeredTimeTick: _ocrV5Diag.ocrTriggeredTimeTick,
+    ocrTriggeredScoreBootstrap: _ocrV5Diag.ocrTriggeredScoreBootstrap,
+    ocrSkippedBusy: _ocrV5Diag.ocrSkippedBusy,
+    ocrSkippedCooldown: _ocrV5Diag.ocrSkippedCooldown,
+    ocrSkippedSettle: _ocrV5Diag.ocrSkippedSettle,
+    ocrSkippedScorePump: _ocrV5Diag.ocrSkippedScorePump,
+    ocrRunOk: _ocrV5Diag.ocrRunOk,
+    ocrRunTimeout: _ocrV5Diag.ocrRunTimeout,
+    baselineRequested: _ocrV5Diag.baselineRequested,
+    baselineUpdated: _ocrV5Diag.baselineUpdated,
+    switchToCopy: _ocrV5Diag.switchToCopy,
+    switchToLegacy: _ocrV5Diag.switchToLegacy,
+    pendingTrigger: _ocrPendingTrigger ? _ocrPendingTrigger.changedRois.slice() : [],
+    pendingScoreAgeMs: getPendingScoreAgeMs(now),
+    starved: isTimeOcrStarved(now),
+    occlusion: _ocrOcclusionActive,
+    ocrBusy: _ocrRunBusy,
+    msSinceTimeOcrOk: now - (_ocrLastTimeSuccessTs || 0),
+    msSinceScoreOcrOk: now - Math.max(_ocrV5LastHomeOcrTs || 0, _ocrV5LastAwayOcrTs || 0),
+    consecutiveTimeout: _ocrConsecutiveTimeout,
+    clockMode: _clockMode,
+    uptimeSec: Math.round((now - (_ocrV5Diag.startedAt || now)) / 1000)
+  };
+  logOcrV5Diag('summary', snap);
+  appendCollectorHealthLog('ocr_v5_summary', snap);
 }
 
 function ensureOcrFrameBuffer(size) {
@@ -670,6 +1077,7 @@ function getClockRefSec() {
 function isLikelyPeriodClockReset(refSec, ocrSec) {
   if (ocrSec < OCR_PERIOD_RESET_MIN_SEC) return false;
   if (refSec < 0) return true;
+  if (refSec < 60) return false;
   return refSec <= OCR_PERIOD_RESET_REF_MAX_SEC;
 }
 
@@ -687,15 +1095,68 @@ function isLikelyShotClockMisreadAsGame(refSec, clock) {
 }
 
 /**
- * 比赛时钟倒计时不应相对参考向前走（除节间复位外）。
+ * 比赛时钟倒计时不应相对参考向前走（除节间复位、0:xx 误锚恢复外）。
  * @param {number} refSec
  * @param {number} ocrSec
+ * @param {{ minutes: number, seconds: number } | null} [clock]
  * @returns {boolean}
  */
-function isSuspiciousGameClockForward(refSec, ocrSec) {
+function isSuspiciousGameClockForward(refSec, ocrSec, clock) {
   if (refSec < 0 || ocrSec < 0) return false;
   if (isLikelyPeriodClockReset(refSec, ocrSec)) return false;
+  if (
+    clock &&
+    Number(clock.minutes) >= 1 &&
+    refSec >= OCR_CLOCK_SUBMINUTE_RECOVERY_MIN_REF_SEC &&
+    refSec < 60 &&
+    ocrSec > refSec
+  ) {
+    return false;
+  }
   return ocrSec > refSec;
+}
+
+/**
+ * 修复 7 段数码管 S→5 误替换导致的分钟十位污染（如 9S:19 → 95:19）。
+ * @param {number} minutes 解析出的分钟
+ * @param {number} seconds 解析出的秒
+ * @returns {{ minutes: number, seconds: number } | null}
+ */
+function repairSmearedGameClockMinutes(minutes, seconds) {
+  var m = Number(minutes);
+  var s = Number(seconds);
+  if (isNaN(m) || isNaN(s) || s < 0 || s > 59) return null;
+  if (m >= 10 && m <= 99 && m % 10 === 5) {
+    var fixedM = Math.floor(m / 10);
+    if (fixedM >= 0 && fixedM <= OCR_GAME_CLOCK_MAX_MINUTES) {
+      return { minutes: fixedM, seconds: s };
+    }
+  }
+  return null;
+}
+
+/**
+ * 修复 7 段数码管分钟十位误读（3↔8、5↔9 等），秒位一致且相对参考正向跳 3–7 分钟。
+ * @param {{ minutes: number, seconds: number }} clock OCR 解析结果
+ * @param {number} refSec 参考秒数
+ * @returns {{ minutes: number, seconds: number } | null}
+ */
+function repairMinutesTensDigitGlitch(clock, refSec) {
+  if (!clock || refSec < 60) return null;
+  var ocrSec = clockToTotalSec(clock);
+  if (isLikelyPeriodClockReset(refSec, ocrSec)) return null;
+  if (ocrSec <= refSec) return null;
+  var delta = ocrSec - refSec;
+  if (delta < OCR_CLOCK_TENS_GLITCH_MIN_DELTA_SEC || delta > OCR_CLOCK_TENS_GLITCH_MAX_DELTA_SEC) {
+    return null;
+  }
+  var ref = clockFromTotalSec(refSec);
+  if (Number(clock.seconds) !== Number(ref.seconds)) return null;
+  var mDiff = Number(clock.minutes) - Number(ref.minutes);
+  if (mDiff < OCR_CLOCK_TENS_GLITCH_MINUTE_DIFF || mDiff > OCR_CLOCK_TENS_GLITCH_MAX_MINUTE_DIFF) {
+    return null;
+  }
+  return { minutes: ref.minutes, seconds: clock.seconds };
 }
 
 /**
@@ -706,11 +1167,66 @@ function isSuspiciousGameClockForward(refSec, ocrSec) {
  */
 function sanitizeGameClockParse(clock, refSec) {
   if (!clock) return null;
+  if (clock.minutes > OCR_GAME_CLOCK_MAX_MINUTES) {
+    var repaired = repairSmearedGameClockMinutes(clock.minutes, clock.seconds);
+    if (repaired) {
+      clock = repaired;
+    } else if (refSec >= 0 && refSec <= OCR_GAME_CLOCK_MAX_MINUTES * 60 + 59) {
+      return null;
+    }
+  }
+  if (refSec >= 60) {
+    var tensFixed = repairMinutesTensDigitGlitch(clock, refSec);
+    if (tensFixed) {
+      logOcrV5Diag('clock_tens_digit_repair', {
+        refSec: refSec,
+        fromSec: clockToTotalSec(clock),
+        toSec: clockToTotalSec(tensFixed)
+      });
+      clock = tensFixed;
+    }
+  }
   var ocrSec = clockToTotalSec(clock);
   if (refSec < 0) return clock;
   if (isLikelyShotClockMisreadAsGame(refSec, clock)) return null;
-  if (isSuspiciousGameClockForward(refSec, ocrSec)) return null;
+  if (!_ocrOcclusionActive && isSuspiciousGameClockForward(refSec, ocrSec, clock)) return null;
   return clock;
+}
+
+/**
+ * 解析 OCR 时间文本并校验；当参考锚误落在 0:xx 时允许恢复到真实 MM:SS。
+ * @param {string} raw OCR 原始文本
+ * @param {number} [refSec] 参考秒数，默认 getClockRefSec()
+ * @returns {{ minutes: number, seconds: number } | null}
+ */
+function resolveGameClockParse(raw, refSec) {
+  var parsed = parseTime(raw);
+  if (!parsed) return null;
+  var ref = typeof refSec === 'number' ? refSec : getClockRefSec();
+  var sanitized = sanitizeGameClockParse(parsed, ref);
+  if (!sanitized && ref >= 60) {
+    var tensFixed = repairMinutesTensDigitGlitch(parsed, ref);
+    if (tensFixed) {
+      sanitized = sanitizeGameClockParse(tensFixed, ref);
+    }
+  }
+  if (
+    !sanitized &&
+    parsed.minutes >= 1 &&
+    ref >= OCR_CLOCK_SUBMINUTE_RECOVERY_MIN_REF_SEC &&
+    ref < 60
+  ) {
+    var recovered = sanitizeGameClockParse(parsed, -1);
+    if (recovered) {
+      logOcrV5Diag('clock_subminute_recovery', {
+        refSec: ref,
+        ocrSec: clockToTotalSec(recovered),
+        raw: String(raw || '').slice(0, 24)
+      });
+      sanitized = recovered;
+    }
+  }
+  return sanitized;
 }
 
 /**
@@ -725,6 +1241,7 @@ function noteOcrTimeSuccess(clock) {
   if (_ocrTimeSuccessStreak >= OCR_TIME_BASELINE_STREAK && !_ocrTimeBaselineReady) {
     _ocrTimeBaselineReady = true;
     console.log('[Collector][OCR] time baseline ready (%s), score pump enabled', OCR_TIME_BASELINE_STREAK);
+    logOcrV5Diag('score_bootstrap_pending', {});
   }
 }
 
@@ -1051,6 +1568,7 @@ function getOcrStartConfirmStreak() {
 function resetOcrOcclusionState() {
   _ocrOcclusionActive = false;
   _ocrOcclusionSince = 0;
+  _ocrOcclusionBestClockSec = -1;
   _ocrOcclusionRecoverStreak = 0;
   _ocrOcclusionEvalLastTs = 0;
   _ocrLastHomeScoreSuccessTs = 0;
@@ -1884,6 +2402,7 @@ Page({
       return { x: r.x, y: r.y, w: r.w, h: r.h, label: r.label, rawText: '' };
     });
     try { wx.setStorageSync(STORAGE_KEY_ROIS, raw); } catch (e) { }
+    this._syncOcrFilterRois();
   },
 
   // ─── OCR 机位预设 ───────────────────────────────────
@@ -2220,6 +2739,8 @@ Page({
 
     resetOcrOcclusionState();
 
+    resetOcrV5TriggerState();
+
     if (typeof bumpManualScoreEditGate === 'function') {
       bumpManualScoreEditGate();
     }
@@ -2478,38 +2999,62 @@ Page({
     _ocrConsecutiveTimeout = 0;
     _ocrSdkDegradedUntil = 0;
     OCR_MIN_INTERVAL_MS = OCR_MIN_INTERVAL_BASE_MS;
+    if (_ocrV5Diag) _ocrV5Diag.ocrRunOk += 1;
+    if (_ocrRunState && _ocrRunState.triggerMode === 'v5') {
+      logOcrV5Diag('ocr_ok', {
+        roiIdx: roiIdx,
+        text: text,
+        costMs: Date.now() - (_ocrRunStartedAt || Date.now())
+      });
+    }
     if (this._shouldRetryCurrentVariant(roiIdx, text)) {
       this._advanceCurrentVariantOrQueue('invalid-text');
       return;
     }
     _ocrRoiTextSeq[roiIdx] = (_ocrRoiTextSeq[roiIdx] || 0) + 1;
     var nowTs = Date.now();
+    var parsedOkForBaseline = false;
     if (roiIdx === 0) {
       var parsedHomeScore = parseScore(text, 0);
       if (parsedHomeScore !== null && !isLikelyZeroScoreDrop(0, parsedHomeScore)) {
         _ocrLastHomeScoreSuccessTs = nowTs;
+        _ocrV5LastHomeOcrTs = nowTs;
         _ocrLastGoodHomeScore = parsedHomeScore;
         noteOcrScoreSuccess();
+        parsedOkForBaseline = true;
       }
     } else if (roiIdx === 1) {
       var parsedAwayScore = parseScore(text, 1);
       if (parsedAwayScore !== null && !isLikelyZeroScoreDrop(1, parsedAwayScore)) {
         _ocrLastAwayScoreSuccessTs = nowTs;
+        _ocrV5LastAwayOcrTs = nowTs;
         _ocrLastGoodAwayScore = parsedAwayScore;
         noteOcrScoreSuccess();
+        parsedOkForBaseline = true;
       }
     } else if (roiIdx === 2) {
-      var parsedTimeRaw = parseTime(text);
-      var parsedTime = sanitizeGameClockParse(parsedTimeRaw, getClockRefSec());
+      var refSec = getClockRefSec();
+      var parsedTime = resolveGameClockParse(text, refSec);
+      if (_ocrOcclusionActive && !parsedTime) {
+        parsedTime = resolveGameClockParse(text, -1);
+      }
       if (parsedTime) {
+        var parsedClockSec = clockToTotalSec(parsedTime);
         _ocrLastTimeSuccessTs = nowTs;
-        _ocrLastGoodClockSec = clockToTotalSec(parsedTime);
+        _ocrLastGoodClockSec = parsedClockSec;
+        if (_ocrOcclusionActive) {
+          _ocrOcclusionBestClockSec = parsedClockSec;
+        }
         noteOcrTimeSuccess(parsedTime);
+        parsedOkForBaseline = true;
         if (!_ocrOcclusionActive) {
           var captureTs = (_ocrRunState && _ocrRunState.captureTs) || nowTs;
           this._recordOcrClockSample(parsedTime, captureTs);
         }
       }
+    }
+    if (parsedOkForBaseline && _ocrFramePumpMode === 'v5' && !_ocrFilterFallback) {
+      this._requestOcrBaselineUpdate([roiIdx]);
     }
     _ocrRunState.updatedRoiIdx = roiIdx;
     _ocrRunState.rawTexts[roiIdx] = text;
@@ -2528,7 +3073,23 @@ Page({
   _recordOcrClockSample: function (parsedTime, frameCaptureTs) {
     if (!parsedTime || _ocrOcclusionActive) return;
     var refSec = getClockRefSec();
+    var parsedRaw = parsedTime;
     parsedTime = sanitizeGameClockParse(parsedTime, refSec);
+    if (
+      !parsedTime &&
+      parsedRaw &&
+      parsedRaw.minutes >= 1 &&
+      refSec >= OCR_CLOCK_SUBMINUTE_RECOVERY_MIN_REF_SEC &&
+      refSec < 60
+    ) {
+      parsedTime = sanitizeGameClockParse(parsedRaw, -1);
+      if (parsedTime) {
+        logOcrV5Diag('clock_subminute_recovery_record', {
+          refSec: refSec,
+          ocrSec: clockToTotalSec(parsedTime)
+        });
+      }
+    }
     if (!parsedTime) return;
     var now = Date.now();
     var ocrSec = clockToTotalSec(parsedTime);
@@ -2548,10 +3109,15 @@ Page({
       pipelineDelaySec > 0 &&
       (_clockMode === 'running' || (_lastOcrClockSec >= 0 && ocrSec < _lastOcrClockSec));
     var realWorldSec = Math.max(0, ocrSec - (compensatePipelineDelay ? pipelineDelaySec : 0));
+    var resumeDropSec = _lastOcrClockSec >= 0 && realWorldSec > 0 && realWorldSec < _lastOcrClockSec
+      ? (_lastOcrClockSec - realWorldSec)
+      : 0;
+    var pauseResumeSnap = _clockMode === 'paused' &&
+      resumeDropSec >= OCR_PAUSE_RESUME_SNAP_MIN_SEC &&
+      resumeDropSec <= OCR_CLOCK_CATCHUP_MAX_DROP_SEC;
     var shouldWakePausedClock = false;
 
     if (_clockMode === 'paused') {
-      var resumeDropSec = _lastOcrClockSec >= 0 ? (_lastOcrClockSec - realWorldSec) : 0;
       var hasResumeFlow = resumeDropSec > 0 && resumeDropSec <= OCR_CLOCK_CATCHUP_MAX_DROP_SEC;
       if (hasResumeFlow) {
         if (!_clockResumeCandidateSince || now - _clockResumeCandidateSince > OCR_CLOCK_RESUME_CONFIRM_MS * 2) {
@@ -2572,11 +3138,22 @@ Page({
         _clockResumeCandidateSince = 0;
         _clockResumeCandidateStreak = 0;
       }
-      shouldWakePausedClock = _clockResumeCandidateStreak >= OCR_START_CONFIRM_STREAK;
+      shouldWakePausedClock = pauseResumeSnap ||
+        _clockResumeCandidateStreak >= OCR_START_CONFIRM_STREAK;
     } else {
       _clockResumeCandidateSec = -1;
       _clockResumeCandidateSince = 0;
       _clockResumeCandidateStreak = 0;
+    }
+
+    if (pauseResumeSnap) {
+      _clockMode = 'running';
+      _procState.pauseConfirmed = false;
+      logOcrV5Diag('pause_resume_snap', {
+        dropSec: resumeDropSec,
+        ocrSec: realWorldSec,
+        prevSec: _lastOcrClockSec
+      });
     }
 
     if (_lastOcrClockSec >= 0 && realWorldSec > 0 && realWorldSec < _lastOcrClockSec) {
@@ -2594,7 +3171,7 @@ Page({
     }
     _ocrLastTimeSuccessTs = now;
 
-    if (!periodReset) {
+    if (!periodReset && !pauseResumeSnap) {
       var capRefSec = _lastOcrClockSec >= 0 ? _lastOcrClockSec : getPublishedClockSecAt(now);
       if (capRefSec >= 0) {
         realWorldSec = capSyncClockStep(capRefSec, realWorldSec);
@@ -2621,7 +3198,8 @@ Page({
       minutes: realClock.minutes,
       seconds: realClock.seconds,
       timeValid: true,
-      wallMs: now
+      wallMs: now,
+      resumeSnap: pauseResumeSnap
     });
 
     if (shouldWakePausedClock && !_procState.clockRunning) {
@@ -2681,6 +3259,7 @@ Page({
         _ocrOcclusionSince = 0;
         _ocrOcclusionRecoverStreak = 0;
         console.log('[Collector][OCR] occlusion cleared, resume processing');
+        logOcrV5Diag('occlusion_clear_eval', { streak: OCR_OCCLUSION_RECOVER_STREAK });
         this._onOcrOcclusionCleared(nowMs);
       }
     } else {
@@ -2694,42 +3273,85 @@ Page({
    * @returns {void}
    */
   _onOcrOcclusionCleared: function (nowMs) {
-    if (_ocrLastGoodClockSec < 0 || _ocrLastGoodHomeScore < 0 || _ocrLastGoodAwayScore < 0) {
+    var homeScore = _ocrLastGoodHomeScore >= 0
+      ? _ocrLastGoodHomeScore
+      : (Number(this.data.homeScore) || 0);
+    var awayScore = _ocrLastGoodAwayScore >= 0
+      ? _ocrLastGoodAwayScore
+      : (Number(this.data.awayScore) || 0);
+    var holdSec = _lastCommittedFrame
+      ? ocrFrameClockSec(_lastCommittedFrame)
+      : clockToTotalSec({ minutes: this.data.minutes, seconds: this.data.seconds });
+    var clockSec = _ocrOcclusionBestClockSec >= 0
+      ? _ocrOcclusionBestClockSec
+      : (_ocrLastGoodClockSec >= 0
+        ? _ocrLastGoodClockSec
+        : holdSec);
+
+    if (clockSec < 0 && _lastCommittedFrame) {
+      clockSec = ocrFrameClockSec(_lastCommittedFrame);
+    }
+    if (clockSec < 0) {
+      logOcrV5Diag('occlusion_clear_skip', { reason: 'no_clock_ref' });
       return;
     }
-    var prevSec = -1;
-    if (_lastCommittedFrame) {
-      prevSec = ocrFrameClockSec(_lastCommittedFrame);
-    } else if (_procState.published && typeof _procState.published.t === 'number') {
-      prevSec = getPublishedClockSecAt(nowMs);
+
+    var gapFromHold = holdSec >= 0 ? (holdSec - clockSec) : 0;
+    if (gapFromHold >= OCR_PAUSE_RESUME_SNAP_MIN_SEC) {
+      logOcrV5Diag('occlusion_resume_snap', {
+        holdSec: holdSec,
+        clockSec: clockSec,
+        gapSec: gapFromHold
+      });
     }
-    var looksRunning = prevSec > 0 && _ocrLastGoodClockSec >= 0 && _ocrLastGoodClockSec < prevSec;
-    if (looksRunning) {
-      _clockMode = 'running';
-    }
+
+    logOcrV5Diag('occlusion_cleared', {
+      home: homeScore,
+      away: awayScore,
+      clockSec: clockSec,
+      holdSec: holdSec,
+      bestSec: _ocrOcclusionBestClockSec
+    });
+
+    var looksRunning = holdSec > 0 && clockSec >= 0 && clockSec < holdSec;
+    _clockMode = looksRunning ? 'running' : _clockMode;
+    _procState.pauseConfirmed = false;
+    _lastOcrClockSec = clockSec;
+    _lastOcrClockWallTs = nowMs;
+    updatePredictedClock(clockFromTotalSec(clockSec));
+    _lastClockPredictEmitSec = clockSec;
+    _lastClockPredictEmitWallTs = nowMs;
+    _procState.lastOcrSec = clockSec;
+    _clockPredictUntil = getClockRunUntil(nowMs, clockSec);
+    this._ensureClockPredictTimer();
+
     var snap = {
-      homeScore: _ocrLastGoodHomeScore,
-      awayScore: _ocrLastGoodAwayScore,
+      homeScore: homeScore,
+      awayScore: awayScore,
       period: this.data.period,
-      minutes: Math.floor(_ocrLastGoodClockSec / 60),
-      seconds: _ocrLastGoodClockSec % 60,
+      minutes: Math.floor(clockSec / 60),
+      seconds: clockSec % 60,
       shotClock: this.data.shotClock
     };
+    _lastPreviewFrameKey = '';
     this._commitLocalState(snap);
     this._emitWsPacket('SYNC', {
-      t: _ocrLastGoodClockSec,
-      a: _ocrLastGoodHomeScore,
-      b: _ocrLastGoodAwayScore,
+      t: clockSec,
+      a: homeScore,
+      b: awayScore,
       p: this.data.period
     });
     if (!_procState.clockRunning && (_clockMode === 'running' || looksRunning)) {
       this._emitWsPacket('START', {
-        t: _ocrLastGoodClockSec,
-        a: _ocrLastGoodHomeScore,
-        b: _ocrLastGoodAwayScore,
+        t: clockSec,
+        a: homeScore,
+        b: awayScore,
         p: this.data.period
       });
     }
+    _ocrOcclusionBestClockSec = -1;
+    resetOcrV5PendingOnly();
+    this._syncOcrFilterRois(false);
   },
 
   /**
@@ -2741,6 +3363,7 @@ Page({
     if (_ocrOcclusionActive) return;
     _ocrOcclusionActive = true;
     _ocrOcclusionSince = nowMs;
+    _ocrOcclusionBestClockSec = -1;
     _ocrOcclusionRecoverStreak = 0;
     _clockMode = 'paused';
     _procState.startObserve = null;
@@ -2877,23 +3500,586 @@ Page({
   },
 
   /**
-   * 双频双泵：
+   * 初始化 V5 OCR Filter Worker。
+   * @returns {void}
+   */
+  _initOcrFilterWorker: function () {
+    var self = this;
+    if (_ocrFilterFallback || _ocrFilterWorker) return;
+    if (typeof wx === 'undefined' || typeof wx.createWorker !== 'function') {
+      _ocrFilterFallback = true;
+      logOcrV5Diag('fallback_legacy', { reason: 'createWorker_unavailable' });
+      console.warn('[Collector][OCR-V5] createWorker unavailable, fallback legacy');
+      return;
+    }
+    try {
+      _ocrFilterWorker = wx.createWorker('workers/ocr-filter.js');
+    } catch (eCreate) {
+      _ocrFilterFallback = true;
+      logOcrV5Diag('fallback_legacy', { reason: 'worker_create_fail', err: String(eCreate) });
+      console.warn('[Collector][OCR-V5] worker create fail, fallback legacy', eCreate);
+      return;
+    }
+    _ocrFilterWorkerReady = false;
+    _ocrFilterPostMode = 'transfer';
+    _ocrFilterWorker.onMessage(function (msg) {
+      self._handleOcrFilterMessage(msg);
+    });
+    _ocrFilterWorker.onProcessKilled(function () {
+      console.warn('[Collector][OCR-V5] worker killed, fallback legacy');
+      if (_ocrV5Diag) _ocrV5Diag.switchToLegacy += 1;
+      logOcrV5Diag('fallback_legacy', { reason: 'worker_killed' });
+      _ocrFilterWorker = null;
+      _ocrFilterWorkerReady = false;
+      _ocrFilterFallback = true;
+      resetOcrV5TriggerState();
+      if (_vkSession && _ocrManualMode && self.data.ocrEnabled) {
+        self._cancelOcrFramePump();
+        setTimeout(function () {
+          if (_vkSession && _ocrManualMode && self.data.ocrEnabled) {
+            self._startOcrFramePumpLegacy(_vkSession, _ocrSessionToken);
+          }
+        }, 0);
+      }
+    });
+    this._syncOcrFilterRois(true);
+  },
+
+  /**
+   * 销毁 V5 OCR Filter Worker。
+   * @returns {void}
+   */
+  _destroyOcrFilterWorker: function () {
+    resetOcrV5TriggerState();
+    _ocrFilterWorkerReady = false;
+    _ocrFilterPostMode = 'transfer';
+    if (_ocrFilterWorker) {
+      try { _ocrFilterWorker.terminate(); } catch (eTerm) { }
+      _ocrFilterWorker = null;
+    }
+  },
+
+  /**
+   * 同步 ROI 配置到 Worker。
+   * @param {boolean} [isInit] 是否为初始化
+   * @returns {void}
+   */
+  _syncOcrFilterRois: function (isInit) {
+    if (!_ocrFilterWorker || _ocrFilterFallback) return;
+    var rois = (this.data.rois || []).map(function (r) {
+      return { x: r.x, y: r.y, w: r.w, h: r.h };
+    });
+    try {
+      _ocrFilterWorker.postMessage({
+        type: isInit ? 'INIT' : 'UPDATE_ROIS',
+        rois: rois
+      });
+    } catch (ePost) {
+      console.warn('[Collector][OCR-V5] sync rois fail', ePost);
+    }
+  },
+
+  /**
+   * 处理 Worker 消息。
+   * @param {{ type: string, changedRois?: number[], roiIndex?: number, seq?: number }} msg Worker 消息
+   * @returns {void}
+   */
+  _handleOcrFilterMessage: function (msg) {
+    if (!msg || !msg.type) return;
+    if (msg.type === 'READY') {
+      _ocrFilterWorkerReady = true;
+      logOcrV5Diag('worker_ready', { roiCount: msg.roiCount, postMode: _ocrFilterPostMode });
+      console.log('[Collector][OCR-V5] worker ready roiCount=%s postMode=%s', msg.roiCount, _ocrFilterPostMode);
+      return;
+    }
+    if (msg.type === 'OCR_TRIGGER' && msg.changedRois && msg.changedRois.length) {
+      if (_ocrV5Diag) _ocrV5Diag.workerTriggers += 1;
+      mergeOcrV5Trigger(msg.changedRois);
+      logOcrV5Diag('worker_trigger', { changedRois: msg.changedRois, seq: msg.seq });
+      return;
+    }
+    if (msg.type === 'BASELINE_UPDATED') {
+      if (_ocrV5Diag) _ocrV5Diag.baselineUpdated += 1;
+      logOcrV5Diag('baseline_updated', { roiIndex: msg.roiIndex, seq: msg.seq });
+    }
+  },
+
+  /**
+   * OCR 失败后清除 Worker 对该 ROI 的 awaiting 状态（避免永久不再触发）。
+   * @param {number[]} roiIndices ROI 索引列表
+   * @returns {void}
+   */
+  _clearOcrFilterAwaitingBaseline: function (roiIndices) {
+    if (!_ocrFilterWorker || _ocrFilterFallback || !roiIndices || !roiIndices.length) return;
+    try {
+      _ocrFilterWorker.postMessage({
+        type: 'CLEAR_AWAITING',
+        roiIndices: roiIndices
+      });
+    } catch (ePost) {
+      logOcrV5Diag('clear_awaiting_fail', { err: String(ePost) });
+    }
+  },
+
+  /**
+   * OCR 成功后请求 Worker 更新 baseline（需连续稳定帧才替换）。
+   * @param {number[]} roiIndices ROI 索引列表
+   * @returns {void}
+   */
+  _requestOcrBaselineUpdate: function (roiIndices) {
+    if (!_ocrFilterWorker || _ocrFilterFallback || !roiIndices || !roiIndices.length) return;
+    if (_ocrV5Diag) _ocrV5Diag.baselineRequested += 1;
+    logOcrV5Diag('baseline_request', { roiIndices: roiIndices });
+    try {
+      _ocrFilterWorker.postMessage({
+        type: 'UPDATE_BASELINE',
+        roiIndices: roiIndices
+      });
+    } catch (ePost) {
+      logOcrV5Diag('baseline_request_fail', { err: String(ePost) });
+      console.warn('[Collector][OCR-V5] baseline update fail', ePost);
+    }
+  },
+
+  /**
+   * V5：在 Transferable 传帧前尝试执行 Worker 触发的精准 OCR。
+   * @param {any} session VKSession
+   * @param {number} token 会话 token
+   * @param {{ data: ArrayBuffer, width: number, height: number }} frame 相机帧
+   * @returns {boolean} 是否已消费本帧用于 OCR
+   */
+  _maybeRunTriggeredOcrV5: function (session, token, frame) {
+    maybeEmitOcrV5DiagSummary();
+    if (token !== _ocrSessionToken || _ocrRunBusy) {
+      if (_ocrRunBusy && _ocrV5Diag) _ocrV5Diag.ocrSkippedBusy += 1;
+      return false;
+    }
+    var now = Date.now();
+    if (now < _ocrTimeoutSettleUntil) {
+      if (_ocrV5Diag) _ocrV5Diag.ocrSkippedSettle += 1;
+      return false;
+    }
+
+    var triggerRois = [];
+    var triggerReason = '';
+    if (_ocrPendingTrigger && _ocrPendingTrigger.changedRois && _ocrPendingTrigger.changedRois.length) {
+      triggerRois = _ocrPendingTrigger.changedRois.slice();
+      triggerReason = _ocrPendingTrigger.reason || 'pending';
+    }
+    if (_ocrOcclusionActive) {
+      if (triggerRois.indexOf(0) < 0) triggerRois.push(0);
+      if (triggerRois.indexOf(1) < 0) triggerRois.push(1);
+      if (triggerRois.indexOf(2) < 0) triggerRois.push(2);
+      triggerReason = 'occlusion';
+    } else if (_ocrFramePumpMode === 'v5' && _ocrTimeBaselineReady && _clockMode !== 'paused') {
+      if (_ocrV5LastHomeOcrTs === 0 && triggerRois.indexOf(0) < 0) triggerRois.push(0);
+      if (_ocrV5LastAwayOcrTs === 0 && triggerRois.indexOf(1) < 0) triggerRois.push(1);
+      if (_ocrV5LastHomeOcrTs === 0 || _ocrV5LastAwayOcrTs === 0) {
+        triggerReason = 'score_bootstrap';
+      } else {
+        var homeScoreDue = now - (_ocrV5LastHomeOcrTs || 0) >= OCR_V5_SCORE_HEARTBEAT_MS;
+        var awayScoreDue = now - (_ocrV5LastAwayOcrTs || 0) >= OCR_V5_SCORE_HEARTBEAT_MS;
+        if (homeScoreDue && triggerRois.indexOf(0) < 0) triggerRois.push(0);
+        if (awayScoreDue && triggerRois.indexOf(1) < 0) triggerRois.push(1);
+        if (homeScoreDue || awayScoreDue) {
+          triggerReason = 'score_heartbeat';
+        }
+      }
+    }
+
+    var sinceTimeOk = now - (_ocrLastTimeSuccessTs || 0);
+    var hasWorkerScorePending = triggerReason === 'worker' &&
+      (triggerRois.indexOf(0) >= 0 || triggerRois.indexOf(1) >= 0);
+    if (!_ocrOcclusionActive && triggerReason !== 'score_bootstrap' && !hasWorkerScorePending) {
+      var needTimeOcr = false;
+      var timeReason = '';
+      if (_clockMode === 'running' && sinceTimeOk >= OCR_V5_TIME_TICK_MS) {
+        needTimeOcr = true;
+        timeReason = 'time_tick';
+      } else if (_clockMode === 'paused' && sinceTimeOk >= OCR_V5_TIME_HEARTBEAT_PAUSED_MS) {
+        needTimeOcr = true;
+        timeReason = 'heartbeat';
+      } else if (_clockMode === 'unknown' && sinceTimeOk >= OCR_V5_TIME_HEARTBEAT_MS) {
+        needTimeOcr = true;
+        timeReason = 'heartbeat';
+      } else if (isTimeOcrStarved(now)) {
+        needTimeOcr = true;
+        timeReason = 'starve';
+      }
+      if (needTimeOcr) {
+        if (triggerRois.indexOf(2) < 0) triggerRois.push(2);
+        if (!triggerReason || triggerReason === 'pending') triggerReason = timeReason;
+      }
+    }
+
+    if (!_ocrOcclusionActive &&
+      triggerReason !== 'score_bootstrap' &&
+      triggerReason !== 'occlusion' &&
+      triggerReason !== 'worker' &&
+      _clockMode === 'running' &&
+      sinceTimeOk >= OCR_V5_TIME_TICK_MS &&
+      triggerRois.indexOf(2) >= 0) {
+      triggerReason = 'time_tick';
+    }
+    if (!triggerRois.length) return false;
+
+    var bypassCooldown = _ocrOcclusionActive ||
+      isTimeOcrStarved(now) ||
+      triggerReason === 'heartbeat' ||
+      triggerReason === 'time_tick' ||
+      triggerReason === 'starve' ||
+      triggerReason === 'score_heartbeat' ||
+      triggerReason === 'score_bootstrap' ||
+      triggerReason === 'worker';
+    if (now < _ocrV5GlobalCooldownUntil && !bypassCooldown) {
+      if (_ocrV5Diag) _ocrV5Diag.ocrSkippedCooldown += 1;
+      return false;
+    }
+
+    var roiIdx = pickTriggeredRoi(triggerRois, now, triggerReason);
+    if (roiIdx < 0) return false;
+
+    var bypassRoiCooldown = bypassCooldown ||
+      (roiIdx === 2 && (triggerReason === 'heartbeat' || triggerReason === 'time_tick')) ||
+      ((roiIdx === 0 || roiIdx === 1) &&
+        (triggerReason === 'score_heartbeat' ||
+          triggerReason === 'score_bootstrap' ||
+          triggerReason === 'worker'));
+    if (isOcrV5RoiCooling(roiIdx, now) && !bypassRoiCooldown) {
+      if (_ocrV5Diag) _ocrV5Diag.ocrSkippedCooldown += 1;
+      return false;
+    }
+    if (roiIdx === 0 || roiIdx === 1) {
+      var scoreAllowed = false;
+      if (triggerReason === 'worker') {
+        scoreAllowed = isScoreOcrAllowedForWorker(now);
+      } else if ((triggerReason === 'score_heartbeat' ||
+        triggerReason === 'score_bootstrap' ||
+        triggerReason === 'occlusion') &&
+        _ocrFramePumpMode === 'v5') {
+        scoreAllowed = isScoreOcrAllowedForV5(now);
+      } else {
+        scoreAllowed = isScorePumpAllowed(now);
+      }
+      if (!scoreAllowed && !isTimeOcrStarved(now) && !_ocrOcclusionActive) {
+        if (_ocrV5Diag) _ocrV5Diag.ocrSkippedScorePump += 1;
+        logOcrV5Diag('ocr_skip_score_pump', {
+          roiIdx: roiIdx,
+          reason: triggerReason,
+          circuitOpen: isScorePumpCircuitOpen(now),
+          quiesced: now < (_ocrScorePumpQuiesceUntil || 0)
+        });
+        if (triggerRois.indexOf(2) >= 0 && roiIdx !== 2) {
+          roiIdx = 2;
+          triggerReason = sinceTimeOk >= OCR_V5_TIME_TICK_MS && _clockMode === 'running'
+            ? 'time_tick'
+            : 'heartbeat';
+        } else {
+          return false;
+        }
+      }
+    }
+
+    triggerRois.splice(triggerRois.indexOf(roiIdx), 1);
+    if (_ocrPendingTrigger && _ocrPendingTrigger.roiFirstSeen) {
+      delete _ocrPendingTrigger.roiFirstSeen[roiIdx];
+    }
+    if (triggerRois.length) {
+      var prevFirstSeen = (_ocrPendingTrigger && _ocrPendingTrigger.roiFirstSeen) || {};
+      var saveReason = triggerReason;
+      if ((triggerRois.indexOf(0) >= 0 || triggerRois.indexOf(1) >= 0) &&
+        (triggerReason === 'worker' ||
+          (_ocrPendingTrigger && _ocrPendingTrigger.reason === 'worker'))) {
+        saveReason = 'worker';
+      }
+      _ocrPendingTrigger = {
+        changedRois: triggerRois,
+        reason: saveReason,
+        ts: now,
+        roiFirstSeen: prevFirstSeen
+      };
+    } else {
+      _ocrPendingTrigger = null;
+    }
+
+    markOcrV5RoiCooldown(roiIdx, now);
+    if (_ocrV5Diag) {
+      if (triggerReason === 'worker') _ocrV5Diag.ocrTriggeredWorker += 1;
+      else if (triggerReason === 'starve') _ocrV5Diag.ocrTriggeredStarve += 1;
+      else if (triggerReason === 'occlusion') _ocrV5Diag.ocrTriggeredOcclusion += 1;
+      else if (triggerReason === 'heartbeat') _ocrV5Diag.ocrTriggeredHeartbeat += 1;
+      else if (triggerReason === 'time_tick') _ocrV5Diag.ocrTriggeredTimeTick += 1;
+      else if (triggerReason === 'score_heartbeat') _ocrV5Diag.ocrTriggeredScoreHeartbeat += 1;
+      else if (triggerReason === 'score_bootstrap') _ocrV5Diag.ocrTriggeredScoreBootstrap += 1;
+    }
+    logOcrV5Diag('ocr_trigger', {
+      roiIdx: roiIdx,
+      reason: triggerReason,
+      pendingRois: triggerRois,
+      msSinceTimeOcrOk: now - (_ocrLastTimeSuccessTs || 0)
+    });
+    this._runTriggeredOcrEngine(session, token, frame.data, frame.width, frame.height, now, roiIdx);
+    return true;
+  },
+
+  /**
+   * V5：对指定 ROI 执行精准 OCR（单 ROI、单并发）。
+   * @param {any} session VKSession
+   * @param {number} token 会话 token
+   * @param {ArrayBuffer} rgbaBuffer 帧 buffer
+   * @param {number} frameW 帧宽
+   * @param {number} frameH 帧高
+   * @param {number} captureTs 捕获墙钟
+   * @param {number} roiIdx ROI 索引
+   * @returns {void}
+   */
+  _runTriggeredOcrEngine: function (session, token, rgbaBuffer, frameW, frameH, captureTs, roiIdx) {
+    if (token !== _ocrSessionToken) return;
+    if (_ocrRunBusy) return;
+    if (!rgbaBuffer || !rgbaBuffer.byteLength) return;
+    if (typeof session.runOCR !== 'function') {
+      console.error('[Collector][OCR-V5] session.runOCR unavailable');
+      return;
+    }
+    if (roiIdx === 0 || roiIdx === 1) {
+      var scorePumpOk = isScoreOcrAllowedForV5(captureTs) || isScoreOcrAllowedForWorker(captureTs);
+      if (!scorePumpOk && !isTimeOcrStarved(captureTs) && !_ocrOcclusionActive) {
+        return;
+      }
+    }
+
+    var fullFrameRgba = new Uint8Array(rgbaBuffer);
+    var variants = cropRgbaCandidatesByRoi(
+      fullFrameRgba,
+      frameW,
+      frameH,
+      this.data.rois[roiIdx]
+    );
+    if (!variants || !variants.length) {
+      console.warn('[Collector][OCR-V5] crop empty idx=%s', roiIdx);
+      return;
+    }
+
+    _ocrRunLastTs = captureTs;
+    _ocrRunBusy = true;
+    _ocrBusySince = captureTs;
+    _ocrRunStartedAt = captureTs;
+    _ocrPumpLastTickTs = captureTs;
+    _ocrRunState = {
+      type: roiIdx === 2 ? 'time' : 'score',
+      triggerMode: 'v5',
+      session: session,
+      token: token,
+      rawTexts: this.data.rois.map(function (roi) { return roi.rawText || ''; }),
+      queue: [roiIdx],
+      queuePos: 0,
+      currentIdx: roiIdx,
+      currentVariants: variants.slice(0, 1),
+      currentVariantPos: 0,
+      captureTs: captureTs
+    };
+    if (this.data.debugMode) {
+      console.log('[Collector][OCR-V5] triggered idx=%s frame=%sx%s', roiIdx, frameW, frameH);
+    }
+    this._runNextRoiOcr();
+  },
+
+  /**
+   * 将相机帧发送给 Worker。优先 Transferable；不支持时自动降级为 copy 模式（不回退 legacy）。
+   * @param {{ data: ArrayBuffer, width: number, height: number }} frame 相机帧
+   * @param {number} seq 帧序号
+   * @returns {void}
+   */
+  _postFrameToOcrFilterWorker: function (frame, seq) {
+    if (!_ocrFilterWorker || _ocrFilterFallback || !_ocrFilterWorkerReady) {
+      if (_ocrV5Diag) _ocrV5Diag.framesSkippedNotReady += 1;
+      return;
+    }
+    if (!frame || !frame.data || !frame.data.byteLength) {
+      if (_ocrV5Diag) _ocrV5Diag.framesSkippedEmpty += 1;
+      return;
+    }
+    if (_ocrFilterPostMode === 'copy' && seq % OCR_V5_FRAME_SKIP !== 0) {
+      if (_ocrV5Diag) _ocrV5Diag.framesSkippedCopyThrottle += 1;
+      return;
+    }
+
+    var self = this;
+    var payload = {
+      type: 'FRAME',
+      width: frame.width,
+      height: frame.height,
+      seq: seq
+    };
+
+    try {
+      if (_ocrFilterPostMode === 'transfer') {
+        payload.buffer = frame.data;
+        _ocrFilterWorker.postMessage(payload, [frame.data]);
+        if (_ocrV5Diag) {
+          _ocrV5Diag.postTransferOk += 1;
+          _ocrV5Diag.framesPosted += 1;
+        }
+        return;
+      }
+
+      var size = frame.data.byteLength;
+      var pool = ensureOcrFrameBuffer(size);
+      pool.set(new Uint8Array(frame.data));
+      payload.buffer = pool.buffer;
+      _ocrFilterWorker.postMessage(payload);
+      if (_ocrV5Diag) {
+        _ocrV5Diag.postCopyOk += 1;
+        _ocrV5Diag.framesPosted += 1;
+      }
+    } catch (ePost) {
+      var errMsg = (ePost && ePost.message) ? ePost.message : String(ePost);
+      if (_ocrFilterPostMode === 'transfer' && errMsg.indexOf('transfer') >= 0) {
+        _ocrFilterPostMode = 'copy';
+        if (_ocrV5Diag) _ocrV5Diag.switchToCopy += 1;
+        logOcrV5Diag('post_mode_switch', { from: 'transfer', to: 'copy', reason: errMsg });
+        console.warn('[Collector][OCR-V5] transfer unsupported, switch to copy mode');
+        self._postFrameToOcrFilterWorker(frame, seq);
+        return;
+      }
+      if (_ocrV5Diag) _ocrV5Diag.postFail += 1;
+      logOcrV5Diag('post_fail_fatal', { err: errMsg, mode: _ocrFilterPostMode });
+      console.warn('[Collector][OCR-V5] post frame fatal, fallback legacy', ePost);
+      _ocrFilterFallback = true;
+      if (_ocrV5Diag) _ocrV5Diag.switchToLegacy += 1;
+      _ocrFilterWorkerReady = false;
+      resetOcrV5TriggerState();
+    }
+  },
+
+  /**
+   * 启动 OCR 帧泵：优先 V5 Worker 驱动，失败则 fallback legacy 双泵。
+   * @param {any} session VKSession
+   * @param {number} token 会话 token
+   * @returns {void}
+   */
+  _startOcrFramePump: function (session, token) {
+    this._initOcrFilterWorker();
+    if (!_ocrFilterFallback && _ocrFilterWorker) {
+      this._startOcrFramePumpV5(session, token);
+      return;
+    }
+    this._startOcrFramePumpLegacy(session, token);
+  },
+
+  /**
+   * V5 帧泵：Transferable 传 Worker + 异动驱动精准 OCR。
+   * @param {any} session VKSession
+   * @param {number} token 会话 token
+   * @returns {void}
+   */
+  _startOcrFramePumpV5: function (session, token) {
+    var self = this;
+    this._cancelOcrFramePump();
+    _ocrPumpFrameCount = 0;
+    _ocrPumpLastTickTs = 0;
+    _ocrFramePumpMode = 'v5';
+    resetOcrV5TriggerState();
+    resetOcrV5Diag('v5');
+    if (!_cameraContext || typeof _cameraContext.onCameraFrame !== 'function') {
+      logOcrV5Diag('fallback_legacy', { reason: 'onCameraFrame_unavailable' });
+      console.error('[Collector][OCR-V5] onCameraFrame unavailable, fallback legacy');
+      _ocrFilterFallback = true;
+      this._startOcrFramePumpLegacy(session, token);
+      return;
+    }
+    logOcrV5Diag('pump_start', {
+      worker: !!_ocrFilterWorker,
+      workerReady: _ocrFilterWorkerReady,
+      postMode: _ocrFilterPostMode
+    });
+    console.log('[Collector][OCR-V5] frame pump start worker=%s ready=%s postMode=%s',
+      !!_ocrFilterWorker, _ocrFilterWorkerReady, _ocrFilterPostMode);
+    try {
+      _cameraFrameListener = _cameraContext.onCameraFrame(function (frame) {
+        if (Date.now() < (self._zoomBlurGuardedUntil || 0)) return;
+        if (_vkSession !== session || token !== _ocrSessionToken) return;
+        _ocrPumpFrameCount += 1;
+        if (_ocrV5Diag) _ocrV5Diag.framesIn += 1;
+        var frameW = frame && frame.width ? frame.width : 0;
+        var frameH = frame && frame.height ? frame.height : 0;
+        if (_ocrPumpFrameCount <= 3 || _ocrPumpFrameCount % 300 === 0) {
+          console.log('[Collector][OCR-V5] pump seq=%s byteLen=%s size=%sx%s busy=%s postMode=%s',
+            _ocrPumpFrameCount,
+            frame && frame.data ? frame.data.byteLength : 0,
+            frameW,
+            frameH,
+            _ocrRunBusy,
+            _ocrFilterPostMode
+          );
+        }
+        if (!frame || !frame.data || frame.data.byteLength === 0 || frameW <= 0 || frameH <= 0) {
+          if (_ocrV5Diag) _ocrV5Diag.framesSkippedEmpty += 1;
+          return;
+        }
+
+        var captureTs = Date.now();
+        self._maybeEvaluateOcrOcclusion(captureTs);
+
+        if (!_ocrRunBusy) {
+          self._maybeRunTriggeredOcrV5(session, token, frame);
+        } else if (_ocrV5Diag) {
+          _ocrV5Diag.framesSkippedBusy += 1;
+        }
+
+        if (_ocrRunBusy) return;
+
+        if (_ocrFilterFallback) {
+          logOcrV5Diag('fallback_legacy_runtime', { seq: _ocrPumpFrameCount });
+          setTimeout(function () {
+            if (_vkSession === session && token === _ocrSessionToken) {
+              self._startOcrFramePumpLegacy(session, token);
+            }
+          }, 0);
+          return;
+        }
+
+        self._postFrameToOcrFilterWorker(frame, _ocrPumpFrameCount);
+      });
+      _cameraFrameListener.start();
+      setTimeout(function () {
+        if (_ocrFramePumpMode === 'v5' && _ocrV5Diag) {
+          _ocrV5Diag.lastSummaryTs = 0;
+          maybeEmitOcrV5DiagSummary();
+        }
+      }, 15000);
+      if (_ocrForceSyncAfterPump || _ocrWsReconnectPendingAfterRestart || isOcrWsRestartGuardActive()) {
+        setTimeout(function () {
+          self._onOcrFramePumpReadyAfterRestart();
+        }, 0);
+      }
+    } catch (eStart) {
+      console.error('[Collector][OCR-V5] onCameraFrame start fail, fallback legacy', eStart);
+      _ocrFilterFallback = true;
+      this._startOcrFramePumpLegacy(session, token);
+    }
+  },
+
+  /**
+   * Legacy 双频双泵（Worker 不可用时的 fallback）：
    *   - 时间泵（高频 TIME_PUMP_INTERVAL）：仅取时间 ROI，最新帧入引擎，历史帧丢弃。
    *   - 比分泵（低频 SCORE_PUMP_INTERVAL）：主/客 ROI 轮询，让出运行通道给时间泵。
    *
    * 单条 VK runOCR 通道由 _ocrRunBusy 互斥；时间泵优先，比分泵在空闲且未到时间泵周期时执行。
-   * 每次入泵时打包 captureTs（Date.now()），交给时间引擎做后续流水线延迟补偿。
    * @param {any} session
    * @param {number} token
    * @returns {void}
    */
-  _startOcrFramePump: function (session, token) {
+  _startOcrFramePumpLegacy: function (session, token) {
     var self = this;
     this._cancelOcrFramePump();
     _ocrPumpFrameCount = 0;
     _ocrPumpLastTickTs = 0;
     _lastTimePumpTs = 0;
     _lastScorePumpTs = 0;
+    _ocrFramePumpMode = 'legacy';
+    resetOcrV5Diag('legacy');
+    logOcrV5Diag('pump_start_legacy', { timePump: TIME_PUMP_INTERVAL, scorePump: SCORE_PUMP_INTERVAL });
     if (!_cameraContext || typeof _cameraContext.onCameraFrame !== 'function') {
       console.error('[Collector][OCR] onCameraFrame unavailable');
       return;
@@ -3022,6 +4208,7 @@ Page({
     _ocrPumpLastTickTs = 0;
     _lastTimePumpTs = 0;
     _lastScorePumpTs = 0;
+    _ocrFramePumpMode = '';
   },
 
   /**
@@ -3187,18 +4374,34 @@ Page({
       if (!_ocrRunState) return;
       _ocrConsecutiveTimeout += 1;
       _ocrStats.timeout += 1;
+      if (_ocrV5Diag) _ocrV5Diag.ocrRunTimeout += 1;
+      if (state && state.triggerMode === 'v5') {
+        logOcrV5Diag('ocr_timeout', {
+          roiIdx: state.currentIdx,
+          type: state.type || '',
+          crop: crop ? (crop.width + 'x' + crop.height) : ''
+        });
+      }
       markOcrSdkDegraded();
       var settleMs = getEffectiveOcrSettleMs(Date.now());
       _ocrTimeoutSettleUntil = Date.now() + settleMs;
       if (state.type === 'time') {
         // 时间引擎：放弃整轮（不重试 variant），但通过 settle 窗口避免立刻补刀。
         self._recordManualOcrFailure('timeout-time');
+        if (state.triggerMode === 'v5') {
+          self._clearOcrFilterAwaitingBaseline([state.currentIdx]);
+        }
         self._finishManualOcrRun(true);
         return;
       }
       _ocrRoiBackoffUntil[state.currentIdx] = Date.now() + 2500;
       _ocrRoiBackoffUntil[state.currentIdx === 0 ? 1 : 0] = Date.now() + 1200;
-      noteOcrScoreTimeout();
+      if (state.triggerMode === 'v5') {
+        _ocrRoiBackoffUntil[state.currentIdx] = Date.now() + 1500;
+        self._clearOcrFilterAwaitingBaseline([state.currentIdx]);
+      } else {
+        noteOcrScoreTimeout();
+      }
       if (_ocrConsecutiveTimeout >= 3) {
         OCR_MIN_INTERVAL_MS = 260;
       }
@@ -3470,6 +4673,8 @@ Page({
     TIME_PUMP_INTERVAL = TIME_PUMP_INTERVAL_BASE_MS;
     SCORE_PUMP_INTERVAL = SCORE_PUMP_INTERVAL_BASE_MS;
     OCR_CLOCK_PREDICT_TICK_MS = OCR_CLOCK_PREDICT_TICK_BASE_MS;
+    this._destroyOcrFilterWorker();
+    _ocrFilterFallback = false;
     this._cancelOcrFramePump();
     if (_vkSession) {
       var session = _vkSession;
@@ -3778,17 +4983,31 @@ Page({
   },
 
   _applyParsedPreview: function (rois, updatedRoiIdx) {
-    if (_ocrOcclusionActive) {
+    if (_ocrOcclusionActive && _ocrOcclusionRecoverStreak === 0) {
       return;
     }
     var next = {};
     var changed = false;
     var scorePairPreview = resolveOcrScorePair(rois);
+    if (!scorePairPreview && (updatedRoiIdx === 0 || updatedRoiIdx === 1)) {
+      var singlePreviewRaw = rois[updatedRoiIdx] && rois[updatedRoiIdx].rawText ? rois[updatedRoiIdx].rawText : '';
+      var singlePreviewVal = parseScore(singlePreviewRaw, updatedRoiIdx);
+      if (singlePreviewVal !== null) {
+        scorePairPreview = {
+          homeScore: updatedRoiIdx === 0 ? singlePreviewVal : (Number(this.data.homeScore) || 0),
+          awayScore: updatedRoiIdx === 1 ? singlePreviewVal : (Number(this.data.awayScore) || 0)
+        };
+      }
+    }
     var homeScore = scorePairPreview ? scorePairPreview.homeScore : null;
     var awayScore = scorePairPreview ? scorePairPreview.awayScore : null;
     var timeInfo = updatedRoiIdx === 2
-      ? filterClockByMode(sanitizeGameClockParse(parseTime(rois[2].rawText), getClockRefSec()))
+      ? filterClockByMode(resolveGameClockParse(rois[2].rawText, getClockRefSec()))
       : null;
+    if (timeInfo && timeInfo.minutes > OCR_GAME_CLOCK_MAX_MINUTES) {
+      var previewFixed = repairSmearedGameClockMinutes(timeInfo.minutes, timeInfo.seconds);
+      timeInfo = previewFixed || getPredictedClock();
+    }
     if (!timeInfo) timeInfo = getPredictedClock();
     if (timeInfo && _lastCommittedFrame) {
       var prevT = ocrFrameClockSec(_lastCommittedFrame);
@@ -3927,11 +5146,27 @@ Page({
    * @returns {void}
    */
   _parseAndMaybeNotify: function (rois, updatedRoiIdx) {
-    if (_ocrOcclusionActive) {
+    if (_ocrOcclusionActive && _ocrOcclusionRecoverStreak === 0) {
       return;
     }
 
     var scorePair = resolveOcrScorePair(rois);
+    if (!scorePair && (updatedRoiIdx === 0 || updatedRoiIdx === 1)) {
+      var singleRaw = rois[updatedRoiIdx] && rois[updatedRoiIdx].rawText ? rois[updatedRoiIdx].rawText : '';
+      var singleVal = parseScore(singleRaw, updatedRoiIdx);
+      if (singleVal !== null) {
+        scorePair = {
+          homeScore: updatedRoiIdx === 0 ? singleVal : (Number(this.data.homeScore) || 0),
+          awayScore: updatedRoiIdx === 1 ? singleVal : (Number(this.data.awayScore) || 0)
+        };
+      }
+    }
+    if (!scorePair && updatedRoiIdx === 2) {
+      scorePair = {
+        homeScore: _ocrLastGoodHomeScore >= 0 ? _ocrLastGoodHomeScore : (Number(this.data.homeScore) || 0),
+        awayScore: _ocrLastGoodAwayScore >= 0 ? _ocrLastGoodAwayScore : (Number(this.data.awayScore) || 0)
+      };
+    }
     if (!scorePair) {
       if (this.data.debugMode) {
         console.log('[Collector][OCR] parse skip home/away raw=%o', rois.map(function (r) { return r.rawText; }));
@@ -3942,16 +5177,12 @@ Page({
     var awayScore = scorePair.awayScore;
     var ocrTimeInfo = updatedRoiIdx === 2
       ? filterClockByMode(
-        sanitizeGameClockParse(
-          parseTime(rois[2] && rois[2].rawText ? rois[2].rawText : ''),
+        resolveGameClockParse(
+          rois[2] && rois[2].rawText ? rois[2].rawText : '',
           getClockRefSec()
         )
       )
       : null;
-
-    var scoreOkTs = Date.now();
-    _ocrLastHomeScoreSuccessTs = scoreOkTs;
-    _ocrLastAwayScoreSuccessTs = scoreOkTs;
 
     var wallPre = Date.now();
     var bypassScoreJumpHold =
@@ -4679,7 +5910,8 @@ Page({
    *   seconds: number,
    *   timeValid: boolean,
    *   wallMs?: number,
-   *   bypassScoreHold?: boolean
+   *   bypassScoreHold?: boolean,
+   *   resumeSnap?: boolean
    * }} input OCR 提纯输入
    * @returns {void}
    */
@@ -4711,6 +5943,27 @@ Page({
     if (timeInfo && refT >= 0) {
       var jump = Math.abs(t - refT);
       if (jump > OCR_SYNC_JUMP_THRESHOLD_SEC) {
+        if (input.resumeSnap) {
+          this._emitWsPacket('SYNC', payloadBase);
+          if (!_procState.clockRunning) {
+            this._emitWsPacket('START', payloadBase);
+          }
+          _procState.syncObserve = null;
+          _procState.sameSecStreak = 0;
+          _procState.sameSecFirstSeen = 0;
+          _procState.lastOcrSec = t;
+          _clockMode = 'running';
+          _procState.pauseConfirmed = false;
+          this._commitLocalState({
+            homeScore: h,
+            awayScore: a,
+            period: period,
+            minutes: timeInfo.minutes,
+            seconds: timeInfo.seconds,
+            shotClock: shotClock
+          });
+          return;
+        }
         if (_procState.syncObserve && _procState.syncObserve.sec === t) {
           _procState.syncObserve.streak += 1;
         } else {
@@ -5029,8 +6282,29 @@ function parseScore(raw, scoreIdx) {
  */
 function parseTime(raw) {
   if (!raw) return null;
-  var text = String(raw)
-    .toUpperCase()
+  var text = String(raw).toUpperCase().trim();
+
+  var smear = text.match(/(\d)[S5]\s*[:：]\s*(\d{2})\b/);
+  if (smear) {
+    var sm = parseInt(smear[1], 10);
+    var ss = parseInt(smear[2], 10);
+    if (!isNaN(sm) && !isNaN(ss) && sm <= OCR_GAME_CLOCK_MAX_MINUTES && ss >= 0 && ss <= 59) {
+      return { minutes: sm, seconds: ss };
+    }
+  }
+
+  var strictMmss = text.match(/(\d{1,2})\s*[:：]\s*(\d{2})\b/);
+  if (strictMmss) {
+    var mStrict = parseInt(strictMmss[1], 10);
+    var sStrict = parseInt(strictMmss[2], 10);
+    if (!isNaN(mStrict) && !isNaN(sStrict) &&
+      mStrict >= 0 && mStrict <= OCR_GAME_CLOCK_MAX_MINUTES &&
+      sStrict >= 0 && sStrict <= 59) {
+      return { minutes: mStrict, seconds: sStrict };
+    }
+  }
+
+  text = text
     .replace(/[ODUQ]/g, '0')
     .replace(/S/g, '5')
     .replace(/Z/g, '2')
@@ -5042,9 +6316,14 @@ function parseTime(raw) {
   if (mmss) {
     var m = parseInt(mmss[1], 10);
     var s = parseInt(mmss[2], 10);
-    // 【优化】：放宽分钟限制到 99 分钟，移除 10:00 死板拦截，完美兼容 CBA/NBA 的 12 分钟或更长节次
-    if (!isNaN(m) && !isNaN(s) && m >= 0 && m <= 99 && s >= 0 && s <= 59) {
-      return { minutes: m, seconds: s };
+    if (!isNaN(m) && !isNaN(s) && s >= 0 && s <= 59) {
+      if (m > OCR_GAME_CLOCK_MAX_MINUTES) {
+        var fixed = repairSmearedGameClockMinutes(m, s);
+        if (fixed) return fixed;
+      }
+      if (m >= 0 && m <= 99) {
+        return { minutes: m, seconds: s };
+      }
     }
   }
 
