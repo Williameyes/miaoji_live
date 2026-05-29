@@ -22,9 +22,9 @@ var WS_TOKEN_PATH = '/api/get_token';
 /** WebSocket 握手路径 */
 var WS_SOCKET_PATH = '/gaoguang-ws';
 /** 假停表防御：同一秒持续超过该毫秒才发 STOP */
-var OCR_FAKE_STOP_HOLD_MS = 2000;
+var OCR_FAKE_STOP_HOLD_MS = 1200;
 /** 假停表：同一秒需连续 OCR 样本次数（防走表 OCR 慢读误触） */
-var OCR_FAKE_STOP_STREAK = 4;
+var OCR_FAKE_STOP_STREAK = 3;
 /** 篮球单节比赛时钟分钟 plausible 上限（含 CBA 12 分钟节） */
 var OCR_GAME_CLOCK_MAX_MINUTES = 15;
 /** 停表恢复后 OCR 落差超过该秒数则一次性 snap 校准（避免 capSync 逐秒追 20s） */
@@ -63,6 +63,8 @@ var OCR_TIMEOUT_LOG_THROTTLE_MS = 10000;
 var OCR_TIME_BASELINE_STREAK = 3;
 /** 超过该毫秒未成功识别时间 ROI，调度器优先时间泵 */
 var OCR_TIME_STARVATION_MS = 1800;
+/** 比分 bootstrap 连续误读 0 达此次数后放弃该侧（避免占满 OCR 通道） */
+var OCR_SCORE_BOOTSTRAP_GIVE_UP_STREAK = 3;
 /** 预测器挂起：超过该毫秒无时间 OCR 成功才暂停本地补秒（不发 STOP） */
 var OCR_PREDICT_SUSPEND_MS = 8000;
 /** 软 SYNC / 观察室单次允许校正的最大秒数（防止饥饿恢复后一次跳 6s+） */
@@ -218,8 +220,8 @@ var OCR_V5_TIME_HEARTBEAT_PAUSED_MS = 1200;
 var OCR_V5_SCORE_PRIORITY_MS = 400;
 /** V5 比分 OCR 心跳：超过该毫秒未成功则主动补采样 */
 var OCR_V5_SCORE_HEARTBEAT_MS = 5000;
-/** V5 走表时时间 OCR 节拍（毫秒，≈1 秒一次，避免 1800ms 饥饿导致跳 2 秒） */
-var OCR_V5_TIME_TICK_MS = 1050;
+/** V5 走表时时间 OCR 节拍（毫秒，<1s 保证每秒至少一次采样，避免跳秒） */
+var OCR_V5_TIME_TICK_MS = 950;
 /** V5 诊断摘要输出间隔（毫秒） */
 var OCR_V5_DIAG_SUMMARY_MS = 30000;
 /** 预测补秒定时器基准 / 最后一分钟激进值 */
@@ -529,6 +531,8 @@ var _ocrV5ScorePumpCursor = 0;
 var _ocrV5LastHomeOcrTs = 0;
 /** V5 客分 OCR 成功墙钟（仅真实 OCR，供 heartbeat 判定） */
 var _ocrV5LastAwayOcrTs = 0;
+/** 比分 bootstrap 连续拒收 0 的次数 [主, 客] */
+var _ocrScoreBootstrapRejectStreak = [0, 0];
 /** 最近一次软 SYNC 墙钟（防抖） */
 var _lastSoftSyncWallTs = 0;
 /** 是否进入最后一分钟极限调度模式（minutes===0 && seconds<=60） */
@@ -598,6 +602,28 @@ function resetOcrV5TriggerState() {
   _ocrV5ScorePumpCursor = 0;
   _ocrV5LastHomeOcrTs = 0;
   _ocrV5LastAwayOcrTs = 0;
+  _ocrScoreBootstrapRejectStreak = [0, 0];
+}
+
+/**
+ * bootstrap 阶段连续拒收 0 分：达上限则标记该侧 bootstrap 结束（不写入 0 分）。
+ * @param {number} scoreIdx 0=主 1=客
+ * @param {number} nowTs 墙钟
+ * @returns {void}
+ */
+function noteScoreBootstrapReject(scoreIdx, nowTs) {
+  if (scoreIdx !== 0 && scoreIdx !== 1) return;
+  _ocrScoreBootstrapRejectStreak[scoreIdx] += 1;
+  if (_ocrScoreBootstrapRejectStreak[scoreIdx] < OCR_SCORE_BOOTSTRAP_GIVE_UP_STREAK) return;
+  if (scoreIdx === 0) {
+    _ocrV5LastHomeOcrTs = nowTs;
+  } else {
+    _ocrV5LastAwayOcrTs = nowTs;
+  }
+  logOcrV5Diag('score_bootstrap_give_up', {
+    scoreIdx: scoreIdx,
+    streak: _ocrScoreBootstrapRejectStreak[scoreIdx]
+  });
 }
 
 /**
@@ -727,12 +753,24 @@ function pickTriggeredRoi(changedRois, nowMs, triggerReason) {
   }
 
   if (triggerReason === 'score_bootstrap' || triggerReason === 'score_heartbeat') {
-    var homeStale = nowMs - (_ocrV5LastHomeOcrTs || 0);
-    var awayStale = nowMs - (_ocrV5LastAwayOcrTs || 0);
+    if (triggerReason === 'score_bootstrap' && isTimeOcrStarved(nowMs) && changedRois.indexOf(2) >= 0) {
+      return 2;
+    }
     if (changedRois.indexOf(0) >= 0 && changedRois.indexOf(1) >= 0) {
+      if (_ocrV5LastHomeOcrTs === 0 && _ocrV5LastAwayOcrTs === 0) {
+        var bootPick = (_ocrV5ScorePumpCursor % 2 === 0) ? 0 : 1;
+        _ocrV5ScorePumpCursor += 1;
+        return bootPick;
+      }
+      if (_ocrV5LastHomeOcrTs === 0) return 0;
+      if (_ocrV5LastAwayOcrTs === 0) return 1;
+      var homeStale = nowMs - (_ocrV5LastHomeOcrTs || 0);
+      var awayStale = nowMs - (_ocrV5LastAwayOcrTs || 0);
       if (awayStale >= homeStale && changedRois.indexOf(1) >= 0) return 1;
       return 0;
     }
+    if (changedRois.indexOf(1) >= 0 && _ocrV5LastAwayOcrTs === 0) return 1;
+    if (changedRois.indexOf(0) >= 0 && _ocrV5LastHomeOcrTs === 0) return 0;
     if (changedRois.indexOf(1) >= 0) return 1;
     if (changedRois.indexOf(0) >= 0) return 0;
   }
@@ -1576,6 +1614,7 @@ function resetOcrOcclusionState() {
   _ocrLastGoodHomeScore = -1;
   _ocrLastGoodAwayScore = -1;
   _ocrLastGoodClockSec = -1;
+  _ocrScoreBootstrapRejectStreak = [0, 0];
 }
 
 /**
@@ -3016,21 +3055,37 @@ Page({
     var parsedOkForBaseline = false;
     if (roiIdx === 0) {
       var parsedHomeScore = parseScore(text, 0);
-      if (parsedHomeScore !== null && !isLikelyZeroScoreDrop(0, parsedHomeScore)) {
+      var isHomeScoreBootstrap = _ocrLastHomeScoreSuccessTs <= 0;
+      if (
+        parsedHomeScore !== null &&
+        !isLikelyZeroScoreDrop(0, parsedHomeScore) &&
+        !(isHomeScoreBootstrap && parsedHomeScore === 0)
+      ) {
+        _ocrScoreBootstrapRejectStreak[0] = 0;
         _ocrLastHomeScoreSuccessTs = nowTs;
         _ocrV5LastHomeOcrTs = nowTs;
         _ocrLastGoodHomeScore = parsedHomeScore;
         noteOcrScoreSuccess();
         parsedOkForBaseline = true;
+      } else if (isHomeScoreBootstrap && parsedHomeScore === 0) {
+        noteScoreBootstrapReject(0, nowTs);
       }
     } else if (roiIdx === 1) {
       var parsedAwayScore = parseScore(text, 1);
-      if (parsedAwayScore !== null && !isLikelyZeroScoreDrop(1, parsedAwayScore)) {
+      var isAwayScoreBootstrap = _ocrLastAwayScoreSuccessTs <= 0;
+      if (
+        parsedAwayScore !== null &&
+        !isLikelyZeroScoreDrop(1, parsedAwayScore) &&
+        !(isAwayScoreBootstrap && parsedAwayScore === 0)
+      ) {
+        _ocrScoreBootstrapRejectStreak[1] = 0;
         _ocrLastAwayScoreSuccessTs = nowTs;
         _ocrV5LastAwayOcrTs = nowTs;
         _ocrLastGoodAwayScore = parsedAwayScore;
         noteOcrScoreSuccess();
         parsedOkForBaseline = true;
+      } else if (isAwayScoreBootstrap && parsedAwayScore === 0) {
+        noteScoreBootstrapReject(1, nowTs);
       }
     } else if (roiIdx === 2) {
       var refSec = getClockRefSec();
@@ -3164,8 +3219,11 @@ Page({
     }
 
     if (now - (_ocrLastTimeSuccessTs || 0) > 2500) {
+      var prevOcrClockSec = _lastOcrClockSec;
       _lastOcrClockSec = realWorldSec;
-      _clockMode = 'running';
+      if (prevOcrClockSec < 0 || realWorldSec < prevOcrClockSec) {
+        _clockMode = 'running';
+      }
       _ocrClockRunAnchorWallTs = now;
       _ocrClockRunAnchorOcrSec = realWorldSec;
     }
@@ -3284,7 +3342,9 @@ Page({
       : clockToTotalSec({ minutes: this.data.minutes, seconds: this.data.seconds });
     var clockSec = _ocrOcclusionBestClockSec >= 0
       ? _ocrOcclusionBestClockSec
-      : (_ocrLastGoodClockSec >= 0
+      : (_ocrLastGoodClockSec >= 0 &&
+        holdSec >= 0 &&
+        Math.abs(_ocrLastGoodClockSec - holdSec) <= 30
         ? _ocrLastGoodClockSec
         : holdSec);
 
@@ -3314,8 +3374,8 @@ Page({
     });
 
     var looksRunning = holdSec > 0 && clockSec >= 0 && clockSec < holdSec;
-    _clockMode = looksRunning ? 'running' : _clockMode;
-    _procState.pauseConfirmed = false;
+    _clockMode = 'paused';
+    _procState.pauseConfirmed = true;
     _lastOcrClockSec = clockSec;
     _lastOcrClockWallTs = nowMs;
     updatePredictedClock(clockFromTotalSec(clockSec));
@@ -3341,7 +3401,7 @@ Page({
       b: awayScore,
       p: this.data.period
     });
-    if (!_procState.clockRunning && (_clockMode === 'running' || looksRunning)) {
+    if (!_procState.clockRunning && looksRunning) {
       this._emitWsPacket('START', {
         t: clockSec,
         a: homeScore,
@@ -3690,7 +3750,8 @@ Page({
     var sinceTimeOk = now - (_ocrLastTimeSuccessTs || 0);
     var hasWorkerScorePending = triggerReason === 'worker' &&
       (triggerRois.indexOf(0) >= 0 || triggerRois.indexOf(1) >= 0);
-    if (!_ocrOcclusionActive && triggerReason !== 'score_bootstrap' && !hasWorkerScorePending) {
+    var scoreBootstrapBlocksTime = triggerReason === 'score_bootstrap' && !isTimeOcrStarved(now);
+    if (!_ocrOcclusionActive && !scoreBootstrapBlocksTime && !hasWorkerScorePending) {
       var needTimeOcr = false;
       var timeReason = '';
       if (_clockMode === 'running' && sinceTimeOk >= OCR_V5_TIME_TICK_MS) {
@@ -3739,8 +3800,11 @@ Page({
     var roiIdx = pickTriggeredRoi(triggerRois, now, triggerReason);
     if (roiIdx < 0) return false;
 
+    if (roiIdx === 2 && triggerReason === 'score_bootstrap' && isTimeOcrStarved(now)) {
+      triggerReason = 'starve';
+    }
     var bypassRoiCooldown = bypassCooldown ||
-      (roiIdx === 2 && (triggerReason === 'heartbeat' || triggerReason === 'time_tick')) ||
+      (roiIdx === 2 && (triggerReason === 'heartbeat' || triggerReason === 'time_tick' || triggerReason === 'starve')) ||
       ((roiIdx === 0 || roiIdx === 1) &&
         (triggerReason === 'score_heartbeat' ||
           triggerReason === 'score_bootstrap' ||
@@ -3874,7 +3938,7 @@ Page({
       queue: [roiIdx],
       queuePos: 0,
       currentIdx: roiIdx,
-      currentVariants: variants.slice(0, 1),
+      currentVariants: variants.slice(0, roiIdx === 2 ? 2 : 1),
       currentVariantPos: 0,
       captureTs: captureTs
     };
@@ -6030,7 +6094,7 @@ Page({
         _procState.lastOcrSec = t;
         if (refT >= 0 && prevSec >= 0 && t < refT) {
           var dropSec = refT - t;
-          if (dropSec >= 1 && dropSec <= 2 && !_procState.clockRunning) {
+          if (dropSec >= 1 && dropSec <= 5 && !_procState.clockRunning) {
             var allowStart = _procState.pauseConfirmed ||
               _clockMode === 'paused' ||
               !pub ||
@@ -6272,8 +6336,9 @@ function parseScore(raw, scoreIdx) {
  *
  * 增强点（针对 7 段数码管 OCR + 最后一分钟 SS.m 显示）：
  *   1. 先转大写并按 7 段数码管混淆矩阵硬替换：O/D/U/Q→0, S→5, Z→2, I/L/|→1, B→8, A→4。
- *   2. 优先匹配常规 MM:SS（秒必须两位），保证 10:00 / 09:58 等正常时段稳定。
- *   3. 匹配失败时，降级匹配最后一分钟的 SS.m（如 59.8、12.3）：
+ *   2. 匹配常规 MM:SS（秒必须两位），保证 05:20 / 10:00 等正常时段稳定。
+ *   3. 分钟 > 节上限时由 repairSmearedGameClockMinutes 修复（如 95:19→9:19，不误伤 05:20）。
+ *   4. 仍无冒号时降级 SS.m（如 59.8、12.3）：
  *      - 第一段数字 < 60 即视为剩余秒数，分钟补 0，毫秒丢弃；
  *      - 解决最后 1 分钟显示由 MM:SS 切换为 SS.m 后断崖式识别失败的问题。
  *
@@ -6282,16 +6347,13 @@ function parseScore(raw, scoreIdx) {
  */
 function parseTime(raw) {
   if (!raw) return null;
-  var text = String(raw).toUpperCase().trim();
-
-  var smear = text.match(/(\d)[S5]\s*[:：]\s*(\d{2})\b/);
-  if (smear) {
-    var sm = parseInt(smear[1], 10);
-    var ss = parseInt(smear[2], 10);
-    if (!isNaN(sm) && !isNaN(ss) && sm <= OCR_GAME_CLOCK_MAX_MINUTES && ss >= 0 && ss <= 59) {
-      return { minutes: sm, seconds: ss };
-    }
-  }
+  var text = String(raw).toUpperCase().trim()
+    .replace(/[ODUQ]/g, '0')
+    .replace(/S/g, '5')
+    .replace(/Z/g, '2')
+    .replace(/[IL|]/g, '1')
+    .replace(/B/g, '8')
+    .replace(/A/g, '4');
 
   var strictMmss = text.match(/(\d{1,2})\s*[:：]\s*(\d{2})\b/);
   if (strictMmss) {
@@ -6303,14 +6365,6 @@ function parseTime(raw) {
       return { minutes: mStrict, seconds: sStrict };
     }
   }
-
-  text = text
-    .replace(/[ODUQ]/g, '0')
-    .replace(/S/g, '5')
-    .replace(/Z/g, '2')
-    .replace(/[IL|]/g, '1')
-    .replace(/B/g, '8')
-    .replace(/A/g, '4');
 
   var mmss = text.match(/(\d{1,2})\s*[:：]\s*(\d{2})(?!.*\d\s*[:：]\s*\d{2})/);
   if (mmss) {
