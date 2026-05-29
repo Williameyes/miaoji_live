@@ -28,6 +28,46 @@ var OCR_FAKE_STOP_STREAK = 3;
 var OCR_START_CONFIRM_STREAK = 2;
 /** 遮挡判定：时间/主分/客分均无法识别超过该毫秒 */
 var OCR_OCCLUSION_HOLD_MS = 2800;
+/** 遮挡恢复期：三项成功读数的判定窗口（轮询+超时下需宽于 OCR_OCCLUSION_HOLD_MS） */
+var OCR_OCCLUSION_FRESH_MS = 4500;
+/** 遮挡期间比分泵间隔（降频，把时间槽让给时间 OCR 破冰） */
+var SCORE_PUMP_INTERVAL_OCCLUSION_MS = 1000;
+/** 连续比分 OCR 超时达到该次数后熔断比分泵，把时间槽让给时间 OCR */
+var OCR_SCORE_TIMEOUT_STREAK_PAUSE = 2;
+/** 比分泵熔断时长（毫秒） */
+var OCR_SCORE_PUMP_PAUSE_MS = 6000;
+/** 连续熔断达到该次数后，长时间静默比分泵以保住时间通道 */
+var OCR_SCORE_CIRCUIT_MAX_TRIPS = 3;
+/** 比分泵长时间静默（毫秒） */
+var OCR_SCORE_PUMP_QUIESCE_MS = 120000;
+/** SDK 连续超时进入降载模式的次数阈值 */
+var OCR_SDK_DEGRADED_TIMEOUT_STREAK = 3;
+/** SDK 降载模式持续时长（毫秒） */
+var OCR_SDK_DEGRADED_DURATION_MS = 45000;
+/** 降载时时间泵间隔（毫秒） */
+var OCR_TIME_PUMP_DEGRADED_MS = 450;
+/** 降载时 OCR 超时后的 settle（毫秒） */
+var OCR_TIMEOUT_SETTLE_DEGRADED_MS = 650;
+/** 软重启最小间隔（防止 timeout 触发重建风暴） */
+var OCR_SOFT_RESTART_MIN_INTERVAL_MS = 120000;
+/** 连续手动失败触发软重启的阈值（滑动窗口内） */
+var OCR_MANUAL_FAIL_THRESHOLD = 18;
+/** 超时日志节流（毫秒） */
+var OCR_TIMEOUT_LOG_THROTTLE_MS = 10000;
+/** 启用比分泵前需连续成功识别时间的次数 */
+var OCR_TIME_BASELINE_STREAK = 3;
+/** 超过该毫秒未成功识别时间 ROI，调度器优先时间泵 */
+var OCR_TIME_STARVATION_MS = 1800;
+/** 预测器挂起：超过该毫秒无时间 OCR 成功才暂停本地补秒（不发 STOP） */
+var OCR_PREDICT_SUSPEND_MS = 8000;
+/** 软 SYNC / 观察室单次允许校正的最大秒数（防止饥饿恢复后一次跳 6s+） */
+var OCR_SOFT_SYNC_MAX_STEP_SEC = 2;
+/** 节间复位：参考时钟低于该值且 OCR 读到 ≥8:00 时视为新节 10:00 */
+var OCR_PERIOD_RESET_REF_MAX_SEC = 420;
+/** 节间复位：OCR 读数至少为该秒数（8:00） */
+var OCR_PERIOD_RESET_MIN_SEC = 480;
+/** 参考时钟仍 >2min 时，拒绝 0:xx（防 24s 进攻时间被 SS.m 误当比赛时钟） */
+var OCR_SHOT_CLOCK_MASK_REF_MIN_SEC = 120;
 /** 遮挡恢复：连续多少次检测到三项均可读才退出遮挡 */
 var OCR_OCCLUSION_RECOVER_STREAK = 2;
 /** 遮挡状态评估最小间隔（毫秒） */
@@ -124,8 +164,8 @@ var OCR_ROI_COUNT = 3;
 var OCR_MIN_INTERVAL_BASE_MS = 160;
 var OCR_MIN_INTERVAL_MS = 160;
 var OCR_PUMP_INTERVAL_MS = 120;
-/** 单 ROI runOCR 默认超时（比分引擎使用） */
-var OCR_RUN_TIMEOUT_MS = 720;
+/** 单 ROI runOCR 默认超时（比分引擎使用；Android VK 实测常 >720ms） */
+var OCR_RUN_TIMEOUT_MS = 1100;
 /**
  * 时间 OCR 引擎超时：1500ms。
  *
@@ -213,8 +253,6 @@ var OCR_SESSION_REBUILD_MS = 50 * 60 * 1000;
 var OCR_SESSION_ROTATE_MS = 18 * 60 * 1000;
 /** 健康检查间隔（重建判定、后台恢复） */
 var OCR_HEALTH_INTERVAL_MS = 60 * 1000;
-/** 连续 runOCR 超时/异常达到该次数后触发温和重建（滑动窗口内） */
-var OCR_MANUAL_FAIL_THRESHOLD = 8;
 var OCR_MANUAL_FAIL_WINDOW_MS = 90 * 1000;
 var ROI_MIN_SIZE = 0.05; // 归一化最小宽/高，防止缩至 0
 
@@ -333,6 +371,28 @@ var _ocrTick = 0;
 var _ocrManualMode = false;
 /** 最近一次时间 ROI 解析出合法 mm:ss 的墙钟时间戳（供时间优先调度）。 */
 var _ocrLastTimeSuccessTs = 0;
+/** 比分泵熔断截止墙钟（连续超时后暂停提交比分 runOCR） */
+var _ocrScorePumpPauseUntil = 0;
+/** 连续比分 OCR 超时计数（达到阈值触发熔断） */
+var _ocrScoreTimeoutStreak = 0;
+/** 连续熔断次数（用于加长暂停 / 长时间静默） */
+var _ocrScoreCircuitTripCount = 0;
+/** 比分泵长时间静默截止墙钟 */
+var _ocrScorePumpQuiesceUntil = 0;
+/** 时间 ROI 连续成功次数（达到 OCR_TIME_BASELINE_STREAK 后才开放比分泵） */
+var _ocrTimeSuccessStreak = 0;
+/** 是否已建立时间 OCR 基线（开放比分泵门槛） */
+var _ocrTimeBaselineReady = false;
+/** 比分泵是否已因反复熔断而彻底关闭（直至重新开关 OCR） */
+var _ocrScorePumpDisabled = false;
+/** SDK 降载模式截止墙钟 */
+var _ocrSdkDegradedUntil = 0;
+/** 上次软重启墙钟 */
+var _ocrLastSoftRestartAt = 0;
+/** 上次 OCR 启动原因（供 boot 分支判断） */
+var _ocrLastBootReason = '';
+/** 超时 warn 日志节流 */
+var _ocrTimeoutWarnLastTs = { score: 0, time: 0 };
 /** 最近一次主队分 ROI 成功识别墙钟戳 */
 var _ocrLastHomeScoreSuccessTs = 0;
 /** 最近一次客队分 ROI 成功识别墙钟戳 */
@@ -485,7 +545,267 @@ function buildOcrScheduleQueue() {
 }
 
 function getOcrMaxVariantsForRoi(roiIdx) {
-  return roiIdx === 2 ? 2 : 1;
+  if (roiIdx === 0 || roiIdx === 1) {
+    if (_ocrOcclusionActive || _ocrConsecutiveTimeout >= 2) {
+      return 1;
+    }
+    if (_ocrConsecutiveTimeout >= 1) {
+      return 2;
+    }
+    return OCR_MAX_VARIANTS_PER_RUN;
+  }
+  return 2;
+}
+
+/**
+ * 重置比分泵熔断状态。
+ * @returns {void}
+ */
+function resetOcrScorePumpCircuit() {
+  _ocrScorePumpPauseUntil = 0;
+  _ocrScoreTimeoutStreak = 0;
+  _ocrScoreCircuitTripCount = 0;
+  _ocrScorePumpQuiesceUntil = 0;
+}
+
+/**
+ * 允许重新开放比分泵（用户重新开关 OCR 时调用）。
+ * @returns {void}
+ */
+function resetScorePumpDisabled() {
+  _ocrScorePumpDisabled = false;
+}
+
+/**
+ * SDK 是否处于降载模式（拉长间隔、关闭比分泵）。
+ * @param {number} nowMs
+ * @returns {boolean}
+ */
+function isOcrSdkDegraded(nowMs) {
+  return nowMs < (_ocrSdkDegradedUntil || 0);
+}
+
+/**
+ * 标记 SDK 降载窗口。
+ * @returns {void}
+ */
+function markOcrSdkDegraded() {
+  if (_ocrConsecutiveTimeout < OCR_SDK_DEGRADED_TIMEOUT_STREAK) return;
+  _ocrSdkDegradedUntil = Date.now() + OCR_SDK_DEGRADED_DURATION_MS;
+}
+
+/**
+ * 当前时间泵有效间隔。
+ * @param {number} nowMs
+ * @returns {number}
+ */
+function getEffectiveTimePumpInterval(nowMs) {
+  if (isOcrSdkDegraded(nowMs) || isTimeOcrStarved(nowMs)) {
+    return OCR_TIME_PUMP_DEGRADED_MS;
+  }
+  return TIME_PUMP_INTERVAL;
+}
+
+/**
+ * 当前 OCR settle 窗口。
+ * @param {number} nowMs
+ * @returns {number}
+ */
+function getEffectiveOcrSettleMs(nowMs) {
+  return isOcrSdkDegraded(nowMs) ? OCR_TIMEOUT_SETTLE_DEGRADED_MS : OCR_TIMEOUT_SETTLE_MS;
+}
+
+/**
+ * 是否应打印 OCR 超时 warn（节流，避免 DevTools 卡死）。
+ * @param {'score'|'time'} kind
+ * @returns {boolean}
+ */
+function shouldLogOcrTimeoutWarn(kind) {
+  var now = Date.now();
+  var last = _ocrTimeoutWarnLastTs[kind] || 0;
+  if (now - last < OCR_TIMEOUT_LOG_THROTTLE_MS) return false;
+  _ocrTimeoutWarnLastTs[kind] = now;
+  return true;
+}
+
+/**
+ * 是否像「高位分被误读为 0」。
+ * @param {number} scoreIdx
+ * @param {number} nextScore
+ * @returns {boolean}
+ */
+function isLikelyZeroScoreDrop(scoreIdx, nextScore) {
+  if (nextScore !== 0) return false;
+  var ref = getScoreParseRef(scoreIdx);
+  return ref >= 8;
+}
+
+/**
+ * 重置时间 OCR 基线（开放比分泵门槛）。
+ * @returns {void}
+ */
+function resetOcrTimeBaseline() {
+  _ocrTimeSuccessStreak = 0;
+  _ocrTimeBaselineReady = false;
+}
+
+/**
+ * 获取比赛时钟参考秒数（最近 OCR / 已发布 / 本地提交）。
+ * @returns {number}
+ */
+function getClockRefSec() {
+  if (_lastOcrClockSec >= 0) return _lastOcrClockSec;
+  var pub = _procState.published;
+  if (pub && typeof pub.t === 'number' && pub.t >= 0) return pub.t;
+  if (_lastCommittedFrame) return ocrFrameClockSec(_lastCommittedFrame);
+  return -1;
+}
+
+/**
+ * 是否像节间复位到 10:00（大屏已回 10:00，参考仍在末节倒计时）。
+ * @param {number} refSec
+ * @param {number} ocrSec
+ * @returns {boolean}
+ */
+function isLikelyPeriodClockReset(refSec, ocrSec) {
+  if (ocrSec < OCR_PERIOD_RESET_MIN_SEC) return false;
+  if (refSec < 0) return true;
+  return refSec <= OCR_PERIOD_RESET_REF_MAX_SEC;
+}
+
+/**
+ * 是否像把 24s 进攻时间/0:xx 误当成比赛时钟。
+ * @param {number} refSec
+ * @param {{ minutes: number, seconds: number }} clock
+ * @returns {boolean}
+ */
+function isLikelyShotClockMisreadAsGame(refSec, clock) {
+  if (refSec < OCR_SHOT_CLOCK_MASK_REF_MIN_SEC || !clock) return false;
+  if (Number(clock.minutes) !== 0) return false;
+  var ocrSec = clockToTotalSec(clock);
+  return ocrSec >= 0 && ocrSec < 60 && !isLikelyPeriodClockReset(refSec, ocrSec);
+}
+
+/**
+ * 比赛时钟倒计时不应相对参考向前走（除节间复位外）。
+ * @param {number} refSec
+ * @param {number} ocrSec
+ * @returns {boolean}
+ */
+function isSuspiciousGameClockForward(refSec, ocrSec) {
+  if (refSec < 0 || ocrSec < 0) return false;
+  if (isLikelyPeriodClockReset(refSec, ocrSec)) return false;
+  return ocrSec > refSec;
+}
+
+/**
+ * 校验 OCR 时间样本是否可用于比赛时钟（过滤进攻时间误读与正向跳变）。
+ * @param {{ minutes: number, seconds: number } | null} clock
+ * @param {number} refSec
+ * @returns {{ minutes: number, seconds: number } | null}
+ */
+function sanitizeGameClockParse(clock, refSec) {
+  if (!clock) return null;
+  var ocrSec = clockToTotalSec(clock);
+  if (refSec < 0) return clock;
+  if (isLikelyShotClockMisreadAsGame(refSec, clock)) return null;
+  if (isSuspiciousGameClockForward(refSec, ocrSec)) return null;
+  return clock;
+}
+
+/**
+ * 记录时间 ROI 解析成功，累计基线 streak（须通过 sanitizeGameClockParse）。
+ * @param {{ minutes: number, seconds: number }} clock
+ * @returns {void}
+ */
+function noteOcrTimeSuccess(clock) {
+  var refSec = getClockRefSec();
+  if (!sanitizeGameClockParse(clock, refSec)) return;
+  _ocrTimeSuccessStreak += 1;
+  if (_ocrTimeSuccessStreak >= OCR_TIME_BASELINE_STREAK && !_ocrTimeBaselineReady) {
+    _ocrTimeBaselineReady = true;
+    console.log('[Collector][OCR] time baseline ready (%s), score pump enabled', OCR_TIME_BASELINE_STREAK);
+  }
+}
+
+/**
+ * 软 SYNC 分步校正：倒计时仅允许向后校正；节间复位允许跳到 10:00。
+ * @param {number} fromSec 已发布或参考秒数
+ * @param {number} toSec OCR 读数秒数
+ * @returns {number}
+ */
+function capSyncClockStep(fromSec, toSec) {
+  if (fromSec < 0 || toSec < 0) return toSec;
+  if (isLikelyPeriodClockReset(fromSec, toSec)) return toSec;
+  var delta = toSec - fromSec;
+  if (delta > 0) return fromSec;
+  if (delta < -OCR_SOFT_SYNC_MAX_STEP_SEC) {
+    return fromSec - OCR_SOFT_SYNC_MAX_STEP_SEC;
+  }
+  return toSec;
+}
+
+/**
+ * 是否允许调度比分泵（基线已建立、未熔断、未静默）。
+ * @param {number} nowMs
+ * @returns {boolean}
+ */
+function isScorePumpAllowed(nowMs) {
+  if (isOcrSdkDegraded(nowMs)) return false;
+  if (!_ocrTimeBaselineReady) return false;
+  if (nowMs < (_ocrScorePumpQuiesceUntil || 0)) return false;
+  if (isScorePumpCircuitOpen(nowMs)) return false;
+  return true;
+}
+
+/**
+ * 时间 OCR 是否处于饥饿（从未成功或过久未成功）。
+ * @param {number} nowMs
+ * @returns {boolean}
+ */
+function isTimeOcrStarved(nowMs) {
+  if (!_ocrLastTimeSuccessTs) return true;
+  return (nowMs - _ocrLastTimeSuccessTs) > OCR_TIME_STARVATION_MS;
+}
+
+/**
+ * 比分泵是否处于全局熔断期。
+ * @param {number} nowMs
+ * @returns {boolean}
+ */
+function isScorePumpCircuitOpen(nowMs) {
+  return nowMs < (_ocrScorePumpPauseUntil || 0);
+}
+
+/**
+ * 记录比分 OCR 超时并视情况熔断比分泵。
+ * @returns {void}
+ */
+function noteOcrScoreTimeout() {
+  _ocrScoreTimeoutStreak += 1;
+  if (_ocrScoreTimeoutStreak < OCR_SCORE_TIMEOUT_STREAK_PAUSE) return;
+  _ocrScoreTimeoutStreak = 0;
+  _ocrScoreCircuitTripCount += 1;
+  var pauseMs = OCR_SCORE_PUMP_PAUSE_MS * Math.min(3, _ocrScoreCircuitTripCount);
+  _ocrScorePumpPauseUntil = Date.now() + pauseMs;
+  console.log(
+    '[Collector][OCR] score pump circuit-open %sms trip=%s for time recovery',
+    pauseMs,
+    _ocrScoreCircuitTripCount
+  );
+  if (_ocrScoreCircuitTripCount >= OCR_SCORE_CIRCUIT_MAX_TRIPS) {
+    _ocrScorePumpQuiesceUntil = Date.now() + OCR_SCORE_PUMP_QUIESCE_MS;
+    console.log('[Collector][OCR] score pump quiesced %sms', OCR_SCORE_PUMP_QUIESCE_MS);
+  }
+  markOcrSdkDegraded();
+}
+
+/**
+ * 比分 OCR 成功后仅清零连续超时计数（不撤销熔断/静默，避免反复占通道）。
+ * @returns {void}
+ */
+function noteOcrScoreSuccess() {
+  _ocrScoreTimeoutStreak = 0;
 }
 
 function cloneClock(clock) {
@@ -746,10 +1066,25 @@ function resetOcrOcclusionState() {
  * @returns {boolean}
  */
 function areAllOcrFieldsFresh(nowMs) {
+  var windowMs = _ocrOcclusionActive ? OCR_OCCLUSION_FRESH_MS : OCR_OCCLUSION_HOLD_MS;
   return (
-    (nowMs - (_ocrLastTimeSuccessTs || 0)) <= OCR_OCCLUSION_HOLD_MS &&
-    (nowMs - (_ocrLastHomeScoreSuccessTs || 0)) <= OCR_OCCLUSION_HOLD_MS &&
-    (nowMs - (_ocrLastAwayScoreSuccessTs || 0)) <= OCR_OCCLUSION_HOLD_MS
+    (nowMs - (_ocrLastTimeSuccessTs || 0)) <= windowMs &&
+    (nowMs - (_ocrLastHomeScoreSuccessTs || 0)) <= windowMs &&
+    (nowMs - (_ocrLastAwayScoreSuccessTs || 0)) <= windowMs
+  );
+}
+
+/**
+ * 三项 OCR 是否均已超过有效窗口（真实遮挡：三项同时失效，而非单项过期）。
+ * @param {number} nowMs
+ * @returns {boolean}
+ */
+function areAllOcrFieldsStale(nowMs) {
+  var windowMs = OCR_OCCLUSION_HOLD_MS;
+  return (
+    (nowMs - (_ocrLastTimeSuccessTs || 0)) > windowMs &&
+    (nowMs - (_ocrLastHomeScoreSuccessTs || 0)) > windowMs &&
+    (nowMs - (_ocrLastAwayScoreSuccessTs || 0)) > windowMs
   );
 }
 
@@ -1903,6 +2238,7 @@ Page({
 
   _prepareCameraForOcrBoot: function (token, reason) {
     var self = this;
+    _ocrLastBootReason = reason || '';
     var bootDelay = _getVkBootDelayMs();
     this._clearOcrBootTimers();
     console.log('[Collector][OCR] prepare camera for boot token=%s reason=%s bootDelay=%s', token, reason || '', bootDelay);
@@ -1994,7 +2330,21 @@ Page({
     _ocrLastRoiRunTs = [0, 0, 0];
     _ocrRoiBackoffUntil = [0, 0, 0];
     _ocrRoiTextSeq = [0, 0, 0];
-    _ocrLastTimeSuccessTs = Date.now();
+    _ocrLastTimeSuccessTs = 0;
+    var softBoot = String(_ocrLastBootReason || '').indexOf('soft-restart') >= 0;
+    if (softBoot) {
+      _ocrScoreTimeoutStreak = 0;
+      _ocrScorePumpQuiesceUntil = Date.now() + OCR_SCORE_PUMP_QUIESCE_MS;
+      resetOcrTimeBaseline();
+      resetOcrOcclusionState();
+      _ocrManualFailTimestamps = [];
+      _ocrSdkDegradedUntil = Date.now() + OCR_SDK_DEGRADED_DURATION_MS;
+      console.log('[Collector][OCR] soft boot: score quiesced, time-only degraded mode');
+    } else {
+      resetOcrScorePumpCircuit();
+      resetScorePumpDisabled();
+      resetOcrTimeBaseline();
+    }
     _timeJumpHoldFrame = null;
     _scoreJumpHold = null;
     _manualScoreEditAt = 0;
@@ -2126,6 +2476,7 @@ Page({
     }
     _ocrStats.success += 1;
     _ocrConsecutiveTimeout = 0;
+    _ocrSdkDegradedUntil = 0;
     OCR_MIN_INTERVAL_MS = OCR_MIN_INTERVAL_BASE_MS;
     if (this._shouldRetryCurrentVariant(roiIdx, text)) {
       this._advanceCurrentVariantOrQueue('invalid-text');
@@ -2135,21 +2486,25 @@ Page({
     var nowTs = Date.now();
     if (roiIdx === 0) {
       var parsedHomeScore = parseScore(text, 0);
-      if (parsedHomeScore !== null) {
+      if (parsedHomeScore !== null && !isLikelyZeroScoreDrop(0, parsedHomeScore)) {
         _ocrLastHomeScoreSuccessTs = nowTs;
         _ocrLastGoodHomeScore = parsedHomeScore;
+        noteOcrScoreSuccess();
       }
     } else if (roiIdx === 1) {
       var parsedAwayScore = parseScore(text, 1);
-      if (parsedAwayScore !== null) {
+      if (parsedAwayScore !== null && !isLikelyZeroScoreDrop(1, parsedAwayScore)) {
         _ocrLastAwayScoreSuccessTs = nowTs;
         _ocrLastGoodAwayScore = parsedAwayScore;
+        noteOcrScoreSuccess();
       }
     } else if (roiIdx === 2) {
-      var parsedTime = parseTime(text);
+      var parsedTimeRaw = parseTime(text);
+      var parsedTime = sanitizeGameClockParse(parsedTimeRaw, getClockRefSec());
       if (parsedTime) {
         _ocrLastTimeSuccessTs = nowTs;
         _ocrLastGoodClockSec = clockToTotalSec(parsedTime);
+        noteOcrTimeSuccess(parsedTime);
         if (!_ocrOcclusionActive) {
           var captureTs = (_ocrRunState && _ocrRunState.captureTs) || nowTs;
           this._recordOcrClockSample(parsedTime, captureTs);
@@ -2172,12 +2527,22 @@ Page({
    */
   _recordOcrClockSample: function (parsedTime, frameCaptureTs) {
     if (!parsedTime || _ocrOcclusionActive) return;
+    var refSec = getClockRefSec();
+    parsedTime = sanitizeGameClockParse(parsedTime, refSec);
+    if (!parsedTime) return;
     var now = Date.now();
     var ocrSec = clockToTotalSec(parsedTime);
+    var periodReset = isLikelyPeriodClockReset(refSec, ocrSec);
+    if (periodReset) {
+      console.log('[Collector][OCR] period clock reset detected ref=%s ocr=%s', refSec, ocrSec);
+      _isFinalMinuteMode = false;
+      TIME_PUMP_INTERVAL = TIME_PUMP_INTERVAL_BASE_MS;
+      OCR_CLOCK_PREDICT_TICK_MS = OCR_CLOCK_PREDICT_TICK_BASE_MS;
+    }
     var captureTs = Number(frameCaptureTs) || now;
     var pipelineDelaySec = Math.min(
       OCR_CLOCK_PREDICT_MAX_LEAD_SEC,
-      Math.floor(Math.max(0, now - captureTs) / 1000)
+      Math.round(Math.max(0, now - captureTs) / 1000)
     );
     var compensatePipelineDelay =
       pipelineDelaySec > 0 &&
@@ -2229,6 +2594,13 @@ Page({
     }
     _ocrLastTimeSuccessTs = now;
 
+    if (!periodReset) {
+      var capRefSec = _lastOcrClockSec >= 0 ? _lastOcrClockSec : getPublishedClockSecAt(now);
+      if (capRefSec >= 0) {
+        realWorldSec = capSyncClockStep(capRefSec, realWorldSec);
+      }
+    }
+
     var realClock = clockFromTotalSec(realWorldSec);
     _lastOcrClockSec = realWorldSec;
     _lastOcrClockWallTs = now;
@@ -2271,8 +2643,9 @@ Page({
       now - (_lastSoftSyncWallTs || 0) >= OCR_SOFT_SYNC_DEBOUNCE_MS
     ) {
       _lastSoftSyncWallTs = now;
+      var softSyncT = capSyncClockStep(publishedSecNow, realWorldSec);
       this._emitWsPacket('SYNC', {
-        t: realWorldSec,
+        t: softSyncT,
         a: homeScore,
         b: awayScore,
         p: this.data.period
@@ -2296,6 +2669,7 @@ Page({
     if (!_ocrOcclusionActive) {
       if (!hasOcrOcclusionBaseline()) return;
       if (areAllOcrFieldsFresh(nowMs)) return;
+      if (!areAllOcrFieldsStale(nowMs)) return;
       this._enterOcrOcclusion(nowMs);
       return;
     }
@@ -2472,17 +2846,8 @@ Page({
     // 【修复2：预测器看门狗，切断幽灵倒数】
     // 若底层 OCR 超过 3 秒未能成功读出并提交有效时间，说明实体表可能处于非正常状态。
     // 强制挂起预测器，防止在无 OCR 数据支撑的情况下盲目倒数。
-    if (now - (_ocrLastTimeSuccessTs || 0) > 3000) {
-      console.log('[Collector][OCR] Predictor suspended due to OCR starvation');
-      if (_procState.clockRunning && _lastCommittedFrame) {
-        this._emitWsPacket('STOP', {
-          t: ocrFrameClockSec(_lastCommittedFrame),
-          a: _lastCommittedFrame.homeScore,
-          b: _lastCommittedFrame.awayScore,
-          p: _lastCommittedFrame.period
-        });
-      }
-      _clockMode = 'paused';
+    if (now - (_ocrLastTimeSuccessTs || 0) > OCR_PREDICT_SUSPEND_MS) {
+      console.log('[Collector][OCR] Predictor suspended due to OCR starvation (local only)');
       this._clearClockPredictTimer();
       return;
     }
@@ -2555,13 +2920,42 @@ Page({
         // 否则连续超时会让 SDK 内部队列雪崩。
         if (captureTs < _ocrTimeoutSettleUntil) return;
 
-        // 比分泵优先于时间泵：
+        var timePumpGap = getEffectiveTimePumpInterval(captureTs);
+
+        if (_ocrOcclusionActive) {
+          if (captureTs - _lastTimePumpTs >= timePumpGap) {
+            _lastTimePumpTs = captureTs;
+            _ocrPumpLastTickTs = captureTs;
+            self._runTimeOcrEngine(session, token, frame.data, frameW, frameH, captureTs);
+          }
+          return;
+        }
+
+        var nextScoreIdx = (_scorePumpCursor % 2 === 0) ? 0 : 1;
+        var timeStarved = isTimeOcrStarved(captureTs);
+        var scorePumpAllowed = isScorePumpAllowed(captureTs);
+        var scoreRoiBackoff = captureTs < (_ocrRoiBackoffUntil[nextScoreIdx] || 0);
+
+        if (timeStarved || !scorePumpAllowed) {
+          if (captureTs - _lastTimePumpTs >= timePumpGap) {
+            _lastTimePumpTs = captureTs;
+            _ocrPumpLastTickTs = captureTs;
+            self._runTimeOcrEngine(session, token, frame.data, frameW, frameH, captureTs);
+          }
+          return;
+        }
+
+        // 比分泵优先于时间泵（仅在时间未饥饿且比分未熔断时）：
         // 时间泵节奏 ~120ms 远小于单次 OCR 耗时（~150-250ms），若把时间泵放在前面，
         // 引擎刚空出又被它抢走，比分泵会被无限饿死（home/away 的 rawText 永远空，
         // 进而 _parseAndMaybeNotify 因 parseScore===null 始终 early-return，
         // 整局比赛比分卡在 0、云端也不会推送）。
         // 比分泵间隔较长（800ms），让它到点先抢一槽，时间泵在间隙里仍能跑 3~4 次。
-        if (captureTs - _lastScorePumpTs >= SCORE_PUMP_INTERVAL) {
+        if (
+          scorePumpAllowed &&
+          captureTs - _lastScorePumpTs >= SCORE_PUMP_INTERVAL &&
+          !scoreRoiBackoff
+        ) {
           _lastScorePumpTs = captureTs;
           _ocrPumpLastTickTs = captureTs;
           self._runScoreOcrEngine(session, token, frame.data, frameW, frameH, captureTs);
@@ -2569,7 +2963,7 @@ Page({
         }
 
         // 时间泵：在比分泵未到点的间隙抢占运行通道
-        if (captureTs - _lastTimePumpTs >= TIME_PUMP_INTERVAL) {
+        if (captureTs - _lastTimePumpTs >= timePumpGap) {
           _lastTimePumpTs = captureTs;
           _ocrPumpLastTickTs = captureTs;
           self._runTimeOcrEngine(session, token, frame.data, frameW, frameH, captureTs);
@@ -2657,6 +3051,13 @@ Page({
       return;
     }
     var now = Date.now();
+    var fullFrameRgba = new Uint8Array(rgbaBuffer);
+    var timeVariants = cropRgbaCandidatesByRoi(
+      fullFrameRgba,
+      frameW,
+      frameH,
+      this.data.rois[2]
+    );
     _ocrRunLastTs = now;
     _ocrRunBusy = true;
     _ocrBusySince = now;
@@ -2665,13 +3066,12 @@ Page({
       type: 'time',
       session: session,
       token: token,
-      frameWidth: frameW,
-      frameHeight: frameH,
-      rgba: new Uint8Array(rgbaBuffer),
       rawTexts: this.data.rois.map(function (roi) { return roi.rawText || ''; }),
       queue: [2],
       queuePos: 0,
-      currentIdx: -1,
+      currentIdx: 2,
+      currentVariants: timeVariants,
+      currentVariantPos: 0,
       captureTs: captureTs
     };
     if (this.data.debugMode) {
@@ -2693,6 +3093,10 @@ Page({
    */
   _runScoreOcrEngine: function (session, token, rgbaBuffer, frameW, frameH, captureTs) {
     if (token !== _ocrSessionToken) return;
+    var nowGuard = Date.now();
+    if (!isScorePumpAllowed(nowGuard) || isTimeOcrStarved(nowGuard)) {
+      return;
+    }
     if (!rgbaBuffer || !rgbaBuffer.byteLength) return;
     if (typeof session.runOCR !== 'function') {
       console.error('[Collector][OCR] session.runOCR unavailable');
@@ -2701,6 +3105,13 @@ Page({
     var idx = (_scorePumpCursor % 2 === 0) ? 0 : 1;
     _scorePumpCursor += 1;
     var now = Date.now();
+    var fullFrameRgba = new Uint8Array(rgbaBuffer);
+    var scoreVariants = cropRgbaCandidatesByRoi(
+      fullFrameRgba,
+      frameW,
+      frameH,
+      this.data.rois[idx]
+    );
     _ocrRunLastTs = now;
     _ocrRunBusy = true;
     _ocrBusySince = now;
@@ -2709,13 +3120,12 @@ Page({
       type: 'score',
       session: session,
       token: token,
-      frameWidth: frameW,
-      frameHeight: frameH,
-      rgba: new Uint8Array(rgbaBuffer),
       rawTexts: this.data.rois.map(function (roi) { return roi.rawText || ''; }),
       queue: [idx],
       queuePos: 0,
-      currentIdx: -1,
+      currentIdx: idx,
+      currentVariants: scoreVariants,
+      currentVariantPos: 0,
       captureTs: captureTs
     };
     if (this.data.debugMode) {
@@ -2737,13 +3147,6 @@ Page({
     }
 
     state.currentIdx = state.queue[state.queuePos];
-    state.currentVariants = cropRgbaCandidatesByRoi(
-      state.rgba,
-      state.frameWidth,
-      state.frameHeight,
-      this.data.rois[state.currentIdx]
-    );
-    state.currentVariantPos = 0;
     if (!state.currentVariants || !state.currentVariants.length) {
       console.warn('[Collector][OCR] crop empty idx=%s roi=%o', state.currentIdx, this.data.rois[state.currentIdx]);
       state.queuePos += 1;
@@ -2776,20 +3179,26 @@ Page({
     // 形成"全部超时 + pending overflow + 状态机收不到样本"的雪崩。
     var timeoutMs = (state.type === 'time') ? OCR_TIME_RUN_TIMEOUT_MS : OCR_RUN_TIMEOUT_MS;
     _ocrRunTimeout = setTimeout(function () {
-      console.warn('[Collector][OCR] runOCR timeout idx=%s label=%s crop=%sx%s type=%s', state.currentIdx, roi.label, crop.width, crop.height, state.type || 'legacy');
+      var logKind = state.type === 'time' ? 'time' : 'score';
+      if (shouldLogOcrTimeoutWarn(logKind)) {
+        console.warn('[Collector][OCR] runOCR timeout idx=%s label=%s crop=%sx%s type=%s', state.currentIdx, roi.label, crop.width, crop.height, state.type || 'legacy');
+      }
       _ocrRunTimeout = 0;
       if (!_ocrRunState) return;
       _ocrConsecutiveTimeout += 1;
       _ocrStats.timeout += 1;
-      // 任何超时都让 SDK 喘息 OCR_TIMEOUT_SETTLE_MS，避免连发把 SDK 内部队列打爆。
-      _ocrTimeoutSettleUntil = Date.now() + OCR_TIMEOUT_SETTLE_MS;
+      markOcrSdkDegraded();
+      var settleMs = getEffectiveOcrSettleMs(Date.now());
+      _ocrTimeoutSettleUntil = Date.now() + settleMs;
       if (state.type === 'time') {
         // 时间引擎：放弃整轮（不重试 variant），但通过 settle 窗口避免立刻补刀。
         self._recordManualOcrFailure('timeout-time');
         self._finishManualOcrRun(true);
         return;
       }
-      _ocrRoiBackoffUntil[state.currentIdx] = Date.now() + 1500;
+      _ocrRoiBackoffUntil[state.currentIdx] = Date.now() + 2500;
+      _ocrRoiBackoffUntil[state.currentIdx === 0 ? 1 : 0] = Date.now() + 1200;
+      noteOcrScoreTimeout();
       if (_ocrConsecutiveTimeout >= 3) {
         OCR_MIN_INTERVAL_MS = 260;
       }
@@ -2808,7 +3217,8 @@ Page({
         clearTimeout(_ocrRunTimeout);
         _ocrRunTimeout = 0;
       }
-      _ocrTimeoutSettleUntil = Date.now() + OCR_TIMEOUT_SETTLE_MS;
+      markOcrSdkDegraded();
+      _ocrTimeoutSettleUntil = Date.now() + getEffectiveOcrSettleMs(Date.now());
       _ocrRoiBackoffUntil[state.currentIdx] = Date.now() + 1500;
       console.error('[Collector][OCR] runOCR fail idx=%s label=%s err=%o', state.currentIdx, roi.label, eRun);
       this._advanceCurrentVariantOrQueue('fail');
@@ -2820,6 +3230,11 @@ Page({
     if (!state) return;
     if (reason === 'timeout' || reason === 'fail') {
       this._recordManualOcrFailure(reason);
+      if (state.type === 'score') {
+        state.queuePos = state.queue.length;
+        this._runNextRoiOcr();
+        return;
+      }
     }
     if (state.currentVariants &&
       state.currentVariantPos + 1 < state.currentVariants.length &&
@@ -2839,7 +3254,14 @@ Page({
     var state = _ocrRunState;
     if (!state || !state.currentVariants || state.currentVariants.length <= 1) return false;
     if (roiIdx === 0 || roiIdx === 1) {
-      return parseScore(text, roiIdx) === null;
+      var val = parseScore(text, roiIdx);
+      if (val === null) return true;
+      var ref = getScoreParseRef(roiIdx);
+      if (ref >= 0) {
+        if (Math.abs(val - ref) >= OCR_SCORE_JUMP_CONFIRM_THRESHOLD) return true;
+        if (isLikelyTruncateGlitch(ref, val)) return true;
+      }
+      return false;
     }
     if (roiIdx === 2) {
       return parseTime(text) === null;
@@ -3012,8 +3434,12 @@ Page({
     _ocrLastRoiRunTs = [0, 0, 0];
     _ocrRoiBackoffUntil = [0, 0, 0];
     _ocrRoiTextSeq = [0, 0, 0];
-    _ocrLastTimeSuccessTs = Date.now();
+    _ocrLastTimeSuccessTs = 0;
+    resetOcrScorePumpCircuit();
+    resetScorePumpDisabled();
+    resetOcrTimeBaseline();
     resetOcrOcclusionState();
+    _ocrSdkDegradedUntil = 0;
     if (!preserveClock) {
       _predictedClock = null;
       _predictedClockWallTs = 0;
@@ -3143,6 +3569,11 @@ Page({
       _ocrManualFailTimestamps.shift();
     }
     if (_ocrManualFailTimestamps.length >= OCR_MANUAL_FAIL_THRESHOLD) {
+      var nowFail = Date.now();
+      if (nowFail - (_ocrLastSoftRestartAt || 0) < OCR_SOFT_RESTART_MIN_INTERVAL_MS) {
+        _ocrManualFailTimestamps = [];
+        return;
+      }
       console.warn('[Collector][OCR] manual fail threshold reached reason=%s count=%s', reason, _ocrManualFailTimestamps.length);
       _ocrManualFailTimestamps = [];
       var self = this;
@@ -3158,6 +3589,7 @@ Page({
    */
   _softRestartOcrSession: function (reason) {
     if (!this.data.ocrEnabled || this.data.ocrTransitioning) return;
+    _ocrLastSoftRestartAt = Date.now();
     console.warn('[Collector][OCR] soft VK session rebuild reason=%s', reason || '');
     beginOcrWsRestartGuard('soft-restart:' + (reason || 'unknown'));
     var token = ++_ocrSessionToken;
@@ -3354,7 +3786,9 @@ Page({
     var scorePairPreview = resolveOcrScorePair(rois);
     var homeScore = scorePairPreview ? scorePairPreview.homeScore : null;
     var awayScore = scorePairPreview ? scorePairPreview.awayScore : null;
-    var timeInfo = updatedRoiIdx === 2 ? filterClockByMode(parseTime(rois[2].rawText)) : null;
+    var timeInfo = updatedRoiIdx === 2
+      ? filterClockByMode(sanitizeGameClockParse(parseTime(rois[2].rawText), getClockRefSec()))
+      : null;
     if (!timeInfo) timeInfo = getPredictedClock();
     if (timeInfo && _lastCommittedFrame) {
       var prevT = ocrFrameClockSec(_lastCommittedFrame);
@@ -3507,7 +3941,12 @@ Page({
     var homeScore = scorePair.homeScore;
     var awayScore = scorePair.awayScore;
     var ocrTimeInfo = updatedRoiIdx === 2
-      ? filterClockByMode(parseTime(rois[2] && rois[2].rawText ? rois[2].rawText : ''))
+      ? filterClockByMode(
+        sanitizeGameClockParse(
+          parseTime(rois[2] && rois[2].rawText ? rois[2].rawText : ''),
+          getClockRefSec()
+        )
+      )
       : null;
 
     var scoreOkTs = Date.now();
@@ -4278,12 +4717,15 @@ Page({
           _procState.syncObserve = { sec: t, streak: 1 };
         }
         if (_procState.syncObserve.streak >= OCR_SYNC_CONFIRM_STREAK) {
-          this._emitWsPacket('SYNC', payloadBase);
+          var syncPayload = Object.assign({}, payloadBase, {
+            t: capSyncClockStep(refT, t)
+          });
+          this._emitWsPacket('SYNC', syncPayload);
           if (
             !_procState.clockRunning &&
             (_clockMode === 'running' || (_procState.pauseConfirmed && t < refT))
           ) {
-            this._emitWsPacket('START', payloadBase);
+            this._emitWsPacket('START', syncPayload);
           }
           _procState.syncObserve = null;
           _procState.sameSecFirstSeen = now;
@@ -4652,7 +5094,7 @@ function isSuspiciousGameClockSkip(prev, next, wallDtMs) {
   var nextT = ocrFrameClockSec(next);
   if (nextT >= prevT) return false;
   var drop = prevT - nextT;
-  var plausible = Math.floor(wallDtMs / 280) + 4;
+  var plausible = Math.floor(wallDtMs / 280) + 5;
   return drop > plausible && drop <= 45;
 }
 
