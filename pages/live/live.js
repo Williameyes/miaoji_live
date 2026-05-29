@@ -396,8 +396,10 @@ Page({
     showRecoveryVeil: false,
     recoveryVeilSrc: '',
     /** 背景层：双缓冲模糊背景 */
-    bgLayerSrcA: '',
-    bgLayerSrcB: '',
+    bgLayerSrcLeftA: '',
+    bgLayerSrcLeftB: '',
+    bgLayerSrcRightA: '',
+    bgLayerSrcRightB: '',
     bgOpacityA: 0,
     bgOpacityB: 0,
     /** 当前活动的背景层（true=A, false=B） */
@@ -2982,14 +2984,16 @@ Page({
   _startBgLayerTimer: function () {
     // 先清理可能存在的旧定时器
     this._stopBgLayerTimer();
+    // 初始化背景侧状态（用于交替更新）
+    this._bgUpdateSide = 'left';
     // 立即更新一次背景
     this._updateBgLayer();
-    // 设置定时器每6秒更新一次
+    // 设置定时器每 900ms 更新一次（高频小幅度）
     this._bgLayerTimer = setInterval(() => {
       if (this._livePageVisible && this.data.liveStreamAllowed && this.data.cameraMounted) {
         this._updateBgLayer();
       }
-    }, 6000);
+    }, 900);
   },
 
   /**
@@ -3003,7 +3007,7 @@ Page({
   },
 
   /**
-   * 初始化背景层 2D 离屏 Canvas
+   * 初始化背景层 2D 离屏 Canvas (只创建一半宽度，复用于左右两次裁剪)
    */
   _initBgLayerCanvas: function() {
     if (this._bgOffscreenCanvas) return Promise.resolve();
@@ -3011,7 +3015,7 @@ Page({
       if (typeof wx.createOffscreenCanvas === 'function') {
         const canvas = wx.createOffscreenCanvas({
           type: '2d',
-          width: 240,
+          width: 120, // 仅截取原视频较小的比例作为边缘，这里设小一点加速渲染
           height: 135
         });
         this._bgOffscreenCanvas = canvas;
@@ -3034,6 +3038,8 @@ Page({
 
   /**
    * 更新背景层：从 _previewRecordPipeline 获取当前帧，利用离屏 2D Canvas 降采样，生成低频双缓冲背景
+   * - 不再整图缩放，而是只采样原视频的左右 8% 区域，作为真正的「边缘延展」素材。
+   * - 左右交替更新，单次更新成本减半，配合高频 900ms 定时器产生连续流动感。
    */
   _updateBgLayer: function () {
     if (!this.data.cameraMounted || !this._previewRecordPipeline) {
@@ -3052,13 +3058,11 @@ Page({
       const fw = Math.max(1, Number(frame.width) || 1);
       const fh = Math.max(1, Number(frame.height) || 1);
       
-      // 创建 ImageData 对象
       let imgData = null;
       try {
         const u8Arr = new Uint8ClampedArray(frame.data);
         imgData = canvas.createImageData(u8Arr, fw, fh);
       } catch (e) {
-        // 兼容某些基础库可能不支持 createImageData(u8Arr, w, h) 的情况
         try {
           imgData = ctx.createImageData(fw, fh);
           imgData.data.set(new Uint8ClampedArray(frame.data));
@@ -3068,42 +3072,58 @@ Page({
         }
       }
 
-      // 为了实现降采样，我们需要一个临时的大 canvas 来画原图，再 drawImage 到小的上面
-      // 但小程序 OffscreenCanvas 数量受限且性能敏感。
-      // 最简单粗暴的降采样：直接丢弃像素 (Nearest Neighbor)
-      const targetW = 240;
-      const targetH = 135;
-      
-      const smallImgData = ctx.createImageData(targetW, targetH);
-      const srcData = imgData.data;
-      const dstData = smallImgData.data;
-      
-      const ratioW = fw / targetW;
+      // 截取 8% 的宽度
+      const sliceW = Math.max(1, Math.floor(fw * 0.08));
+      const targetW = 160;
+      const targetH = 90;
+      const ratioW = sliceW / targetW;
       const ratioH = fh / targetH;
+      const srcData = imgData.data;
       
-      for (let y = 0; y < targetH; y++) {
-        const srcY = Math.floor(y * ratioH);
-        for (let x = 0; x < targetW; x++) {
-          const srcX = Math.floor(x * ratioW);
-          const srcIdx = (srcY * fw + srcX) * 4;
-          const dstIdx = (y * targetW + x) * 4;
-          
-          dstData[dstIdx] = srcData[srcIdx];         // R
-          dstData[dstIdx + 1] = srcData[srcIdx + 1]; // G
-          dstData[dstIdx + 2] = srcData[srcIdx + 2]; // B
-          dstData[dstIdx + 3] = srcData[srcIdx + 3]; // A
+      const side = this._bgUpdateSide || 'left';
+      // 下次更新切换方向
+      this._bgUpdateSide = side === 'left' ? 'right' : 'left';
+
+      const ambientImgData = ctx.createImageData(targetW, targetH);
+      const ambientDstData = ambientImgData.data;
+
+      if (side === 'left') {
+        for (let y = 0; y < targetH; y++) {
+          const srcY = Math.floor(y * ratioH);
+          for (let x = 0; x < targetW; x++) {
+            const srcX = Math.floor(x * ratioW); // 取 [0, sliceW)
+            const srcIdx = (srcY * fw + srcX) * 4;
+            const dstIdx = (y * targetW + x) * 4;
+            
+            ambientDstData[dstIdx] = srcData[srcIdx];
+            ambientDstData[dstIdx + 1] = srcData[srcIdx + 1];
+            ambientDstData[dstIdx + 2] = srcData[srcIdx + 2];
+            ambientDstData[dstIdx + 3] = srcData[srcIdx + 3];
+          }
+        }
+      } else {
+        const rightStart = fw - sliceW;
+        for (let y = 0; y < targetH; y++) {
+          const srcY = Math.floor(y * ratioH);
+          for (let x = 0; x < targetW; x++) {
+            const srcX = rightStart + Math.floor(x * ratioW); // 取 [fw - sliceW, fw)
+            const srcIdx = (srcY * fw + srcX) * 4;
+            const dstIdx = (y * targetW + x) * 4;
+            
+            ambientDstData[dstIdx] = srcData[srcIdx];
+            ambientDstData[dstIdx + 1] = srcData[srcIdx + 1];
+            ambientDstData[dstIdx + 2] = srcData[srcIdx + 2];
+            ambientDstData[dstIdx + 3] = srcData[srcIdx + 3];
+          }
         }
       }
 
-      ctx.putImageData(smallImgData, 0, 0);
+      ctx.putImageData(ambientImgData, 0, 0);
+      let imgSrc = '';
+      try { imgSrc = canvas.toDataURL('image/jpeg', 0.5); } catch (e) {}
 
-      // 导出为临时文件
-      try {
-        const tempFilePath = canvas.toDataURL('image/jpeg', 0.5);
-        // OffscreenCanvas 的 toDataURL 返回的是 base64
-        this._crossFadeBg(tempFilePath);
-      } catch (e) {
-        console.error('bgLayer toDataURL failed:', e);
+      if (imgSrc) {
+        this._crossFadeBgSingleSide(side, imgSrc);
       }
     }).catch((err) => {
       console.error('bgLayer init canvas failed:', err);
@@ -3111,54 +3131,73 @@ Page({
   },
 
   /**
-   * 双缓冲交叉渐变：新背景
+   * 单侧双缓冲交叉渐变（为了适配左右交替更新）
    */
-  _crossFadeBg: function (newImagePath) {
+  _crossFadeBgSingleSide: function (side, newSrc) {
     const isActiveA = this._bgIsActiveA;
-    const hasBgA = !!this.data.bgLayerSrcA;
-    const hasBgB = !!this.data.bgLayerSrcB;
-    const isFirstInit = !hasBgA && !hasBgB;
-
-    if (isFirstInit) {
-      // 第一次初始化，直接显示在A层
-      this.setData({
-        bgLayerSrcA: newImagePath,
-        bgOpacityA: 0.42,
-        bgOpacityB: 0
-      });
-      this._bgIsActiveA = true;
-      return;
-    }
-
+    // 初次同时设置左右侧为空的问题在分开更新时会逐侧填补，所以只需关心对应侧
+    
     if (isActiveA) {
-      // 当前A是活动层，将新图放到B，让B淡入，A淡出
-      this.setData({
-        bgLayerSrcB: newImagePath,
-        bgOpacityB: 0
-      }, () => {
-        // 延迟一小会儿让图片加载，然后渐变
-        setTimeout(() => {
-          this.setData({
-            bgOpacityA: 0,
-            bgOpacityB: 0.42
-          });
-          this._bgIsActiveA = false;
-        }, 50);
-      });
+      // 当前是A层活跃，新图准备写到B层
+      if (side === 'left') {
+        this.setData({ bgLayerSrcLeftB: newSrc });
+      } else {
+        this.setData({ bgLayerSrcRightB: newSrc });
+      }
+      
+      // 两边分别缓冲后，我们希望只要新图画上去了，立刻翻转当前活跃层？
+      // 因为现在是左右交替更新，如果每次单侧更新都 flip 全局 opacity，会导致另一侧闪烁
+      // 所以正确做法是：底层其实只需要单纯的定时更新单侧图片，但由于小程序 Image 组件 src 替换会闪白，
+      // 我们依然利用 A/B 两个 Image。但是每个方向自己有一个 Active 状态比较好。
+      // 为简化，这里直接将新图更新到**当前不活跃的层**，然后立刻将其设置为活动层，并渐隐掉另一层。
+      // 但因为是左右分开的，如果我们 flip 全局的 bgOpacityA / bgOpacityB，另一侧必须得有图（也就是它当前活跃的图要复制到新活跃层上，否则翻转后另一侧就空了）。
+      
+      // 为了保证两边都有图：
+      // 如果当前是 A，我们想切到 B，那不仅要把 side 更新到 B，还得把非 side 那一边的 A 复制到 B
+      if (side === 'left') {
+        this.setData({
+          bgLayerSrcLeftB: newSrc,
+          bgLayerSrcRightB: this.data.bgLayerSrcRightA // 继承另一侧的老图
+        }, () => {
+          setTimeout(() => {
+            this.setData({ bgOpacityA: 0, bgOpacityB: 0.78 });
+            this._bgIsActiveA = false;
+          }, 50);
+        });
+      } else {
+        this.setData({
+          bgLayerSrcRightB: newSrc,
+          bgLayerSrcLeftB: this.data.bgLayerSrcLeftA
+        }, () => {
+          setTimeout(() => {
+            this.setData({ bgOpacityA: 0, bgOpacityB: 0.78 });
+            this._bgIsActiveA = false;
+          }, 50);
+        });
+      }
     } else {
-      // 当前B是活动层，将新图放到A，让A淡入，B淡出
-      this.setData({
-        bgLayerSrcA: newImagePath,
-        bgOpacityA: 0
-      }, () => {
-        setTimeout(() => {
-          this.setData({
-            bgOpacityA: 0.42,
-            bgOpacityB: 0
-          });
-          this._bgIsActiveA = true;
-        }, 50);
-      });
+      // 当前是B层活跃，新图准备写到A层
+      if (side === 'left') {
+        this.setData({
+          bgLayerSrcLeftA: newSrc,
+          bgLayerSrcRightA: this.data.bgLayerSrcRightB
+        }, () => {
+          setTimeout(() => {
+            this.setData({ bgOpacityA: 0.78, bgOpacityB: 0 });
+            this._bgIsActiveA = true;
+          }, 50);
+        });
+      } else {
+        this.setData({
+          bgLayerSrcRightA: newSrc,
+          bgLayerSrcLeftA: this.data.bgLayerSrcLeftB
+        }, () => {
+          setTimeout(() => {
+            this.setData({ bgOpacityA: 0.78, bgOpacityB: 0 });
+            this._bgIsActiveA = true;
+          }, 50);
+        });
+      }
     }
   },
 

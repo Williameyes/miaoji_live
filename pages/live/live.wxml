@@ -3,15 +3,15 @@
 <view class="container landscape {{isRecording ? 'container--rec-performance' : ''}}">
   <!-- 左侧边缘扩散层 -->
   <view wx:if="{{liveStreamAllowed && cameraMounted}}" class="ambient-layer ambient-left">
-    <image wx:if="{{bgLayerSrcA}}" class="ambient-image" src="{{bgLayerSrcA}}" style="opacity: {{bgOpacityA}};" />
-    <image wx:if="{{bgLayerSrcB}}" class="ambient-image" src="{{bgLayerSrcB}}" style="opacity: {{bgOpacityB}};" />
+    <image wx:if="{{bgLayerSrcLeftA}}" class="ambient-image" src="{{bgLayerSrcLeftA}}" style="opacity: {{bgOpacityA}};" />
+    <image wx:if="{{bgLayerSrcLeftB}}" class="ambient-image" src="{{bgLayerSrcLeftB}}" style="opacity: {{bgOpacityB}};" />
     <view class="ambient-mask"></view>
   </view>
 
   <!-- 右侧边缘扩散层 -->
   <view wx:if="{{liveStreamAllowed && cameraMounted}}" class="ambient-layer ambient-right">
-    <image wx:if="{{bgLayerSrcA}}" class="ambient-image" src="{{bgLayerSrcA}}" style="opacity: {{bgOpacityA}};" />
-    <image wx:if="{{bgLayerSrcB}}" class="ambient-image" src="{{bgLayerSrcB}}" style="opacity: {{bgOpacityB}};" />
+    <image wx:if="{{bgLayerSrcRightA}}" class="ambient-image" src="{{bgLayerSrcRightA}}" style="opacity: {{bgOpacityA}};" />
+    <image wx:if="{{bgLayerSrcRightB}}" class="ambient-image" src="{{bgLayerSrcRightB}}" style="opacity: {{bgOpacityB}};" />
     <view class="ambient-mask"></view>
   </view>
   <!-- Level 0: 16:9 内接取景框（与 computeLiveStage16x9 一致），避免全屏与相机典型 16:9 输出比例差导致的非等比拉伸感 -->
