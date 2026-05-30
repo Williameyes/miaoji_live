@@ -13,6 +13,54 @@
 var API = require('../../../../config/api.js');
 var REQ = require('../../../../utils/request.js');
 var wsTokenReq = require('../../../../utils/ws-token-request.js');
+var COLLECTOR_AUDIT = require('./audit.js');
+
+/**
+ * 审计专用：设置下一次 _commitLocalState 的 clock_source 上下文。
+ * @param {string} source
+ * @param {string} reason
+ * @param {string} functionName
+ * @returns {void}
+ */
+function setAuditClockSource(source, reason, functionName) {
+  COLLECTOR_AUDIT.setClockSourceContext({
+    source: source,
+    reason: reason,
+    functionName: functionName
+  });
+}
+
+/**
+ * 审计专用：clockMode 写入前记录 mode_change。
+ * @param {string} nextMode
+ * @param {string} reason
+ * @param {string} functionName
+ * @returns {void}
+ */
+function auditBeforeClockMode(nextMode, reason, functionName) {
+  COLLECTOR_AUDIT.auditModeChange({
+    prevMode: _clockMode,
+    nextMode: nextMode,
+    reason: reason,
+    functionName: functionName
+  });
+}
+
+/**
+ * 审计专用：clockRunning 写入前记录 running_change。
+ * @param {boolean} next
+ * @param {string} reason
+ * @param {string} functionName
+ * @returns {void}
+ */
+function auditBeforeClockRunning(next, reason, functionName) {
+  COLLECTOR_AUDIT.auditRunningChange({
+    prev: !!_procState.clockRunning,
+    next: !!next,
+    reason: reason,
+    functionName: functionName
+  });
+}
 
 /** WSS 网关根地址（由 HTTPS BaseURL 推导） */
 var WS_BASE_URL = String(API.API_BASE_URL || '').replace(/^http/i, 'ws');
@@ -477,6 +525,9 @@ var _ocrRecoveryModeUntil = 0;
 var _ocrOcclusionBestClockSec = -1;
 /** 进入遮挡时冻结在 UI 上的比赛时钟总秒数（遮挡期不变、不追赶） */
 var _occlusionHoldClockSec = -1;
+/** 遮挡期内连续两次相同 best 时钟（用于解除前稳定，避免 4:04/05/06 闪动即解除） */
+var _ocrOcclusionBestStableSec = -1;
+var _ocrOcclusionBestStableStreak = 0;
 /** 遮挡恢复连续确认计数 */
 var _ocrOcclusionRecoverStreak = 0;
 /** 上次遮挡评估墙钟戳 */
@@ -775,6 +826,12 @@ function enqueueOcrReq(state, captureTs) {
     sentAt: now
   });
   if (state) state.reqId = reqId;
+  COLLECTOR_AUDIT.auditOcrQueue({
+    action: 'enqueue',
+    reqId: reqId,
+    queueLen: _ocrReqQueue.length,
+    roiIdx: state && typeof state.roiIdx === 'number' ? state.roiIdx : null
+  });
   return reqId;
 }
 
@@ -787,6 +844,11 @@ function abandonOcrReq(reqId) {
   for (var i = 0; i < _ocrReqQueue.length; i++) {
     if (_ocrReqQueue[i].reqId === reqId) {
       _ocrReqQueue[i].abandoned = true;
+      COLLECTOR_AUDIT.auditOcrQueue({
+        action: 'abandon',
+        reqId: reqId,
+        queueLen: _ocrReqQueue.length
+      });
       return;
     }
   }
@@ -1183,6 +1245,18 @@ function maybeEmitOcrV5DiagSummary() {
   };
   logOcrV5Diag('summary', snap);
   appendCollectorHealthLog('ocr_v5_summary', snap);
+  COLLECTOR_AUDIT.auditWorkerStats({
+    mode: snap.mode,
+    pumpMode: snap.pumpMode,
+    workerReady: snap.workerReady,
+    workerTriggers: snap.workerTriggers,
+    ocrTriggeredWorker: snap.ocrTriggeredWorker,
+    framesIn: snap.framesIn,
+    framesPosted: snap.framesPosted,
+    postFail: snap.postFail,
+    fallback: snap.fallback,
+    ocrBusy: snap.ocrBusy
+  });
 }
 
 function ensureOcrFrameBuffer(size) {
@@ -1609,13 +1683,31 @@ function subtractClock(clock, elapsedSec) {
 function syncClockStateFromMode() {
   if (_clockMode === 'running') {
     _clockState = CLOCK_STATE_RUNNING;
+    COLLECTOR_AUDIT.auditClockState({
+      clockMode: _clockMode,
+      clockState: _clockState,
+      clockRunning: _procState.clockRunning,
+      pauseConfirmed: _procState.pauseConfirmed
+    });
     return;
   }
   if (_clockMode === 'paused') {
     _clockState = CLOCK_STATE_STOPPED;
+    COLLECTOR_AUDIT.auditClockState({
+      clockMode: _clockMode,
+      clockState: _clockState,
+      clockRunning: _procState.clockRunning,
+      pauseConfirmed: _procState.pauseConfirmed
+    });
     return;
   }
   _clockState = CLOCK_STATE_UNKNOWN;
+  COLLECTOR_AUDIT.auditClockState({
+    clockMode: _clockMode,
+    clockState: _clockState,
+    clockRunning: _procState.clockRunning,
+    pauseConfirmed: _procState.pauseConfirmed
+  });
 }
 
 function getPredictedClock() {
@@ -1854,6 +1946,8 @@ function resetOcrOcclusionState() {
   _ocrOcclusionSince = 0;
   _ocrOcclusionBestClockSec = -1;
   _occlusionHoldClockSec = -1;
+  _ocrOcclusionBestStableSec = -1;
+  _ocrOcclusionBestStableStreak = 0;
   _ocrOcclusionRecoverStreak = 0;
   _ocrOcclusionWasRunning = false;
   _ocrOcclusionEvalLastTs = 0;
@@ -1876,9 +1970,14 @@ function resetOcrOcclusionState() {
  * @returns {number}
  */
 function computeOcclusionResumeClockSec(nowMs) {
+  if (_occlusionHoldClockSec >= 0) {
+    if (_ocrOcclusionBestStableStreak >= 2 && _ocrOcclusionBestClockSec >= 0) {
+      return _ocrOcclusionBestClockSec;
+    }
+    return _occlusionHoldClockSec;
+  }
   if (_ocrOcclusionBestClockSec >= 0) return _ocrOcclusionBestClockSec;
   if (_ocrLastGoodClockSec >= 0) return _ocrLastGoodClockSec;
-  if (_occlusionHoldClockSec >= 0) return _occlusionHoldClockSec;
   if (!_lastCommittedFrame) return -1;
   return ocrFrameClockSec(_lastCommittedFrame);
 }
@@ -1895,7 +1994,7 @@ function canClearOcrOcclusion(nowMs) {
   if (timeFresh) {
     if (_ocrOcclusionWasRunning &&
       (_ocrLastGoodClockSec >= 0 || _ocrOcclusionBestClockSec >= 0)) {
-      return true;
+      return _ocrOcclusionBestStableStreak >= 2;
     }
     return _ocrLastGoodHomeScore >= 0 && _ocrLastGoodAwayScore >= 0;
   }
@@ -1954,6 +2053,7 @@ function hasOcrOcclusionBaseline() {
  * @returns {void}
  */
 function resetProcessOcrState() {
+  auditBeforeClockRunning(false, 'reset', 'resetProcessOcrState');
   _procState.clockRunning = false;
   _procState.sameSecFirstSeen = 0;
   _procState.lastOcrSec = -1;
@@ -2040,6 +2140,39 @@ function appendCollectorHealthLog(event, detail) {
     _collectorHealthLogs.splice(0, _collectorHealthLogs.length - COLLECTOR_HEALTH_LOG_MAX);
   }
   scheduleCollectorHealthLogFlush();
+}
+
+/**
+ * 返回内存中全部采集端审计日志快照。
+ * @returns {ReturnType<typeof COLLECTOR_AUDIT.dumpCollectorAudit>}
+ */
+function dumpCollectorAudit() {
+  return COLLECTOR_AUDIT.dumpCollectorAudit();
+}
+
+/**
+ * 导出采集端审计日志 JSON 字符串。
+ * @param {Record<string, unknown>} [extra] 附加顶层字段
+ * @returns {string}
+ */
+function exportCollectorAudit(extra) {
+  return COLLECTOR_AUDIT.exportCollectorAudit(extra);
+}
+
+/**
+ * 导出比赛结束审计快照文件（collector-audit-final.json）。
+ * @returns {ReturnType<typeof COLLECTOR_AUDIT.exportAuditSnapshot>}
+ */
+function exportAuditSnapshot() {
+  return COLLECTOR_AUDIT.exportAuditSnapshot();
+}
+
+/**
+ * 生成带时间戳的审计导出文件。
+ * @returns {ReturnType<typeof COLLECTOR_AUDIT.exportAuditToFile>}
+ */
+function exportAuditToFile() {
+  return COLLECTOR_AUDIT.exportAuditToFile();
 }
 
 /**
@@ -2917,6 +3050,7 @@ Page({
       b: this.data.awayScore,
       p: p
     });
+    setAuditClockSource('manual', 'period_select', 'onSetPeriod');
     this._commitLocalState({
       homeScore: this.data.homeScore,
       awayScore: this.data.awayScore,
@@ -2955,6 +3089,130 @@ Page({
    * 体积控制：最多 60 条 + 设备 header + 当前 WS 快照；包含截断保护避免剪贴板写入超限。
    * @returns {void}
    */
+  /**
+   * 长按导出采集端审计日志到剪贴板（与健康日志独立）。
+   * @returns {void}
+   */
+  onExportCollectorAudit: function () {
+    var dump = dumpCollectorAudit();
+    if (!dump.count) {
+      wx.showToast({ title: '暂无审计日志', icon: 'none' });
+      return;
+    }
+    var snapshot = exportAuditSnapshot();
+    var summary = snapshot.summary || COLLECTOR_AUDIT.buildAuditSummary();
+    var ndjsonPath = COLLECTOR_AUDIT.getAuditNdjsonPath();
+    var text = exportCollectorAudit({
+      ws: getCollectorWsDiagnosticSnapshot(),
+      ndjsonPath: ndjsonPath,
+      finalSnapshotPath: snapshot.path || '',
+      summary: summary
+    });
+    var summaryLines = [];
+    if (summary.eventCounts) {
+      var evtKeys = Object.keys(summary.eventCounts);
+      for (var si = 0; si < evtKeys.length && si < 10; si++) {
+        summaryLines.push(evtKeys[si] + ': ' + summary.eventCounts[evtKeys[si]]);
+      }
+    }
+    wx.setClipboardData({
+      data: text,
+      success: function () {
+        var content = [
+          'RingBuffer: ' + dump.count + ' 条',
+          'NDJSON: ' + (ndjsonPath || '不可用'),
+          '快照: ' + (snapshot.path || '未生成'),
+          '统计: ' + (summaryLines.length ? summaryLines.join(', ') : '无')
+        ].join('\n');
+        wx.showModal({
+          title: '审计日志已导出',
+          content: content,
+          showCancel: false,
+          confirmText: '知道了'
+        });
+      },
+      fail: function () {
+        wx.showToast({ title: '剪贴板写入失败', icon: 'none' });
+      }
+    });
+  },
+
+  /**
+   * 导出审计日志为本地文件，并尝试分享给好友或保存到手机。
+   * @returns {void}
+   */
+  onExportCollectorAuditFile: function () {
+    var dump = dumpCollectorAudit();
+    if (!dump.count) {
+      wx.showToast({ title: '暂无审计日志', icon: 'none' });
+      return;
+    }
+    var fileResult = exportAuditToFile();
+    if (!fileResult.ok || !fileResult.path) {
+      wx.showToast({ title: '导出文件失败', icon: 'none' });
+      return;
+    }
+    var sizeKb = Math.max(1, Math.round((fileResult.size || 0) / 1024));
+    var summary = fileResult.summary || {};
+    var summaryText = summary.total ? ('共 ' + summary.total + ' 条') : '';
+
+    var showFileReadyModal = function (hint) {
+      wx.showModal({
+        title: '审计文件已生成',
+        content: [
+          fileResult.fileName,
+          sizeKb + ' KB',
+          summaryText,
+          hint || '',
+          fileResult.path
+        ].filter(Boolean).join('\n'),
+        showCancel: false,
+        confirmText: '知道了'
+      });
+    };
+
+    if (typeof wx.shareFileMessage === 'function') {
+      wx.shareFileMessage({
+        filePath: fileResult.path,
+        fileName: fileResult.fileName,
+        success: function () {
+          wx.showToast({ title: '请选择好友发送', icon: 'none' });
+        },
+        fail: function () {
+          if (typeof wx.saveFileToDisk === 'function') {
+            wx.saveFileToDisk({
+              filePath: fileResult.path,
+              success: function () {
+                wx.showToast({ title: '已保存到手机', icon: 'success' });
+              },
+              fail: function () {
+                showFileReadyModal('可通过文件路径在调试器中取回');
+              }
+            });
+            return;
+          }
+          showFileReadyModal('分享不可用，请通过调试器取回文件');
+        }
+      });
+      return;
+    }
+
+    if (typeof wx.saveFileToDisk === 'function') {
+      wx.saveFileToDisk({
+        filePath: fileResult.path,
+        success: function () {
+          wx.showToast({ title: '已保存到手机', icon: 'success' });
+        },
+        fail: function () {
+          showFileReadyModal('保存失败，请通过调试器取回文件');
+        }
+      });
+      return;
+    }
+
+    showFileReadyModal('当前环境不支持分享，请通过调试器取回文件');
+  },
+
   onExportCollectorLogs: function () {
     initCollectorHealthLogs();
     var compactDetail = function (detail) {
@@ -3486,6 +3744,9 @@ Page({
       state.queuePos += 1;
     }
     this._maybeEvaluateOcrOcclusion(nowTs);
+    if (_ocrOcclusionActive) {
+      this._pinOcclusionHoldUi();
+    }
     this._runNextRoiOcr(state);
   },
 
@@ -3508,19 +3769,34 @@ Page({
     var refForOcclusion = _ocrOcclusionBestClockSec >= 0
       ? _ocrOcclusionBestClockSec
       : (_ocrLastGoodClockSec >= 0 ? _ocrLastGoodClockSec : -1);
+    if (_occlusionHoldClockSec >= 0 && Math.abs(_occlusionHoldClockSec - ocrSec) > 1) {
+      logOcrV5Diag('occlusion_time_sample_reject', {
+        ocrSec: ocrSec,
+        holdSec: _occlusionHoldClockSec
+      });
+      return false;
+    }
     if (refForOcclusion >= 0) {
-      var delta = refForOcclusion - ocrSec; // 走表应为正且不大
+      var delta = refForOcclusion - ocrSec;
       var continuous = _ocrOcclusionWasRunning
-        ? (delta >= -2 && delta <= OCR_CLOCK_CATCHUP_MAX_DROP_SEC)
+        ? (delta >= -1 && delta <= 1)
         : (Math.abs(delta) <= OCR_CLOCK_CATCHUP_MAX_DROP_SEC);
       if (!continuous) {
         logOcrV5Diag('occlusion_time_sample_reject', { ocrSec: ocrSec, ref: refForOcclusion });
         return false;
       }
     }
-    _ocrLastTimeSuccessTs = now;
     _ocrLastGoodClockSec = ocrSec;
     _ocrOcclusionBestClockSec = ocrSec;
+    if (ocrSec === _ocrOcclusionBestStableSec) {
+      _ocrOcclusionBestStableStreak += 1;
+    } else {
+      _ocrOcclusionBestStableSec = ocrSec;
+      _ocrOcclusionBestStableStreak = 1;
+    }
+    if (_ocrOcclusionBestStableStreak >= 2) {
+      _ocrLastTimeSuccessTs = now;
+    }
     logOcrV5Diag('occlusion_time_sample', {
       ocrSec: ocrSec,
       captureLagMs: now - (frameCaptureTs || now)
@@ -3553,8 +3829,10 @@ Page({
     _clockAnchorWallTs = now;
     _driftSoftAdjustRate = 1.0;
     _lastClockPredictEmitSec = ocrSec;
+    auditBeforeClockMode('running', isPeriodReset ? 'period_reset' : 'snap', '_snapClockToOcr');
     _clockMode = 'running';
     _procState.pauseConfirmed = false;
+    auditBeforeClockRunning(true, isPeriodReset ? 'period_reset' : 'snap', '_snapClockToOcr');
     _procState.clockRunning = true;
     _procState.lastOcrSec = ocrSec;
     _procState.syncObserve = null;
@@ -3572,6 +3850,11 @@ Page({
       logOcrV5Diag('period_auto_advance', { period: period, ocrSec: ocrSec });
     }
     var clk = clockFromTotalSec(ocrSec);
+    setAuditClockSource(
+      isPeriodReset ? 'ocr' : (isOcrRecoverySnapActive(now) ? 'ocr_recovery' : 'ocr'),
+      isPeriodReset ? 'period_reset' : 'snap',
+      '_snapClockToOcr'
+    );
     this._commitLocalState({
       homeScore: homeScore,
       awayScore: awayScore,
@@ -3639,6 +3922,7 @@ Page({
 
     // 恢复/重启对齐窗口：每秒都有 OCR，直接信任本次读数并一次性对齐，不做逐秒追赶。
     if (isOcrRecoverySnapActive(now)) {
+      setAuditClockSource('ocr_recovery', 'recovery_window', '_recordOcrClockSample');
       this._snapClockToOcr(ocrSec, now);
       return;
     }
@@ -3653,6 +3937,7 @@ Page({
       _lastOcrClockSec = -1;
       _procState.lastOcrSec = -1;
       _procState.syncObserve = null;
+      setAuditClockSource('ocr', 'period_reset', '_recordOcrClockSample');
       this._snapClockToOcr(ocrSec, now, true);
       return;
     }
@@ -3703,8 +3988,10 @@ Page({
     }
 
     if (pauseResumeSnap) {
+      auditBeforeClockMode('running', 'resume_detect', '_recordOcrClockSample');
       _clockMode = 'running';
       _procState.pauseConfirmed = false;
+      auditBeforeClockRunning(true, 'resume_detect', '_recordOcrClockSample');
       _procState.clockRunning = true;
       logOcrV5Diag('pause_resume_snap', {
         dropSec: resumeDropSec,
@@ -3721,6 +4008,7 @@ Page({
         !_procState.pauseConfirmed &&
         _clockMode !== 'paused'
       ) {
+        auditBeforeClockMode('running', 'drop_recover', '_recordOcrClockSample');
         _clockMode = 'running';
       }
     }
@@ -3733,6 +4021,7 @@ Page({
         !_procState.pauseConfirmed &&
         _clockMode !== 'paused'
       ) {
+        auditBeforeClockMode('running', 'starvation_recover', '_recordOcrClockSample');
         _clockMode = 'running';
       }
       _ocrClockRunAnchorWallTs = now;
@@ -3768,6 +4057,11 @@ Page({
 
     var homeScore = _lastCommittedFrame ? _lastCommittedFrame.homeScore : this.data.homeScore;
     var awayScore = _lastCommittedFrame ? _lastCommittedFrame.awayScore : this.data.awayScore;
+    setAuditClockSource(
+      pauseResumeSnap ? 'ocr' : 'ocr',
+      pauseResumeSnap ? 'resume_snap' : 'sample',
+      '_recordOcrClockSample'
+    );
     this.processOcrFrame({
       homeScore: homeScore,
       awayScore: awayScore,
@@ -3780,8 +4074,10 @@ Page({
 
     if (shouldWakePausedClock && !_procState.clockRunning) {
       console.log('[Collector][OCR] watchdog self-heal: valid clock flow recovered, force immediate sync');
+      auditBeforeClockMode('running', 'watchdog_heal', '_recordOcrClockSample');
       _clockMode = 'running';
       _procState.pauseConfirmed = false;
+      auditBeforeClockRunning(true, 'watchdog_heal', '_recordOcrClockSample');
       _procState.clockRunning = true;
       _clockResumeCandidateSec = -1;
       _clockResumeCandidateSince = 0;
@@ -3837,7 +4133,7 @@ Page({
       var timeFresh = (nowMs - (_ocrLastTimeSuccessTs || 0)) <= OCR_OCCLUSION_FRESH_MS;
       var forceClear = !timeFresh && _ocrOcclusionSince > 0 &&
         (nowMs - _ocrOcclusionSince) >= OCR_OCCLUSION_FORCE_CLEAR_MS;
-      var needStreak = forceClear ? 1 : (_ocrOcclusionWasRunning ? 1 : OCR_OCCLUSION_RECOVER_STREAK);
+      var needStreak = forceClear ? 1 : (_ocrOcclusionWasRunning ? 2 : OCR_OCCLUSION_RECOVER_STREAK);
       if (_ocrOcclusionRecoverStreak >= needStreak) {
         _ocrOcclusionActive = false;
         _ocrOcclusionSince = 0;
@@ -3852,6 +4148,9 @@ Page({
       }
     } else {
       _ocrOcclusionRecoverStreak = 0;
+    }
+    if (_ocrOcclusionActive) {
+      this._pinOcclusionHoldUi();
     }
   },
 
@@ -3927,12 +4226,15 @@ Page({
     _ocrLastHomeScoreSuccessTs = nowMs;
     _ocrLastAwayScoreSuccessTs = nowMs;
     if (_ocrOcclusionWasRunning || looksRunning) {
+      auditBeforeClockMode('running', 'occlusion_clear', '_onOcrOcclusionCleared');
       _clockMode = 'running';
       _procState.pauseConfirmed = false;
+      auditBeforeClockRunning(true, 'occlusion_clear', '_onOcrOcclusionCleared');
       _procState.clockRunning = true;
       _clockPredictUntil = getClockRunUntil(nowMs, clockSec);
       this._ensureClockPredictTimer();
     } else {
+      auditBeforeClockMode('paused', 'occlusion_clear', '_onOcrOcclusionCleared');
       _clockMode = 'paused';
       _procState.pauseConfirmed = true;
       this._clearClockPredictTimer();
@@ -3948,6 +4250,7 @@ Page({
       shotClock: this.data.shotClock
     };
     _lastPreviewFrameKey = '';
+    setAuditClockSource('ocr_recovery', 'occlusion_clear', '_onOcrOcclusionCleared');
     this._commitLocalState(snap);
     this._emitTimeOnlyIfChanged(clockFromTotalSec(clockSec), nowMs, true);
     logOcrV5Diag('occlusion_resume_direct', { clockSec: clockSec, holdSec: holdSec });
@@ -3976,6 +4279,8 @@ Page({
     }
     _ocrOcclusionWasRunning = false;
     _ocrOcclusionBestClockSec = -1;
+    _ocrOcclusionBestStableSec = -1;
+    _ocrOcclusionBestStableStreak = 0;
     _occlusionHoldClockSec = -1;
     resetOcrScorePumpCircuit();          // 清除比分泵熔断/quiesce
     _ocrSdkDegradedUntil = 0;           // 清除 SDK 降载
@@ -4002,12 +4307,15 @@ Page({
       ? ocrFrameClockSec(_lastCommittedFrame)
       : clockToTotalSec({ minutes: this.data.minutes, seconds: this.data.seconds });
     if (_occlusionHoldClockSec < 0) _occlusionHoldClockSec = -1;
+    _ocrOcclusionBestStableSec = -1;
+    _ocrOcclusionBestStableStreak = 0;
     _ocrOcclusionRecoverStreak = 0;
     _procState.startObserve = null;
     _procState.syncObserve = null;
     resetOcrV5PendingOnly();
     this._clearClockPredictTimer();
     if (_occlusionHoldClockSec >= 0) {
+      auditBeforeClockMode('paused', 'occlusion_enter', '_enterOcrOcclusion');
       _clockMode = 'paused';
       syncClockStateFromMode();
       updatePredictedClock(clockFromTotalSec(_occlusionHoldClockSec));
@@ -4018,6 +4326,7 @@ Page({
     }
 
     if (_lastCommittedFrame) {
+      setAuditClockSource('occlusion', 'enter_hold', '_enterOcrOcclusion');
       this._commitLocalState({
         homeScore: _lastCommittedFrame.homeScore,
         awayScore: _lastCommittedFrame.awayScore,
@@ -4043,6 +4352,34 @@ Page({
       _lastCommittedFrame ? _lastCommittedFrame.homeScore : 0,
       _lastCommittedFrame ? _lastCommittedFrame.awayScore : 0
     );
+    this._pinOcclusionHoldUi();
+  },
+
+  /**
+   * 遮挡期将 UI 时间钉死在进入遮挡时的 hold 秒数（抵御任意 stray setData）。
+   * @returns {void}
+   */
+  _pinOcclusionHoldUi: function () {
+    if (!_ocrOcclusionActive || _occlusionHoldClockSec < 0) return;
+    var clk = clockFromTotalSec(_occlusionHoldClockSec);
+    if (this.data.minutes === clk.minutes && this.data.seconds === clk.seconds) return;
+    COLLECTOR_AUDIT.auditClockSource({
+      source: 'occlusion_hold',
+      reason: 'pin_ui',
+      functionName: '_pinOcclusionHoldUi',
+      prev: {
+        m: this.data.minutes,
+        s: this.data.seconds,
+        totalSec: clockToTotalSec({ minutes: this.data.minutes, seconds: this.data.seconds })
+      },
+      next: { m: clk.minutes, s: clk.seconds, totalSec: _occlusionHoldClockSec }
+    });
+    if (_lastCommittedFrame) {
+      _lastCommittedFrame.minutes = clk.minutes;
+      _lastCommittedFrame.seconds = clk.seconds;
+      _lastCommittedFrameKey = buildFrameKey(_lastCommittedFrame);
+    }
+    this.setData({ minutes: clk.minutes, seconds: clk.seconds });
   },
 
   _ensureClockPredictTimer: function () {
@@ -4122,7 +4459,9 @@ Page({
     var lag = committedSec - predictedSec;
     var minEmitMs = lag > 2 ? OCR_CLOCK_CATCHUP_FAST_INTERVAL_MS : OCR_CLOCK_NORMAL_INTERVAL_MS;
     if (_lastClockPredictEmitWallTs && now - _lastClockPredictEmitWallTs < minEmitMs) return;
-    var emitSec = Math.max(predictedSec, committedSec - 1);
+    var emitSec = lag <= 2
+      ? predictedSec
+      : Math.max(predictedSec, committedSec - 1);
     if (_lastOcrClockSec >= 0) {
       var minAllowedSec = Math.max(0, _lastOcrClockSec - OCR_CLOCK_PREDICT_MAX_LEAD_SEC);
       if (emitSec < minAllowedSec) emitSec = minAllowedSec;
@@ -5312,6 +5651,7 @@ Page({
       _ocrLastTimeSuccessTs = 0;
       _predictedClock = null;
       _predictedClockWallTs = 0;
+      auditBeforeClockMode('unknown', 'ocr_session_reset', '_stopOcrSession');
       _clockMode = 'unknown';
       _lastOcrClockSec = -1;
       _lastOcrClockWallTs = 0;
@@ -5673,19 +6013,6 @@ Page({
     }
     var homeScore = scorePairPreview ? scorePairPreview.homeScore : null;
     var awayScore = scorePairPreview ? scorePairPreview.awayScore : null;
-    
-    // 走表时由预测器补秒；停表/遮挡期间不写时间列，避免与冻结画面打架
-    var timeInfo = null;
-    if (_clockMode !== 'paused' && !_ocrOcclusionActive) {
-      timeInfo = getPredictedClock();
-      if (timeInfo && _lastCommittedFrame) {
-        var prevT = ocrFrameClockSec(_lastCommittedFrame);
-        var previewT = clockToTotalSec(timeInfo);
-        if (previewT < prevT - 1 && prevT - previewT <= OCR_CLOCK_CATCHUP_MAX_DROP_SEC) {
-          timeInfo = clockFromTotalSec(prevT - 1);
-        }
-      }
-    }
 
     if (homeScore !== null && homeScore !== this.data.homeScore && shouldPreviewScore(0, homeScore)) {
       next.homeScore = homeScore;
@@ -5695,23 +6022,11 @@ Page({
       next.awayScore = awayScore;
       changed = true;
     }
-    if (timeInfo) {
-      if (timeInfo.minutes !== this.data.minutes) {
-        next.minutes = timeInfo.minutes;
-        changed = true;
-      }
-      if (timeInfo.seconds !== this.data.seconds) {
-        next.seconds = timeInfo.seconds;
-        changed = true;
-      }
-    }
 
     if (!changed) return;
     var previewKey = [
       typeof next.homeScore === 'number' ? next.homeScore : this.data.homeScore,
-      typeof next.awayScore === 'number' ? next.awayScore : this.data.awayScore,
-      typeof next.minutes === 'number' ? next.minutes : this.data.minutes,
-      typeof next.seconds === 'number' ? next.seconds : this.data.seconds
+      typeof next.awayScore === 'number' ? next.awayScore : this.data.awayScore
     ].join('|');
     if (previewKey === _lastPreviewFrameKey) return;
     _lastPreviewFrameKey = previewKey;
@@ -5738,9 +6053,11 @@ Page({
     }
     if (!force) {
       var isOcrAligned = (_lastOcrClockSec >= 0 && Math.abs(newT - _lastOcrClockSec) <= 2);
-      if (!isOcrAligned) {
+      var drop = prevT - newT;
+      if (isOcrAligned && drop <= 1) {
+        // 与 OCR 锚点一致时直接显示预测秒，不走 prevT-1 阶梯（避免闪一下）
+      } else if (!isOcrAligned) {
         if (newT > prevT) return;
-        var drop = prevT - newT;
         if (drop > 1) {
           if (drop > OCR_CLOCK_CATCHUP_MAX_DROP_SEC) return;
           var minEmitMs = drop > 2 ? OCR_CLOCK_CATCHUP_FAST_INTERVAL_MS : OCR_CLOCK_NORMAL_INTERVAL_MS;
@@ -5764,6 +6081,7 @@ Page({
     _lastClockPredictEmitWallTs = wallMs;
     _lastClockPredictEmitSec = newT;
     _lastCommittedFrameKey = buildFrameKey(snap);
+    setAuditClockSource('predict', force ? 'predict_force' : 'predict_tick', '_emitTimeOnlyIfChanged');
     this._commitLocalState(snap);
     this._maybeApplyFinalMinuteMode(timeInfo);
   },
@@ -5929,6 +6247,11 @@ Page({
       return;
     }
 
+    setAuditClockSource(
+      hasFrameClock ? 'ocr' : 'predict',
+      hasFrameClock ? 'parse_roi' : 'parse_predict',
+      '_parseAndMaybeNotify'
+    );
     this.processOcrFrame({
       homeScore: frame.homeScore,
       awayScore: frame.awayScore,
@@ -6468,11 +6791,13 @@ Page({
     }
     _procState.published = nextPublished;
     if (act === 'START') {
+      auditBeforeClockRunning(true, 'ws_start', '_emitWsPacket');
       _procState.clockRunning = true;
       _procState.pauseConfirmed = false;
       _procState.sameSecStreak = 0;
       _procState.sameSecFirstSeen = 0;
       _procState.startObserve = null;
+      auditBeforeClockMode('running', 'ws_start', '_emitWsPacket');
       _clockMode = 'running';
       syncClockStateFromMode();
       updatePredictedClock(clockFromTotalSec(packet.t));
@@ -6483,9 +6808,11 @@ Page({
       _clockPredictUntil = getClockRunUntil(packetWallMs, packet.t);
       this._ensureClockPredictTimer();
     } else if (act === 'STOP') {
+      auditBeforeClockRunning(false, 'ws_stop', '_emitWsPacket');
       _procState.clockRunning = false;
       _procState.pauseConfirmed = true;
       _procState.sameSecStreak = 0;
+      auditBeforeClockMode('paused', 'ws_stop', '_emitWsPacket');
       _clockMode = 'paused';
       syncClockStateFromMode();
       this._clearClockPredictTimer();
@@ -6505,6 +6832,23 @@ Page({
    * @returns {void}
    */
   _commitLocalState: function (snapshot) {
+    var auditPrevHome = this.data.homeScore;
+    var auditPrevAway = this.data.awayScore;
+    var auditPrevMin = this.data.minutes;
+    var auditPrevSec = this.data.seconds;
+    if (
+      snapshot &&
+      typeof snapshot === 'object' &&
+      _ocrOcclusionActive &&
+      _occlusionHoldClockSec >= 0
+    ) {
+      setAuditClockSource('occlusion_hold', 'commit_override', '_commitLocalState');
+      var holdClk = clockFromTotalSec(_occlusionHoldClockSec);
+      snapshot = Object.assign({}, snapshot, {
+        minutes: holdClk.minutes,
+        seconds: holdClk.seconds
+      });
+    }
     if (snapshot && typeof snapshot === 'object') {
       _lastCommittedFrame = {
         homeScore: Number(snapshot.homeScore) || 0,
@@ -6532,6 +6876,39 @@ Page({
       seconds: _lastCommittedFrame.seconds,
       shotClock: _lastCommittedFrame.shotClock
     });
+    if (
+      _lastCommittedFrame.homeScore !== auditPrevHome ||
+      _lastCommittedFrame.awayScore !== auditPrevAway
+    ) {
+      COLLECTOR_AUDIT.auditScoreChange({
+        from: { h: auditPrevHome, a: auditPrevAway },
+        to: { h: _lastCommittedFrame.homeScore, a: _lastCommittedFrame.awayScore }
+      });
+    }
+    if (
+      _lastCommittedFrame.minutes !== auditPrevMin ||
+      _lastCommittedFrame.seconds !== auditPrevSec
+    ) {
+      var auditCtx = COLLECTOR_AUDIT.takeClockSourceContext();
+      var auditPrevTotal = auditPrevMin * 60 + auditPrevSec;
+      var auditNextTotal = clockToTotalSec(_lastCommittedFrame);
+      COLLECTOR_AUDIT.auditClockSource({
+        source: auditCtx.source || 'unknown',
+        reason: auditCtx.reason || '',
+        functionName: auditCtx.functionName || '_commitLocalState',
+        prev: { m: auditPrevMin, s: auditPrevSec, totalSec: auditPrevTotal },
+        next: {
+          m: _lastCommittedFrame.minutes,
+          s: _lastCommittedFrame.seconds,
+          totalSec: auditNextTotal
+        }
+      });
+      COLLECTOR_AUDIT.auditClockChange({
+        from: { m: auditPrevMin, s: auditPrevSec },
+        to: { m: _lastCommittedFrame.minutes, s: _lastCommittedFrame.seconds },
+        totalSec: auditNextTotal
+      });
+    }
   },
 
   /**
@@ -6629,6 +7006,13 @@ Page({
     if (timeInfo && refT >= 0) {
       var jump = Math.abs(t - refT);
       if (jump > OCR_SYNC_JUMP_THRESHOLD_SEC) {
+        COLLECTOR_AUDIT.auditOcrJump({
+          jump: jump,
+          from: refT,
+          to: t,
+          resumeSnap: !!input.resumeSnap,
+          periodReset: isLikelyPeriodClockReset(refT, t)
+        });
         if (input.resumeSnap || isLikelyPeriodClockReset(refT, t)) {
           var snapPeriod = period;
           if (isLikelyPeriodClockReset(refT, t) && snapPeriod < 8) {
@@ -6645,9 +7029,12 @@ Page({
           _procState.sameSecStreak = 0;
           _procState.sameSecFirstSeen = 0;
           _procState.lastOcrSec = t;
+          auditBeforeClockMode('running', 'jump_snap', 'processOcrFrame');
           _clockMode = 'running';
           _procState.pauseConfirmed = false;
+          auditBeforeClockRunning(true, 'jump_snap', 'processOcrFrame');
           _procState.clockRunning = true;
+          setAuditClockSource('sync', 'jump_snap', 'processOcrFrame');
           this._commitLocalState({
             homeScore: h,
             awayScore: a,
@@ -6679,6 +7066,7 @@ Page({
           _procState.sameSecStreak = 1;
           _procState.lastOcrSec = t;
         }
+        setAuditClockSource('sync', 'sync_observe', 'processOcrFrame');
         this._commitLocalState({
           homeScore: h,
           awayScore: a,
@@ -6743,6 +7131,7 @@ Page({
           } else {
             _procState.startObserve = null;
             if (dropSec === 1 && _procState.clockRunning) {
+              auditBeforeClockMode('running', 'resume_detect', 'processOcrFrame');
               _clockMode = 'running';
               _procState.pauseConfirmed = false;
             }
@@ -6754,6 +7143,9 @@ Page({
     }
 
     if (timeInfo) {
+      if (!COLLECTOR_AUDIT.hasClockSourceContext()) {
+        setAuditClockSource('ocr', 'process_frame', 'processOcrFrame');
+      }
       this._commitLocalState({
         homeScore: h,
         awayScore: a,
@@ -6763,6 +7155,9 @@ Page({
         shotClock: shotClock
       });
     } else {
+      if (!COLLECTOR_AUDIT.hasClockSourceContext()) {
+        setAuditClockSource('ocr', 'score_only', 'processOcrFrame');
+      }
       this._commitLocalState({
         homeScore: h,
         awayScore: a,
@@ -6786,6 +7181,7 @@ Page({
       b: this.data.awayScore,
       p: this.data.period
     });
+    setAuditClockSource('manual', 'score_plus', 'onHomeScorePlus');
     this._commitLocalState({
       homeScore: nh,
       awayScore: this.data.awayScore,
@@ -6805,6 +7201,7 @@ Page({
       b: na,
       p: this.data.period
     });
+    setAuditClockSource('manual', 'score_plus', 'onAwayScorePlus');
     this._commitLocalState({
       homeScore: this.data.homeScore,
       awayScore: na,
@@ -6825,6 +7222,7 @@ Page({
       b: this.data.awayScore,
       p: np
     });
+    setAuditClockSource('manual', 'period_plus', 'onPeriodPlus');
     this._commitLocalState({
       homeScore: this.data.homeScore,
       awayScore: this.data.awayScore,
@@ -6840,6 +7238,7 @@ Page({
     var t = clockToTotalSec({ minutes: 10, seconds: 0 });
     this._emitWsPacket('SYNC', { t: t, a: 0, b: 0, p: 1 });
     this._emitWsPacket('S_RESET', { t: t, a: 0, b: 0, p: 1 });
+    setAuditClockSource('manual', 'reset', 'onReset');
     this._commitLocalState({
       homeScore: 0,
       awayScore: 0,

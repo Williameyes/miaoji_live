@@ -143,6 +143,13 @@
           hover-stay-time="80"
           catchtap="onLoadPreset"
         >恢复预设</view>
+
+        <view
+          class="col-console-btn col-console-btn--audit-export"
+          hover-class="col-console-btn--pressed"
+          hover-stay-time="80"
+          catchtap="onExportCollectorAuditFile"
+        >导出审计</view>
       </view>
     </view>
   </view>
