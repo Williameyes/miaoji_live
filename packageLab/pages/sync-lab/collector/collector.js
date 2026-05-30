@@ -225,7 +225,7 @@ var OCR_V5_TIME_TICK_MS = 950;
 /** V5 诊断摘要输出间隔（毫秒） */
 var OCR_V5_DIAG_SUMMARY_MS = 30000;
 /** 预测补秒定时器基准 / 最后一分钟激进值 */
-var OCR_CLOCK_PREDICT_TICK_BASE_MS = 250;
+var OCR_CLOCK_PREDICT_TICK_BASE_MS = 500;
 var OCR_CLOCK_PREDICT_TICK_FINAL_MS = 100;
 /** 当前生效的预测补秒间隔（运行时根据 final-minute 模式动态切换） */
 var OCR_CLOCK_PREDICT_TICK_MS = OCR_CLOCK_PREDICT_TICK_BASE_MS;
@@ -3715,7 +3715,12 @@ Page({
 
     if (_lastOcrClockSec >= 0 && realWorldSec > 0 && realWorldSec < _lastOcrClockSec) {
       var dropFromLast = _lastOcrClockSec - realWorldSec;
-      if (dropFromLast >= 1 && dropFromLast <= 3) {
+      if (
+        dropFromLast >= 1 &&
+        dropFromLast <= 3 &&
+        !_procState.pauseConfirmed &&
+        _clockMode !== 'paused'
+      ) {
         _clockMode = 'running';
       }
     }
@@ -3723,7 +3728,11 @@ Page({
     if (now - (_ocrLastTimeSuccessTs || 0) > 2500) {
       var prevOcrClockSec = _lastOcrClockSec;
       _lastOcrClockSec = realWorldSec;
-      if (prevOcrClockSec < 0 || realWorldSec < prevOcrClockSec) {
+      if (
+        (prevOcrClockSec < 0 || realWorldSec < prevOcrClockSec) &&
+        !_procState.pauseConfirmed &&
+        _clockMode !== 'paused'
+      ) {
         _clockMode = 'running';
       }
       _ocrClockRunAnchorWallTs = now;
@@ -3741,12 +3750,14 @@ Page({
     var realClock = clockFromTotalSec(realWorldSec);
     _lastOcrClockSec = realWorldSec;
     _lastOcrClockWallTs = now;
-    updatePredictedClock(realClock);
-    _clockAnchorMs = realWorldSec * 1000;
-    _clockAnchorWallTs = now;
-    _driftSoftAdjustRate = 1.0;
-    _lastClockPredictEmitSec = realWorldSec;
-    this._maybeApplyFinalMinuteMode(realClock);
+    if (_clockMode !== 'paused' && !_ocrOcclusionActive) {
+      updatePredictedClock(realClock);
+      _clockAnchorMs = realWorldSec * 1000;
+      _clockAnchorWallTs = now;
+      _driftSoftAdjustRate = 1.0;
+      _lastClockPredictEmitSec = realWorldSec;
+      this._maybeApplyFinalMinuteMode(realClock);
+    }
 
     if (_clockMode !== 'paused') {
       _clockPredictUntil = Math.max(_clockPredictUntil || 0, getClockRunUntil(now, realWorldSec));
@@ -5663,14 +5674,16 @@ Page({
     var homeScore = scorePairPreview ? scorePairPreview.homeScore : null;
     var awayScore = scorePairPreview ? scorePairPreview.awayScore : null;
     
-    // Phase 6: OCR 不直接影响 UI 时间，预测器接管时间显示
-    var timeInfo = getPredictedClock();
-    
-    if (timeInfo && _lastCommittedFrame) {
-      var prevT = ocrFrameClockSec(_lastCommittedFrame);
-      var previewT = clockToTotalSec(timeInfo);
-      if (previewT < prevT - 1 && prevT - previewT <= OCR_CLOCK_CATCHUP_MAX_DROP_SEC) {
-        timeInfo = clockFromTotalSec(prevT - 1);
+    // 走表时由预测器补秒；停表/遮挡期间不写时间列，避免与冻结画面打架
+    var timeInfo = null;
+    if (_clockMode !== 'paused' && !_ocrOcclusionActive) {
+      timeInfo = getPredictedClock();
+      if (timeInfo && _lastCommittedFrame) {
+        var prevT = ocrFrameClockSec(_lastCommittedFrame);
+        var previewT = clockToTotalSec(timeInfo);
+        if (previewT < prevT - 1 && prevT - previewT <= OCR_CLOCK_CATCHUP_MAX_DROP_SEC) {
+          timeInfo = clockFromTotalSec(prevT - 1);
+        }
       }
     }
 
@@ -5767,6 +5780,10 @@ Page({
     // 如果内部时间状态机(_lastOcrClockSec)已经确认并接纳了这个时间（误差2秒内），
     // 说明这是合法的初次对齐或大跨度跳变，强制放行，无视下方的 20 秒防抖拦截门禁！
     if (_lastOcrClockSec >= 0 && Math.abs(nextT - _lastOcrClockSec) <= 2) {
+      return frame;
+    }
+
+    if (drop <= OCR_SOFT_SYNC_MAX_STEP_SEC) {
       return frame;
     }
 
