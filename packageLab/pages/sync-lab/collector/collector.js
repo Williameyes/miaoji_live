@@ -219,7 +219,7 @@ var OCR_V5_TIME_HEARTBEAT_PAUSED_MS = 1200;
 /** V5 待触发比分 ROI 优先于时间心跳的等待阈值（毫秒） */
 var OCR_V5_SCORE_PRIORITY_MS = 400;
 /** V5 比分 OCR 心跳：超过该毫秒未成功则主动补采样 */
-var OCR_V5_SCORE_HEARTBEAT_MS = 5000;
+var OCR_V5_SCORE_HEARTBEAT_MS = 2500;
 /** V5 走表时时间 OCR 节拍（毫秒，<1s 保证每秒至少一次采样，避免跳秒） */
 var OCR_V5_TIME_TICK_MS = 950;
 /** V5 诊断摘要输出间隔（毫秒） */
@@ -262,7 +262,7 @@ var MAX_PREDICT_WITHOUT_CONFIRM_MS = 8000;
 
 var OCR_TIME_REFRESH_MS = 160;
 /** 比分 ROI 刷新间隔（放宽，把更多 OCR 槽让给时钟；比分另有确认门禁）。 */
-var OCR_SCORE_REFRESH_MS = 1200;
+var OCR_SCORE_REFRESH_MS = 800;
 /**
  * 距上次时间 ROI 解析成功超过该毫秒时，在队列中优先时间 ROI。
  * @type {number}
@@ -1329,8 +1329,9 @@ function getClockRefSec() {
 function isLikelyPeriodClockReset(refSec, ocrSec) {
   if (ocrSec < OCR_PERIOD_RESET_MIN_SEC) return false;
   if (refSec < 0) return true;
-  // 末节归零(0:xx)后大屏回到 8:00+（含 10:00）——此前 ref<60 直接 return false 导致永远进不了新节
-  if (refSec < 60) return true;
+  // ✅ 修复：refSec <= 10 时（包含 00:00 结束阶段）也允许节间复位
+  if (refSec <= 10) return true;
+  if (refSec < 60) return false;
   return refSec <= OCR_PERIOD_RESET_REF_MAX_SEC;
 }
 
@@ -3385,6 +3386,10 @@ Page({
           _ocrV5LastHomeOcrTs = nowTs;
           _ocrLastGoodHomeScore = parsedHomeScore;
           noteOcrScoreSuccess();
+          if (Math.abs(parsedHomeScore - (_lastCommittedFrame ? _lastCommittedFrame.homeScore : 0)) >= OCR_SCORE_JUMP_CONFIRM_THRESHOLD) {
+            // 大跳变：不信任当前读数，主动把 heartbeat ts 设为 0 触发快速复核
+            _ocrV5LastHomeOcrTs = 0;
+          }
           parsedOkForBaseline = true;
         } else {
           logOcrV5Diag('score_pending_confirm', { roiIdx: 0, value: parsedHomeScore });
@@ -3406,6 +3411,10 @@ Page({
           _ocrV5LastAwayOcrTs = nowTs;
           _ocrLastGoodAwayScore = parsedAwayScore;
           noteOcrScoreSuccess();
+          if (Math.abs(parsedAwayScore - (_lastCommittedFrame ? _lastCommittedFrame.awayScore : 0)) >= OCR_SCORE_JUMP_CONFIRM_THRESHOLD) {
+            // 大跳变：不信任当前读数，主动把 heartbeat ts 设为 0 触发快速复核
+            _ocrV5LastAwayOcrTs = 0;
+          }
           parsedOkForBaseline = true;
         } else {
           logOcrV5Diag('score_pending_confirm', { roiIdx: 1, value: parsedAwayScore });
@@ -3640,6 +3649,10 @@ Page({
       _isFinalMinuteMode = false;
       TIME_PUMP_INTERVAL = TIME_PUMP_INTERVAL_BASE_MS;
       OCR_CLOCK_PREDICT_TICK_MS = OCR_CLOCK_PREDICT_TICK_BASE_MS;
+      // ✅ 新增：节间复位时清空旧参考，允许直接跳到新节时间
+      _lastOcrClockSec = -1;
+      _procState.lastOcrSec = -1;
+      _procState.syncObserve = null;
       this._snapClockToOcr(ocrSec, now, true);
       return;
     }
@@ -3953,6 +3966,10 @@ Page({
     _ocrOcclusionWasRunning = false;
     _ocrOcclusionBestClockSec = -1;
     _occlusionHoldClockSec = -1;
+    resetOcrScorePumpCircuit();          // 清除比分泵熔断/quiesce
+    _ocrSdkDegradedUntil = 0;           // 清除 SDK 降载
+    _procState.lastOcrSec = -1;         // 允许第一帧 OCR 直接作为新基线
+    _procState.syncObserve = null;
     resetOcrV5PendingOnly();
     this._syncOcrFilterRois(false);
   },

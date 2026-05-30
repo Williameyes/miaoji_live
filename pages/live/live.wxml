@@ -1,19 +1,6 @@
 <page-meta background-color="#000000" background-color-top="#000000" background-color-bottom="#000000" page-style="background: #000000;"></page-meta>
 <wxs module="c" src="./live.wxs"></wxs>
 <view class="container landscape {{isRecording ? 'container--rec-performance' : ''}}">
-  <!-- 左侧边缘扩散层 -->
-  <view wx:if="{{liveStreamAllowed && cameraMounted}}" class="ambient-layer ambient-left">
-    <image wx:if="{{bgLayerSrcLeftA}}" class="ambient-image" src="{{bgLayerSrcLeftA}}" style="opacity: {{bgOpacityA}};" />
-    <image wx:if="{{bgLayerSrcLeftB}}" class="ambient-image" src="{{bgLayerSrcLeftB}}" style="opacity: {{bgOpacityB}};" />
-    <view class="ambient-mask"></view>
-  </view>
-
-  <!-- 右侧边缘扩散层 -->
-  <view wx:if="{{liveStreamAllowed && cameraMounted}}" class="ambient-layer ambient-right">
-    <image wx:if="{{bgLayerSrcRightA}}" class="ambient-image" src="{{bgLayerSrcRightA}}" style="opacity: {{bgOpacityA}};" />
-    <image wx:if="{{bgLayerSrcRightB}}" class="ambient-image" src="{{bgLayerSrcRightB}}" style="opacity: {{bgOpacityB}};" />
-    <view class="ambient-mask"></view>
-  </view>
   <!-- Level 0: 16:9 内接取景框（与 computeLiveStage16x9 一致），避免全屏与相机典型 16:9 输出比例差导致的非等比拉伸感 -->
   <view
     wx:if="{{liveStreamAllowed && cameraMounted}}"
@@ -591,29 +578,19 @@
   <!-- Level 3: 管理抽屉 (drawerMode 0=隐藏 1=打开) -->
   <view wx:if="{{drawerMode === 1}}">
 
-    <!-- 顶部控制区（包含相机设置与影院模式） -->
-    <view class="drawer-top-controls">
-      <!-- 顶部相机设置面板 -->
+    <!-- 顶部相机设置面板 -->
+    <view
+      class="drawer-camera-settings-panel"
+      wx:if="{{cameraMounted && liveStreamAllowed && !isReplaying}}"
+    >
       <view
-        class="drawer-camera-settings-panel"
-        wx:if="{{cameraMounted && liveStreamAllowed && !isReplaying}}"
-      >
-        <view
-          wx:for="{{cameraViewModeStops}}"
-          wx:key="mode"
-          class="drawer-camera-pill {{cameraViewMode === item.mode ? 'drawer-camera-pill--active' : ''}}"
-          catchtap="onCameraViewModeTap"
-          data-mode="{{item.mode}}"
-        >{{item.label}}</view>
-        <view class="drawer-camera-pill drawer-camera-pill--focus" catchtap="onCameraFocusControlTap">锁焦</view>
-      </view>
-
-      <!-- 影院模式开关面板 -->
-      <view class="drawer-camera-settings-panel cinema-mode-panel" catchtap="onToggleCinemaMode">
-        <text wx:if="{{isCinemaMode}}" class="cinema-mode-text">[ 🎬 影院模式 ]</text>
-        <text wx:else class="cinema-mode-text">[ 📱 原生模式 ]</text>
-        <view wx:if="{{isCinemaMode}}" class="cinema-mode-dot"></view>
-      </view>
+        wx:for="{{cameraViewModeStops}}"
+        wx:key="mode"
+        class="drawer-camera-pill {{cameraViewMode === item.mode ? 'drawer-camera-pill--active' : ''}}"
+        catchtap="onCameraViewModeTap"
+        data-mode="{{item.mode}}"
+      >{{item.label}}</view>
+      <view class="drawer-camera-pill drawer-camera-pill--focus" catchtap="onCameraFocusControlTap">锁焦</view>
     </view>
 
     <!-- 遮罩：点击关闭（z-index 低于面板，不拦截面板内点击） -->

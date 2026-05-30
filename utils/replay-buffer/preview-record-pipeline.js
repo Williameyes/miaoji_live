@@ -285,14 +285,6 @@ function createPreviewRecordPipeline(page) {
   }
 
   /**
-   * 获取最新的相机帧
-   * @returns {{ data: ArrayBuffer, width: number, height: number }|null}
-   */
-  function getLastCameraFrame() {
-    return pingPong ? pingPong.getLastCameraFrame() : null;
-  }
-
-  /**
    * @param {string[]} paths
    */
   function pinPaths(paths) {
@@ -349,7 +341,6 @@ function createPreviewRecordPipeline(page) {
     flushAndResolveHighlightSeek,
     getSegments,
     isActive,
-    getLastCameraFrame,
     pinPaths,
     unpinPaths,
     releaseSegmentPaths,

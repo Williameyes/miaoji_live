@@ -1103,14 +1103,6 @@ class PingPongRecorder {
   }
 
   /**
-   * 获取最新相机帧，供其它系统消费（如氛围背景）
-   * @returns {{ data: ArrayBuffer, width: number, height: number }|null}
-   */
-  getLastCameraFrame() {
-    return this._lastCameraFrame || null;
-  }
-
-  /**
    * 获取当前活跃录制轨（含正在录但未落盘的虚拟段）。
    * @returns {Array<{ path?: string, startTime: number, endTime: number, trackId: string, live?: boolean }>}
    */
