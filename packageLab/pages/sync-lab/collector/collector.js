@@ -1407,10 +1407,10 @@ function getClockRefSec() {
 function isLikelyPeriodClockReset(refSec, ocrSec) {
   if (ocrSec < OCR_PERIOD_RESET_MIN_SEC) return false;
   if (refSec < 0) return true;
-  // ✅ 修复：refSec <= 10 时（包含 00:00 结束阶段）也允许节间复位
+  // 修复：只有当上一秒接近 0:00 时（<= 10秒），才允许跳回 10:00。
+  // 避免在比赛中段误读时触发错误的"节间复位"。
   if (refSec <= 10) return true;
-  if (refSec < 60) return false;
-  return refSec <= OCR_PERIOD_RESET_REF_MAX_SEC;
+  return false;
 }
 
 /**
@@ -3929,6 +3929,28 @@ Page({
     var now = Date.now();
     var ocrSec = clockToTotalSec(parsedTime);
 
+    var isMassiveDrop = (_lastOcrClockSec >= 0 && (_lastOcrClockSec - ocrSec) > OCR_CLOCK_CATCHUP_MAX_DROP_SEC);
+    if (isMassiveDrop && !isOcrRecoverySnapActive(now)) {
+      if (_clockJumpCandidateSec === ocrSec) {
+        if (now - _clockJumpCandidateSince >= OCR_CLOCK_JUMP_HOLD_MS) {
+          logOcrV5Diag('clock_jump_confirmed_local', { from: _lastOcrClockSec, to: ocrSec });
+          _clockJumpCandidateSec = -1;
+          _clockJumpCandidateSince = 0;
+          // 确认完毕，允许往下执行并重置基准
+        } else {
+          return; // 还在观察期内，丢弃本帧
+        }
+      } else {
+        _clockJumpCandidateSec = ocrSec;
+        _clockJumpCandidateSince = now;
+        logOcrV5Diag('clock_jump_candidate', { ocrSec: ocrSec });
+        return; // 新的大跳变，开始观察，丢弃本帧
+      }
+    } else {
+      _clockJumpCandidateSec = -1;
+      _clockJumpCandidateSince = 0;
+    }
+
     // 恢复/重启对齐窗口：每秒都有 OCR，直接信任本次读数并一次性对齐，不做逐秒追赶。
     // ✅ BUG-1 修复：恢复窗口内仍须经过 sanitizeGameClockParse 防护，拒绝正向跳变与大幅误读。
     // 历史教训：9:58 恢复期内 OCR 误读 4:30，因绕过防护直接 snap 导致 328s 向后跳变（云端直播全员看到）。
@@ -4067,12 +4089,7 @@ Page({
     }
     _ocrLastTimeSuccessTs = now;
 
-    if (!periodReset && !pauseResumeSnap) {
-      var capRefSec = _lastOcrClockSec >= 0 ? _lastOcrClockSec : getPublishedClockSecAt(now);
-      if (capRefSec >= 0) {
-        realWorldSec = capSyncClockStep(capRefSec, realWorldSec);
-      }
-    }
+
 
     var realClock = clockFromTotalSec(realWorldSec);
     _lastOcrClockSec = realWorldSec;
@@ -7093,7 +7110,7 @@ Page({
         }
         if (_procState.syncObserve.streak >= OCR_SYNC_CONFIRM_STREAK) {
           var syncPayload = Object.assign({}, payloadBase, {
-            t: capSyncClockStep(refT, t)
+            t: t // 修复：既然已经连续多帧确认了大跳变，直接发真实的 t，取消 capSyncClockStep
           });
           this._emitWsPacket('SYNC', syncPayload);
           if (
@@ -7106,6 +7123,16 @@ Page({
           _procState.sameSecFirstSeen = now;
           _procState.sameSecStreak = 1;
           _procState.lastOcrSec = t;
+          
+          // 确保同步后立即重置采集端本地的所有内部锚点，防止被历史状态拉回
+          _lastOcrClockSec = t;
+          _lastOcrClockWallTs = now;
+          updatePredictedClock(clockFromTotalSec(t));
+          _clockAnchorMs = t * 1000;
+          _clockAnchorWallTs = now;
+          _driftSoftAdjustRate = 1.0;
+          _lastClockPredictEmitSec = t;
+          _clockPredictUntil = Math.max(_clockPredictUntil || 0, getClockRunUntil(now, t));
         }
         setAuditClockSource('sync', 'sync_observe', 'processOcrFrame');
         this._commitLocalState({
