@@ -32,12 +32,14 @@ function setAuditClockSource(source, reason, functionName) {
 
 /**
  * 审计专用：clockMode 写入前记录 mode_change。
+ * ✅ BUG-3/5 修复：仅在 mode 真正发生变化时写入审计，避免 96% 同值→同值噪声占满 ring buffer。
  * @param {string} nextMode
  * @param {string} reason
  * @param {string} functionName
  * @returns {void}
  */
 function auditBeforeClockMode(nextMode, reason, functionName) {
+  if (_clockMode === nextMode) return; // 同值→同值，跳过审计
   COLLECTOR_AUDIT.auditModeChange({
     prevMode: _clockMode,
     nextMode: nextMode,
@@ -48,12 +50,14 @@ function auditBeforeClockMode(nextMode, reason, functionName) {
 
 /**
  * 审计专用：clockRunning 写入前记录 running_change。
+ * ✅ BUG-3/5 修复：仅在 running 真正发生变化时写入审计。
  * @param {boolean} next
  * @param {string} reason
  * @param {string} functionName
  * @returns {void}
  */
 function auditBeforeClockRunning(next, reason, functionName) {
+  if (!!_procState.clockRunning === !!next) return; // 同值→同值，跳过审计
   COLLECTOR_AUDIT.auditRunningChange({
     prev: !!_procState.clockRunning,
     next: !!next,
@@ -3829,11 +3833,16 @@ Page({
     _clockAnchorWallTs = now;
     _driftSoftAdjustRate = 1.0;
     _lastClockPredictEmitSec = ocrSec;
-    auditBeforeClockMode('running', isPeriodReset ? 'period_reset' : 'snap', '_snapClockToOcr');
-    _clockMode = 'running';
-    _procState.pauseConfirmed = false;
-    auditBeforeClockRunning(true, isPeriodReset ? 'period_reset' : 'snap', '_snapClockToOcr');
-    _procState.clockRunning = true;
+    // ✅ BUG-4 修复：只在模式/状态真正需要变化时写入，避免 108 次 same→same snap 审计噪声。
+    if (_clockMode !== 'running' || _procState.pauseConfirmed) {
+      auditBeforeClockMode('running', isPeriodReset ? 'period_reset' : 'snap', '_snapClockToOcr');
+      _clockMode = 'running';
+      _procState.pauseConfirmed = false;
+    }
+    if (!_procState.clockRunning) {
+      auditBeforeClockRunning(true, isPeriodReset ? 'period_reset' : 'snap', '_snapClockToOcr');
+      _procState.clockRunning = true;
+    }
     _procState.lastOcrSec = ocrSec;
     _procState.syncObserve = null;
     _clockPredictUntil = Math.max(_clockPredictUntil || 0, getClockRunUntil(now, ocrSec));
@@ -3921,10 +3930,34 @@ Page({
     var ocrSec = clockToTotalSec(parsedTime);
 
     // 恢复/重启对齐窗口：每秒都有 OCR，直接信任本次读数并一次性对齐，不做逐秒追赶。
+    // ✅ BUG-1 修复：恢复窗口内仍须经过 sanitizeGameClockParse 防护，拒绝正向跳变与大幅误读。
+    // 历史教训：9:58 恢复期内 OCR 误读 4:30，因绕过防护直接 snap 导致 328s 向后跳变（云端直播全员看到）。
     if (isOcrRecoverySnapActive(now)) {
-      setAuditClockSource('ocr_recovery', 'recovery_window', '_recordOcrClockSample');
-      this._snapClockToOcr(ocrSec, now);
-      return;
+      var recoveryRefSec = _lastOcrClockSec >= 0 ? _lastOcrClockSec : getClockRefSec();
+      var recoveryValidated = sanitizeGameClockParse(parsedTime, recoveryRefSec);
+      if (!recoveryValidated) {
+        // 恢复窗口内 OCR 读数不合法（如相对参考向前跳、进攻时钟误读）：降级为普通采样流程
+        logOcrV5Diag('recovery_snap_rejected', {
+          ocrSec: ocrSec,
+          refSec: recoveryRefSec,
+          reason: 'sanitize_fail'
+        });
+      } else {
+        var recoveryOcrSec = clockToTotalSec(recoveryValidated);
+        // 额外保护：恢复窗口内禁止超过 OCR_CLOCK_CATCHUP_MAX_DROP_SEC 的大向后跳变
+        // （正向跳变已由 sanitizeGameClockParse 的 isSuspiciousGameClockForward 拒绝）
+        if (recoveryRefSec >= 0 && recoveryRefSec - recoveryOcrSec > OCR_CLOCK_CATCHUP_MAX_DROP_SEC) {
+          logOcrV5Diag('recovery_snap_rejected', {
+            ocrSec: recoveryOcrSec,
+            refSec: recoveryRefSec,
+            reason: 'large_backward_jump'
+          });
+        } else {
+          setAuditClockSource('ocr_recovery', 'recovery_window', '_recordOcrClockSample');
+          this._snapClockToOcr(recoveryOcrSec, now);
+          return;
+        }
+      }
     }
 
     var periodReset = isLikelyPeriodClockReset(refSec, ocrSec);
@@ -4007,9 +4040,13 @@ Page({
         dropFromLast <= 3 &&
         !_procState.pauseConfirmed &&
         _clockMode !== 'paused'
+        // ✅ BUG-3 修复：只在非 running 时才写 clockMode（auditBeforeClockMode 内部已去重，
+        //    但赋值本身也应避免，以减少 resume_detect 在 processOcrFrame 的重复审计触发）。
       ) {
-        auditBeforeClockMode('running', 'drop_recover', '_recordOcrClockSample');
-        _clockMode = 'running';
+        if (_clockMode !== 'running') {
+          auditBeforeClockMode('running', 'drop_recover', '_recordOcrClockSample');
+          _clockMode = 'running';
+        }
       }
     }
 
@@ -4019,7 +4056,8 @@ Page({
       if (
         (prevOcrClockSec < 0 || realWorldSec < prevOcrClockSec) &&
         !_procState.pauseConfirmed &&
-        _clockMode !== 'paused'
+        _clockMode !== 'paused' &&
+        _clockMode !== 'running' // ✅ BUG-3 修复：已经是 running 则跳过
       ) {
         auditBeforeClockMode('running', 'starvation_recover', '_recordOcrClockSample');
         _clockMode = 'running';
@@ -4176,8 +4214,11 @@ Page({
     _ocrReqQueue = [];
     _pendingTimeFrame = null;
     resetOcrV5PendingOnly();
-    /** 恢复后数秒内禁止 predict/OCR 的「逐秒追赶」，只允许一次性对齐 */
-    _ocrRecoveryModeUntil = nowMs + 8000;
+    /** 恢复后数秒内禁止 predict/OCR 的「逐秒追赶」，只允许一次性对齐
+     *  ✅ BUG-2 修复：由 8000ms 缩短至 3500ms。
+     *  原因：8s 窗口内每一帧 OCR 都走 _snapClockToOcr，产生大量正/负向±1s 闪跳（audit 记录到
+     *  每分钟 ~28 次 clock_oscillation）；3.5s 足够首帧对齐，后续帧回归正常采样路径。 */
+    _ocrRecoveryModeUntil = nowMs + 3500;
 
     var homeScore = _ocrLastGoodHomeScore >= 0
       ? _ocrLastGoodHomeScore
