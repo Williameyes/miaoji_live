@@ -201,11 +201,16 @@
       <view class="match-name-row">
         <view
           class="match-name-banner"
-          catchlongpress="onExportHealthLogs"
+          catchlongpress="onPrepareLiveAuditExport"
           style="color: {{matchConfig.matchNameColor}}"
         >
           {{matchConfig.matchName || 'HoopsLive Assistant'}}
         </view>
+        <view
+          wx:if="{{auditExportShareVisible}}"
+          class="audit-export-share-btn"
+          catchtap="onTapShareLiveAuditFile"
+        >发送审计</view>
       </view>
 
       <!-- 记分条主体：左右等宽且比分固定（色条视觉约 50% 高度，操作热区保持原 min-height） -->

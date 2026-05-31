@@ -6,6 +6,7 @@ const { parseExpireAtToMs } = require('../../utils/referral.js');
 const storageEst = require('../../utils/file-storage-estimate.js');
 const clipsStorage = require('../../utils/miaoxie-clips-storage.js');
 const replayBufferMod = require('../../utils/replay-buffer/index.js');
+const LIVE_AUDIT = require('./audit.js');
 
 /** 视录分离重构后保留空壳，避免遗留 VK/增强引用导致运行时错误。 */
 const renderPipelineMod = {
@@ -421,6 +422,8 @@ Page({
     cacheStorageLampActionable: false,
     /** 与顶部状态灯同系：OK / WT(warn) / EX(severe) */
     cacheStorageLampText: 'OK',
+    /** 长按比赛名生成审计文件后，展示「发送审计」按钮（须 tap 才能 wx.shareFileMessage） */
+    auditExportShareVisible: false,
     /**
      * 左下角「相机/变焦」快捷：展开态；与抽屉互斥，避免与列表手势冲突。
      * @type {boolean}
@@ -1480,6 +1483,10 @@ Page({
     this._livePageVisible = false;
     /** 远程诊断上报节流定时器 */
     this._remoteHealthLogTimer = null;
+    /** 长按比赛名预生成的审计导出文件（供 tap 分享，满足微信 TAP gesture 要求） */
+    this._pendingAuditExport = null;
+    /** 审计分享按钮自动隐藏定时器 */
+    this._auditExportShareTimer = null;
     /** 权益校验串行锁，避免 onLoad/onShow/重试并发导致重复挂载 camera。 */
     this._entitlementChecking = false;
     this._entitlementOnAllowedQueue = [];
@@ -2369,6 +2376,40 @@ Page({
       this._healthLogDevice = {};
     }
     this.appendHealthLog('page_load', {});
+    try {
+      LIVE_AUDIT.appendAuditLog('page_load', {});
+    } catch (eAuditInit) { /* ignore */ }
+  },
+
+  /**
+   * 将关键健康日志事件镜像到审计 RingBuffer（独立于 health log 落盘策略）。
+   * @param {string} eventName 事件名
+   * @param {Record<string, unknown>} [detail] 事件详情
+   * @returns {void}
+   */
+  mirrorHealthToAudit: function (eventName, detail) {
+    const ev = String(eventName || '');
+    if (!ev) return;
+    const prefixes = [
+      'highlight_',
+      'rolling_',
+      'segment_',
+      'replay_',
+      'hard_recover',
+      'stop_record',
+      'temp_',
+      'match_switch',
+      'page_',
+      'ws_',
+      'vk_canvas',
+      'camera_',
+      'manual_relaunch'
+    ];
+    const shouldMirror = prefixes.some((p) => ev.indexOf(p) === 0);
+    if (!shouldMirror) return;
+    try {
+      LIVE_AUDIT.appendAuditLog(ev, LIVE_AUDIT.compactAuditDetail(detail || {}));
+    } catch (eMirror) { /* ignore */ }
   },
 
   /**
@@ -2388,6 +2429,7 @@ Page({
     if (this._healthLogs.length > 120) {
       this._healthLogs.splice(0, this._healthLogs.length - 120);
     }
+    this.mirrorHealthToAudit(item.e, item.d);
     this.scheduleHealthLogFlush();
     const ev = item.e;
     if (
@@ -2555,11 +2597,15 @@ Page({
   },
 
   /**
-   * 手动导出健康日志到剪贴板，便于现场复现后快速回传排查。
-   * @returns {void}
+   * 同步写入直播审计导出 JSON（RingBuffer + health log + diag）。
+   * @returns {{ ok: boolean, path?: string, fileName?: string, size?: number, summary?: Record<string, unknown>, healthCount?: number, error?: string }}
    */
-  onExportHealthLogs: function () {
-    const compactDetail = (detail) => {
+  _prepareLiveAuditExportFile: function () {
+    const dump = LIVE_AUDIT.dumpLiveAudit();
+    if (!dump.count) {
+      return { ok: false, error: 'empty' };
+    }
+    const compactHealthDetail = (detail) => {
       if (!detail || typeof detail !== 'object') return detail;
       const out = {};
       Object.keys(detail).slice(0, 28).forEach((key) => {
@@ -2571,44 +2617,176 @@ Page({
       });
       return out;
     };
-    const logs = (this._healthLogs || []).slice(-60).map((it) => ({
+    const healthLogs = (this._healthLogs || []).slice(-120).map((it) => ({
       t: it.t,
       e: it.e,
-      d: compactDetail(it.d)
+      d: compactHealthDetail(it.d)
     }));
-    const payload = {
-      at: Date.now(),
-      device: this._healthLogDevice || {},
-      logs
-    };
-    let text = '';
-    try {
-      text = JSON.stringify(payload);
-      if (text.length > 900000) {
-        payload.logs = payload.logs.slice(-25);
-        text = JSON.stringify(payload);
+    const fileResult = LIVE_AUDIT.exportAuditToFile({
+      healthLogs,
+      healthDevice: this._healthLogDevice || {},
+      diag: this.getLiveRollingDiagSnapshot({}),
+      ndjsonPath: LIVE_AUDIT.getAuditNdjsonPath()
+    });
+    if (!fileResult.ok || !fileResult.path) {
+      return { ok: false, error: fileResult.error || 'export_fail' };
+    }
+    return Object.assign({}, fileResult, { healthCount: healthLogs.length });
+  },
+
+  /**
+   * 隐藏「发送审计」按钮并清理预生成文件引用。
+   * @returns {void}
+   */
+  _dismissAuditExportShare: function () {
+    if (this._auditExportShareTimer) {
+      clearTimeout(this._auditExportShareTimer);
+      this._auditExportShareTimer = null;
+    }
+    this._pendingAuditExport = null;
+    if (this.data.auditExportShareVisible) {
+      this.setData({ auditExportShareVisible: false });
+    }
+  },
+
+  /**
+   * 展示审计文件就绪弹窗（分享/保存均失败时的兜底）。
+   * @param {{ fileName: string, sizeKb: number, summaryText: string, healthCount: number, path: string }} info
+   * @param {string} [hint]
+   * @returns {void}
+   */
+  _showAuditExportReadyModal: function (info, hint) {
+    wx.showModal({
+      title: '审计文件已生成',
+      content: [
+        info.fileName,
+        info.sizeKb + ' KB',
+        info.summaryText,
+        'health: ' + info.healthCount + ' 条',
+        hint || '',
+        '可搜索 highlight_trim_diagnostic 定位高光裁剪问题'
+      ].filter(Boolean).join('\n'),
+      showCancel: false,
+      confirmText: '知道了'
+    });
+  },
+
+  /**
+   * 在 **tap 手势** 内调用 wx.shareFileMessage（微信要求，longpress 无效）。
+   * @param {{ path: string, fileName: string, sizeKb: number, summaryText: string, healthCount: number }} pending
+   * @returns {void}
+   */
+  _shareLiveAuditFileNow: function (pending) {
+    if (!pending || !pending.path) return;
+    const showFallbackModal = (hint, errMsg) => {
+      if (errMsg) {
+        try {
+          this.appendHealthLog('audit_export_share_fail', { errMsg: String(errMsg).slice(0, 120) });
+        } catch (eLog) { /* ignore */ }
       }
-    } catch (eJson) {
-      wx.showToast({ title: '日志序列化失败', icon: 'none' });
-      return;
-    }
-    if (!text) {
-      wx.showToast({ title: '暂无健康日志', icon: 'none' });
-      return;
-    }
-    wx.setClipboardData({
-      data: text,
-      success: () => {
-        wx.showModal({
-          title: '诊断日志已复制',
-          content: `已复制 ${payload.logs.length} 条健康日志。\n请搜索 highlight_trim_diagnostic 并把该高光 id 相关条目发给我。`,
-          showCancel: false
+      this._showAuditExportReadyModal(pending, hint);
+    };
+
+    if (typeof wx.shareFileMessage !== 'function') {
+      if (typeof wx.saveFileToDisk === 'function') {
+        wx.saveFileToDisk({
+          filePath: pending.path,
+          success: () => {
+            wx.showToast({ title: '已保存到手机', icon: 'success' });
+            this._dismissAuditExportShare();
+          },
+          fail: () => {
+            showFallbackModal('当前环境不支持分享，请通过调试器取回文件');
+          }
         });
+        return;
+      }
+      showFallbackModal('当前环境不支持分享，请通过调试器取回文件');
+      return;
+    }
+
+    wx.shareFileMessage({
+      filePath: pending.path,
+      fileName: pending.fileName,
+      success: () => {
+        wx.showToast({ title: '请选择好友发送', icon: 'none' });
+        this._dismissAuditExportShare();
       },
-      fail: () => {
-        wx.showToast({ title: '复制失败，请重试', icon: 'none' });
+      fail: (err) => {
+        const errMsg = err && err.errMsg ? err.errMsg : '';
+        if (typeof wx.saveFileToDisk === 'function') {
+          wx.saveFileToDisk({
+            filePath: pending.path,
+            success: () => {
+              wx.showToast({ title: '已保存到手机', icon: 'success' });
+              this._dismissAuditExportShare();
+            },
+            fail: () => {
+              showFallbackModal('分享不可用，可通过调试器取回文件', errMsg);
+            }
+          });
+          return;
+        }
+        showFallbackModal('分享不可用，请通过调试器取回文件', errMsg);
       }
     });
+  },
+
+  /**
+   * 长按比赛名：预生成审计 JSON 文件，并显示「发送审计」按钮。
+   * wx.shareFileMessage 仅认 tap 手势，不能在 longpress 回调里直接分享（采集端用 catchtap 故可分享）。
+   * @returns {void}
+   */
+  onPrepareLiveAuditExport: function () {
+    const fileResult = this._prepareLiveAuditExportFile();
+    if (!fileResult.ok || !fileResult.path) {
+      wx.showToast({
+        title: fileResult.error === 'empty' ? '暂无审计日志' : '导出文件失败',
+        icon: 'none'
+      });
+      return;
+    }
+    const summary = fileResult.summary || {};
+    this._pendingAuditExport = {
+      path: fileResult.path,
+      fileName: fileResult.fileName,
+      sizeKb: Math.max(1, Math.round((fileResult.size || 0) / 1024)),
+      summaryText: summary.total ? ('共 ' + summary.total + ' 条审计') : '',
+      healthCount: fileResult.healthCount || 0
+    };
+    this.setData({ auditExportShareVisible: true });
+    wx.showToast({ title: '点击「发送审计」分享', icon: 'none', duration: 2400 });
+    if (this._auditExportShareTimer) {
+      clearTimeout(this._auditExportShareTimer);
+    }
+    this._auditExportShareTimer = setTimeout(() => {
+      this._dismissAuditExportShare();
+    }, 60000);
+  },
+
+  /**
+   * 点击「发送审计」：在用户 tap 手势内同步调起 wx.shareFileMessage。
+   * 若尚未长按预生成，则在同一次 tap 内先写文件再立即分享。
+   * @returns {void}
+   */
+  onTapShareLiveAuditFile: function () {
+    let pending = this._pendingAuditExport;
+    if (!pending || !pending.path) {
+      const fileResult = this._prepareLiveAuditExportFile();
+      if (!fileResult.ok || !fileResult.path) {
+        wx.showToast({ title: '导出文件失败', icon: 'none' });
+        return;
+      }
+      const summary = fileResult.summary || {};
+      pending = {
+        path: fileResult.path,
+        fileName: fileResult.fileName,
+        sizeKb: Math.max(1, Math.round((fileResult.size || 0) / 1024)),
+        summaryText: summary.total ? ('共 ' + summary.total + ' 条审计') : '',
+        healthCount: fileResult.healthCount || 0
+      };
+    }
+    this._shareLiveAuditFileNow(pending);
   },
 
   /**
@@ -2620,6 +2798,13 @@ Page({
     this._highlightRequestLock = true;
     if (this.data.isSavingHighlight) return;
     this.setData({ isSavingHighlight: true });
+    try {
+      LIVE_AUDIT.auditHighlight('save_begin', {
+        sessionId: this._highlightSaveSessionId || 0,
+        rollingActive: !!this.rollingActive,
+        segmentCounter: this.segmentCounter || 0
+      });
+    } catch (eAuditBegin) { /* ignore */ }
     if (this._highlightSaveHardTimeoutTimer) {
       clearTimeout(this._highlightSaveHardTimeoutTimer);
       this._highlightSaveHardTimeoutTimer = null;
@@ -5652,6 +5837,7 @@ Page({
       clearTimeout(this._remoteHealthLogTimer);
       this._remoteHealthLogTimer = null;
     }
+    this._dismissAuditExportShare();
     this._insertConflictRecovering = false;
     this._needManualRelaunch = false;
     this._hardRecoverAwaitingCamera = false;
@@ -5686,6 +5872,10 @@ Page({
       this.rollingWatchdogTimer = null;
     }
     this.appendHealthLog('page_unload', {});
+    try {
+      LIVE_AUDIT.exportAuditSnapshot();
+      LIVE_AUDIT.flushAuditFileLines();
+    } catch (eAuditUnload) { /* ignore */ }
     if (this._postZoomFocusTimer) {
       clearTimeout(this._postZoomFocusTimer);
       this._postZoomFocusTimer = null;
@@ -10212,6 +10402,31 @@ Page({
       hasManifest: !!item.replayManifest,
       status: item.status || ''
     });
+    try {
+      LIVE_AUDIT.auditHighlight('finalize_indexed', {
+        id: String(item.id || ''),
+        matchId,
+        segmentCount: segments.length,
+        seekMode: pending.seekMode || '',
+        tailTrim: !!pending.replayTailTrim,
+        trimStartMs: typeof pending.replayInitialTimeSec === 'number'
+          ? Math.max(0, Math.floor(pending.replayInitialTimeSec * 1000))
+          : -1,
+        trimEndMs: typeof pending.replayMediaStopAtSec === 'number'
+          ? Math.max(0, Math.floor(pending.replayMediaStopAtSec * 1000))
+          : -1,
+        clickTime: typeof pending.clickTime === 'number' ? pending.clickTime : pending.createdAt,
+        windowStartInSegMs: typeof pending.windowStartInSegMs === 'number'
+          ? pending.windowStartInSegMs
+          : -1,
+        windowEndInSegMs: typeof pending.windowEndInSegMs === 'number'
+          ? pending.windowEndInSegMs
+          : -1,
+        segmentPaths: segments.map((p) => (typeof p === 'string' ? p.slice(-72) : '')),
+        replayInitialTimeSec: pending.replayInitialTimeSec,
+        replayMediaStopAtSec: pending.replayMediaStopAtSec
+      });
+    } catch (eAuditFin) { /* ignore */ }
     this.retainRollingSegmentsByPaths(segments);
     const dcFin = this.data.defaultCover;
     const coverRaw = typeof pending.cover === 'string' ? pending.cover : dcFin;

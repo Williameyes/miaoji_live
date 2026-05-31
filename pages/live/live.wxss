@@ -595,6 +595,20 @@ button.live-ble-btn::after {
   pointer-events: auto;
 }
 
+.audit-export-share-btn {
+  flex-shrink: 0;
+  margin-left: 8rpx;
+  padding: 4rpx 12rpx;
+  font-size: 11rpx;
+  line-height: 14rpx;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(16, 174, 255, 0.92);
+  border-radius: 8rpx;
+  box-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+}
+
 /* 记分条：色带视觉高度约 30rpx（约为原先 60rpx 的 50%），整行仍保留约 60rpx 操作热区 */
 .main-score-bar {
   display: flex;
