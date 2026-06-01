@@ -38,6 +38,22 @@ function createPreviewRecordPipeline(page) {
   let feeding = false;
   /** 最近一次帧/轨道活动，供 segment watchdog 识别乒乓假死。 */
   let lastPipelineHeartbeatAt = 0;
+  /** 当前 start() 是否已完成预热（收到足够帧）。 */
+  let pipelineWarmedUp = false;
+  /** 预热阶段累计帧数。 */
+  let warmupFrameCount = 0;
+  /** feedFrame 进行中起始时间，用于检测 requestFrame 挂死。 */
+  let feedingSince = 0;
+  /** 等待首帧回调默认超时（ms）。 */
+  const PREVIEW_RECORD_FIRST_FRAME_TIMEOUT_MS = 3500;
+  /** 预热最少帧数（remount 后相机首帧可能是静止缓存）。 */
+  const PREVIEW_RECORD_WARMUP_MIN_FRAMES = 5;
+  /** 本次 start 要求的预热最少帧数（可由 page 在 remount 后抬高）。 */
+  let currentWarmupMinFrames = PREVIEW_RECORD_WARMUP_MIN_FRAMES;
+  /** 本次 pipeline start 墙钟起点，供首帧 lag 诊断。 */
+  let pipelineStartAt = 0;
+  /** @type {Array<function(): void>} */
+  let warmupWaiters = [];
   /**
    * 每次 start() 自增；stop() 时归 0；start() 时分配给当前 pingPong 实例。
    * 切换场次时 pipeline.stop() 触发 pingPong 内部的强制收尾，
@@ -73,21 +89,94 @@ function createPreviewRecordPipeline(page) {
   }
 
   /**
+   * 等待 onCameraFrame 连续输出足够帧后再启动 MediaRecorder。
+   * @param {number} maxMs
+   * @param {number} [minFrames]
+   * @returns {Promise<void>}
+   */
+  function waitForWarmupFrames(maxMs, minFrames) {
+    if (pipelineWarmedUp) return Promise.resolve();
+    const limitMs = Math.max(1200, Number(maxMs) || PREVIEW_RECORD_FIRST_FRAME_TIMEOUT_MS);
+    const needFrames = Math.max(1, Number(minFrames) || PREVIEW_RECORD_WARMUP_MIN_FRAMES);
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        warmupWaiters = warmupWaiters.filter((fn) => fn !== onWarmupReady);
+        log('preview_record_warmup_timeout', { maxMs: limitMs, frameCount: warmupFrameCount, needFrames });
+        reject(new Error('first frame timeout'));
+      }, limitMs);
+      const onWarmupReady = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        warmupWaiters = warmupWaiters.filter((fn) => fn !== onWarmupReady);
+        resolve();
+      };
+      if (warmupFrameCount >= needFrames) {
+        onWarmupReady();
+        return;
+      }
+      warmupWaiters.push(onWarmupReady);
+    });
+  }
+
+  /**
    * @param {{ data: ArrayBuffer, width: number, height: number }} frame
    * @returns {void}
    */
   function onFrame(frame) {
-    if (!active || !pingPong) return;
     const now = Date.now();
+    if (!pipelineWarmedUp) {
+      warmupFrameCount += 1;
+      if (warmupFrameCount === 1) {
+        const lagMs = pipelineStartAt > 0 ? now - pipelineStartAt : 0;
+        log('preview_record_first_frame', {
+          lagMs,
+          width: frame && frame.width ? frame.width : 0,
+          height: frame && frame.height ? frame.height : 0
+        });
+        if (page) {
+          page._previewRecordFirstFrameAt = now;
+        }
+      }
+      const needFrames = currentWarmupMinFrames || PREVIEW_RECORD_WARMUP_MIN_FRAMES;
+      if (warmupFrameCount >= needFrames) {
+        pipelineWarmedUp = true;
+        log('preview_record_warmup_ready', {
+          frameCount: warmupFrameCount,
+          needFrames,
+          elapsedMs: pipelineStartAt > 0 ? now - pipelineStartAt : 0
+        });
+        const waiters = warmupWaiters.splice(0, warmupWaiters.length);
+        waiters.forEach((fn) => {
+          try { fn(); } catch (eWait) { /* ignore */ }
+        });
+      }
+    }
+    if (!active || !pingPong) return;
     if (now - lastFrameAt < frameInterval) return;
     lastFrameAt = now;
     if (now - lastPipelineHeartbeatAt >= 5000) {
       touchPipelineHeartbeat('frame_feed');
     }
-    if (feeding) return;
+    if (feeding) {
+      if (feedingSince > 0 && now - feedingSince > 1200) {
+        log('preview_record_feeding_force_reset', {
+          stuckMs: now - feedingSince
+        });
+        feeding = false;
+        feedingSince = 0;
+      } else {
+        return;
+      }
+    }
     feeding = true;
+    feedingSince = now;
     pingPong.feedFrame(frame).finally(() => {
       feeding = false;
+      feedingSince = 0;
     });
   }
 
@@ -191,6 +280,18 @@ function createPreviewRecordPipeline(page) {
       canvasWidth: options.canvasWidth || 854,
       canvasHeight: options.canvasHeight || 480
     });
+    pipelineWarmedUp = false;
+    warmupFrameCount = 0;
+    pipelineStartAt = Date.now();
+    warmupWaiters = [];
+    feeding = false;
+    feedingSince = 0;
+    const requireFirstFrame = options.requireFirstFrame !== false;
+    const firstFrameTimeoutMs = Number(options.firstFrameTimeoutMs) || PREVIEW_RECORD_FIRST_FRAME_TIMEOUT_MS;
+    currentWarmupMinFrames = Math.max(
+      PREVIEW_RECORD_WARMUP_MIN_FRAMES,
+      Number(options.warmupMinFrames) || PREVIEW_RECORD_WARMUP_MIN_FRAMES
+    );
     return pingPong.init().then(() => {
       frameSource = frameSourceMod.createNativeFrameSource({
         cameraContext,
@@ -198,14 +299,44 @@ function createPreviewRecordPipeline(page) {
         minIntervalMs: 0
       });
       return frameSource.start();
-    }).then(() => pingPong.start()).then(() => {
+    }).then(() => {
+      if (!requireFirstFrame) {
+        pipelineWarmedUp = true;
+        return Promise.resolve();
+      }
+      return waitForWarmupFrames(firstFrameTimeoutMs, currentWarmupMinFrames);
+    }).then(() => {
       active = true;
+      return pingPong.start();
+    }).then(() => {
       touchPipelineHeartbeat('pipeline_start');
       if (page) {
         page.lastRecordStartAt = Date.now();
         page.setData({ isRecording: true });
       }
-      log('preview_record_pipeline_start', { fps, sessionId: instanceSessionId });
+      log('preview_record_pipeline_start', {
+        fps,
+        sessionId: instanceSessionId,
+        requireFirstFrame,
+        warmupMinFrames: currentWarmupMinFrames
+      });
+    }).catch((err) => {
+      if (frameSource) {
+        frameSource.stop();
+        frameSource = null;
+      }
+      if (pingPong) {
+        pingPong.destroy();
+        pingPong = null;
+      }
+      pipelineWarmedUp = false;
+      warmupFrameCount = 0;
+      pipelineStartAt = 0;
+      warmupWaiters = [];
+      feeding = false;
+      feedingSince = 0;
+      active = false;
+      throw err;
     });
   }
 
@@ -219,6 +350,12 @@ function createPreviewRecordPipeline(page) {
      * 不再污染新场次的 page.rollingSegments / segmentCounter / _lastSuccessfulChunkAt。
      */
     active = false;
+    pipelineWarmedUp = false;
+    warmupFrameCount = 0;
+    pipelineStartAt = 0;
+    warmupWaiters = [];
+    feeding = false;
+    feedingSince = 0;
     if (frameSource) {
       frameSource.stop();
       frameSource = null;

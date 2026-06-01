@@ -49,6 +49,8 @@ function isHollowSegment(sizeBytes, wallDurationMs) {
 
   if (size < DEFAULT_MIN_BYTES) return true;
   if (wallMs < 500) return size < HOLLOW_SHORT_ABSOLUTE_MIN_BYTES;
+  /** 1.5–3s 段也按码率判空壳，避免相机刚重建时 2KB 级假段混入高光。 */
+  if (wallMs >= 1500 && size / durSec < HOLLOW_MAX_BYTES_PER_SEC) return true;
   if (wallMs >= 3000 && size < HOLLOW_SHORT_ABSOLUTE_MIN_BYTES) return true;
   if (wallMs >= 10000 && size < HOLLOW_LONG_ABSOLUTE_MIN_BYTES) return true;
   if (wallMs >= 5000 && size / durSec < HOLLOW_MAX_BYTES_PER_SEC) return true;

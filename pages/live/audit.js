@@ -203,7 +203,16 @@ function flushAuditFileLines() {
     maybeRotateAuditFile(fs, filePath);
     var payload = batch.join('\n') + '\n';
     if (typeof fs.appendFileSync === 'function') {
-      fs.appendFileSync(filePath, payload, 'utf8');
+      var fileExists = false;
+      try {
+        fs.accessSync(filePath);
+        fileExists = true;
+      } catch (eAccess) { /* 首次写入 */ }
+      if (fileExists) {
+        fs.appendFileSync(filePath, payload, 'utf8');
+      } else {
+        fs.writeFileSync(filePath, payload, 'utf8');
+      }
     } else {
       fs.appendFile({
         filePath: filePath,
@@ -248,6 +257,36 @@ function appendAuditFile(event) {
     scheduleAuditFlushTimer();
   } catch (eLine) {
     logAuditFileError(eLine, 'append_line');
+  }
+}
+
+/**
+ * 清空内存缓冲、计数器与磁盘 NDJSON，开启新的直播页审计会话。
+ * 每次 onLoad 调用，避免跨场次/多次进入 live 页累加旧日志。
+ * @returns {void}
+ */
+function resetAuditSession() {
+  if (_auditFlushTimer) {
+    clearTimeout(_auditFlushTimer);
+    _auditFlushTimer = 0;
+  }
+  pendingAuditLines = [];
+  _highlightEventCounts = {};
+  _auditBuffer = new RingBuffer(AUDIT_BUFFER_CAPACITY);
+
+  var fs = getAuditFs();
+  if (!fs) return;
+  var paths = [
+    getAuditNdjsonPath(),
+    getAuditNdjsonOldPath(),
+    getAuditFinalPath()
+  ];
+  for (var i = 0; i < paths.length; i++) {
+    var p = paths[i];
+    if (!p) continue;
+    try {
+      fs.unlinkSync(p);
+    } catch (eUnlink) { /* 文件可能尚不存在 */ }
   }
 }
 
@@ -514,5 +553,6 @@ module.exports = {
   getAuditNdjsonPath: getAuditNdjsonPath,
   buildAuditSummary: buildAuditSummary,
   flushAuditFileLines: flushAuditFileLines,
-  compactAuditDetail: compactAuditDetail
+  compactAuditDetail: compactAuditDetail,
+  resetAuditSession: resetAuditSession
 };

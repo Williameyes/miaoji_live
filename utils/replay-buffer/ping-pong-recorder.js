@@ -137,6 +137,8 @@ function requestFrameRecorder(recorder, onDraw) {
     } catch (eReq) {
       finish(eReq);
     }
+    /** requestFrame 偶发永不回调（尤其 camera remount 后），须超时释放以免 feed 永久锁死。 */
+    setTimeout(() => finish(new Error('requestFrame timeout')), 800);
   });
 }
 
