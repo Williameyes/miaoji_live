@@ -154,6 +154,7 @@ class RecorderCore {
     this._highlightTimeoutTimer = setTimeout(() => {
       this._highlightTimeoutTimer = null;
       if (!this.pendingHighlight || this.pendingHighlight.id !== pending.id) return;
+      const epoch = page._rollingPipelineEpoch || 0;
       const clickCoveredByBufferedSegment = (Array.isArray(page.rollingSegments) ? page.rollingSegments : [])
         .some((seg) =>
           seg
@@ -161,6 +162,7 @@ class RecorderCore {
           && typeof seg.endTime === 'number'
           && seg.startTime <= pending.endTime
           && seg.endTime >= pending.endTime
+          && (seg.pipelineEpoch === undefined || seg.pipelineEpoch === epoch)
         );
       if (clickCoveredByBufferedSegment) {
         this._log('highlight_timeout_promoted_to_generate', {
@@ -231,6 +233,7 @@ class RecorderCore {
   maybeGenerateHighlight() {
     const pending = this.pendingHighlight;
     if (!pending) return false;
+    const epoch = this.page._rollingPipelineEpoch || 0;
     const segments = Array.isArray(this.page.rollingSegments) ? this.page.rollingSegments : [];
     const covered = segments.some((seg) =>
       seg
@@ -238,6 +241,7 @@ class RecorderCore {
       && typeof seg.endTime === 'number'
       && seg.startTime <= pending.endTime
       && seg.endTime >= pending.endTime
+      && (seg.pipelineEpoch === undefined || seg.pipelineEpoch === epoch)
     );
     if (!covered) return false;
     this.clearPendingHighlight();
@@ -373,7 +377,8 @@ class RecorderCore {
   onRecoverSuccess(source) {
     this.recoverFailCount = 0;
     this.leaveDegradedMode();
-    this.markReady(source || 'recover_success');
+    /** restart_only 路径结束时 state 仍为 RECOVERING；markReady 会 early return，须显式落态。 */
+    this.setState(RECORDER_STATE.READY, source || 'recover_success');
   }
 
   onRecoverFail(source) {

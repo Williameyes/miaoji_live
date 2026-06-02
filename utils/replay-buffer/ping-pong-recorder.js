@@ -1685,6 +1685,8 @@ class PingPongRecorder {
         if (!track) return;
         if (track.blit && track.blit.destroy) track.blit.destroy();
         this._destroyRecorder(track);
+        track.canvas = null;
+        track.blit = null;
       });
       this.tracks = {};
       this.segments = [];

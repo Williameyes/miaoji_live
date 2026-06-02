@@ -104,6 +104,17 @@ function createPreviewRecordPipeline(page) {
         if (settled) return;
         settled = true;
         warmupWaiters = warmupWaiters.filter((fn) => fn !== onWarmupReady);
+        if (warmupFrameCount >= needFrames) {
+          pipelineWarmedUp = true;
+          log('preview_record_warmup_ready', {
+            frameCount: warmupFrameCount,
+            needFrames,
+            elapsedMs: pipelineStartAt > 0 ? Date.now() - pipelineStartAt : 0,
+            via: 'timeout_frame_count'
+          });
+          resolve();
+          return;
+        }
         log('preview_record_warmup_timeout', { maxMs: limitMs, frameCount: warmupFrameCount, needFrames });
         reject(new Error('first frame timeout'));
       }, limitMs);
@@ -186,18 +197,55 @@ function createPreviewRecordPipeline(page) {
    */
   function applySegmentToPage(segment) {
     if (!page) return;
+    if (typeof page._handleDegradedRollingSegment === 'function') {
+      const wallMs = Math.max(0, (segment.endTime || 0) - (segment.startTime || 0));
+      const sizeBytes = segment.sizeBytes || 0;
+      if (
+        page._liveReturnedFromBackground
+        && wallMs >= 8000
+        && typeof page._isRollingSegmentQualityHealthy === 'function'
+        && !page._isRollingSegmentQualityHealthy(sizeBytes, wallMs)
+      ) {
+        page._handleDegradedRollingSegment(segment);
+        return;
+      }
+    }
     const now = Date.now();
     page.lastSegmentAt = now;
     page._lastSuccessfulChunkAt = now;
     touchPipelineHeartbeat('segment_ready');
     page.rollingSegments = page.rollingSegments || [];
-    page.rollingSegments.push(Object.assign({}, segment));
+    page.rollingSegments.push(Object.assign({}, segment, {
+      pipelineEpoch: page._rollingPipelineEpoch || 0
+    }));
     while (page.rollingSegments.length > (page.rollingBufferMax || 8)) {
       page.rollingSegments.shift();
     }
     page.segmentBuffer = page.rollingSegments;
     page.segmentCounter = (page.segmentCounter || 0) + 1;
     page.setData({ isRecording: true });
+    if (
+      page._liveReturnedFromBackground
+      && typeof page._isRollingSegmentQualityHealthy === 'function'
+    ) {
+      const wallMs = Math.max(0, (segment.endTime || 0) - (segment.startTime || 0));
+      const sizeBytes = segment.sizeBytes || 0;
+      if (page._isRollingSegmentQualityHealthy(sizeBytes, wallMs)) {
+        page._liveReturnedFromBackground = false;
+        page._highlightHollowFlushStreak = 0;
+        page._encodeStallGraceUntil = 0;
+        page._hardRecoverHadTimeoutRebuild = false;
+        page._lastSuccessfulChunkAt = now;
+        if (typeof page.appendHealthLog === 'function') {
+          page.appendHealthLog('preview_record_quality_restored', {
+            trackId: segment.trackId || '',
+            sizeBytes,
+            wallDurationMs: wallMs,
+            bytesPerSec: wallMs > 0 ? Math.round(sizeBytes / Math.max(1, wallMs / 1000)) : 0
+          });
+        }
+      }
+    }
     if (typeof page._tryGenerateHighlight === 'function') {
       page._tryGenerateHighlight();
     }
@@ -213,131 +261,140 @@ function createPreviewRecordPipeline(page) {
     return PingPongRecorder.isApiSupported();
   }
 
+  /** @type {Promise<void>|null} 串行化 stop→start，避免旧 PingPong 未 destroy 时新建实例。 */
+  let stopInFlight = null;
+
   /**
    * @param {Object} opts
    * @returns {Promise<void>}
    */
   function start(opts) {
     const options = opts || {};
-    if (active) return Promise.resolve();
-    if (!isSupported()) {
-      return Promise.reject(new Error('preview-record unsupported'));
-    }
-    const cameraContext = options.cameraContext || (page && page.data && page.data.cameraContext);
-    if (!cameraContext) {
-      return Promise.reject(new Error('cameraContext missing'));
-    }
-    const rollingDir = typeof page.getRollingDir === 'function' ? page.getRollingDir() : '';
-    const ensureRollingDir = typeof page.ensureRollingDir === 'function'
-      ? () => page.ensureRollingDir()
-      : () => Promise.resolve(rollingDir);
-    const fps = options.fps || 15;
-    frameInterval = frameIntervalMs(fps);
-    /**
-     * 给本次 pingPong 实例分配独立 sessionId；绑定到 boundOnSegmentReady 闭包内，
-     * stop() 后再有同一实例的迟到 segment 时，sessionId 已不匹配，自动丢弃。
-     */
-    activeSessionId += 1;
-    const instanceSessionId = activeSessionId;
-    /**
-     * @param {Object} segment
-     */
-    const boundOnSegmentReady = (segment) => {
-      if (!active || instanceSessionId !== activeSessionId) {
-        log('preview_record_stale_segment_dropped', {
-          path: segment && segment.path ? segment.path : '',
-          trackId: segment && segment.trackId ? segment.trackId : '',
-          instanceSessionId,
-          activeSessionId,
-          active,
-          startTime: segment && segment.startTime ? segment.startTime : 0,
-          endTime: segment && segment.endTime ? segment.endTime : 0,
-          sizeBytes: segment && segment.sizeBytes ? segment.sizeBytes : 0
-        });
-        return;
+    const runStart = () => {
+      if (active) return Promise.resolve();
+      if (!isSupported()) {
+        return Promise.reject(new Error('preview-record unsupported'));
       }
-      applySegmentToPage(segment);
-    };
-    pingPong = new PingPongRecorder({
-      onLog: log,
-      onSegmentReady: boundOnSegmentReady,
-      onTrackActivity: () => touchPipelineHeartbeat('track_start'),
-      onStoragePressure: (reason) => {
-        if (page && typeof page.freeRollingFileStorageAggressive === 'function') {
-          page.freeRollingFileStorageAggressive(reason || 'persist_io_fail');
+      const cameraContext = options.cameraContext || (page && page.data && page.data.cameraContext);
+      if (!cameraContext) {
+        return Promise.reject(new Error('cameraContext missing'));
+      }
+      const rollingDir = typeof page.getRollingDir === 'function' ? page.getRollingDir() : '';
+      const ensureRollingDir = typeof page.ensureRollingDir === 'function'
+        ? () => page.ensureRollingDir()
+        : () => Promise.resolve(rollingDir);
+      const fps = options.fps || 15;
+      frameInterval = frameIntervalMs(fps);
+      /**
+       * 给本次 pingPong 实例分配独立 sessionId；绑定到 boundOnSegmentReady 闭包内，
+       * stop() 后再有同一实例的迟到 segment 时，sessionId 已不匹配，自动丢弃。
+       */
+      activeSessionId += 1;
+      const instanceSessionId = activeSessionId;
+      /**
+       * @param {Object} segment
+       */
+      const boundOnSegmentReady = (segment) => {
+        if (!active || instanceSessionId !== activeSessionId) {
+          log('preview_record_stale_segment_dropped', {
+            path: segment && segment.path ? segment.path : '',
+            trackId: segment && segment.trackId ? segment.trackId : '',
+            instanceSessionId,
+            activeSessionId,
+            active,
+            startTime: segment && segment.startTime ? segment.startTime : 0,
+            endTime: segment && segment.endTime ? segment.endTime : 0,
+            sizeBytes: segment && segment.sizeBytes ? segment.sizeBytes : 0
+          });
+          return;
         }
-        return Promise.resolve();
-      },
-      rollingDir,
-      ensureRollingDir,
-      chunkDurationMs: options.chunkDurationMs || 180000,
-      staggerMs: options.staggerMs || 8000,
-      highlightFlushMinIntervalMs: options.highlightFlushMinIntervalMs || 10000,
-      fps,
-      stopToStartGapMs: options.stopToStartGapMs || 400,
-      recycleIntervalMs: options.recycleIntervalMs || 25 * 60 * 1000,
-      maxFiles: options.maxFiles || 2,
-      canvasWidth: options.canvasWidth || 854,
-      canvasHeight: options.canvasHeight || 480
-    });
-    pipelineWarmedUp = false;
-    warmupFrameCount = 0;
-    pipelineStartAt = Date.now();
-    warmupWaiters = [];
-    feeding = false;
-    feedingSince = 0;
-    const requireFirstFrame = options.requireFirstFrame !== false;
-    const firstFrameTimeoutMs = Number(options.firstFrameTimeoutMs) || PREVIEW_RECORD_FIRST_FRAME_TIMEOUT_MS;
-    currentWarmupMinFrames = Math.max(
-      PREVIEW_RECORD_WARMUP_MIN_FRAMES,
-      Number(options.warmupMinFrames) || PREVIEW_RECORD_WARMUP_MIN_FRAMES
-    );
-    return pingPong.init().then(() => {
-      frameSource = frameSourceMod.createNativeFrameSource({
-        cameraContext,
-        onFrame,
-        minIntervalMs: 0
-      });
-      return frameSource.start();
-    }).then(() => {
-      if (!requireFirstFrame) {
-        pipelineWarmedUp = true;
-        return Promise.resolve();
-      }
-      return waitForWarmupFrames(firstFrameTimeoutMs, currentWarmupMinFrames);
-    }).then(() => {
-      active = true;
-      return pingPong.start();
-    }).then(() => {
-      touchPipelineHeartbeat('pipeline_start');
-      if (page) {
-        page.lastRecordStartAt = Date.now();
-        page.setData({ isRecording: true });
-      }
-      log('preview_record_pipeline_start', {
+        applySegmentToPage(segment);
+      };
+      pingPong = new PingPongRecorder({
+        onLog: log,
+        onSegmentReady: boundOnSegmentReady,
+        onTrackActivity: () => touchPipelineHeartbeat('track_start'),
+        onStoragePressure: (reason) => {
+          if (page && typeof page.freeRollingFileStorageAggressive === 'function') {
+            page.freeRollingFileStorageAggressive(reason || 'persist_io_fail');
+          }
+          return Promise.resolve();
+        },
+        rollingDir,
+        ensureRollingDir,
+        chunkDurationMs: options.chunkDurationMs || 180000,
+        staggerMs: options.staggerMs || 8000,
+        highlightFlushMinIntervalMs: options.highlightFlushMinIntervalMs || 10000,
         fps,
-        sessionId: instanceSessionId,
-        requireFirstFrame,
-        warmupMinFrames: currentWarmupMinFrames
+        stopToStartGapMs: options.stopToStartGapMs || 400,
+        recycleIntervalMs: options.recycleIntervalMs || 25 * 60 * 1000,
+        maxFiles: options.maxFiles || 2,
+        canvasWidth: options.canvasWidth || 854,
+        canvasHeight: options.canvasHeight || 480
       });
-    }).catch((err) => {
-      if (frameSource) {
-        frameSource.stop();
-        frameSource = null;
-      }
-      if (pingPong) {
-        pingPong.destroy();
-        pingPong = null;
-      }
       pipelineWarmedUp = false;
       warmupFrameCount = 0;
-      pipelineStartAt = 0;
+      pipelineStartAt = Date.now();
       warmupWaiters = [];
       feeding = false;
       feedingSince = 0;
-      active = false;
-      throw err;
-    });
+      const requireFirstFrame = options.requireFirstFrame !== false;
+      const firstFrameTimeoutMs = Number(options.firstFrameTimeoutMs) || PREVIEW_RECORD_FIRST_FRAME_TIMEOUT_MS;
+      currentWarmupMinFrames = Math.max(
+        PREVIEW_RECORD_WARMUP_MIN_FRAMES,
+        Number(options.warmupMinFrames) || PREVIEW_RECORD_WARMUP_MIN_FRAMES
+      );
+      return pingPong.init().then(() => {
+        frameSource = frameSourceMod.createNativeFrameSource({
+          cameraContext,
+          onFrame,
+          minIntervalMs: 0
+        });
+        return frameSource.start();
+      }).then(() => {
+        if (!requireFirstFrame) {
+          pipelineWarmedUp = true;
+          return Promise.resolve();
+        }
+        return waitForWarmupFrames(firstFrameTimeoutMs, currentWarmupMinFrames);
+      }).then(() => {
+        active = true;
+        return pingPong.start();
+      }).then(() => {
+        touchPipelineHeartbeat('pipeline_start');
+        if (page) {
+          page.lastRecordStartAt = Date.now();
+          page.setData({ isRecording: true });
+        }
+        log('preview_record_pipeline_start', {
+          fps,
+          sessionId: instanceSessionId,
+          requireFirstFrame,
+          warmupMinFrames: currentWarmupMinFrames
+        });
+      }).catch((err) => {
+        if (frameSource) {
+          frameSource.stop();
+          frameSource = null;
+        }
+        if (pingPong) {
+          pingPong.destroy();
+          pingPong = null;
+        }
+        pipelineWarmedUp = false;
+        warmupFrameCount = 0;
+        pipelineStartAt = 0;
+        warmupWaiters = [];
+        feeding = false;
+        feedingSince = 0;
+        active = false;
+        throw err;
+      });
+    };
+    if (stopInFlight) {
+      return stopInFlight.then(() => runStart());
+    }
+    return runStart();
   }
 
   /**
@@ -366,22 +423,25 @@ function createPreviewRecordPipeline(page) {
       page.setData({ isRecording: false });
       page.lastRecordStartAt = 0;
     }
-    if (!pp) return Promise.resolve();
-    return pp.stop().then(() => {
-      log('preview_record_pipeline_stop', {});
+    if (!pp) {
+      stopInFlight = Promise.resolve();
+      return stopInFlight;
+    }
+    stopInFlight = pp.destroy().then(() => {
+      log('preview_record_pipeline_stop', { destroyed: true });
+    }).catch((err) => {
+      log('preview_record_pipeline_stop_fail', {
+        err: String(err && err.message || err).slice(0, 120)
+      });
     });
+    return stopInFlight;
   }
 
   /**
-   * @returns {void}
+   * @returns {Promise<void>}
    */
   function destroy() {
-    stop().finally(() => {
-      if (pingPong) {
-        pingPong.destroy();
-        pingPong = null;
-      }
-    });
+    return stop();
   }
 
   /**
