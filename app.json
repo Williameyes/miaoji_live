@@ -27,6 +27,7 @@
         "pages/radar-lab/oam/tournament-edit/tournament-edit",
         "pages/radar-lab/monitor/index",
         "pages/radar-lab/monitor/detail",
+        "pages/radar-lab/settlement/detail",
         "pages/radar-lab/poster/poster"
       ]
     }

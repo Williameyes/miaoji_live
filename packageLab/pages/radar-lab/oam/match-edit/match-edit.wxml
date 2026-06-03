@@ -35,6 +35,14 @@
           </picker>
         </view>
       </view>
+      <view class="rl-field">
+        <text class="rl-label">广告奖池金额（元）</text>
+        <input class="rl-input" type="digit" placeholder="如 700" value="{{totalPool}}" bindinput="onTotalPoolInput" />
+      </view>
+      <view class="rl-field">
+        <text class="rl-label">推广分起征人数</text>
+        <input class="rl-input" type="number" placeholder="如 1000" value="{{minViewers}}" bindinput="onMinViewersInput" />
+      </view>
       <button class="rl-btn rl-btn-primary" disabled="{{submitting || !tournaments.length}}" bindtap="onSave">保存场次</button>
       <button class="rl-btn rl-btn-secondary" style="margin-top:16rpx;" disabled="{{submitting || !tournaments.length}}" bindtap="onSaveAndMonitor">保存并进入监控</button>
     </view>

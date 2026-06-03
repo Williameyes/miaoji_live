@@ -91,13 +91,13 @@
 .oam-match-actions {
   display: flex;
   flex-direction: row;
-  gap: 12rpx;
+  gap: 8rpx;
   flex-shrink: 0;
 }
 
 .oam-action-btn {
   margin: 0;
-  padding: 0 22rpx;
+  padding: 0 18rpx;
   height: 60rpx;
   line-height: 60rpx;
   font-size: 24rpx;
@@ -118,6 +118,11 @@
 .oam-action-btn--primary {
   background: #dbeafe;
   color: #1d4ed8;
+}
+
+.oam-commercial-desc {
+  margin-top: 6rpx;
+  color: #64748b;
 }
 
 .rl-empty-sub {

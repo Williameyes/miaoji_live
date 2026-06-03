@@ -1,0 +1,113 @@
+@import '../common/common.wxss';
+
+.settle-metrics {
+  display: flex;
+  flex-direction: row;
+  gap: 20rpx;
+}
+
+.settle-metric {
+  flex: 1;
+  min-width: 0;
+  background: #f8fafc;
+  border-radius: 16rpx;
+  padding: 24rpx;
+}
+
+.settle-metric-label {
+  display: block;
+  font-size: 24rpx;
+  color: #64748b;
+  margin-bottom: 8rpx;
+}
+
+.settle-metric-value {
+  display: block;
+  font-size: 36rpx;
+  line-height: 1.2;
+  font-weight: 800;
+  color: #2563eb;
+}
+
+.settle-row {
+  padding: 28rpx 32rpx;
+  border-bottom: 1rpx solid #f1f5f9;
+}
+
+.settle-row:last-child {
+  border-bottom: none;
+}
+
+.settle-row-main {
+  min-width: 0;
+  margin-bottom: 18rpx;
+}
+
+.settle-row-title {
+  font-size: 30rpx;
+  font-weight: 800;
+  color: #1e293b;
+  margin-bottom: 8rpx;
+}
+
+.settle-row-desc,
+.settle-row-link {
+  font-size: 23rpx;
+  line-height: 1.45;
+  color: #64748b;
+  word-break: break-all;
+}
+
+.settle-row-link {
+  color: #2563eb;
+  margin-top: 4rpx;
+}
+
+.settle-row-side {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16rpx;
+  margin-bottom: 18rpx;
+}
+
+.settle-share {
+  font-size: 25rpx;
+  color: #64748b;
+}
+
+.settle-payout {
+  font-size: 34rpx;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.settle-row-actions {
+  display: flex;
+  flex-direction: row;
+  gap: 14rpx;
+}
+
+.settle-action-btn {
+  flex: 1;
+  height: 68rpx;
+  line-height: 68rpx;
+  margin: 0;
+  padding: 0 18rpx;
+  border: none;
+  border-radius: 16rpx;
+  font-size: 25rpx;
+  font-weight: 700;
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.settle-action-btn::after {
+  border: none;
+}
+
+.settle-action-btn--primary {
+  background: #dbeafe;
+  color: #1d4ed8;
+}

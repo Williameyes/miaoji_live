@@ -13,6 +13,13 @@
  * @property {string} matchStatus
  * @property {string} [currentOnline]
  * @property {string} [peakOnline]
+ * @property {string} [totalViewersRecap]
+ * @property {number} [totalPool]
+ * @property {number} [minViewers]
+ * @property {string} [settlementStatus]
+ * @property {string} [financialSettledAt]
+ * @property {number} [adsCount]
+ * @property {number} [adsVersion]
  */
 
 /**
@@ -72,7 +79,17 @@ function normalizeMatch(raw) {
     matchStatus: String(o.match_status || o.status || ''),
     currentOnline:
       o.current_online_count != null ? String(o.current_online_count) : '',
-    peakOnline: o.peak_user_count != null ? String(o.peak_user_count) : ''
+    peakOnline: o.peak_user_count != null ? String(o.peak_user_count) : '',
+    totalViewersRecap:
+      o.total_viewers_recap != null ? String(o.total_viewers_recap) : '',
+    totalPool: Number(o.total_pool ?? o.totalPool ?? 0) || 0,
+    minViewers: Number(o.min_viewers ?? o.minViewers ?? 0) || 0,
+    settlementStatus: String(o.settlement_status || o.settlementStatus || 'pending'),
+    financialSettledAt: String(o.financial_settled_at || o.financialSettledAt || ''),
+    adsCount:
+      Number(o.ads_count ?? o.adsCount ?? 0) ||
+      (Array.isArray(o.ads_list) ? o.ads_list.length : 0),
+    adsVersion: Number(o.ads_version ?? o.adsVersion ?? 0) || 0
   };
 }
 

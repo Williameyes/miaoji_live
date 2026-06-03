@@ -6,10 +6,21 @@ const { ensureRadarLabAccess } = require('../../../utils/radar-access.js');
 const {
   oamUpsert,
   fetchTournamentList,
-  fetchMatchList
+  fetchMatchList,
+  fetchMatchDetail
 } = require('../../../services/radar-api.js');
 const { formatStartTimeDisplay } = require('../../../utils/radar-datetime.js');
 const { parseMatchExcelBuffer } = require('../../../utils/radar-excel-parser.js');
+
+/**
+ * @param {import('../../../utils/radar-model.js').RadarMatchView} m
+ * @returns {string}
+ */
+function formatCommercialText(m) {
+  const poolText = m.totalPool > 0 ? '奖池 ¥' + m.totalPool : '未配奖池';
+  const settlementText = m.settlementStatus === 'settled' ? '已清算' : '待清算';
+  return poolText + ' · ' + settlementText;
+}
 
 Page({
   data: {
@@ -66,7 +77,8 @@ Page({
               teamA: m.teamA,
               teamB: m.teamB,
               startTimeText: formatStartTimeDisplay(m.startTime),
-              tournamentName: m.tournamentName || '—'
+              tournamentName: m.tournamentName || '—',
+              commercialText: formatCommercialText(m)
             };
           });
           self.setData({
@@ -76,6 +88,7 @@ Page({
             matchRows: matchRows,
             loading: false
           });
+          self._hydrateCommercialDetails(matchRows);
         });
       })
       .catch(function (err) {
@@ -84,6 +97,42 @@ Page({
           wx.showToast({ title: err.message || '加载失败', icon: 'none' });
         }
       });
+  },
+
+  /**
+   * match/list 不保证返回商业字段，奖池/清算状态以 match/detail 为准。
+   * @param {Array<Record<string, unknown>>} rows
+   * @returns {void}
+   */
+  _hydrateCommercialDetails: function (rows) {
+    const self = this;
+    if (!Array.isArray(rows) || !rows.length) return;
+    Promise.all(
+      rows.map(function (row) {
+        return fetchMatchDetail(row.id)
+          .then(function (detail) {
+            return detail
+              ? {
+                  id: String(row.id),
+                  commercialText: formatCommercialText(detail)
+                }
+              : null;
+          })
+          .catch(function () {
+            return null;
+          });
+      })
+    ).then(function (details) {
+      const detailMap = {};
+      details.forEach(function (item) {
+        if (item) detailMap[item.id] = item.commercialText;
+      });
+      const nextRows = self.data.matchRows.map(function (row) {
+        const text = detailMap[String(row.id)];
+        return text ? Object.assign({}, row, { commercialText: text }) : row;
+      });
+      self.setData({ matchRows: nextRows });
+    });
   },
 
   /**
@@ -185,6 +234,21 @@ Page({
     if (!id) return;
     wx.navigateTo({
       url: '/packageLab/pages/radar-lab/monitor/detail?match_id=' + encodeURIComponent(id)
+    });
+  },
+
+  /**
+   * @param {WechatMiniprogram.BaseEvent} e
+   * @returns {void}
+   */
+  onOpenAds: function (e) {
+    const id = e.currentTarget.dataset.id;
+    if (!id) return;
+    wx.navigateTo({
+      url:
+        '/packageLab/pages/radar-lab/monitor/detail?match_id=' +
+        encodeURIComponent(id) +
+        '&focus_ads=1'
     });
   },
 

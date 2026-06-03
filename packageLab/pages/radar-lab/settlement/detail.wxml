@@ -1,0 +1,63 @@
+<view class="rl-root">
+
+  <view class="rl-header">
+    <view class="rl-kicker">广告核销</view>
+    <view class="rl-title">{{matchTitle || '结算单'}}</view>
+    <view class="rl-sub" wx:if="{{matchId}}">
+      <text wx:if="{{tournamentName}}">{{tournamentName}} · </text>
+      <text>{{financialSettledAt || settlementStatus}}</text>
+    </view>
+  </view>
+
+  <view class="rl-card">
+    <view class="rl-card-inner">
+      <view class="settle-metrics">
+        <view class="settle-metric">
+          <text class="settle-metric-label">奖池</text>
+          <text class="settle-metric-value">{{totalPoolText}}</text>
+        </view>
+        <view class="settle-metric">
+          <text class="settle-metric-label">应付合计</text>
+          <text class="settle-metric-value">{{payoutTotalText}}</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="rl-empty" wx:if="{{loading}}">
+    <text>加载中…</text>
+  </view>
+
+  <view class="rl-card" wx:elif="{{rows.length}}">
+    <block wx:for="{{rows}}" wx:key="index">
+      <view class="settle-row">
+        <view class="settle-row-main">
+          <view class="settle-row-title">主播 {{item.index}}</view>
+          <view class="settle-row-desc">{{item.secUserId}}</view>
+          <view class="settle-row-link" wx:if="{{item.liveUrl}}">{{item.liveUrl}}</view>
+        </view>
+        <view class="settle-row-side">
+          <text class="settle-share">{{item.totalShares}} 分</text>
+          <text class="settle-payout">{{item.finalPayoutText}}</text>
+        </view>
+        <view class="settle-row-actions" wx:if="{{item.evidenceZipUrl}}">
+          <button
+            class="settle-action-btn settle-action-btn--primary"
+            data-url="{{item.evidenceZipUrl}}"
+            bindtap="onDownloadEvidence"
+          >下载核销包</button>
+          <button
+            class="settle-action-btn"
+            data-url="{{item.evidenceZipUrl}}"
+            bindtap="onCopyEvidence"
+          >复制链接</button>
+        </view>
+      </view>
+    </block>
+  </view>
+
+  <view class="rl-empty" wx:else>
+    <text>暂无结算记录</text>
+  </view>
+
+</view>

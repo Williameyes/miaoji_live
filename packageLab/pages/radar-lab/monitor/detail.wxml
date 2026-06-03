@@ -27,6 +27,54 @@
 
   <view class="rl-card">
     <view class="rl-card-inner">
+      <view class="mon-commercial-head">
+        <view class="rl-section-title">广告核销</view>
+        <text class="rl-badge {{settlementBadgeClass}}">{{settlementLabel}}</text>
+      </view>
+      <view class="mon-metrics mon-commercial-metrics">
+        <view class="mon-metric">
+          <text class="mon-metric-label">广告奖池</text>
+          <text class="mon-metric-value mon-metric-value-small">{{totalPoolText}}</text>
+        </view>
+        <view class="mon-metric">
+          <text class="mon-metric-label">起征人数</text>
+          <text class="mon-metric-value mon-metric-value-small">{{minViewersText}}</text>
+        </view>
+      </view>
+      <view class="mon-commercial-row">
+        <view class="mon-commercial-stat">
+          <text class="mon-commercial-label">物料数</text>
+          <text class="mon-commercial-value">{{adsCountText}}</text>
+        </view>
+        <view class="mon-commercial-stat">
+          <text class="mon-commercial-label">物料版本</text>
+          <text class="mon-commercial-value">{{adsVersionText}}</text>
+        </view>
+        <view class="mon-commercial-stat" wx:if="{{financialSettledAt}}">
+          <text class="mon-commercial-label">清算时间</text>
+          <text class="mon-commercial-value">{{financialSettledAt}}</text>
+        </view>
+      </view>
+      <view class="rl-field">
+        <text class="rl-label">品牌名称</text>
+        <input
+          class="rl-input"
+          placeholder="可选，同品牌重复上传将更新"
+          value="{{logoBrandName}}"
+          bindinput="onLogoBrandInput"
+          disabled="{{settlementStatus === 'settled'}}"
+        />
+      </view>
+      <button
+        class="rl-btn rl-btn-secondary"
+        disabled="{{uploadingLogo || settlementStatus === 'settled'}}"
+        bindtap="onChooseLogo"
+      >上传品牌 Logo</button>
+    </view>
+  </view>
+
+  <view class="rl-card">
+    <view class="rl-card-inner">
       <view class="rl-section-title">全网合流热度</view>
       <view class="mon-canvas-wrap">
         <canvas type="2d" id="heatCanvas" class="mon-canvas"></canvas>
@@ -42,10 +90,22 @@
       disabled="{{submitting || !canStop}}"
       bindtap="onStopMonitoring"
     >关闭监控</button>
+    <button
+      wx:if="{{!canOpenSettlement}}"
+      class="rl-btn rl-btn-secondary"
+      disabled="{{submitting || !canSettle}}"
+      bindtap="onSettleMatch"
+    >一键清算</button>
+    <button
+      wx:else
+      class="rl-btn rl-btn-primary"
+      disabled="{{submitting}}"
+      bindtap="onOpenSettlement"
+    >查看结算单</button>
   </view>
 
   <view class="rl-notice">
-    <text class="rl-notice-text">本场监控专属页面；同场次可多次粘贴不同主播口令；关闭监控将释放全部 Worker。</text>
+    <text class="rl-notice-text">{{canSettle || canOpenSettlement ? '结算单按赛后推广分生成。' : settleDisabledTip}}</text>
   </view>
 
   <view class="rl-modal-mask" wx:if="{{showBindModal}}" bindtap="onCloseBindModal" catchtouchmove="stopModalBubble">

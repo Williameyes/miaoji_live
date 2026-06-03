@@ -27,6 +27,60 @@
   color: #2563eb;
 }
 
+.mon-metric-value-small {
+  font-size: 32rpx;
+  color: #0f172a;
+}
+
+.mon-commercial-head {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  margin-bottom: 20rpx;
+}
+
+.mon-commercial-head .rl-section-title {
+  margin-bottom: 0;
+}
+
+.mon-commercial-metrics {
+  margin-bottom: 22rpx;
+}
+
+.mon-commercial-row {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 14rpx;
+  margin-bottom: 24rpx;
+}
+
+.mon-commercial-stat {
+  min-width: 180rpx;
+  flex: 1;
+  background: #f8fafc;
+  border-radius: 14rpx;
+  padding: 18rpx 20rpx;
+  box-sizing: border-box;
+}
+
+.mon-commercial-label {
+  display: block;
+  font-size: 22rpx;
+  color: #94a3b8;
+  margin-bottom: 6rpx;
+}
+
+.mon-commercial-value {
+  display: block;
+  font-size: 25rpx;
+  color: #334155;
+  font-weight: 700;
+  word-break: break-all;
+}
+
 .mon-canvas-wrap {
   position: relative;
   width: 100%;

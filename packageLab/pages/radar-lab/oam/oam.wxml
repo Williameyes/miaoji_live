@@ -35,9 +35,11 @@
         <view class="oam-match-main" bindtap="onEditMatch" data-id="{{item.id}}">
           <view class="rl-list-title">{{item.teamA}} vs {{item.teamB}}</view>
           <view class="rl-list-desc">{{item.startTimeText}} · {{item.tournamentName}}</view>
+          <view class="rl-list-desc oam-commercial-desc">{{item.commercialText}}</view>
         </view>
         <view class="oam-match-actions">
           <button class="oam-action-btn oam-action-btn--ghost" bindtap="onEditMatch" data-id="{{item.id}}">编辑</button>
+          <button class="oam-action-btn oam-action-btn--ghost" bindtap="onOpenAds" data-id="{{item.id}}">广告</button>
           <button class="oam-action-btn oam-action-btn--primary" bindtap="onOpenMonitor" data-id="{{item.id}}">监控</button>
         </view>
       </view>

@@ -7,7 +7,9 @@ const {
   addMatchTask,
   stopMatchMonitoring,
   fetchMatchStreamData,
-  fetchMatchDetail
+  fetchMatchDetail,
+  setMatchAds,
+  settleMatch
 } = require('../../../services/radar-api.js');
 const {
   normalizeTimeline,
@@ -35,6 +37,28 @@ const STATUS_BADGE = {
   interrupted: 'rl-badge-warn'
 };
 
+/** @type {Record<string, string>} */
+const SETTLEMENT_LABELS = {
+  pending: '待清算',
+  settled: '已清算'
+};
+
+/** @type {Record<string, string>} */
+const SETTLEMENT_BADGE = {
+  pending: 'rl-badge-warn',
+  settled: 'rl-badge-ok'
+};
+
+/**
+ * @param {number} amount
+ * @returns {string}
+ */
+function formatMoney(amount) {
+  if (!amount || amount <= 0) return '未配置';
+  const fixed = Number(amount).toFixed(2);
+  return '¥' + fixed.replace(/\.00$/, '');
+}
+
 Page({
   data: {
     matchId: '',
@@ -45,6 +69,20 @@ Page({
     statusBadgeClass: 'rl-badge-muted',
     currentOnline: '—',
     peakOnline: '—',
+    totalPoolNumber: 0,
+    totalPoolText: '未配置',
+    minViewersText: '未配置',
+    adsCountText: '—',
+    adsVersionText: '—',
+    settlementStatus: 'pending',
+    settlementLabel: '待清算',
+    settlementBadgeClass: 'rl-badge-warn',
+    financialSettledAt: '',
+    canSettle: false,
+    canOpenSettlement: false,
+    settleDisabledTip: '等待全场监控结束',
+    logoBrandName: '',
+    uploadingLogo: false,
     timelineEmpty: true,
     polling: false,
     showBindModal: false,
@@ -80,7 +118,10 @@ Page({
       }, 600);
       return;
     }
-    this.setData({ matchId: matchId });
+    this.setData({
+      matchId: matchId,
+      focusAds: query && query.focus_ads === '1'
+    });
     this._loadMatchMeta(matchId);
   },
 
@@ -89,6 +130,7 @@ Page({
    */
   onShow: function () {
     if (this.data.matchId) {
+      this._loadMatchMeta(this.data.matchId, true);
       this._fetchStreamOnce();
       this._startPolling();
     }
@@ -118,29 +160,100 @@ Page({
   },
 
   /**
-   * 拉取场次元信息（队名、赛事名）。
+   * 拉取场次元信息（队名、赛事名、商业配置）。
    * @param {string} matchId
+   * @param {boolean} [silent]
    * @returns {void}
    */
-  _loadMatchMeta: function (matchId) {
+  _loadMatchMeta: function (matchId, silent) {
     const self = this;
     fetchMatchDetail(matchId)
       .then(function (detail) {
-        const title = detail
-          ? detail.teamA + ' vs ' + detail.teamB
-          : '场次 #' + matchId;
-        self.setData({
-          matchTitle: title,
-          tournamentName: detail ? detail.tournamentName : '',
-          loading: false
-        });
-      })
-      .catch(function () {
+        if (detail) {
+          self._applyMatchDetail(detail);
+          return;
+        }
         self.setData({
           matchTitle: '场次 #' + matchId,
           loading: false
         });
+      })
+      .catch(function () {
+        if (!silent) {
+          self.setData({
+            matchTitle: '场次 #' + matchId,
+            loading: false
+          });
+        }
       });
+  },
+
+  /**
+   * @param {import('../../../utils/radar-model.js').RadarMatchView} detail
+   * @returns {void}
+   */
+  _applyMatchDetail: function (detail) {
+    const status = detail.matchStatus || this.data.matchStatus;
+    const settlementStatus = detail.settlementStatus || 'pending';
+    const flags = this._buildSettleFlags({
+      matchStatus: status,
+      settlementStatus: settlementStatus,
+      totalPoolNumber: detail.totalPool || 0
+    });
+    this.setData(Object.assign({
+      matchTitle: detail.teamA + ' vs ' + detail.teamB,
+      tournamentName: detail.tournamentName,
+      matchStatus: status,
+      statusLabel: STATUS_LABELS[status] || status || '未知',
+      statusBadgeClass: STATUS_BADGE[status] || 'rl-badge-muted',
+      totalPoolNumber: detail.totalPool || 0,
+      totalPoolText: formatMoney(detail.totalPool || 0),
+      minViewersText: detail.minViewers > 0 ? String(detail.minViewers) + ' 人' : '未配置',
+      adsCountText: detail.adsCount > 0 ? String(detail.adsCount) + ' 个' : '—',
+      adsVersionText: detail.adsVersion > 0 ? 'v' + detail.adsVersion : '—',
+      settlementStatus: settlementStatus,
+      settlementLabel: SETTLEMENT_LABELS[settlementStatus] || settlementStatus || '待清算',
+      settlementBadgeClass: SETTLEMENT_BADGE[settlementStatus] || 'rl-badge-warn',
+      financialSettledAt: detail.financialSettledAt || '',
+      loading: false
+    }, flags));
+  },
+
+  /**
+   * @param {{matchStatus?: string, settlementStatus?: string, totalPoolNumber?: number}} next
+   * @returns {{canSettle: boolean, canOpenSettlement: boolean, settleDisabledTip: string}}
+   */
+  _buildSettleFlags: function (next) {
+    const matchStatus = next.matchStatus || this.data.matchStatus;
+    const settlementStatus = next.settlementStatus || this.data.settlementStatus;
+    const totalPoolNumber =
+      typeof next.totalPoolNumber === 'number' ? next.totalPoolNumber : this.data.totalPoolNumber;
+    if (settlementStatus === 'settled') {
+      return {
+        canSettle: false,
+        canOpenSettlement: true,
+        settleDisabledTip: '本场已清算'
+      };
+    }
+    if (matchStatus !== 'ended') {
+      return {
+        canSettle: false,
+        canOpenSettlement: false,
+        settleDisabledTip: '等待全场监控结束'
+      };
+    }
+    if (!totalPoolNumber || totalPoolNumber <= 0) {
+      return {
+        canSettle: false,
+        canOpenSettlement: false,
+        settleDisabledTip: '请先配置广告奖池金额'
+      };
+    }
+    return {
+      canSettle: true,
+      canOpenSettlement: false,
+      settleDisabledTip: ''
+    };
   },
 
   /**
@@ -247,7 +360,8 @@ Page({
         );
         self._timelinePoints = timeline;
         const canStop = status === 'monitoring' || status === 'waiting_radar';
-        self.setData({
+        const flags = self._buildSettleFlags({ matchStatus: status });
+        self.setData(Object.assign({
           matchStatus: status,
           statusLabel: STATUS_LABELS[status] || status || '未知',
           statusBadgeClass: STATUS_BADGE[status] || 'rl-badge-muted',
@@ -255,7 +369,7 @@ Page({
           peakOnline: formatCompactCount(parseUserCount(res.peak_user_count)),
           timelineEmpty: !timeline.length,
           canStop: canStop
-        });
+        }, flags));
         self._redrawChart();
       })
       .catch(function (err) {
@@ -324,6 +438,138 @@ Page({
   },
 
   /**
+   * @param {WechatMiniprogram.Input} e
+   * @returns {void}
+   */
+  onLogoBrandInput: function (e) {
+    this.setData({ logoBrandName: e.detail.value });
+  },
+
+  /**
+   * @returns {void}
+   */
+  onChooseLogo: function () {
+    if (this.data.settlementStatus === 'settled') {
+      wx.showToast({ title: '本场已清算，不能修改广告物料', icon: 'none' });
+      return;
+    }
+    const self = this;
+    const handleFile = function (file) {
+      if (!file || !file.tempFilePath) return;
+      self._uploadLogo(file.tempFilePath);
+    };
+    if (wx.chooseMedia) {
+      wx.chooseMedia({
+        count: 1,
+        mediaType: ['image'],
+        sizeType: ['compressed'],
+        sourceType: ['album', 'camera'],
+        success: function (res) {
+          handleFile(res.tempFiles && res.tempFiles[0]);
+        }
+      });
+      return;
+    }
+    wx.chooseImage({
+      count: 1,
+      sizeType: ['compressed'],
+      sourceType: ['album', 'camera'],
+      success: function (res) {
+        handleFile({
+          tempFilePath: res.tempFilePaths && res.tempFilePaths[0],
+          size: res.tempFiles && res.tempFiles[0] ? res.tempFiles[0].size : 0
+        });
+      }
+    });
+  },
+
+  /**
+   * @param {string} filePath
+   * @returns {void}
+   */
+  _uploadLogo: function (filePath) {
+    const self = this;
+    this.setData({ uploadingLogo: true });
+    wx.showLoading({ title: '上传中…', mask: true });
+    setMatchAds({
+      matchId: this.data.matchId,
+      brandName: String(this.data.logoBrandName || '').trim(),
+      filePath: filePath
+    })
+      .then(function (res) {
+        wx.hideLoading();
+        const msg = typeof res.message === 'string' && res.message ? res.message : 'Logo 已上传';
+        wx.showToast({ title: msg.length > 12 ? 'Logo 已上传' : msg, icon: 'success' });
+        self.setData({ logoBrandName: '' });
+        self._loadMatchMeta(self.data.matchId, true);
+      })
+      .catch(function (err) {
+        wx.hideLoading();
+        wx.showToast({ title: err.message || '上传失败', icon: 'none' });
+      })
+      .finally(function () {
+        self.setData({ uploadingLogo: false });
+      });
+  },
+
+  /**
+   * @returns {void}
+   */
+  onSettleMatch: function () {
+    const self = this;
+    if (!this.data.canSettle) {
+      wx.showToast({ title: this.data.settleDisabledTip || '暂不能清算', icon: 'none' });
+      return;
+    }
+    wx.showModal({
+      title: '一键财务清算',
+      content: '将按推广分占比生成本场结算单，清算后广告物料不可再修改。确定继续？',
+      confirmText: '清算',
+      success: function (res) {
+        if (!res.confirm) return;
+        self._doSettleMatch();
+      }
+    });
+  },
+
+  /**
+   * @returns {void}
+   */
+  _doSettleMatch: function () {
+    const self = this;
+    this.setData({ submitting: true });
+    wx.showLoading({ title: '清算中…', mask: true });
+    settleMatch(this.data.matchId)
+      .then(function () {
+        wx.hideLoading();
+        wx.showToast({ title: '清算完成', icon: 'success' });
+        self._loadMatchMeta(self.data.matchId, true);
+        setTimeout(function () {
+          self.onOpenSettlement();
+        }, 450);
+      })
+      .catch(function (err) {
+        wx.hideLoading();
+        wx.showToast({ title: err.message || '清算失败', icon: 'none' });
+      })
+      .finally(function () {
+        self.setData({ submitting: false });
+      });
+  },
+
+  /**
+   * @returns {void}
+   */
+  onOpenSettlement: function () {
+    if (!this.data.matchId) return;
+    wx.navigateTo({
+      url:
+        '/packageLab/pages/radar-lab/settlement/detail?match_id=' +
+        encodeURIComponent(this.data.matchId)
+    });
+  },
+
+  /**
    * @returns {void}
    */
   onStopMonitoring: function () {
@@ -351,6 +597,7 @@ Page({
     stopMatchMonitoring(matchId)
       .then(function () {
         wx.showToast({ title: '监控已关闭', icon: 'success' });
+        self._loadMatchMeta(matchId, true);
         self._fetchStreamOnce();
       })
       .catch(function (err) {

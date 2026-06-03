@@ -26,6 +26,8 @@ Page({
     teamB: '',
     startDate: '',
     startTime: '',
+    totalPool: '',
+    minViewers: '',
     submitting: false,
     loading: true
   },
@@ -56,6 +58,8 @@ Page({
         let teamB = '';
         let startDate = timestampToDateStr(now);
         let startTime = timestampToTimeStr(now);
+        let totalPool = '';
+        let minViewers = '';
         const loadDetail = editId
           ? fetchMatchDetail(editId).then(function (detail) {
               if (detail) {
@@ -65,6 +69,8 @@ Page({
                 const parts = parseStartTimeToParts(detail.startTime);
                 startDate = parts.dateStr;
                 startTime = parts.timeStr;
+                totalPool = detail.totalPool > 0 ? String(detail.totalPool) : '';
+                minViewers = detail.minViewers > 0 ? String(detail.minViewers) : '';
               }
             })
           : Promise.resolve();
@@ -86,6 +92,8 @@ Page({
             teamB: teamB,
             startDate: startDate,
             startTime: startTime,
+            totalPool: totalPool,
+            minViewers: minViewers,
             loading: false
           });
         });
@@ -143,6 +151,80 @@ Page({
   },
 
   /**
+   * @param {WechatMiniprogram.Input} e
+   * @returns {void}
+   */
+  onTotalPoolInput: function (e) {
+    this.setData({ totalPool: e.detail.value });
+  },
+
+  /**
+   * @param {WechatMiniprogram.Input} e
+   * @returns {void}
+   */
+  onMinViewersInput: function (e) {
+    this.setData({ minViewers: e.detail.value });
+  },
+
+  /**
+   * @returns {{totalPool: number, minViewers: number} | null}
+   */
+  _readCommercialConfig: function () {
+    const poolText = String(this.data.totalPool || '').trim();
+    const minText = String(this.data.minViewers || '').trim();
+    const totalPool = poolText ? Number(poolText) : 0;
+    const minViewers = minText ? Number(minText) : 0;
+    if (poolText && (!Number.isFinite(totalPool) || totalPool < 0)) {
+      wx.showToast({ title: '奖池金额需为非负数字', icon: 'none' });
+      return null;
+    }
+    if (minText && (!Number.isFinite(minViewers) || minViewers < 0 || Math.floor(minViewers) !== minViewers)) {
+      wx.showToast({ title: '起征人数需为非负整数', icon: 'none' });
+      return null;
+    }
+    return { totalPool: totalPool, minViewers: minViewers };
+  },
+
+  /**
+   * @param {Record<string, unknown>} data
+   * @returns {Record<string, unknown> | null}
+   */
+  _appendCommercialConfig: function (data) {
+    const cfg = this._readCommercialConfig();
+    if (!cfg) return null;
+    if (String(this.data.totalPool || '').trim()) {
+      data.total_pool = cfg.totalPool;
+    }
+    if (String(this.data.minViewers || '').trim()) {
+      data.min_viewers = cfg.minViewers;
+    }
+    return data;
+  },
+
+  /**
+   * 新建场次时，兼容后端 insert 分支暂未写入商业字段的情况：拿到 ID 后补一次 update。
+   * @param {Record<string, unknown>} payload
+   * @returns {Promise<Record<string, unknown>>}
+   */
+  _submitMatchUpsert: function (payload) {
+    const data = payload.data || {};
+    const hasCommercialConfig =
+      data.total_pool !== undefined || data.min_viewers !== undefined;
+    return oamUpsert(payload).then(function (res) {
+      const affectedId = res && res.affected_id ? String(res.affected_id) : '';
+      if (data.match_id || !affectedId || !hasCommercialConfig) {
+        return res;
+      }
+      return oamUpsert({
+        action: 'upsert_match',
+        data: Object.assign({}, data, { match_id: affectedId })
+      }).then(function () {
+        return res;
+      });
+    });
+  },
+
+  /**
    * @returns {void}
    */
   onSave: function () {
@@ -154,20 +236,22 @@ Page({
       return;
     }
     const startTimeStr = combineDateTimeToStartTime(d.startDate, d.startTime);
+    const matchData = this._appendCommercialConfig({
+      tournament_id: d.tournamentId,
+      team_a: d.teamA.trim(),
+      team_b: d.teamB.trim(),
+      start_time: startTimeStr
+    });
+    if (!matchData) return;
     this.setData({ submitting: true });
     const payload = {
       action: 'upsert_match',
-      data: {
-        tournament_id: d.tournamentId,
-        team_a: d.teamA.trim(),
-        team_b: d.teamB.trim(),
-        start_time: startTimeStr
-      }
+      data: matchData
     };
     if (d.matchId) {
       payload.data.match_id = d.matchId;
     }
-    oamUpsert(payload)
+    this._submitMatchUpsert(payload)
       .then(function () {
         wx.showToast({ title: '已保存', icon: 'success' });
         setTimeout(function () {
@@ -194,20 +278,22 @@ Page({
       return;
     }
     const startTimeStr = combineDateTimeToStartTime(d.startDate, d.startTime);
+    const matchData = this._appendCommercialConfig({
+      tournament_id: d.tournamentId,
+      team_a: d.teamA.trim(),
+      team_b: d.teamB.trim(),
+      start_time: startTimeStr
+    });
+    if (!matchData) return;
     this.setData({ submitting: true });
     const payload = {
       action: 'upsert_match',
-      data: {
-        tournament_id: d.tournamentId,
-        team_a: d.teamA.trim(),
-        team_b: d.teamB.trim(),
-        start_time: startTimeStr
-      }
+      data: matchData
     };
     if (d.matchId) {
       payload.data.match_id = d.matchId;
     }
-    oamUpsert(payload)
+    this._submitMatchUpsert(payload)
       .then(function (res) {
         const id = String(res.affected_id || d.matchId || '');
         wx.redirectTo({
