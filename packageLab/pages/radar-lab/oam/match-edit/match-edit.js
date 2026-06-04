@@ -202,26 +202,12 @@ Page({
   },
 
   /**
-   * 新建场次时，兼容后端 insert 分支暂未写入商业字段的情况：拿到 ID 后补一次 update。
+   * 提交场次 upsert。后端 insert/update 均已支持商业字段，不额外补 update。
    * @param {Record<string, unknown>} payload
    * @returns {Promise<Record<string, unknown>>}
    */
   _submitMatchUpsert: function (payload) {
-    const data = payload.data || {};
-    const hasCommercialConfig =
-      data.total_pool !== undefined || data.min_viewers !== undefined;
-    return oamUpsert(payload).then(function (res) {
-      const affectedId = res && res.affected_id ? String(res.affected_id) : '';
-      if (data.match_id || !affectedId || !hasCommercialConfig) {
-        return res;
-      }
-      return oamUpsert({
-        action: 'upsert_match',
-        data: Object.assign({}, data, { match_id: affectedId })
-      }).then(function () {
-        return res;
-      });
-    });
+    return oamUpsert(payload);
   },
 
   /**

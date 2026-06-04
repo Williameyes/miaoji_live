@@ -21,6 +21,9 @@ const {
 /** 轮询间隔（毫秒） */
 const POLL_INTERVAL_MS = 20000;
 
+/** Logo 原图上传上限（字节） */
+const LOGO_MAX_UPLOAD_SIZE = 200 * 1024;
+
 /** @type {Record<string, string>} */
 const STATUS_LABELS = {
   waiting_radar: '等待雷达',
@@ -456,6 +459,10 @@ Page({
     const self = this;
     const handleFile = function (file) {
       if (!file || !file.tempFilePath) return;
+      if (file.size && file.size > LOGO_MAX_UPLOAD_SIZE) {
+        wx.showToast({ title: 'Logo 请控制在 200KB 以内', icon: 'none' });
+        return;
+      }
       self._uploadLogo(file.tempFilePath);
     };
     if (wx.chooseMedia) {
