@@ -3,6 +3,7 @@ const {
   persistPendingReferrerFromQuery,
   consumeVipExtensionCelebrationIfNeeded
 } = require('./utils/referral.js');
+const { persistPromoSquareMatchIdFromQuery } = require('./utils/promo-square-cache.js');
 const {
   evaluateEnhanceRenderWhitelist,
   evaluateVkSupportCached
@@ -25,7 +26,9 @@ App({
     }
 
     if (options && options.query) {
-      persistPendingReferrerFromQuery(/** @type {Record<string, string | undefined>} */ (options.query));
+      const q = /** @type {Record<string, string | undefined>} */ (options.query);
+      persistPendingReferrerFromQuery(q);
+      persistPromoSquareMatchIdFromQuery(q);
     }
 
     // 初始化文件系统
@@ -106,7 +109,9 @@ App({
    */
   onShow: function (options) {
     if (options && options.query) {
-      persistPendingReferrerFromQuery(/** @type {Record<string, string | undefined>} */ (options.query));
+      const q = /** @type {Record<string, string | undefined>} */ (options.query);
+      persistPendingReferrerFromQuery(q);
+      persistPromoSquareMatchIdFromQuery(q);
     }
     if (!getToken()) {
       return;

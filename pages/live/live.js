@@ -49,6 +49,7 @@ const vkCanvasRecorderMod = {
 };
 const { checkSyncLabWhitelist } = require('../../utils/sync-lab-whitelist.js');
 const liveWsClientMod = require('../../services/live-ws-client.js');
+const { loadPromoAds } = require('../../services/promo-live.service.js');
 const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
 
 /**
@@ -514,6 +515,21 @@ Page({
     drawerHighlights: [],
     /** 当前场次高光片段总数（用于抽屉顶部统计显示）。 */
     highlightCount: 0,
+    /**
+     * 商业推广：母比赛 ID（promo_match_id，与本地计分场次 currentMatchId 无关）。
+     * @type {string}
+     */
+    promoMatchId: '',
+    /** 商业推广 Logo 列表（含拖拽坐标 x/y） */
+    promoAds: [],
+    /** 是否在取景框上展示推广 Logo */
+    promoAdsVisible: false,
+    /** 载入 Ads 紧凑面板（与自动记分房间号面板同款） */
+    promoAdsPanelOpen: false,
+    /** 弹窗内输入的母比赛 ID */
+    promoLoadInput: '',
+    /** 载入推广请求中 */
+    promoLoadBusy: false,
     defaultCover: 'data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"160\" height=\"90\" viewBox=\"0 0 160 90\"><defs><linearGradient id=\"g\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"%2338475e\"/><stop offset=\"100%\" stop-color=\"%23202a3c\"/></linearGradient></defs><rect width=\"160\" height=\"90\" rx=\"12\" ry=\"12\" fill=\"url(%23g)\"/></svg>',
 
     showReplayMask: false,
@@ -11380,6 +11396,133 @@ Page({
       this.setData({ drawerMode: 0 });
     }
     this.stopEnhanceFpsPolling();
+  },
+
+  /**
+   * 点击镜头工具条「Ads」：展开/收起母比赛 ID 输入面板。
+   * @returns {void}
+   */
+  onPromoLoadTap: function () {
+    if (!this.data.autoSyncWhitelisted) {
+      return;
+    }
+    if (this.data.promoAdsPanelOpen) {
+      if (!this.data.promoLoadBusy) {
+        this.setData({ promoAdsPanelOpen: false });
+      }
+      return;
+    }
+    this.setData({
+      promoAdsPanelOpen: true,
+      promoLoadInput: this.data.promoMatchId || ''
+    });
+  },
+
+  /**
+   * 载入推广弹窗：输入母比赛 ID。
+   * @param {Object} e
+   * @returns {void}
+   */
+  onPromoLoadInput: function (e) {
+    this.setData({
+      promoLoadInput:
+        e.detail && e.detail.value !== undefined ? String(e.detail.value) : ''
+    });
+  },
+
+  /**
+   * 轻点遮罩关闭 Ads 输入面板。
+   * @returns {void}
+   */
+  onPromoAdsPanelBackdropTap: function () {
+    if (this.data.promoLoadBusy) {
+      return;
+    }
+    this.setData({ promoAdsPanelOpen: false });
+  },
+
+  /**
+   * 确认载入商业推广 Logo（POST load_promo_ads，字段 promo_match_id）。
+   * @returns {void}
+   */
+  onPromoLoadConfirm: function () {
+    const self = this;
+    if (self.data.promoLoadBusy) {
+      return;
+    }
+    const id = (self.data.promoLoadInput || '').trim();
+    if (!id) {
+      wx.showToast({ title: '请输入母比赛 ID', icon: 'none' });
+      return;
+    }
+    if (!getToken()) {
+      wx.showToast({ title: '请先登录', icon: 'none' });
+      return;
+    }
+    self.setData({ promoLoadBusy: true });
+    loadPromoAds(id)
+      .then(function (body) {
+        const rawAds = Array.isArray(body.ads) ? body.ads : [];
+        const promoAds = rawAds.map(function (ad, index) {
+          const item = ad && typeof ad === 'object' ? ad : {};
+          return {
+            id: 'promo_ad_' + index,
+            brand_name: String(item.brand_name || ''),
+            image_url: String(item.image_url || ''),
+            x: 12 + (index % 3) * 96,
+            y: 12 + Math.floor(index / 3) * 72
+          };
+        });
+        self.setData({
+          promoLoadBusy: false,
+          promoAdsPanelOpen: false,
+          promoMatchId: id,
+          promoAds: promoAds,
+          promoAdsVisible: promoAds.length > 0
+        });
+        if (promoAds.length === 0) {
+          wx.showToast({ title: '暂无广告 Logo', icon: 'none' });
+        } else {
+          wx.showToast({ title: '已载入 ' + promoAds.length + ' 个 Logo', icon: 'success' });
+        }
+      })
+      .catch(function (err) {
+        self.setData({ promoLoadBusy: false });
+        const msg = err && err.message ? err.message : '载入失败';
+        wx.showToast({ title: msg, icon: 'none' });
+      });
+  },
+
+  /**
+   * 清除已载入的商业推广 Logo。
+   * @returns {void}
+   */
+  onClearPromoAdsTap: function () {
+    this.setData({ promoAds: [], promoAdsVisible: false, promoMatchId: '' });
+    wx.showToast({ title: '已清除推广 Logo', icon: 'none' });
+  },
+
+  /**
+   * 推广 Logo movable-view 拖拽位置变更。
+   * @param {Object} e
+   * @returns {void}
+   */
+  onPromoAdPositionChange: function (e) {
+    const rawIndex = e.currentTarget.dataset.index;
+    const detail = e.detail || {};
+    const idx = Number(rawIndex);
+    if (Number.isNaN(idx)) {
+      return;
+    }
+    const ads = (this.data.promoAds || []).slice();
+    if (!ads[idx]) {
+      return;
+    }
+    ads[idx] = Object.assign({}, ads[idx], {
+      x: typeof detail.x === 'number' ? detail.x : ads[idx].x,
+      y: typeof detail.y === 'number' ? detail.y : ads[idx].y
+    });
+    this.setData({ promoAds: ads });
   },
 
   /** 向后兼容：内部调用 closeDrawer 的地方统一走 closeAllDrawers */

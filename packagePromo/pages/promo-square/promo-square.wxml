@@ -1,0 +1,71 @@
+<view class="promo-page">
+  <view class="promo-intro">
+    <text class="promo-kicker">商业化推广</text>
+    <text class="promo-intro-desc">查看赛事赞助推广详情，通过审批后可参与分成。</text>
+  </view>
+
+  <view wx:if="{{isWhitelistDebug}}" class="promo-card promo-card--debug">
+    <view class="promo-card-head">
+      <text class="promo-card-icon">🛠</text>
+      <text class="promo-card-title">调试：母比赛 ID</text>
+    </view>
+    <view class="promo-debug-row">
+      <input
+        class="promo-debug-input"
+        type="number"
+        placeholder="如 40"
+        value="{{debugMatchIdInput}}"
+        bindinput="onDebugMatchIdInput"
+      />
+      <button class="promo-debug-btn" size="mini" type="primary" bindtap="onDebugSearchTap">查询</button>
+    </view>
+  </view>
+
+  <view wx:if="{{loading}}" class="promo-card promo-card--state">
+    <text class="promo-state-text">加载中…</text>
+  </view>
+
+  <view wx:elif="{{!hasPromoContent && errorText}}" class="promo-card promo-card--state promo-card--warn">
+    <text class="promo-state-text">{{errorText}}</text>
+  </view>
+
+  <block wx:elif="{{hasPromoContent}}">
+    <view class="promo-card">
+      <view class="promo-card-head">
+        <text class="promo-card-icon">🏀</text>
+        <text class="promo-card-title">{{promoTitle}}</text>
+      </view>
+      <text class="promo-match-line">{{teamA}} vs {{teamB}}</text>
+      <view class="promo-meta-chips">
+        <text class="promo-chip">奖池 ¥{{totalPool}}</text>
+        <text class="promo-chip">起征 {{minViewers}} 人</text>
+      </view>
+      <text class="promo-id-hint">母比赛 ID：{{targetMatchId}}</text>
+    </view>
+
+    <view class="promo-card">
+      <view class="promo-card-head">
+        <text class="promo-card-icon">🖼</text>
+        <text class="promo-card-title">赞助 Logo 预览</text>
+      </view>
+      <view wx:if="{{ads.length === 0}}" class="promo-empty">暂无广告物料</view>
+      <view class="promo-ads-grid">
+        <view class="promo-ad-item" wx:for="{{ads}}" wx:key="image_url">
+          <image class="promo-ad-logo" src="{{item.image_url}}" mode="aspectFit" />
+          <text class="promo-ad-brand">{{item.brand_name}}</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="promo-card promo-card--action">
+      <button
+        class="promo-btn-primary"
+        type="primary"
+        loading="{{applying}}"
+        disabled="{{!promoEnabled || applying}}"
+        bindtap="onApplyTap"
+      >申请推广</button>
+      <text wx:if="{{!promoEnabled}}" class="promo-tip">该比赛暂未开放推广申请</text>
+    </view>
+  </block>
+</view>

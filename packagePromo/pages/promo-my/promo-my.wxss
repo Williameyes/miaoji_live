@@ -1,0 +1,189 @@
+page {
+  background-color: #f8fafc;
+  min-height: 100%;
+}
+
+.promo-page {
+  padding: 24rpx 40rpx calc(48rpx + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  min-height: 100vh;
+}
+
+.promo-intro {
+  margin-bottom: 28rpx;
+}
+
+.promo-kicker {
+  display: block;
+  font-size: 20rpx;
+  letter-spacing: 0.12em;
+  color: #94a3b8;
+  font-weight: 600;
+  margin-bottom: 8rpx;
+}
+
+.promo-intro-desc {
+  display: block;
+  font-size: 26rpx;
+  line-height: 1.55;
+  color: #64748b;
+}
+
+.promo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 24rpx;
+}
+
+.promo-card {
+  background: #ffffff;
+  border-radius: 28rpx;
+  padding: 32rpx;
+  box-shadow: 0 4rpx 20rpx rgba(0, 0, 0, 0.05);
+}
+
+.promo-card--state {
+  text-align: center;
+  padding: 56rpx 32rpx;
+}
+
+.promo-card--warn {
+  border: 1rpx solid rgba(251, 191, 36, 0.35);
+  background: linear-gradient(180deg, #fffbeb 0%, #ffffff 48%);
+}
+
+.promo-card-head {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  margin-bottom: 20rpx;
+  gap: 12rpx;
+}
+
+.promo-card-icon {
+  font-size: 32rpx;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.promo-card-title {
+  font-size: 32rpx;
+  font-weight: 700;
+  color: #0f172a;
+  flex: 1;
+  min-width: 0;
+}
+
+.promo-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  margin-bottom: 16rpx;
+}
+
+.promo-meta-label {
+  font-size: 24rpx;
+  color: #64748b;
+}
+
+.promo-meta-value {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.promo-meta-value--accent {
+  color: #2563eb;
+}
+
+.promo-id-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #f8fafc;
+  border: 1rpx solid #e2e8f0;
+  border-radius: 20rpx;
+  padding: 20rpx 24rpx;
+  margin-bottom: 12rpx;
+}
+
+.promo-id-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.promo-id-value {
+  display: block;
+  margin-top: 6rpx;
+  font-size: 34rpx;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.promo-copy-btn {
+  flex-shrink: 0;
+  margin-left: 16rpx;
+  padding: 10rpx 24rpx;
+  font-size: 24rpx;
+  font-weight: 600;
+  color: #2563eb;
+  border: 1rpx solid #bfdbfe;
+  border-radius: 999rpx;
+  background: #eff6ff;
+}
+
+.promo-approved {
+  display: block;
+  font-size: 24rpx;
+  color: #94a3b8;
+  margin-bottom: 20rpx;
+}
+
+.promo-ads-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16rpx;
+  margin-bottom: 24rpx;
+}
+
+.promo-ad-thumb {
+  width: 128rpx;
+  height: 84rpx;
+  background: #f1f5f9;
+  border-radius: 12rpx;
+}
+
+.promo-btn-secondary {
+  width: 100%;
+  height: 80rpx;
+  line-height: 80rpx;
+  padding: 0;
+  margin: 0;
+  background: #ffffff;
+  color: #2563eb;
+  font-weight: 600;
+  font-size: 28rpx;
+  border: 2rpx solid #bfdbfe;
+  border-radius: 40rpx;
+}
+
+.promo-btn-secondary::after {
+  border: none;
+}
+
+.promo-state-text {
+  display: block;
+  font-size: 28rpx;
+  color: #64748b;
+}
+
+.promo-state-text--error {
+  color: #dc2626;
+}
+
+.promo-state-sub {
+  display: block;
+  margin-top: 12rpx;
+  font-size: 24rpx;
+  color: #94a3b8;
+}

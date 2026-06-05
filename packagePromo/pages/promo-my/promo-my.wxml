@@ -1,0 +1,59 @@
+<view class="promo-page">
+  <view class="promo-intro">
+    <text class="promo-kicker">商业化推广</text>
+    <text class="promo-intro-desc">已通过审批的推广场次，可复制母比赛 ID 用于直播载入 Ads。</text>
+  </view>
+
+  <view wx:if="{{loading}}" class="promo-card promo-card--state">
+    <text class="promo-state-text">加载中…</text>
+  </view>
+
+  <view wx:elif="{{errorText}}" class="promo-card promo-card--state promo-card--warn">
+    <text class="promo-state-text promo-state-text--error">{{errorText}}</text>
+  </view>
+
+  <view wx:elif="{{promotions.length === 0}}" class="promo-card promo-card--state">
+    <text class="promo-state-text">暂无已通过审批的推广</text>
+    <text class="promo-state-sub">通过推广广场申请并获批后，将显示在此</text>
+  </view>
+
+  <view wx:else class="promo-list">
+    <view class="promo-card" wx:for="{{promotions}}" wx:key="applicationId">
+      <view class="promo-card-head">
+        <text class="promo-card-icon">🏆</text>
+        <text class="promo-card-title">{{item.promoTitle}}</text>
+      </view>
+      <view class="promo-meta-row">
+        <text class="promo-meta-label">奖池</text>
+        <text class="promo-meta-value promo-meta-value--accent">¥{{item.totalPool}}</text>
+      </view>
+      <view class="promo-id-row">
+        <view class="promo-id-main">
+          <text class="promo-meta-label">母比赛 ID</text>
+          <text class="promo-id-value">{{item.targetMatchId}}</text>
+        </view>
+        <view class="promo-copy-btn" catchtap="onCopyMatchIdTap" data-id="{{item.targetMatchId}}">复制</view>
+      </view>
+      <text class="promo-approved">审批通过：{{item.approvedAt}}</text>
+
+      <view class="promo-ads-row" wx:if="{{item.ads.length > 0}}">
+        <image
+          class="promo-ad-thumb"
+          wx:for="{{item.ads}}"
+          wx:for-item="ad"
+          wx:key="image_url"
+          src="{{ad.image_url}}"
+          mode="aspectFit"
+        />
+      </view>
+
+      <button
+        class="promo-btn-secondary"
+        loading="{{downloadingIndex === index}}"
+        disabled="{{downloadingIndex === index}}"
+        catchtap="onDownloadAllTap"
+        data-index="{{index}}"
+      >一键下载全量 Logo</button>
+    </view>
+  </view>
+</view>

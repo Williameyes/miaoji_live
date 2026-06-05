@@ -4,18 +4,14 @@
 
 const { post, get, request, uploadFile } = require('../../utils/request.js');
 const {
+  parseAppApiResponse,
+  normalizeAppApiError
+} = require('../../utils/app-api-response.js');
+const {
   parseMatchList,
   parseTournamentList,
   parseMatchDetail
 } = require('../utils/radar-model.js');
-
-/**
- * @typedef {Object} RadarAppSuccessBody
- * @property {boolean} success
- * @property {string} [message]
- * @property {string} [error_code]
- * @property {unknown} [data]
- */
 
 /** @type {Record<string, string>} */
 const RADAR_ERROR_MESSAGES = {
@@ -29,28 +25,8 @@ const RADAR_ERROR_MESSAGES = {
   MATCH_NOT_FOUND: '场次不存在'
 };
 
-/**
- * 解析雷达业务接口响应，失败时抛出带 error_code 的 Error。
- * @param {unknown} body
- * @returns {Record<string, unknown>}
- */
-function parseRadarAppResponse(body) {
-  if (!body || typeof body !== 'object') {
-    throw Object.assign(new Error('服务端响应无效'), { errorCode: 'INVALID_RESPONSE' });
-  }
-  const b = /** @type {RadarAppSuccessBody & Record<string, unknown>} */ (body);
-  if (b.success === true) {
-    return b;
-  }
-  const msg =
-    (typeof b.message === 'string' && b.message.length > 0 ? b.message : '') ||
-    (typeof b.error_code === 'string' ? b.error_code : '请求失败');
-  const err = Object.assign(new Error(msg), {
-    errorCode: typeof b.error_code === 'string' ? b.error_code : '',
-    responseBody: b
-  });
-  throw err;
-}
+/** @type {typeof parseAppApiResponse} */
+const parseRadarAppResponse = parseAppApiResponse;
 
 /**
  * 将非 2xx 的雷达业务错误也归一成带 errorCode/message 的 Error。
@@ -58,21 +34,7 @@ function parseRadarAppResponse(body) {
  * @returns {Error}
  */
 function normalizeRadarAppError(err) {
-  const data = err && typeof err === 'object'
-    ? /** @type {{data?: unknown, statusCode?: number}} */ (err).data
-    : null;
-  if (data && typeof data === 'object') {
-    const b = /** @type {Record<string, unknown>} */ (data);
-    const code = typeof b.error_code === 'string' ? b.error_code : '';
-    const fallback = typeof b.message === 'string' && b.message ? b.message : '';
-    const msg = (code && RADAR_ERROR_MESSAGES[code]) || fallback || '请求失败';
-    return Object.assign(new Error(msg), {
-      errorCode: code,
-      responseBody: b,
-      statusCode: err && typeof err === 'object' ? err.statusCode : undefined
-    });
-  }
-  return /** @type {Error} */ (err);
+  return normalizeAppApiError(err, RADAR_ERROR_MESSAGES);
 }
 
 /**

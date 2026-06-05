@@ -14,6 +14,16 @@
       ]
     },
     {
+      "root": "packagePromo",
+      "name": "packagePromo",
+      "pages": [
+        "pages/promo-bind/promo-bind",
+        "pages/promo-square/promo-square",
+        "pages/promo-my/promo-my",
+        "pages/promo-review/promo-review"
+      ]
+    },
+    {
       "root": "packageLab",
       "name": "packageLab",
       "pages": [
@@ -74,13 +84,5 @@
     ]
   },
   "workers": "workers",
-  "sitemapLocation": "sitemap.json",
-  "permission": {
-    "scope.camera": {
-      "desc": "用于扫描篮球记分牌，实现自动 OCR 识别比分"
-    },
-    "scope.writePhotosAlbum": {
-      "desc": "用于保存赛事影响力战报海报到相册"
-    }
-  }
+  "sitemapLocation": "sitemap.json"
 }

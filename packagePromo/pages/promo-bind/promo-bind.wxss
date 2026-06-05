@@ -1,0 +1,141 @@
+page {
+  background-color: #f8fafc;
+  min-height: 100%;
+}
+
+.promo-page {
+  padding: 24rpx 40rpx calc(48rpx + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  min-height: 100vh;
+}
+
+.promo-intro {
+  margin-bottom: 28rpx;
+}
+
+.promo-kicker {
+  display: block;
+  font-size: 20rpx;
+  letter-spacing: 0.12em;
+  color: #94a3b8;
+  font-weight: 600;
+  margin-bottom: 8rpx;
+}
+
+.promo-intro-desc {
+  display: block;
+  font-size: 26rpx;
+  line-height: 1.55;
+  color: #64748b;
+}
+
+.promo-card {
+  background: #ffffff;
+  border-radius: 28rpx;
+  padding: 32rpx;
+  margin-bottom: 24rpx;
+  box-shadow: 0 4rpx 20rpx rgba(0, 0, 0, 0.05);
+}
+
+.promo-card-head {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  margin-bottom: 20rpx;
+  gap: 12rpx;
+}
+
+.promo-card-icon {
+  font-size: 32rpx;
+  line-height: 1;
+}
+
+.promo-card-title {
+  font-size: 32rpx;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.promo-p {
+  display: block;
+  font-size: 28rpx;
+  line-height: 1.65;
+  color: #475569;
+  margin-bottom: 20rpx;
+}
+
+.promo-status {
+  display: block;
+  font-size: 28rpx;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+.promo-status--ok {
+  color: #16a34a;
+  font-weight: 600;
+}
+
+.promo-polling {
+  display: block;
+  margin-top: 12rpx;
+  font-size: 24rpx;
+  color: #d97706;
+}
+
+.promo-textarea {
+  width: 100%;
+  min-height: 160rpx;
+  background: #f8fafc;
+  border: 1rpx solid #e2e8f0;
+  border-radius: 20rpx;
+  padding: 24rpx;
+  box-sizing: border-box;
+  font-size: 28rpx;
+  color: #0f172a;
+  line-height: 1.55;
+  margin-bottom: 24rpx;
+}
+
+.promo-btn-primary {
+  width: 100%;
+  height: 88rpx;
+  line-height: 88rpx;
+  padding: 0;
+  margin: 0 0 16rpx;
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 30rpx;
+  border-radius: 44rpx;
+  box-shadow: 0 12rpx 32rpx rgba(37, 99, 235, 0.22);
+}
+
+.promo-btn-primary::after {
+  border: none;
+}
+
+.promo-tip {
+  display: block;
+  font-size: 24rpx;
+  line-height: 1.5;
+  color: #94a3b8;
+}
+
+.promo-card--tip {
+  background: linear-gradient(180deg, #eff6ff 0%, #ffffff 52%);
+  border: 1rpx solid rgba(191, 219, 254, 0.6);
+}
+
+.promo-path {
+  display: block;
+  margin: 12rpx 0 16rpx;
+  padding: 16rpx 20rpx;
+  font-size: 22rpx;
+  line-height: 1.5;
+  color: #1e40af;
+  background: #f8fafc;
+  border-radius: 12rpx;
+  word-break: break-all;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}

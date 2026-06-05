@@ -1,0 +1,73 @@
+<view class="promo-page" style="padding-top: {{statusBarHeight}}px;">
+  <view class="nav-row">
+    <view class="nav-back" bindtap="onBackTap">‹ 返回</view>
+    <text class="nav-title">推广审批</text>
+  </view>
+
+  <view class="search-card">
+    <text class="search-label">母比赛 ID</text>
+    <view class="search-row">
+      <input
+        class="search-input"
+        type="number"
+        placeholder="如 40"
+        value="{{targetMatchId}}"
+        bindinput="onMatchIdInput"
+      />
+      <button class="btn-search" size="mini" type="primary" bindtap="onSearchTap">查询</button>
+    </view>
+    <text class="search-hint">仅该场次推广负责人或管理员可查看</text>
+  </view>
+
+  <view wx:if="{{loading}}" class="state-box">
+    <text class="state-text">加载中…</text>
+  </view>
+
+  <view wx:elif="{{errorText}}" class="state-box state-box--error">
+    <text class="state-text">{{errorText}}</text>
+  </view>
+
+  <view wx:elif="{{applications.length === 0 && targetMatchId}}" class="state-box">
+    <text class="state-text">暂无待审批申请</text>
+  </view>
+
+  <view wx:else class="app-list">
+    <view class="app-card" wx:for="{{applications}}" wx:key="applicationId">
+      <view class="app-head">
+        <text class="app-name">{{item.anchorName}}</text>
+        <text class="app-time">{{item.createdAt}}</text>
+      </view>
+      <view class="app-row">
+        <text class="app-label">openid</text>
+        <text class="app-value app-value--mono">{{item.openid}}</text>
+      </view>
+      <view class="app-row">
+        <text class="app-label">sec_user_id</text>
+        <text class="app-value app-value--mono">{{item.secUserId}}</text>
+        <view
+          class="copy-btn"
+          catchtap="onCopySecUserIdTap"
+          data-val="{{item.secUserId}}"
+        >复制</view>
+      </view>
+      <view class="app-actions">
+        <button
+          class="btn-reject"
+          size="mini"
+          disabled="{{reviewingId === '' + item.applicationId}}"
+          catchtap="onRejectTap"
+          data-id="{{item.applicationId}}"
+        >拒绝</button>
+        <button
+          class="btn-approve"
+          size="mini"
+          type="primary"
+          loading="{{reviewingId === '' + item.applicationId}}"
+          disabled="{{reviewingId === '' + item.applicationId}}"
+          catchtap="onApproveTap"
+          data-id="{{item.applicationId}}"
+        >通过</button>
+      </view>
+    </view>
+  </view>
+</view>
