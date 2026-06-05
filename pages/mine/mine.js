@@ -677,7 +677,7 @@ Page({
   },
 
   /**
-   * 实验功能「自动同步」入口：仅白名单用户可进入。
+   * 实验功能「自动同步」入口：仅白名单用户可进入采集端。
    * 非白名单用户收到模糊提示，不暴露功能细节。
    * @returns {void}
    */
@@ -690,7 +690,7 @@ Page({
       wx.showToast({ title: '暂无使用权限', icon: 'none' });
       return;
     }
-    wx.navigateTo({ url: '/packageLab/pages/sync-lab/index/index' });
+    wx.navigateTo({ url: '/packageLab/pages/sync-lab/collector/collector' });
   },
 
   /**

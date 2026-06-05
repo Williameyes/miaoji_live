@@ -1,11 +1,11 @@
 /**
- * @fileoverview Live 页内「扫描 SG_xxxx + 连接采集端」流程，与 sync-lab broadcaster 扫描逻辑对齐。
+ * @fileoverview Live 页内「扫描 SG_xxxx + 连接采集端」流程。
  */
 
 const BLE = require('./ble-protocol.js');
 const bleManager = require('../services/bleManager.js');
 
-/** 与 broadcaster 一致的扫描超时（ms） */
+/** 扫描超时（ms） */
 const DEFAULT_SCAN_TIMEOUT_MS = 20000;
 
 /** 最近一次在 Live 页输入的 4 位匹配码（仅本地 Storage） */

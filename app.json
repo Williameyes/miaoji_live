@@ -28,9 +28,7 @@
       "root": "packageLab",
       "name": "packageLab",
       "pages": [
-        "pages/sync-lab/index/index",
         "pages/sync-lab/collector/collector",
-        "pages/sync-lab/broadcaster/broadcaster",
         "pages/radar-lab/index/index",
         "pages/radar-lab/oam/oam",
         "pages/radar-lab/oam/tournament-list/tournament-list",
