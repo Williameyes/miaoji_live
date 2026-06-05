@@ -11412,7 +11412,11 @@ Page({
       }
       return;
     }
+    if (this.data.drawerMode === 1) {
+      this.stopEnhanceFpsPolling();
+    }
     this.setData({
+      drawerMode: 0,
       promoAdsPanelOpen: true,
       promoLoadInput: this.data.promoMatchId || ''
     });

@@ -25,7 +25,9 @@ const RADAR_ERROR_MESSAGES = {
   MATCH_NOT_FOUND: '场次不存在',
   PROMO_NOT_READY: '发布条件未满足',
   PROMO_NOT_ENABLED: '推广广场未发布',
-  FORBIDDEN: '无权限执行此操作'
+  FORBIDDEN: '无权限执行此操作',
+  NO_BOUND_ANCHORS: '暂无已绑定主播，请先启动监测或审批通过',
+  PROBE_ALREADY_PENDING: '探测任务已在队列中'
 };
 
 /** @type {typeof parseAppApiResponse} */
@@ -106,6 +108,20 @@ function addMatchTask(matchId, rawText) {
     match_id: matchId,
     raw_text: rawText
   }).then(parseRadarAppResponse);
+}
+
+/**
+ * 手动触发一轮雷达探测（快照模式，非持续轮询）。
+ * 对已绑定主播重新入队探测任务，可多次调用。
+ * @param {number|string} matchId
+ * @returns {Promise<Record<string, unknown>>}
+ */
+function triggerMatchProbe(matchId) {
+  return post('/api/app/match/trigger_probe', { match_id: matchId })
+    .then(parseRadarAppResponse)
+    .catch(function (err) {
+      throw normalizeRadarAppError(err);
+    });
 }
 
 /**
@@ -315,6 +331,7 @@ module.exports = {
   fetchMatchList,
   fetchMatchDetail,
   addMatchTask,
+  triggerMatchProbe,
   stopMatchMonitoring,
   fetchMatchStreamData,
   fetchTournamentInfluence,

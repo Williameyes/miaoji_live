@@ -25,11 +25,21 @@
     </view>
   </view>
 
-  <view class="rl-card">
+  <view class="rl-card" wx:if="{{promoEnabled || totalPoolNumber > 0}}">
     <view class="rl-card-inner">
       <view class="mon-commercial-head">
-        <view class="rl-section-title">广告核销</view>
+        <view class="rl-section-title">推广与广告核销</view>
         <text class="rl-badge {{settlementBadgeClass}}">{{settlementLabel}}</text>
+      </view>
+      <view class="mon-promo-row" wx:if="{{promoEnabled}}">
+        <text class="mon-promo-label">推广专场</text>
+        <text class="mon-promo-title">{{promoTitle || '已发布'}}</text>
+      </view>
+      <view class="mon-promo-actions" wx:if="{{promoEnabled}}">
+        <button class="rl-btn rl-btn-secondary mon-promo-btn" bindtap="onOpenPromoPublish">推广管理</button>
+        <button class="rl-btn rl-btn-secondary mon-promo-btn" bindtap="onOpenPromoReview">
+          审批申请{{pendingCount > 0 ? '（' + pendingCount + '）' : ''}}
+        </button>
       </view>
       <view class="mon-metrics mon-commercial-metrics">
         <view class="mon-metric">
@@ -84,12 +94,17 @@
   </view>
 
   <view class="mon-actions">
-    <button class="rl-btn rl-btn-primary" disabled="{{submitting}}" bindtap="onOpenBindModal">绑定直播雷达</button>
+    <button class="rl-btn rl-btn-primary" disabled="{{submitting}}" bindtap="onOpenBindModal">启动监测</button>
+    <button
+      class="rl-btn rl-btn-secondary"
+      disabled="{{submitting || !canProbe}}"
+      bindtap="onTriggerProbe"
+    >再次探测</button>
     <button
       class="rl-btn rl-btn-danger"
       disabled="{{submitting || !canStop}}"
       bindtap="onStopMonitoring"
-    >关闭监控</button>
+    >关闭监测</button>
     <button
       wx:if="{{!canOpenSettlement}}"
       class="rl-btn rl-btn-secondary"
@@ -105,12 +120,12 @@
   </view>
 
   <view class="rl-notice">
-    <text class="rl-notice-text">{{canSettle || canOpenSettlement ? '结算单按赛后推广分生成。' : settleDisabledTip}}</text>
+    <text class="rl-notice-text">监测采用手动触发模式：启动后采集一轮数据；需要更新时点「再次探测」。审批通过也会自动探测一次。{{canSettle || canOpenSettlement ? '结算单按赛后推广分生成。' : settleDisabledTip ? ' ' + settleDisabledTip : ''}}</text>
   </view>
 
   <view class="rl-modal-mask" wx:if="{{showBindModal}}" bindtap="onCloseBindModal" catchtouchmove="stopModalBubble">
     <view class="rl-modal" catchtap="stopModalBubble">
-      <view class="rl-modal-title">绑定 / 追加直播雷达</view>
+      <view class="rl-modal-title">启动监测</view>
       <view class="rl-field">
         <text class="rl-label">粘贴抖音分享口令或链接</text>
         <textarea
@@ -122,11 +137,11 @@
         />
       </view>
       <view class="rl-notice" style="margin-bottom:8rpx;">
-        <text class="rl-notice-text">提交后后端会自动解析主播并入库。</text>
+        <text class="rl-notice-text">首次挂载需粘贴口令；已审批主播可直接点「再次探测」无需重复粘贴。</text>
       </view>
       <view class="rl-modal-actions">
         <button class="rl-btn rl-btn-secondary" bindtap="onCloseBindModal">取消</button>
-        <button class="rl-btn rl-btn-primary" disabled="{{submitting}}" bindtap="onSubmitBind">启动监控</button>
+        <button class="rl-btn rl-btn-primary" disabled="{{submitting}}" bindtap="onSubmitBind">开始监测</button>
       </view>
     </view>
   </view>

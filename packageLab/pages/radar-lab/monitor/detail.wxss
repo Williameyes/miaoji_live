@@ -32,6 +32,39 @@
   color: #0f172a;
 }
 
+.mon-promo-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12rpx;
+  margin-bottom: 16rpx;
+}
+
+.mon-promo-label {
+  font-size: 22rpx;
+  color: #64748b;
+  flex-shrink: 0;
+}
+
+.mon-promo-title {
+  font-size: 26rpx;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.mon-promo-actions {
+  display: flex;
+  flex-direction: row;
+  gap: 16rpx;
+  margin-bottom: 20rpx;
+}
+
+.mon-promo-btn {
+  flex: 1;
+  margin: 0;
+  font-size: 26rpx;
+}
+
 .mon-commercial-head {
   display: flex;
   flex-direction: row;

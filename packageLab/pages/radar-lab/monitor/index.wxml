@@ -2,11 +2,24 @@
 
   <view class="rl-header">
     <view class="rl-kicker">直播雷达</view>
-    <view class="rl-title">实时监控</view>
+    <view class="rl-title">监测中心</view>
     <view class="rl-sub">
-      正在采集中的场次
+      流量监测与推广专场统一管理
       <text wx:if="{{polling}}" style="margin-left:12rpx;color:#94a3b8;">· 每20秒刷新</text>
     </view>
+  </view>
+
+  <view class="mon-tabs">
+    <view
+      class="mon-tab {{activeTab === 'active' ? 'mon-tab--active' : ''}}"
+      data-tab="active"
+      bindtap="onTabChange"
+    >采集中</view>
+    <view
+      class="mon-tab {{activeTab === 'promo' ? 'mon-tab--active' : ''}}"
+      data-tab="promo"
+      bindtap="onTabChange"
+    >推广专场</view>
   </view>
 
   <view class="rl-card" wx:if="{{matchRows.length}}">
@@ -15,10 +28,14 @@
         <view class="rt-item-main">
           <view class="rl-list-title">{{item.teamA}} vs {{item.teamB}}</view>
           <view class="rl-list-desc">{{item.startTimeText}} · {{item.tournamentName}}</view>
+          <view class="rl-list-desc rt-promo-desc" wx:if="{{activeTab === 'promo' && item.promoTitle}}">
+            {{item.promoTitle}}
+          </view>
         </view>
         <view class="rt-item-right">
-          <text class="rt-online">{{item.currentOnline}}</text>
+          <text class="rt-online" wx:if="{{activeTab === 'active'}}">{{item.currentOnline}}</text>
           <text class="rt-status">{{item.statusLabel}}</text>
+          <text class="rt-promo-badge" wx:if="{{item.hasPromo}}">推广</text>
         </view>
         <text class="rl-list-arrow">›</text>
       </view>
@@ -26,8 +43,14 @@
   </view>
 
   <view class="rl-empty" wx:elif="{{!loading}}">
-    <text>暂无采集中的场次</text>
-    <text class="rl-empty-sub">请在场次维护中绑定直播雷达，采集启动后将自动出现在此列表</text>
+    <text wx:if="{{activeTab === 'active'}}">暂无采集中的场次</text>
+    <text wx:else>暂无推广专场</text>
+    <text class="rl-empty-sub" wx:if="{{activeTab === 'active'}}">
+      在场次详情点「启动监测」后，采集中场次将出现在此列表
+    </text>
+    <text class="rl-empty-sub" wx:else>
+      在场次维护发布推广广场后，可在此快捷进入监测与审批
+    </text>
   </view>
 
   <view class="rl-empty" wx:else>

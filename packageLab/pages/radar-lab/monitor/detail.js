@@ -5,11 +5,13 @@
 const { ensureRadarLabAccess } = require('../../../utils/radar-access.js');
 const {
   addMatchTask,
+  triggerMatchProbe,
   stopMatchMonitoring,
   fetchMatchStreamData,
   fetchMatchDetail,
   setMatchAds,
-  settleMatch
+  settleMatch,
+  fetchPromoPendingApplications
 } = require('../../../services/radar-api.js');
 const {
   normalizeTimeline,
@@ -92,6 +94,11 @@ Page({
     bindRawText: '',
     submitting: false,
     canStop: false,
+    canProbe: false,
+    promoEnabled: false,
+    promoTitle: '',
+    pendingCount: 0,
+    focusAds: false,
     canvasReady: false,
     loading: true
   },
@@ -126,6 +133,7 @@ Page({
       focusAds: query && query.focus_ads === '1'
     });
     this._loadMatchMeta(matchId);
+    this._refreshPendingCount(matchId);
   },
 
   /**
@@ -134,6 +142,7 @@ Page({
   onShow: function () {
     if (this.data.matchId) {
       this._loadMatchMeta(this.data.matchId, true);
+      this._refreshPendingCount(this.data.matchId);
       this._fetchStreamOnce();
       this._startPolling();
     }
@@ -203,6 +212,9 @@ Page({
       settlementStatus: settlementStatus,
       totalPoolNumber: detail.totalPool || 0
     });
+    const canProbe =
+      settlementStatus !== 'settled' &&
+      (status === 'monitoring' || status === 'waiting_radar' || status === 'ended');
     this.setData(Object.assign({
       matchTitle: detail.teamA + ' vs ' + detail.teamB,
       tournamentName: detail.tournamentName,
@@ -218,8 +230,29 @@ Page({
       settlementLabel: SETTLEMENT_LABELS[settlementStatus] || settlementStatus || '待清算',
       settlementBadgeClass: SETTLEMENT_BADGE[settlementStatus] || 'rl-badge-warn',
       financialSettledAt: detail.financialSettledAt || '',
+      promoEnabled: Boolean(detail.promoEnabled),
+      promoTitle: detail.promoTitle || '',
+      canProbe: canProbe,
       loading: false
     }, flags));
+  },
+
+  /**
+   * 刷新待审批推广申请数量。
+   * @param {string} matchId
+   * @returns {void}
+   */
+  _refreshPendingCount: function (matchId) {
+    const self = this;
+    if (!matchId) return;
+    fetchPromoPendingApplications(matchId)
+      .then(function (body) {
+        const list = Array.isArray(body.applications) ? body.applications : [];
+        self.setData({ pendingCount: list.length });
+      })
+      .catch(function () {
+        self.setData({ pendingCount: 0 });
+      });
   },
 
   /**
@@ -419,7 +452,7 @@ Page({
         const enqueued = res.task_enqueued !== false;
         const dup = typeof res.duplicate_reason === 'string' ? res.duplicate_reason : '';
         if (enqueued) {
-          wx.showToast({ title: '已启动监控', icon: 'success' });
+          wx.showToast({ title: '监测已启动', icon: 'success' });
         } else {
           const hint =
             dup === 'already_monitoring'
@@ -573,6 +606,92 @@ Page({
       url:
         '/packageLab/pages/radar-lab/settlement/detail?match_id=' +
         encodeURIComponent(this.data.matchId)
+    });
+  },
+
+  /**
+   * 手动触发一轮探测（对已绑定主播重新入队，可多次调用）。
+   * @returns {void}
+   */
+  onTriggerProbe: function () {
+    const self = this;
+    const matchId = this.data.matchId;
+    if (!matchId || !this.data.canProbe) {
+      wx.showToast({ title: '当前状态不可探测', icon: 'none' });
+      return;
+    }
+    wx.showModal({
+      title: '再次探测',
+      content: '将触发雷达对已绑定主播采集一轮在线数据，不会开启持续轮询。确定继续？',
+      confirmText: '探测',
+      success: function (res) {
+        if (!res.confirm) return;
+        self._doTriggerProbe(matchId);
+      }
+    });
+  },
+
+  /**
+   * @param {string} matchId
+   * @returns {void}
+   */
+  _doTriggerProbe: function (matchId) {
+    const self = this;
+    this.setData({ submitting: true });
+    triggerMatchProbe(matchId)
+      .then(function (res) {
+        const enqueued = res.task_enqueued !== false;
+        const count =
+          typeof res.tasks_enqueued === 'number'
+            ? res.tasks_enqueued
+            : typeof res.anchors_probed === 'number'
+              ? res.anchors_probed
+              : 0;
+        if (enqueued || count > 0) {
+          wx.showToast({
+            title: count > 0 ? '已触发 ' + count + ' 路探测' : '探测已触发',
+            icon: 'success'
+          });
+        } else {
+          wx.showToast({ title: '暂无待探测主播', icon: 'none' });
+        }
+        self._fetchStreamOnce();
+        self._loadMatchMeta(matchId, true);
+      })
+      .catch(function (err) {
+        const msg = err && err.message ? err.message : '探测失败';
+        wx.showToast({ title: msg, icon: 'none' });
+      })
+      .finally(function () {
+        self.setData({ submitting: false });
+      });
+  },
+
+  /**
+   * 跳转推广发布页。
+   * @returns {void}
+   */
+  onOpenPromoPublish: function () {
+    const matchId = this.data.matchId;
+    if (!matchId) return;
+    wx.navigateTo({
+      url:
+        '/packageLab/pages/radar-lab/oam/promo-publish/promo-publish?match_id=' +
+        encodeURIComponent(matchId)
+    });
+  },
+
+  /**
+   * 跳转推广审批页。
+   * @returns {void}
+   */
+  onOpenPromoReview: function () {
+    const matchId = this.data.matchId;
+    if (!matchId) return;
+    wx.navigateTo({
+      url:
+        '/packagePromo/pages/promo-review/promo-review?target_match_id=' +
+        encodeURIComponent(matchId)
     });
   },
 

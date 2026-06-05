@@ -24,8 +24,8 @@
     </view>
     <view class="rl-list-item" bindtap="onGoMonitor" hover-class="rl-list-item-hover">
       <view class="rl-list-main">
-        <view class="rl-list-title">📡 实时监控</view>
-        <view class="rl-list-desc">查看正在采集中的场次，进入单场热度曲线与操作</view>
+        <view class="rl-list-title">📡 监测中心</view>
+        <view class="rl-list-desc">采集中场次与推广专场统一管理，启动监测、审批、探测</view>
       </view>
       <text class="rl-list-arrow">›</text>
     </view>

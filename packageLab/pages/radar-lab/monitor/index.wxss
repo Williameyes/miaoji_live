@@ -1,5 +1,39 @@
 @import '../common/common.wxss';
 
+.mon-tabs {
+  display: flex;
+  flex-direction: row;
+  gap: 16rpx;
+  margin: 0 32rpx 24rpx;
+}
+
+.mon-tab {
+  flex: 1;
+  text-align: center;
+  padding: 20rpx 0;
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #64748b;
+  background: #f1f5f9;
+  border-radius: 16rpx;
+}
+
+.mon-tab--active {
+  color: #fff;
+  background: #2563eb;
+}
+
+.rt-promo-desc {
+  color: #7c3aed;
+}
+
+.rt-promo-badge {
+  display: block;
+  font-size: 20rpx;
+  color: #7c3aed;
+  margin-top: 4rpx;
+}
+
 .rt-item {
   display: flex;
   flex-direction: row;

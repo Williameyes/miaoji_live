@@ -162,7 +162,7 @@ Page({
           icon: 'success'
         });
         if (status === 'approved' && body.task_enqueued) {
-          wx.showToast({ title: '雷达任务已入队', icon: 'none', duration: 2000 });
+          wx.showToast({ title: '已自动探测一次', icon: 'none', duration: 2000 });
         }
         const matchId = self.data.targetMatchId;
         if (matchId) {
