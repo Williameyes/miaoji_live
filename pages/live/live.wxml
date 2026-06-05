@@ -35,14 +35,26 @@
         wx:for="{{promoAds}}"
         wx:key="id"
         class="promo-movable-view"
+        style="width: {{item.displayWidth}}px; height: {{item.displayHeight}}px;"
         direction="all"
-        inertia="{{true}}"
+        inertia="{{false}}"
+        out-of-bounds="{{true}}"
         x="{{item.x}}"
         y="{{item.y}}"
         bindchange="onPromoAdPositionChange"
+        catchtouchstart="onPromoAdTouchStart"
+        catchtouchmove="onPromoAdTouchMove"
+        catchtouchend="onPromoAdTouchEnd"
+        catchtouchcancel="onPromoAdTouchEnd"
         data-index="{{index}}"
       >
-        <image class="promo-ad-image" src="{{item.image_url}}" mode="aspectFit" />
+        <image
+          class="promo-ad-image"
+          src="{{item.image_url}}"
+          mode="aspectFit"
+          bindload="onPromoAdImageLoad"
+          data-index="{{index}}"
+        />
       </movable-view>
     </movable-area>
   </view>

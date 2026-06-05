@@ -52,6 +52,12 @@ const liveWsClientMod = require('../../services/live-ws-client.js');
 const { loadPromoAds } = require('../../services/promo-live.service.js');
 const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
 
+/** 推广 Logo 初始展示时长边上限（px），超出则等比缩小 */
+const PROMO_AD_MAX_EDGE_PX = 240;
+/** 推广 Logo 双指缩放下限 / 上限 */
+const PROMO_AD_SCALE_MIN = 0.25;
+const PROMO_AD_SCALE_MAX = 4;
+
 /**
  * 画质增强内测白名单 OpenID。
  * 仅此列表内用户在设备能力通过时可看到增强设置控制条。
@@ -11467,28 +11473,54 @@ Page({
     loadPromoAds(id)
       .then(function (body) {
         const rawAds = Array.isArray(body.ads) ? body.ads : [];
-        const promoAds = rawAds.map(function (ad, index) {
+        const baseAds = rawAds.map(function (ad, index) {
           const item = ad && typeof ad === 'object' ? ad : {};
           return {
             id: 'promo_ad_' + index,
             brand_name: String(item.brand_name || ''),
             image_url: String(item.image_url || ''),
-            x: 12 + (index % 3) * 96,
-            y: 12 + Math.floor(index / 3) * 72
+            width: 1,
+            height: 1,
+            displayWidth: 1,
+            displayHeight: 1,
+            scale: 1,
+            x: 12 + (index % 3) * 140,
+            y: 12 + Math.floor(index / 3) * 100
           };
         });
-        self.setData({
-          promoLoadBusy: false,
-          promoAdsPanelOpen: false,
-          promoMatchId: id,
-          promoAds: promoAds,
-          promoAdsVisible: promoAds.length > 0
+        return Promise.all(
+          baseAds.map(function (entry) {
+            const url = entry.image_url;
+            if (!url) {
+              return Promise.resolve(entry);
+            }
+            return new Promise(function (resolve) {
+              wx.getImageInfo({
+                src: url,
+                success: function (info) {
+                  const sized = self._applyPromoAdBaseSize(entry, info.width, info.height);
+                  resolve(sized);
+                },
+                fail: function () {
+                  resolve(entry);
+                }
+              });
+            });
+          })
+        ).then(function (promoAds) {
+          self.setData({
+            promoLoadBusy: false,
+            promoAdsPanelOpen: false,
+            promoMatchId: id,
+            promoAds: promoAds,
+            promoAdsVisible: promoAds.length > 0
+          });
+          if (promoAds.length === 0) {
+            wx.showToast({ title: '暂无广告 Logo', icon: 'none' });
+          } else {
+            wx.showToast({ title: '已载入 ' + promoAds.length + ' 个 Logo', icon: 'success' });
+          }
         });
-        if (promoAds.length === 0) {
-          wx.showToast({ title: '暂无广告 Logo', icon: 'none' });
-        } else {
-          wx.showToast({ title: '已载入 ' + promoAds.length + ' 个 Logo', icon: 'success' });
-        }
       })
       .catch(function (err) {
         self.setData({ promoLoadBusy: false });
@@ -11507,26 +11539,207 @@ Page({
   },
 
   /**
-   * 推广 Logo movable-view 拖拽位置变更。
+   * 按图片原始比例计算推广 Logo 基准尺寸（过长边限制在 PROMO_AD_MAX_EDGE_PX）。
+   * @param {number} naturalWidth
+   * @param {number} naturalHeight
+   * @returns {{ width: number, height: number }}
+   */
+  _computePromoAdDisplaySize: function (naturalWidth, naturalHeight) {
+    let nw = Math.round(Number(naturalWidth) || 0);
+    let nh = Math.round(Number(naturalHeight) || 0);
+    if (nw <= 0 || nh <= 0) {
+      return { width: 0, height: 0 };
+    }
+    const maxDim = Math.max(nw, nh);
+    if (maxDim > PROMO_AD_MAX_EDGE_PX) {
+      const ratio = PROMO_AD_MAX_EDGE_PX / maxDim;
+      nw = Math.max(1, Math.round(nw * ratio));
+      nh = Math.max(1, Math.round(nh * ratio));
+    }
+    return { width: nw, height: nh };
+  },
+
+  /**
+   * 根据基准尺寸与缩放比例计算 movable-view 实际宽高。
+   * @param {number} baseWidth
+   * @param {number} baseHeight
+   * @param {number} scale
+   * @returns {{ displayWidth: number, displayHeight: number, scale: number }}
+   */
+  _computePromoAdScaledSize: function (baseWidth, baseHeight, scale) {
+    const baseW = Math.max(1, Math.round(Number(baseWidth) || 1));
+    const baseH = Math.max(1, Math.round(Number(baseHeight) || 1));
+    let s = Number(scale);
+    if (!Number.isFinite(s) || s <= 0) {
+      s = 1;
+    }
+    s = Math.max(PROMO_AD_SCALE_MIN, Math.min(PROMO_AD_SCALE_MAX, s));
+    return {
+      scale: s,
+      displayWidth: Math.max(1, Math.round(baseW * s)),
+      displayHeight: Math.max(1, Math.round(baseH * s))
+    };
+  },
+
+  /**
+   * 写入推广 Logo 基准尺寸，并按当前 scale 同步展示尺寸。
+   * @param {Record<string, unknown>} entry
+   * @param {number} naturalWidth
+   * @param {number} naturalHeight
+   * @returns {Record<string, unknown>}
+   */
+  _applyPromoAdBaseSize: function (entry, naturalWidth, naturalHeight) {
+    const size = this._computePromoAdDisplaySize(naturalWidth, naturalHeight);
+    if (size.width <= 0 || size.height <= 0) {
+      return entry;
+    }
+    const scaled = this._computePromoAdScaledSize(
+      size.width,
+      size.height,
+      typeof entry.scale === 'number' ? entry.scale : 1
+    );
+    return Object.assign({}, entry, {
+      width: size.width,
+      height: size.height,
+      scale: scaled.scale,
+      displayWidth: scaled.displayWidth,
+      displayHeight: scaled.displayHeight
+    });
+  },
+
+  /**
+   * 提交推广 Logo 缩放结果（路径 setData，避免整表重渲染引发回弹）。
+   * @param {number} idx
+   * @param {number} scale
+   * @returns {void}
+   */
+  _commitPromoAdScale: function (idx, scale) {
+    const ads = this.data.promoAds || [];
+    const ad = ads[idx];
+    if (!ad) {
+      return;
+    }
+    const scaled = this._computePromoAdScaledSize(ad.width, ad.height, scale);
+    const patch = {};
+    patch['promoAds[' + idx + '].scale'] = scaled.scale;
+    patch['promoAds[' + idx + '].displayWidth'] = scaled.displayWidth;
+    patch['promoAds[' + idx + '].displayHeight'] = scaled.displayHeight;
+    this.setData(patch);
+  },
+
+  /**
+   * 推广 Logo 图片加载后补齐基准尺寸（getImageInfo 失败时的兜底）。
    * @param {Object} e
    * @returns {void}
    */
-  onPromoAdPositionChange: function (e) {
-    const rawIndex = e.currentTarget.dataset.index;
-    const detail = e.detail || {};
-    const idx = Number(rawIndex);
+  onPromoAdImageLoad: function (e) {
+    const idx = Number(e.currentTarget.dataset.index);
     if (Number.isNaN(idx)) {
       return;
     }
+    const detail = e.detail || {};
     const ads = (this.data.promoAds || []).slice();
     if (!ads[idx]) {
       return;
     }
-    ads[idx] = Object.assign({}, ads[idx], {
-      x: typeof detail.x === 'number' ? detail.x : ads[idx].x,
-      y: typeof detail.y === 'number' ? detail.y : ads[idx].y
-    });
-    this.setData({ promoAds: ads });
+    const next = this._applyPromoAdBaseSize(ads[idx], detail.width, detail.height);
+    if (next.width === ads[idx].width && next.height === ads[idx].height) {
+      return;
+    }
+    const patch = {};
+    patch['promoAds[' + idx + '].width'] = next.width;
+    patch['promoAds[' + idx + '].height'] = next.height;
+    patch['promoAds[' + idx + '].scale'] = next.scale;
+    patch['promoAds[' + idx + '].displayWidth'] = next.displayWidth;
+    patch['promoAds[' + idx + '].displayHeight'] = next.displayHeight;
+    this.setData(patch);
+  },
+
+  /**
+   * 推广 Logo movable-view 拖拽位置变更（缩放过程中忽略，避免与捏合冲突）。
+   * @param {Object} e
+   * @returns {void}
+   */
+  onPromoAdPositionChange: function (e) {
+    if (this._promoAdPinching || this._promoAdPinchState) {
+      return;
+    }
+    const detail = e.detail || {};
+    if (detail.source === 'friction') {
+      return;
+    }
+    const idx = Number(e.currentTarget.dataset.index);
+    if (Number.isNaN(idx)) {
+      return;
+    }
+    if (typeof detail.x !== 'number' || typeof detail.y !== 'number') {
+      return;
+    }
+    const patch = {};
+    patch['promoAds[' + idx + '].x'] = detail.x;
+    patch['promoAds[' + idx + '].y'] = detail.y;
+    this.setData(patch);
+  },
+
+  /**
+   * 推广 Logo 双指捏合起始。
+   * @param {Object} e
+   * @returns {void}
+   */
+  onPromoAdTouchStart: function (e) {
+    const idx = Number(e.currentTarget.dataset.index);
+    if (Number.isNaN(idx) || !e.touches || e.touches.length < 2) {
+      return;
+    }
+    const ad = (this.data.promoAds || [])[idx];
+    if (!ad) {
+      return;
+    }
+    const dist = this.getDistance(e.touches[0], e.touches[1]);
+    if (dist <= 0) {
+      return;
+    }
+    this._promoAdPinching = true;
+    this._promoAdPinchState = {
+      index: idx,
+      startDist: dist,
+      startScale: typeof ad.scale === 'number' && ad.scale > 0 ? ad.scale : 1
+    };
+  },
+
+  /**
+   * 推广 Logo 双指捏合缩放（自定义等比缩放，不依赖 movable-view 原生 scale）。
+   * @param {Object} e
+   * @returns {void}
+   */
+  onPromoAdTouchMove: function (e) {
+    const st = this._promoAdPinchState;
+    if (!st || !e.touches || e.touches.length < 2) {
+      return;
+    }
+    const dist = this.getDistance(e.touches[0], e.touches[1]);
+    if (st.startDist <= 0 || dist <= 0) {
+      return;
+    }
+    const rawScale = st.startScale * (dist / st.startDist);
+    const lastScale = typeof st.lastScale === 'number' ? st.lastScale : st.startScale;
+    if (Math.abs(rawScale - lastScale) < 0.015) {
+      return;
+    }
+    st.lastScale = rawScale;
+    this._commitPromoAdScale(st.index, rawScale);
+  },
+
+  /**
+   * 推广 Logo 双指捏合结束。
+   * @returns {void}
+   */
+  onPromoAdTouchEnd: function () {
+    const self = this;
+    setTimeout(function () {
+      self._promoAdPinching = false;
+      self._promoAdPinchState = null;
+    }, 80);
   },
 
   /** 向后兼容：内部调用 closeDrawer 的地方统一走 closeAllDrawers */
