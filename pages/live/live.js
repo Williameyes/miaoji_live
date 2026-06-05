@@ -52,11 +52,17 @@ const liveWsClientMod = require('../../services/live-ws-client.js');
 const { loadPromoAds } = require('../../services/promo-live.service.js');
 const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
 
-/** 推广 Logo 初始展示时长边上限（px），超出则等比缩小 */
-const PROMO_AD_MAX_EDGE_PX = 240;
+/** 推广 Logo 初始展示高度占屏幕高度比例（约 1/10，减轻挡画面） */
+const PROMO_AD_HEIGHT_RATIO = 0.1;
 /** 推广 Logo 双指缩放下限 / 上限 */
 const PROMO_AD_SCALE_MIN = 0.25;
 const PROMO_AD_SCALE_MAX = 4;
+/** 推广 Logo 贴边留白（px） */
+const PROMO_AD_EDGE_MARGIN_PX = 8;
+/** 推广 Logo 边缘吸附触发距离（px） */
+const PROMO_AD_SNAP_THRESHOLD_PX = 28;
+/** 拖拽停止后延迟吸附（ms），仅在松手时执行一次 setData */
+const PROMO_AD_SNAP_DELAY_MS = 120;
 
 /**
  * 画质增强内测白名单 OpenID。
@@ -11508,17 +11514,25 @@ Page({
             });
           })
         ).then(function (promoAds) {
+          const margin = PROMO_AD_EDGE_MARGIN_PX;
+          const positioned = promoAds.map(function (ad, index) {
+            const rowH = (ad.displayHeight || 1) + margin;
+            return Object.assign({}, ad, {
+              x: margin,
+              y: margin + index * rowH
+            });
+          });
           self.setData({
             promoLoadBusy: false,
             promoAdsPanelOpen: false,
             promoMatchId: id,
-            promoAds: promoAds,
-            promoAdsVisible: promoAds.length > 0
+            promoAds: positioned,
+            promoAdsVisible: positioned.length > 0
           });
-          if (promoAds.length === 0) {
+          if (positioned.length === 0) {
             wx.showToast({ title: '暂无广告 Logo', icon: 'none' });
           } else {
-            wx.showToast({ title: '已载入 ' + promoAds.length + ' 个 Logo', icon: 'success' });
+            wx.showToast({ title: '已载入 ' + positioned.length + ' 个 Logo', icon: 'success' });
           }
         });
       })
@@ -11539,7 +11553,29 @@ Page({
   },
 
   /**
-   * 按图片原始比例计算推广 Logo 基准尺寸（过长边限制在 PROMO_AD_MAX_EDGE_PX）。
+   * 推广 Logo 目标展示高度（屏幕高度约 1/10）。
+   * @returns {number}
+   */
+  _getPromoAdTargetHeightPx: function () {
+    const sys = wx.getSystemInfoSync();
+    const screenH = Math.max(1, Number(sys.windowHeight) || 375);
+    return Math.max(20, Math.round(screenH * PROMO_AD_HEIGHT_RATIO));
+  },
+
+  /**
+   * 推广 Logo 可拖拽区域尺寸（与 16:9 取景框一致）。
+   * @returns {{ w: number, h: number }}
+   */
+  _getPromoMovableAreaSize: function () {
+    const sys = wx.getSystemInfoSync();
+    return computeLiveStage16x9SizePx(
+      Math.max(1, Number(sys.windowWidth) || 375),
+      Math.max(1, Number(sys.windowHeight) || 667)
+    );
+  },
+
+  /**
+   * 按图片原始比例计算基准尺寸：展示高度不超过屏幕高度 1/10（仅缩小、不放大）。
    * @param {number} naturalWidth
    * @param {number} naturalHeight
    * @returns {{ width: number, height: number }}
@@ -11550,13 +11586,90 @@ Page({
     if (nw <= 0 || nh <= 0) {
       return { width: 0, height: 0 };
     }
-    const maxDim = Math.max(nw, nh);
-    if (maxDim > PROMO_AD_MAX_EDGE_PX) {
-      const ratio = PROMO_AD_MAX_EDGE_PX / maxDim;
+    const targetH = this._getPromoAdTargetHeightPx();
+    if (nh > targetH) {
+      const ratio = targetH / nh;
       nw = Math.max(1, Math.round(nw * ratio));
-      nh = Math.max(1, Math.round(nh * ratio));
+      nh = targetH;
     }
     return { width: nw, height: nh };
+  },
+
+  /**
+   * 将推广 Logo 吸附到最近的取景框边缘（仅在拖拽结束后调用一次）。
+   * @param {number} idx
+   * @returns {void}
+   */
+  _snapPromoAdToEdge: function (idx) {
+    const ads = this.data.promoAds || [];
+    const ad = ads[idx];
+    if (!ad) {
+      return;
+    }
+    const area = this._getPromoMovableAreaSize();
+    const margin = PROMO_AD_EDGE_MARGIN_PX;
+    const threshold = PROMO_AD_SNAP_THRESHOLD_PX;
+    const viewW = Math.max(1, Number(ad.displayWidth) || 1);
+    const viewH = Math.max(1, Number(ad.displayHeight) || 1);
+    const maxX = Math.max(margin, area.w - viewW - margin);
+    const maxY = Math.max(margin, area.h - viewH - margin);
+
+    let x = typeof ad.x === 'number' ? ad.x : margin;
+    let y = typeof ad.y === 'number' ? ad.y : margin;
+
+    const distLeft = x;
+    const distTop = y;
+    const distRight = area.w - (x + viewW);
+    const distBottom = area.h - (y + viewH);
+    const minDist = Math.min(distLeft, distTop, distRight, distBottom);
+
+    if (minDist > threshold) {
+      return;
+    }
+
+    if (minDist === distLeft) {
+      x = margin;
+    } else if (minDist === distTop) {
+      y = margin;
+    } else if (minDist === distRight) {
+      x = maxX;
+    } else {
+      y = maxY;
+    }
+
+    x = Math.max(margin, Math.min(maxX, Math.round(x)));
+    y = Math.max(margin, Math.min(maxY, Math.round(y)));
+
+    if (x === ad.x && y === ad.y) {
+      return;
+    }
+    const patch = {};
+    patch['promoAds[' + idx + '].x'] = x;
+    patch['promoAds[' + idx + '].y'] = y;
+    this.setData(patch);
+  },
+
+  /**
+   * 拖拽结束后延迟触发边缘吸附（防抖，避免拖动过程中重复 setData）。
+   * @param {number} idx
+   * @returns {void}
+   */
+  _schedulePromoAdEdgeSnap: function (idx) {
+    const self = this;
+    if (self._promoAdSnapTimers == null) {
+      self._promoAdSnapTimers = {};
+    }
+    const key = String(idx);
+    if (self._promoAdSnapTimers[key]) {
+      clearTimeout(self._promoAdSnapTimers[key]);
+    }
+    self._promoAdSnapTimers[key] = setTimeout(function () {
+      delete self._promoAdSnapTimers[key];
+      if (self._promoAdPinching || self._promoAdPinchState) {
+        return;
+      }
+      self._snapPromoAdToEdge(idx);
+    }, PROMO_AD_SNAP_DELAY_MS);
   },
 
   /**
@@ -11679,6 +11792,9 @@ Page({
     patch['promoAds[' + idx + '].x'] = detail.x;
     patch['promoAds[' + idx + '].y'] = detail.y;
     this.setData(patch);
+    if (detail.source === 'touch') {
+      this._schedulePromoAdEdgeSnap(idx);
+    }
   },
 
   /**
@@ -11734,11 +11850,18 @@ Page({
    * 推广 Logo 双指捏合结束。
    * @returns {void}
    */
-  onPromoAdTouchEnd: function () {
+  onPromoAdTouchEnd: function (e) {
     const self = this;
+    const wasPinching = Boolean(self._promoAdPinchState);
+    const idx = Number(e && e.currentTarget && e.currentTarget.dataset
+      ? e.currentTarget.dataset.index
+      : NaN);
     setTimeout(function () {
       self._promoAdPinching = false;
       self._promoAdPinchState = null;
+      if (!wasPinching && !Number.isNaN(idx)) {
+        self._schedulePromoAdEdgeSnap(idx);
+      }
     }, 80);
   },
 
