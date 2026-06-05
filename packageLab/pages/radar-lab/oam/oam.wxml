@@ -39,7 +39,7 @@
         </view>
         <view class="oam-match-actions">
           <button class="oam-action-btn oam-action-btn--ghost" bindtap="onEditMatch" data-id="{{item.id}}">编辑</button>
-          <button class="oam-action-btn oam-action-btn--ghost" bindtap="onOpenAds" data-id="{{item.id}}">广告</button>
+          <button class="oam-action-btn oam-action-btn--ghost" bindtap="onOpenPromo" data-id="{{item.id}}">推广</button>
           <button class="oam-action-btn oam-action-btn--primary" bindtap="onOpenMonitor" data-id="{{item.id}}">监控</button>
         </view>
       </view>

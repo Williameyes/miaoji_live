@@ -73,15 +73,15 @@
       </view>
       <view wx:if="{{hasPromoData}}" class="list-divider"></view>
       <view
-        wx:if="{{isAdmin}}"
+        wx:if="{{showPromoReviewEntry}}"
         class="list-item"
         hover-class="list-item-hover"
         bindtap="onPromoReviewTap"
       >
-        <text class="list-label">推广审批 <text class="list-label-badge">实验</text></text>
+        <text class="list-label">推广审批</text>
         <text class="list-arrow">›</text>
       </view>
-      <view wx:if="{{isAdmin}}" class="list-divider"></view>
+      <view wx:if="{{showPromoReviewEntry}}" class="list-divider"></view>
     </block>
     <block wx:if="{{loggedIn && isInWhitelist}}">
       <view class="list-item" hover-class="list-item-hover" bindtap="onSyncLabTap">

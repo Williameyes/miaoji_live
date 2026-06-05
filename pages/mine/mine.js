@@ -237,8 +237,10 @@ Page({
           '<path d="M30 102c4-18 18-28 30-28s26 10 30 28" fill="#EFF6FF"/>' +
         '</svg>'
       ),
-    /** 当前用户是否为管理员（可进推广审批） */
+    /** 当前用户是否为管理员 */
     isAdmin: false,
+    /** 是否显示「推广审批」入口（管理员或雷达白名单中介） */
+    showPromoReviewEntry: false,
     /** 是否有已通过审批的推广（有才显示「我的推广」入口） */
     hasPromoData: false,
     /** 是否显示「推广广场」入口（白名单恒显；非白名单仅有开放推广内容时显） */
@@ -510,11 +512,13 @@ Page({
       ? pickLoggedInAvatarDisplaySrc(av, this.data.loggedInPlaceholderAvatar, ts)
       : this.data.defaultAvatar;
     const isAdmin = n.isAdmin === true;
+    const inWhitelist = hasToken && checkSyncLabWhitelist();
     this.setData({
       userInfo: /** @type {MineUserInfo} */ (info),
       loggedIn: hasToken,
-      isInWhitelist: hasToken && checkSyncLabWhitelist(),
+      isInWhitelist: inWhitelist,
       isAdmin: isAdmin,
+      showPromoReviewEntry: hasToken && (isAdmin || inWhitelist),
       needCompleteProfile,
       displayNick: n.nickName || PLACEHOLDER_NICK,
       avatarUrl: av,
@@ -577,11 +581,13 @@ Page({
     }
 
     const isAdmin = userInfo && userInfo.isAdmin === true;
+    const inWhitelist = loggedIn && checkSyncLabWhitelist();
     this.setData({
       userInfo,
       loggedIn,
-      isInWhitelist: loggedIn && checkSyncLabWhitelist(),
+      isInWhitelist: inWhitelist,
       isAdmin: isAdmin,
+      showPromoReviewEntry: loggedIn && (isAdmin || inWhitelist),
       needCompleteProfile,
       displayNick,
       avatarUrl,

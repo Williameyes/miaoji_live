@@ -22,13 +22,24 @@ Page({
    */
   onLoad: function (options) {
     const sys = wx.getSystemInfoSync();
-    const rawId = options && options.target_match_id ? String(options.target_match_id) : '';
+    const rawId = options && options.target_match_id ? String(options.target_match_id).trim() : '';
     this.setData({
       statusBarHeight: sys.statusBarHeight || 0,
       targetMatchId: rawId
     });
     if (rawId) {
       this.loadPending(rawId);
+    }
+  },
+
+  /**
+   * 从发布页返回时刷新待审批列表。
+   * @returns {void}
+   */
+  onShow: function () {
+    const matchId = (this.data.targetMatchId || '').trim();
+    if (matchId && getToken()) {
+      this.loadPending(matchId);
     }
   },
 

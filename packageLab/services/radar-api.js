@@ -22,7 +22,10 @@ const RADAR_ERROR_MESSAGES = {
   ADS_LIMIT_EXCEEDED: '广告物料已达上限（10 个）',
   LOGO_FILE_TOO_LARGE: 'Logo 压缩后仍过大，请更换一张更简洁的图片',
   MATCH_ALREADY_ENDED: '场次已结束',
-  MATCH_NOT_FOUND: '场次不存在'
+  MATCH_NOT_FOUND: '场次不存在',
+  PROMO_NOT_READY: '发布条件未满足',
+  PROMO_NOT_ENABLED: '推广广场未发布',
+  FORBIDDEN: '无权限执行此操作'
 };
 
 /** @type {typeof parseAppApiResponse} */
@@ -230,6 +233,80 @@ function fetchTournamentInfluence(tournamentId) {
   );
 }
 
+/**
+ * 查询推广发布状态与前置检查。
+ * @param {number|string} targetMatchId
+ * @param {string} [promoTitle] - 草稿标题，用于实时校验
+ * @returns {Promise<Record<string, unknown>>}
+ */
+function fetchPromoPublishStatus(targetMatchId, promoTitle) {
+  const params = { target_match_id: targetMatchId };
+  if (promoTitle && String(promoTitle).trim()) {
+    params.promo_title = String(promoTitle).trim();
+  }
+  return get('/api/app/promo/publish/status', params)
+    .then(parseRadarAppResponse)
+    .catch(function (err) {
+      throw normalizeRadarAppError(err);
+    });
+}
+
+/**
+ * 发布推广广场。
+ * @param {number|string} targetMatchId
+ * @param {string} promoTitle
+ * @returns {Promise<Record<string, unknown>>}
+ */
+function publishPromo(targetMatchId, promoTitle) {
+  return post('/api/app/promo/publish', {
+    target_match_id: Number(targetMatchId),
+    promo_title: promoTitle
+  })
+    .then(parseRadarAppResponse)
+    .catch(function (err) {
+      throw normalizeRadarAppError(err);
+    });
+}
+
+/**
+ * 关闭推广广场。
+ * @param {number|string} targetMatchId
+ * @returns {Promise<Record<string, unknown>>}
+ */
+function unpublishPromo(targetMatchId) {
+  return post('/api/app/promo/unpublish', { target_match_id: Number(targetMatchId) })
+    .then(parseRadarAppResponse)
+    .catch(function (err) {
+      throw normalizeRadarAppError(err);
+    });
+}
+
+/**
+ * 生成推广广场小程序码（Base64 PNG）。
+ * @param {number|string} targetMatchId
+ * @returns {Promise<Record<string, unknown>>}
+ */
+function fetchPromoWxacode(targetMatchId) {
+  return post('/api/app/promo/wxacode', { target_match_id: Number(targetMatchId) })
+    .then(parseRadarAppResponse)
+    .catch(function (err) {
+      throw normalizeRadarAppError(err);
+    });
+}
+
+/**
+ * 拉取待审批推广申请列表。
+ * @param {number|string} targetMatchId
+ * @returns {Promise<Record<string, unknown>>}
+ */
+function fetchPromoPendingApplications(targetMatchId) {
+  return get('/api/app/promo/pending', { target_match_id: targetMatchId })
+    .then(parseRadarAppResponse)
+    .catch(function (err) {
+      throw normalizeRadarAppError(err);
+    });
+}
+
 module.exports = {
   parseRadarAppResponse,
   normalizeRadarAppError,
@@ -243,5 +320,10 @@ module.exports = {
   fetchTournamentInfluence,
   setMatchAds,
   settleMatch,
-  getMatchSettlement
+  getMatchSettlement,
+  fetchPromoPublishStatus,
+  publishPromo,
+  unpublishPromo,
+  fetchPromoWxacode,
+  fetchPromoPendingApplications
 };

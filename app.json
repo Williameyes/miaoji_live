@@ -34,6 +34,7 @@
         "pages/radar-lab/oam/oam",
         "pages/radar-lab/oam/tournament-list/tournament-list",
         "pages/radar-lab/oam/match-edit/match-edit",
+        "pages/radar-lab/oam/promo-publish/promo-publish",
         "pages/radar-lab/oam/tournament-edit/tournament-edit",
         "pages/radar-lab/monitor/index",
         "pages/radar-lab/monitor/detail",

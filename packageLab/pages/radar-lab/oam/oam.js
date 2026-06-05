@@ -19,7 +19,8 @@ const { parseMatchExcelBuffer } = require('../../../utils/radar-excel-parser.js'
 function formatCommercialText(m) {
   const poolText = m.totalPool > 0 ? '奖池 ¥' + m.totalPool : '未配奖池';
   const settlementText = m.settlementStatus === 'settled' ? '已清算' : '待清算';
-  return poolText + ' · ' + settlementText;
+  const promoText = m.promoEnabled ? ' · 推广已开' : '';
+  return poolText + ' · ' + settlementText + promoText;
 }
 
 Page({
@@ -238,17 +239,17 @@ Page({
   },
 
   /**
+   * 进入推广发布页（奖池/Logo/小程序码一站式）。
    * @param {WechatMiniprogram.BaseEvent} e
    * @returns {void}
    */
-  onOpenAds: function (e) {
+  onOpenPromo: function (e) {
     const id = e.currentTarget.dataset.id;
     if (!id) return;
     wx.navigateTo({
       url:
-        '/packageLab/pages/radar-lab/monitor/detail?match_id=' +
-        encodeURIComponent(id) +
-        '&focus_ads=1'
+        '/packageLab/pages/radar-lab/oam/promo-publish/promo-publish?match_id=' +
+        encodeURIComponent(id)
     });
   },
 

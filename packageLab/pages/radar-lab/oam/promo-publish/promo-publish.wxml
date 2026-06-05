@@ -1,0 +1,127 @@
+<view class="rl-root">
+
+  <view class="rl-header">
+    <view class="rl-kicker">OAM · 推广广场</view>
+    <view class="rl-title">{{matchTitle}}</view>
+    <view class="rl-sub" wx:if="{{tournamentName}}">
+      {{tournamentName}}
+      <text class="pp-status-pill {{promoEnabled ? 'pp-status-pill--on' : 'pp-status-pill--off'}}">
+        {{promoEnabled ? '已发布' : '未发布'}}
+      </text>
+    </view>
+  </view>
+
+  <view class="rl-empty" wx:if="{{loading}}">
+    <text>加载中…</text>
+  </view>
+
+  <block wx:else>
+    <view class="rl-card">
+      <view class="rl-card-inner">
+        <view class="rl-section-title">发布前检查</view>
+        <view class="pp-check-list">
+          <view class="pp-check-item {{checks.poolOk ? 'pp-check-item--ok' : 'pp-check-item--fail'}}">
+            <view class="pp-check-dot"></view>
+            <text>广告奖池 {{totalPoolText}}</text>
+          </view>
+          <view class="pp-check-item {{checks.minViewersOk ? 'pp-check-item--ok' : 'pp-check-item--fail'}}">
+            <view class="pp-check-dot"></view>
+            <text>起征人数 {{minViewersText}}</text>
+          </view>
+          <view class="pp-check-item {{checks.adsOk ? 'pp-check-item--ok' : 'pp-check-item--fail'}}">
+            <view class="pp-check-dot"></view>
+            <text>广告 Logo {{adsCountText}}</text>
+          </view>
+          <view class="pp-check-item {{checks.titleOk ? 'pp-check-item--ok' : 'pp-check-item--fail'}}">
+            <view class="pp-check-dot"></view>
+            <text>推广标题</text>
+          </view>
+        </view>
+        <navigator
+          class="pp-edit-link"
+          url="/packageLab/pages/radar-lab/oam/match-edit/match-edit?id={{matchId}}"
+          wx:if="{{!checks.poolOk || !checks.minViewersOk}}"
+        >去场次编辑配置奖池与起征点</navigator>
+      </view>
+    </view>
+
+    <view class="rl-card">
+      <view class="rl-card-inner">
+        <view class="rl-section-title">推广物料</view>
+        <view class="rl-field">
+          <text class="rl-label">推广标题（分享卡片展示）</text>
+          <input
+            class="rl-input"
+            placeholder="如：XX 杯赛事推广专场"
+            value="{{promoTitle}}"
+            bindinput="onPromoTitleInput"
+            bindblur="onPromoTitleBlur"
+          />
+        </view>
+        <view class="rl-field">
+          <text class="rl-label">品牌名称（上传 Logo 时可选）</text>
+          <input
+            class="rl-input"
+            placeholder="可选，同品牌重复上传将更新"
+            value="{{logoBrandName}}"
+            bindinput="onLogoBrandInput"
+          />
+        </view>
+        <button
+          class="rl-btn rl-btn-secondary"
+          disabled="{{uploadingLogo}}"
+          bindtap="onChooseLogo"
+        >上传品牌 Logo</button>
+        <view class="pp-ads-preview" wx:if="{{adsPreview.length}}">
+          <block wx:for="{{adsPreview}}" wx:key="imageUrl">
+            <image class="pp-ads-thumb" src="{{item.imageUrl}}" mode="aspectFit" />
+          </block>
+        </view>
+      </view>
+    </view>
+
+    <view class="rl-card">
+      <view class="rl-card-inner">
+        <view class="rl-section-title">发布与分发</view>
+        <button
+          class="rl-btn rl-btn-primary"
+          disabled="{{submitting || !ready}}"
+          bindtap="onPublish"
+        >{{promoEnabled ? '更新并发布' : '发布推广广场'}}</button>
+        <button
+          class="rl-btn rl-btn-secondary"
+          style="margin-top:16rpx;"
+          disabled="{{submitting || !promoEnabled}}"
+          bindtap="onGenerateWxacode"
+        >生成小程序码</button>
+        <view class="pp-wxacode-wrap" wx:if="{{wxacodePath}}">
+          <image class="pp-wxacode-img" src="{{wxacodePath}}" mode="aspectFit" show-menu-by-longpress />
+          <text class="pp-wxacode-tip">长按图片可转发或保存，主播扫码进入推广广场</text>
+        </view>
+        <view class="pp-share-path" wx:if="{{sharePath}}">{{sharePath}}</view>
+        <view class="pp-link-row" wx:if="{{sharePath}}">
+          <button class="rl-btn rl-btn-secondary" bindtap="onCopySharePath">复制分享路径</button>
+          <button
+            class="rl-btn rl-btn-secondary"
+            disabled="{{!wxacodePath}}"
+            bindtap="onSaveWxacode"
+          >保存小程序码</button>
+        </view>
+        <button
+          class="rl-btn rl-btn-secondary"
+          style="margin-top:24rpx;"
+          wx:if="{{promoEnabled}}"
+          bindtap="onOpenReview"
+        >审批主播申请{{pendingCount > 0 ? '（' + pendingCount + '）' : ''}}</button>
+        <button
+          class="rl-btn rl-btn-danger"
+          style="margin-top:16rpx;"
+          wx:if="{{promoEnabled}}"
+          disabled="{{submitting}}"
+          bindtap="onUnpublish"
+        >关闭推广广场</button>
+      </view>
+    </view>
+  </block>
+
+</view>

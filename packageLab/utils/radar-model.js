@@ -20,6 +20,8 @@
  * @property {string} [financialSettledAt]
  * @property {number} [adsCount]
  * @property {number} [adsVersion]
+ * @property {boolean} [promoEnabled]
+ * @property {string} [promoTitle]
  */
 
 /**
@@ -89,7 +91,9 @@ function normalizeMatch(raw) {
     adsCount:
       Number(o.ads_count ?? o.adsCount ?? 0) ||
       (Array.isArray(o.ads_list) ? o.ads_list.length : 0),
-    adsVersion: Number(o.ads_version ?? o.adsVersion ?? 0) || 0
+    adsVersion: Number(o.ads_version ?? o.adsVersion ?? 0) || 0,
+    promoEnabled: Boolean(o.promo_enabled ?? o.promoEnabled),
+    promoTitle: String(o.promo_title || o.promoTitle || '')
   };
 }
 
