@@ -4,11 +4,13 @@
 
 const { ensureRadarLabAccess } = require('../../../../utils/radar-access.js');
 const { fetchTournamentList } = require('../../../../services/radar-api.js');
+const { getRadarListScope } = require('../../../../utils/radar-list-scope.js');
 
 Page({
   data: {
     tournamentRows: [],
-    loading: false
+    loading: false,
+    adminViewAll: false
   },
 
   /**
@@ -45,8 +47,9 @@ Page({
     if (!silent) {
       this.setData({ loading: true });
     }
-    return fetchTournamentList()
+    return fetchTournamentList({ scope: getRadarListScope() })
       .then(function (list) {
+        const listScope = getRadarListScope();
         const rows = list.map(function (t) {
           const dateRange =
             t.startDate && t.endDate ? t.startDate + ' ~ ' + t.endDate : '—';
@@ -59,10 +62,15 @@ Page({
                 ? String(t.influenceScore)
                 : '—',
             scheduledCount: t.totalScheduledMatches || 0,
-            monitoredCount: t.totalMonitoredMatches || 0
+            monitoredCount: t.totalMonitoredMatches || 0,
+            canManage: t.canManage !== false
           };
         });
-        self.setData({ tournamentRows: rows, loading: false });
+        self.setData({
+          tournamentRows: rows,
+          loading: false,
+          adminViewAll: listScope === 'all'
+        });
       })
       .catch(function (err) {
         self.setData({ loading: false });
@@ -91,6 +99,13 @@ Page({
   onEditTournament: function (e) {
     const id = e.currentTarget.dataset.id;
     if (!id) return;
+    const row = this.data.tournamentRows.find(function (r) {
+      return String(r.id) === String(id);
+    });
+    if (row && row.canManage === false) {
+      wx.showToast({ title: '无权操作该赛事', icon: 'none' });
+      return;
+    }
     wx.navigateTo({
       url:
         '/packageLab/pages/radar-lab/oam/tournament-edit/tournament-edit?id=' +

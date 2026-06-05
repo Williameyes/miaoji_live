@@ -12,6 +12,7 @@ const {
   parseTournamentList,
   parseMatchDetail
 } = require('../utils/radar-model.js');
+const { getRadarListScope } = require('../utils/radar-list-scope.js');
 
 /** @type {Record<string, string>} */
 const RADAR_ERROR_MESSAGES = {
@@ -57,10 +58,16 @@ function oamUpsert(payload) {
 
 /**
  * 拉取赛事列表。
+ * @param {Object} [query]
+ * @param {'mine' | 'all'} [query.scope] - 默认：管理员 `all`，普通用户 `mine`
  * @returns {Promise<import('../utils/radar-model.js').RadarTournamentView[]>}
  */
-function fetchTournamentList() {
-  return get('/api/app/tournament/list')
+function fetchTournamentList(query) {
+  const q = query || {};
+  const params = {
+    scope: q.scope || getRadarListScope()
+  };
+  return get('/api/app/tournament/list', params)
     .then(parseRadarAppResponse)
     .then(parseTournamentList);
 }
@@ -70,11 +77,14 @@ function fetchTournamentList() {
  * @param {Object} [query]
  * @param {string} [query.tournamentId] - 赛事 ID，不传则全部
  * @param {string} [query.status] - 如 `monitoring,waiting_radar`
+ * @param {'mine' | 'all'} [query.scope] - 默认：管理员 `all`，普通用户 `mine`
  * @returns {Promise<import('../utils/radar-model.js').RadarMatchView[]>}
  */
 function fetchMatchList(query) {
   const q = query || {};
-  const params = {};
+  const params = {
+    scope: q.scope || getRadarListScope()
+  };
   if (q.tournamentId && q.tournamentId !== 'all') {
     params.tournament_id = q.tournamentId;
   }
@@ -94,7 +104,10 @@ function fetchMatchList(query) {
 function fetchMatchDetail(matchId) {
   return get('/api/app/match/detail', { match_id: matchId })
     .then(parseRadarAppResponse)
-    .then(parseMatchDetail);
+    .then(parseMatchDetail)
+    .catch(function (err) {
+      throw normalizeRadarAppError(err);
+    });
 }
 
 /**

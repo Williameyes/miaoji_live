@@ -34,12 +34,21 @@ Page({
   },
 
   /**
-   * 跳转实时监控列表页。
+   * 跳转热度监测列表。
    * @returns {void}
    */
   onGoMonitor: function () {
     if (!ensureRadarLabAccess()) return;
     wx.navigateTo({ url: '/packageLab/pages/radar-lab/monitor/index' });
+  },
+
+  /**
+   * 跳转推广监测列表。
+   * @returns {void}
+   */
+  onGoPromo: function () {
+    if (!ensureRadarLabAccess()) return;
+    wx.navigateTo({ url: '/packageLab/pages/radar-lab/monitor/promo' });
   },
 
   /**

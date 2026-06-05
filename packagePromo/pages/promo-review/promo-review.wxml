@@ -1,73 +1,72 @@
-<view class="promo-page" style="padding-top: {{statusBarHeight}}px;">
-  <view class="nav-row">
-    <view class="nav-back" bindtap="onBackTap">‹ 返回</view>
-    <text class="nav-title">推广审批</text>
+<view class="rl-root review-root">
+
+  <view class="rl-header">
+    <view class="rl-kicker">直播雷达 · 推广</view>
+    <view class="rl-title">推广审批</view>
+    <view class="rl-sub" wx:if="{{targetMatchId}}">场次 #{{targetMatchId}} · 待审批主播申请</view>
+    <view class="rl-sub" wx:else>请从推广监测或推广发布页进入</view>
   </view>
 
-  <view class="search-card">
-    <text class="search-label">母比赛 ID</text>
-    <view class="search-row">
-      <input
-        class="search-input"
-        type="number"
-        placeholder="如 40"
-        value="{{targetMatchId}}"
-        bindinput="onMatchIdInput"
-      />
-      <button class="btn-search" size="mini" type="primary" bindtap="onSearchTap">查询</button>
+  <view wx:if="{{!fromListEntry}}" class="rl-card">
+    <view class="rl-empty review-empty">
+      <text>请从推广监测或推广发布页的「审批申请」进入</text>
     </view>
-    <text class="search-hint">仅该场次推广负责人或管理员可查看</text>
   </view>
 
-  <view wx:if="{{loading}}" class="state-box">
-    <text class="state-text">加载中…</text>
+  <view wx:elif="{{loading}}" class="rl-empty">
+    <text>加载中…</text>
   </view>
 
-  <view wx:elif="{{errorText}}" class="state-box state-box--error">
-    <text class="state-text">{{errorText}}</text>
+  <view wx:elif="{{errorText}}" class="rl-card">
+    <view class="rl-empty review-empty review-empty--error">
+      <text>{{errorText}}</text>
+    </view>
   </view>
 
-  <view wx:elif="{{applications.length === 0 && targetMatchId}}" class="state-box">
-    <text class="state-text">暂无待审批申请</text>
+  <view wx:elif="{{applications.length === 0}}" class="rl-card">
+    <view class="rl-empty review-empty">
+      <text>暂无待审批申请</text>
+      <text class="rl-empty-sub">主播扫码进入推广广场并提交申请后，会显示在此</text>
+    </view>
   </view>
 
-  <view wx:else class="app-list">
-    <view class="app-card" wx:for="{{applications}}" wx:key="applicationId">
-      <view class="app-head">
-        <text class="app-name">{{item.anchorName}}</text>
-        <text class="app-time">{{item.createdAt}}</text>
-      </view>
-      <view class="app-row">
-        <text class="app-label">openid</text>
-        <text class="app-value app-value--mono">{{item.openid}}</text>
-      </view>
-      <view class="app-row">
-        <text class="app-label">sec_user_id</text>
-        <text class="app-value app-value--mono">{{item.secUserId}}</text>
-        <view
-          class="copy-btn"
-          catchtap="onCopySecUserIdTap"
-          data-val="{{item.secUserId}}"
-        >复制</view>
-      </view>
-      <view class="app-actions">
-        <button
-          class="btn-reject"
-          size="mini"
-          disabled="{{reviewingId === '' + item.applicationId}}"
-          catchtap="onRejectTap"
-          data-id="{{item.applicationId}}"
-        >拒绝</button>
-        <button
-          class="btn-approve"
-          size="mini"
-          type="primary"
-          loading="{{reviewingId === '' + item.applicationId}}"
-          disabled="{{reviewingId === '' + item.applicationId}}"
-          catchtap="onApproveTap"
-          data-id="{{item.applicationId}}"
-        >通过</button>
+  <view wx:else class="review-list">
+    <view class="rl-card review-card" wx:for="{{applications}}" wx:key="applicationId">
+      <view class="rl-card-inner">
+        <view class="review-head">
+          <text class="review-name">{{item.anchorName}}</text>
+          <text class="review-time">{{item.createdAt}}</text>
+        </view>
+        <view class="review-row">
+          <text class="review-label">openid</text>
+          <text class="review-value review-value--mono">{{item.openid}}</text>
+        </view>
+        <view class="review-row">
+          <text class="review-label">sec_user_id</text>
+          <text class="review-value review-value--mono">{{item.secUserId}}</text>
+          <view
+            class="review-copy"
+            catchtap="onCopySecUserIdTap"
+            data-val="{{item.secUserId}}"
+          >复制</view>
+        </view>
+        <view class="review-actions">
+          <button
+            class="rl-btn rl-btn-secondary review-btn"
+            disabled="{{reviewingId === '' + item.applicationId}}"
+            catchtap="onRejectTap"
+            data-id="{{item.applicationId}}"
+          >拒绝</button>
+          <button
+            class="rl-btn rl-btn-primary review-btn"
+            loading="{{reviewingId === '' + item.applicationId}}"
+            disabled="{{reviewingId === '' + item.applicationId}}"
+            catchtap="onApproveTap"
+            data-id="{{item.applicationId}}"
+          >通过</button>
+        </view>
       </view>
     </view>
   </view>
+
 </view>

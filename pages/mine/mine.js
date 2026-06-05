@@ -28,11 +28,7 @@ const {
 } = require('../../utils/referral.js');
 
 const { checkSyncLabWhitelist } = require('../../utils/sync-lab-whitelist.js');
-const { checkHasMyPromos, checkPromoSquareAvailable } = require('../../services/promo-live.service.js');
-const {
-  readPromoSquareMatchId,
-  PROMO_DEBUG_DEFAULT_MATCH_ID
-} = require('../../utils/promo-square-cache.js');
+const { checkHasMyPromos } = require('../../services/promo-live.service.js');
 
 /** 后端占位昵称，需引导用户完善 */
 const PLACEHOLDER_NICK = '微信用户';
@@ -237,14 +233,8 @@ Page({
           '<path d="M30 102c4-18 18-28 30-28s26 10 30 28" fill="#EFF6FF"/>' +
         '</svg>'
       ),
-    /** 当前用户是否为管理员 */
-    isAdmin: false,
-    /** 是否显示「推广审批」入口（管理员或雷达白名单中介） */
-    showPromoReviewEntry: false,
     /** 是否有已通过审批的推广（有才显示「我的推广」入口） */
-    hasPromoData: false,
-    /** 是否显示「推广广场」入口（白名单恒显；非白名单仅有开放推广内容时显） */
-    showPromoSquareEntry: false
+    hasPromoData: false
   },
 
   onLoad: function () {
@@ -265,7 +255,6 @@ Page({
     this.syncUserState();
     this.refreshVipStatusFromServer();
     this.refreshPromoEntryVisibility();
-    this.refreshPromoSquareEntryVisibility();
   },
 
   /**
@@ -284,48 +273,6 @@ Page({
       .catch(() => {
         this.setData({ hasPromoData: false });
       });
-  },
-
-  /**
-   * 刷新「推广广场」入口：白名单调试恒显；非白名单仅当有开放推广内容时显。
-   * @returns {void}
-   */
-  refreshPromoSquareEntryVisibility: function () {
-    if (checkSyncLabWhitelist()) {
-      this.setData({ showPromoSquareEntry: true });
-      return;
-    }
-    const cachedId = readPromoSquareMatchId();
-    if (!cachedId) {
-      this.setData({ showPromoSquareEntry: false });
-      return;
-    }
-    checkPromoSquareAvailable(cachedId)
-      .then((available) => {
-        this.setData({ showPromoSquareEntry: available === true });
-      })
-      .catch(() => {
-        this.setData({ showPromoSquareEntry: false });
-      });
-  },
-
-  /**
-   * 跳转推广广场。
-   * @returns {void}
-   */
-  onPromoSquareTap: function () {
-    let matchId = '';
-    if (checkSyncLabWhitelist()) {
-      matchId = PROMO_DEBUG_DEFAULT_MATCH_ID;
-    } else {
-      matchId = readPromoSquareMatchId();
-    }
-    const base = '/packagePromo/pages/promo-square/promo-square';
-    const url =
-      matchId.length > 0
-        ? base + '?target_match_id=' + encodeURIComponent(matchId)
-        : base;
-    wx.navigateTo({ url: url });
   },
 
   /**
@@ -350,18 +297,6 @@ Page({
       return;
     }
     wx.navigateTo({ url: '/packagePromo/pages/promo-my/promo-my' });
-  },
-
-  /**
-   * 跳转分包：推广审批。
-   * @returns {void}
-   */
-  onPromoReviewTap: function () {
-    if (!getToken()) {
-      wx.showToast({ title: '请先登录', icon: 'none' });
-      return;
-    }
-    wx.navigateTo({ url: '/packagePromo/pages/promo-review/promo-review' });
   },
 
   /**
@@ -511,14 +446,11 @@ Page({
     const displayAvatarSrc = hasToken
       ? pickLoggedInAvatarDisplaySrc(av, this.data.loggedInPlaceholderAvatar, ts)
       : this.data.defaultAvatar;
-    const isAdmin = n.isAdmin === true;
     const inWhitelist = hasToken && checkSyncLabWhitelist();
     this.setData({
       userInfo: /** @type {MineUserInfo} */ (info),
       loggedIn: hasToken,
       isInWhitelist: inWhitelist,
-      isAdmin: isAdmin,
-      showPromoReviewEntry: false,
       needCompleteProfile,
       displayNick: n.nickName || PLACEHOLDER_NICK,
       avatarUrl: av,
@@ -580,14 +512,11 @@ Page({
       needCompleteProfile = false;
     }
 
-    const isAdmin = userInfo && userInfo.isAdmin === true;
     const inWhitelist = loggedIn && checkSyncLabWhitelist();
     this.setData({
       userInfo,
       loggedIn,
       isInWhitelist: inWhitelist,
-      isAdmin: isAdmin,
-      showPromoReviewEntry: false,
       needCompleteProfile,
       displayNick,
       avatarUrl,

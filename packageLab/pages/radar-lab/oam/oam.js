@@ -3,6 +3,7 @@
  */
 
 const { ensureRadarLabAccess } = require('../../../utils/radar-access.js');
+const { getRadarListScope } = require('../../../utils/radar-list-scope.js');
 const {
   oamUpsert,
   fetchTournamentList,
@@ -30,7 +31,8 @@ Page({
     selectedTournamentId: 'all',
     matchRows: [],
     submitting: false,
-    loading: false
+    loading: false,
+    adminViewAll: false
   },
 
   /**
@@ -57,7 +59,8 @@ Page({
       this.setData({ loading: true });
     }
     const selectedId = this.data.selectedTournamentId;
-    return fetchTournamentList()
+    const listScope = getRadarListScope();
+    return fetchTournamentList({ scope: listScope })
       .then(function (tournaments) {
         const filterOptions = [{ id: 'all', name: '全部赛事' }].concat(
           tournaments.map(function (t) {
@@ -70,7 +73,8 @@ Page({
         if (filterIndex < 0) filterIndex = 0;
         const tournamentId = filterOptions[filterIndex].id;
         return fetchMatchList({
-          tournamentId: tournamentId === 'all' ? '' : tournamentId
+          tournamentId: tournamentId === 'all' ? '' : tournamentId,
+          scope: listScope
         }).then(function (matches) {
           const matchRows = matches.map(function (m) {
             return {
@@ -79,7 +83,8 @@ Page({
               teamB: m.teamB,
               startTimeText: formatStartTimeDisplay(m.startTime),
               tournamentName: m.tournamentName || '—',
-              commercialText: formatCommercialText(m)
+              commercialText: formatCommercialText(m),
+              canManage: m.canManage !== false
             };
           });
           self.setData({
@@ -87,7 +92,8 @@ Page({
             filterIndex: filterIndex,
             selectedTournamentId: tournamentId,
             matchRows: matchRows,
-            loading: false
+            loading: false,
+            adminViewAll: listScope === 'all'
           });
           self._hydrateCommercialDetails(matchRows);
         });
@@ -221,6 +227,13 @@ Page({
   onEditMatch: function (e) {
     const id = e.currentTarget.dataset.id;
     if (!id) return;
+    const row = this.data.matchRows.find(function (r) {
+      return String(r.id) === String(id);
+    });
+    if (row && row.canManage === false) {
+      wx.showToast({ title: '无权操作该场次', icon: 'none' });
+      return;
+    }
     wx.navigateTo({
       url: '/packageLab/pages/radar-lab/oam/match-edit/match-edit?id=' + encodeURIComponent(id)
     });
@@ -233,6 +246,13 @@ Page({
   onOpenMonitor: function (e) {
     const id = e.currentTarget.dataset.id;
     if (!id) return;
+    const row = this.data.matchRows.find(function (r) {
+      return String(r.id) === String(id);
+    });
+    if (row && row.canManage === false) {
+      wx.showToast({ title: '无权操作该场次', icon: 'none' });
+      return;
+    }
     wx.navigateTo({
       url: '/packageLab/pages/radar-lab/monitor/detail?match_id=' + encodeURIComponent(id)
     });
@@ -246,6 +266,13 @@ Page({
   onOpenPromo: function (e) {
     const id = e.currentTarget.dataset.id;
     if (!id) return;
+    const row = this.data.matchRows.find(function (r) {
+      return String(r.id) === String(id);
+    });
+    if (row && row.canManage === false) {
+      wx.showToast({ title: '无权操作该场次', icon: 'none' });
+      return;
+    }
     wx.navigateTo({
       url:
         '/packageLab/pages/radar-lab/oam/promo-publish/promo-publish?match_id=' +

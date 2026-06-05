@@ -61,36 +61,23 @@
       <text class="list-arrow">›</text>
     </view>
     <view class="list-divider"></view>
-    <view wx:if="{{showPromoSquareEntry}}" class="list-item" hover-class="list-item-hover" bindtap="onPromoSquareTap">
-      <text class="list-label">推广广场<text wx:if="{{isInWhitelist}}" class="list-label-badge">调试</text></text>
-      <text class="list-arrow">›</text>
-    </view>
-    <view wx:if="{{showPromoSquareEntry}}" class="list-divider"></view>
     <block wx:if="{{loggedIn}}">
       <view wx:if="{{hasPromoData}}" class="list-item" hover-class="list-item-hover" bindtap="onPromoMyTap">
         <text class="list-label">我的推广</text>
         <text class="list-arrow">›</text>
       </view>
       <view wx:if="{{hasPromoData}}" class="list-divider"></view>
-      <view
-        wx:if="{{showPromoReviewEntry}}"
-        class="list-item"
-        hover-class="list-item-hover"
-        bindtap="onPromoReviewTap"
-      >
-        <text class="list-label">推广审批</text>
+    </block>
+    <block wx:if="{{loggedIn && isInWhitelist}}">
+      <view class="list-item" hover-class="list-item-hover" bindtap="onRadarLabTap">
+        <text class="list-label">直播雷达 <text class="list-label-badge">实验</text></text>
         <text class="list-arrow">›</text>
       </view>
-      <view wx:if="{{showPromoReviewEntry}}" class="list-divider"></view>
+      <view class="list-divider"></view>
     </block>
     <block wx:if="{{loggedIn && isInWhitelist}}">
       <view class="list-item" hover-class="list-item-hover" bindtap="onSyncLabTap">
         <text class="list-label">自动同步 <text class="list-label-badge">实验</text></text>
-        <text class="list-arrow">›</text>
-      </view>
-      <view class="list-divider"></view>
-      <view class="list-item" hover-class="list-item-hover" bindtap="onRadarLabTap">
-        <text class="list-label">直播雷达 <text class="list-label-badge">实验</text></text>
         <text class="list-arrow">›</text>
       </view>
       <view class="list-divider"></view>

@@ -97,15 +97,10 @@
         <view class="pp-wxacode-wrap" wx:if="{{wxacodePath}}">
           <image class="pp-wxacode-img" src="{{wxacodePath}}" mode="aspectFit" show-menu-by-longpress />
           <text class="pp-wxacode-tip">长按图片可转发或保存，主播扫码进入推广广场</text>
-        </view>
-        <view class="pp-share-path" wx:if="{{sharePath}}">{{sharePath}}</view>
-        <view class="pp-link-row" wx:if="{{sharePath}}">
-          <button class="rl-btn rl-btn-secondary" bindtap="onCopySharePath">复制分享路径</button>
           <button
-            class="rl-btn rl-btn-secondary"
-            disabled="{{!wxacodePath}}"
+            class="rl-btn rl-btn-secondary pp-save-wxacode-btn"
             bindtap="onSaveWxacode"
-          >保存小程序码</button>
+          >保存小程序码到相册</button>
         </view>
         <button
           class="rl-btn rl-btn-secondary"

@@ -22,13 +22,19 @@
             <text class="tour-meta-tag" wx:if="{{item.influenceScore !== '—'}}">影响力 {{item.influenceScore}}</text>
           </view>
         </view>
-        <button class="tour-edit-btn" bindtap="onEditTournament" data-id="{{item.id}}">编辑</button>
+        <button
+          wx:if="{{!adminViewAll || item.canManage}}"
+          class="tour-edit-btn"
+          bindtap="onEditTournament"
+          data-id="{{item.id}}"
+        >编辑</button>
+        <text wx:if="{{adminViewAll && !item.canManage}}" class="rl-list-desc">仅查看</text>
       </view>
     </block>
   </view>
 
   <view class="rl-empty" wx:else>
-    <text>暂无赛事</text>
+    <text>暂无赛事，去创建</text>
     <text class="rl-empty-sub">点击下方按钮创建第一届赛事，再前往场次维护排期</text>
   </view>
 

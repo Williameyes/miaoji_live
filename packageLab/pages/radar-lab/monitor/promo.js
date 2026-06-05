@@ -1,5 +1,5 @@
 /**
- * @fileoverview 热度监测：仅展示无广告/推广配置且采集中场次。
+ * @fileoverview 推广监测：带广告/推广配置的场次（发布、小程序码、审批入口）。
  */
 
 const { ensureRadarLabAccess } = require('../../../utils/radar-access.js');
@@ -64,7 +64,7 @@ Page({
     if (!silent) {
       this.setData({ loading: true });
     }
-    return fetchMonitorRows('heat')
+    return fetchMonitorRows('promo')
       .then(function (rows) {
         self.setData({ matchRows: rows, loading: false });
       })
@@ -100,16 +100,17 @@ Page({
   },
 
   /**
-   * 进入单场热度监测详情。
+   * 进入推广发布/管理页。
    * @param {WechatMiniprogram.BaseEvent} e
    * @returns {void}
    */
-  onOpenDetail: function (e) {
+  onOpenPromoManage: function (e) {
     const id = e.currentTarget.dataset.id;
     if (!id) return;
     wx.navigateTo({
       url:
-        '/packageLab/pages/radar-lab/monitor/detail?match_id=' + encodeURIComponent(id)
+        '/packageLab/pages/radar-lab/oam/promo-publish/promo-publish?match_id=' +
+        encodeURIComponent(id)
     });
   }
 });

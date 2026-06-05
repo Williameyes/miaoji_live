@@ -3,7 +3,8 @@
     "pages/index/index",
     "pages/live/live",
     "pages/mine/mine",
-    "pages/help/help"
+    "pages/help/help",
+    "pages/promo-landing/promo-landing"
   ],
   "subpackages": [
     {
@@ -37,6 +38,7 @@
         "pages/radar-lab/oam/promo-publish/promo-publish",
         "pages/radar-lab/oam/tournament-edit/tournament-edit",
         "pages/radar-lab/monitor/index",
+        "pages/radar-lab/monitor/promo",
         "pages/radar-lab/monitor/detail",
         "pages/radar-lab/settlement/detail",
         "pages/radar-lab/poster/poster"

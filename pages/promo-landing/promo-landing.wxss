@@ -1,0 +1,12 @@
+.promo-landing {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f8fafc;
+}
+
+.promo-landing-text {
+  font-size: 28rpx;
+  color: #64748b;
+}

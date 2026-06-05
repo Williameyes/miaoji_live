@@ -1,6 +1,10 @@
 const app = getApp();
 
 const { STORAGE_USER_INFO_KEY } = require('../../utils/request.js');
+const {
+  resolvePromoTargetMatchId,
+  buildPromoSquarePageUrl
+} = require('../../utils/promo-entry.js');
 const { buildJerseyIconDataUrl } = require('../../utils/jersey-icon.js');
 const {
   estimateUserDataPathUsageBytes,
@@ -268,11 +272,27 @@ Page({
   },
 
   /**
+   * 小程序码 scene 落地：从首页解析 m= 并跳转推广广场分包页。
    * @param {WechatMiniprogram.Page.ILifetimePageOptions} [options]
+   * @returns {void}
    */
-  onLoad() {
+  onLoad(options) {
     const sys = wx.getSystemInfoSync();
     this.setData({ statusBarHeight: sys.statusBarHeight || 0 });
+
+    const matchId = resolvePromoTargetMatchId(
+      options && typeof options === 'object'
+        ? /** @type {Record<string, string | undefined>} */ (options)
+        : {}
+    );
+    if (matchId) {
+      wx.navigateTo({
+        url: buildPromoSquarePageUrl(matchId),
+        fail: function () {
+          wx.showToast({ title: '打开推广广场失败', icon: 'none' });
+        }
+      });
+    }
   },
 
   onShow() {

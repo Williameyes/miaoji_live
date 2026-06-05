@@ -32,23 +32,49 @@
   <view class="rl-card" wx:elif="{{matchRows.length}}">
     <block wx:for="{{matchRows}}" wx:key="id">
       <view class="oam-match-item" hover-class="rl-list-item-hover">
-        <view class="oam-match-main" bindtap="onEditMatch" data-id="{{item.id}}">
+        <view
+          class="oam-match-main"
+          bindtap="onEditMatch"
+          data-id="{{item.id}}"
+          wx:if="{{!adminViewAll || item.canManage}}"
+        >
+          <view class="rl-list-title">{{item.teamA}} vs {{item.teamB}}</view>
+          <view class="rl-list-desc">{{item.startTimeText}} · {{item.tournamentName}}</view>
+          <view class="rl-list-desc oam-commercial-desc">{{item.commercialText}}</view>
+        </view>
+        <view class="oam-match-main" wx:else>
           <view class="rl-list-title">{{item.teamA}} vs {{item.teamB}}</view>
           <view class="rl-list-desc">{{item.startTimeText}} · {{item.tournamentName}}</view>
           <view class="rl-list-desc oam-commercial-desc">{{item.commercialText}}</view>
         </view>
         <view class="oam-match-actions">
-          <button class="oam-action-btn oam-action-btn--ghost" bindtap="onEditMatch" data-id="{{item.id}}">编辑</button>
-          <button class="oam-action-btn oam-action-btn--ghost" bindtap="onOpenPromo" data-id="{{item.id}}">推广</button>
-          <button class="oam-action-btn oam-action-btn--primary" bindtap="onOpenMonitor" data-id="{{item.id}}">监测</button>
+          <button
+            wx:if="{{!adminViewAll || item.canManage}}"
+            class="oam-action-btn oam-action-btn--ghost"
+            bindtap="onEditMatch"
+            data-id="{{item.id}}"
+          >编辑</button>
+          <button
+            wx:if="{{!adminViewAll || item.canManage}}"
+            class="oam-action-btn oam-action-btn--ghost"
+            bindtap="onOpenPromo"
+            data-id="{{item.id}}"
+          >推广</button>
+          <button
+            wx:if="{{!adminViewAll || item.canManage}}"
+            class="oam-action-btn oam-action-btn--primary"
+            bindtap="onOpenMonitor"
+            data-id="{{item.id}}"
+          >监测</button>
+          <text wx:if="{{adminViewAll && !item.canManage}}" class="rl-list-desc">仅查看</text>
         </view>
       </view>
     </block>
   </view>
 
   <view class="rl-empty" wx:else>
-    <text>暂无场次</text>
-    <text class="rl-empty-sub">先选择赛事，再新增或批量导入；导入后列表会自动刷新</text>
+    <text>暂无场次，去创建</text>
+    <text class="rl-empty-sub">点击下方「新增场次」创建第一场，或先前往赛事维护创建赛事</text>
   </view>
 
   <view class="oam-fab" bindtap="onNewMatch" hover-class="oam-fab-hover">

@@ -2,7 +2,7 @@
  * @fileoverview 场次新建/编辑（服务端拉取与保存）。
  */
 
-const { ensureRadarLabAccess } = require('../../../../utils/radar-access.js');
+const { ensureRadarLabAccess, isForbiddenError, handleRadarForbidden } = require('../../../../utils/radar-access.js');
 const {
   oamUpsert,
   fetchTournamentList,
@@ -100,6 +100,10 @@ Page({
       })
       .catch(function (err) {
         self.setData({ loading: false });
+        if (isForbiddenError(err)) {
+          handleRadarForbidden();
+          return;
+        }
         wx.showToast({ title: err.message || '加载失败', icon: 'none' });
       });
   },

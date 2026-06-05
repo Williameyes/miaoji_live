@@ -2,7 +2,7 @@
  * @fileoverview 单场监控详情：曲线、挂载口令、关闭监控（无场次选择）。
  */
 
-const { ensureRadarLabAccess } = require('../../../utils/radar-access.js');
+const { ensureRadarLabAccess, isForbiddenError, handleRadarForbidden } = require('../../../utils/radar-access.js');
 const {
   addMatchTask,
   triggerMatchProbe,
@@ -190,7 +190,11 @@ Page({
           loading: false
         });
       })
-      .catch(function () {
+      .catch(function (err) {
+        if (isForbiddenError(err)) {
+          handleRadarForbidden();
+          return;
+        }
         if (!silent) {
           self.setData({
             matchTitle: '场次 #' + matchId,

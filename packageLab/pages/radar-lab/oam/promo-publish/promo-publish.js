@@ -3,7 +3,7 @@
  */
 
 const { getToken } = require('../../../../../utils/request.js');
-const { ensureRadarLabAccess } = require('../../../../utils/radar-access.js');
+const { ensureRadarLabAccess, isForbiddenError, handleRadarForbidden } = require('../../../../utils/radar-access.js');
 const {
   fetchPromoPublishStatus,
   publishPromo,
@@ -48,7 +48,6 @@ Page({
     uploadingLogo: false,
     submitting: false,
     loading: true,
-    sharePath: '',
     wxacodePath: '',
     pendingCount: 0
   },
@@ -110,6 +109,10 @@ Page({
         self._applyStatus(status);
       })
       .catch(function (err) {
+        if (isForbiddenError(err)) {
+          handleRadarForbidden();
+          return;
+        }
         if (!silent) {
           wx.showToast({ title: err.message || '加载失败', icon: 'none' });
         }
@@ -161,7 +164,6 @@ Page({
         titleOk: Boolean(checksRaw.title_ok)
       },
       adsPreview: adsPreview,
-      sharePath: String(status.share_path || ''),
       loading: false
     });
     if (Boolean(status.promo_enabled) && getToken()) {
@@ -283,11 +285,14 @@ Page({
     publishPromo(this.data.matchId, title)
       .then(function (res) {
         wx.hideLoading();
-        wx.showToast({ title: '推广广场已发布', icon: 'success' });
-        self.setData({
-          promoEnabled: true,
-          sharePath: String(res.share_path || self.data.sharePath)
+        wx.showModal({
+          title: '发布成功',
+          content:
+            '主播需扫描小程序码进入「推广广场」申请；你可在控制台「推广监测」查看本场，并生成小程序码。',
+          showCancel: false,
+          confirmText: '知道了'
         });
+        self.setData({ promoEnabled: true });
         self._loadStatus(true);
         self._refreshPendingCount();
       })
@@ -343,7 +348,7 @@ Page({
     const self = this;
     wx.showModal({
       title: '关闭推广广场',
-      content: '关闭后主播将无法通过链接/扫码进入申请，是否继续？',
+      content: '关闭后主播将无法扫码进入申请，是否继续？',
       success: function (res) {
         if (!res.confirm) return;
         self.setData({ submitting: true });
@@ -408,20 +413,7 @@ Page({
   },
 
   /**
-   * @returns {void}
-   */
-  onCopySharePath: function () {
-    const path = this.data.sharePath;
-    if (!path) return;
-    wx.setClipboardData({
-      data: path,
-      success: function () {
-        wx.showToast({ title: '路径已复制', icon: 'success' });
-      }
-    });
-  },
-
-  /**
+   * 保存小程序码到相册。
    * @returns {void}
    */
   onSaveWxacode: function () {

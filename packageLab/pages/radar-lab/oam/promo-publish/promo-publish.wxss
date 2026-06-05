@@ -97,26 +97,9 @@
   text-align: center;
 }
 
-.pp-share-path {
+.pp-save-wxacode-btn {
+  width: 100%;
   margin-top: 20rpx;
-  padding: 20rpx 24rpx;
-  border-radius: 16rpx;
-  background: #f1f5f9;
-  font-size: 24rpx;
-  color: #475569;
-  word-break: break-all;
-  line-height: 1.5;
-}
-
-.pp-link-row {
-  display: flex;
-  flex-direction: row;
-  gap: 16rpx;
-  margin-top: 20rpx;
-}
-
-.pp-link-row .rl-btn {
-  flex: 1;
 }
 
 .pp-edit-link {

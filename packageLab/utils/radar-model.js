@@ -22,6 +22,8 @@
  * @property {number} [adsVersion]
  * @property {boolean} [promoEnabled]
  * @property {string} [promoTitle]
+ * @property {boolean} [canManage] - scope=mine 时恒为 true；scope=all 时区分是否可操作
+ * @property {string | null} [ownerOpenid] - 场次负责人 openid（详情接口）
  */
 
 /**
@@ -33,6 +35,7 @@
  * @property {number} [influenceScore]
  * @property {number} [totalScheduledMatches]
  * @property {number} [totalMonitoredMatches]
+ * @property {boolean} [canManage] - scope=mine 时恒为 true；scope=all 时区分是否可操作
  */
 
 /**
@@ -93,7 +96,12 @@ function normalizeMatch(raw) {
       (Array.isArray(o.ads_list) ? o.ads_list.length : 0),
     adsVersion: Number(o.ads_version ?? o.adsVersion ?? 0) || 0,
     promoEnabled: Boolean(o.promo_enabled ?? o.promoEnabled),
-    promoTitle: String(o.promo_title || o.promoTitle || '')
+    promoTitle: String(o.promo_title || o.promoTitle || ''),
+    canManage: o.can_manage !== false && o.canManage !== false,
+    ownerOpenid:
+      o.owner_openid != null || o.ownerOpenid != null
+        ? String(o.owner_openid || o.ownerOpenid || '')
+        : null
   };
 }
 
@@ -116,7 +124,8 @@ function normalizeTournament(raw) {
     totalScheduledMatches:
       Number(o.total_scheduled_matches ?? o.totalScheduledMatches ?? 0) || 0,
     totalMonitoredMatches:
-      Number(o.total_monitored_matches ?? o.totalMonitoredMatches ?? 0) || 0
+      Number(o.total_monitored_matches ?? o.totalMonitoredMatches ?? 0) || 0,
+    canManage: o.can_manage !== false && o.canManage !== false
   };
 }
 

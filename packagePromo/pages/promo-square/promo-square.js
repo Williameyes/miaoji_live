@@ -8,6 +8,7 @@ const {
   PROMO_DEBUG_DEFAULT_MATCH_ID,
   writePromoSquareMatchId
 } = require('../../../utils/promo-square-cache.js');
+const { resolvePromoTargetMatchId } = require('../../../utils/promo-entry.js');
 const { getProfile, getPromoSquare, applyPromo } = require('../../services/promo.service.js');
 
 Page({
@@ -31,40 +32,13 @@ Page({
   },
 
   /**
-   * 从页面参数或小程序码 scene 解析母比赛 ID。
-   * @param {Record<string, string | undefined>} options
-   * @returns {string}
-   */
-  _resolveTargetMatchId: function (options) {
-    const direct =
-      options && options.target_match_id ? String(options.target_match_id).trim() : '';
-    if (direct) return direct;
-
-    const sceneRaw = options && options.scene ? String(options.scene) : '';
-    if (!sceneRaw) return '';
-
-    let scene = sceneRaw;
-    try {
-      scene = decodeURIComponent(sceneRaw);
-    } catch (e) {
-      scene = sceneRaw;
-    }
-
-    const matchParam = scene.match(/(?:^|&)m=(\d+)/);
-    if (matchParam && matchParam[1]) return matchParam[1];
-
-    if (/^\d+$/.test(scene)) return scene;
-    return '';
-  },
-
-  /**
    * 页面加载：读取 target_match_id 或扫码 scene；白名单无参时默认加载调试 ID。
    * @param {Object} options
    * @returns {void}
    */
   onLoad: function (options) {
     const isWhitelistDebug = checkSyncLabWhitelist();
-    const rawId = this._resolveTargetMatchId(options || {});
+    const rawId = resolvePromoTargetMatchId(options || {});
     const initialId = rawId || (isWhitelistDebug ? PROMO_DEBUG_DEFAULT_MATCH_ID : '');
     this.setData({
       isWhitelistDebug: isWhitelistDebug,

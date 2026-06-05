@@ -1,5 +1,5 @@
 /**
- * @fileoverview 推广审批：中介（promo_owner）或管理员查看待审批列表并操作。
+ * @fileoverview 推广审批：场次负责人查看待审批列表并操作（须从本人场次列表进入）。
  */
 
 const { getToken } = require('../../../utils/request.js');
@@ -7,25 +7,24 @@ const { listPending, reviewPromo } = require('../../services/promo.service.js');
 
 Page({
   data: {
-    statusBarHeight: 0,
     targetMatchId: '',
     loading: false,
     applications: [],
     errorText: '',
-    reviewingId: ''
+    reviewingId: '',
+    fromListEntry: false
   },
 
   /**
-   * 页面加载：可带 target_match_id 参数。
+   * 页面加载：须带 target_match_id 参数（从场次列表/监控页进入）。
    * @param {Object} options
    * @returns {void}
    */
   onLoad: function (options) {
-    const sys = wx.getSystemInfoSync();
     const rawId = options && options.target_match_id ? String(options.target_match_id).trim() : '';
     this.setData({
-      statusBarHeight: sys.statusBarHeight || 0,
-      targetMatchId: rawId
+      targetMatchId: rawId,
+      fromListEntry: rawId.length > 0
     });
     if (rawId) {
       this.loadPending(rawId);
@@ -44,40 +43,16 @@ Page({
   },
 
   /**
-   * 输入母比赛 ID。
-   * @param {Object} e
-   * @returns {void}
-   */
-  onMatchIdInput: function (e) {
-    this.setData({
-      targetMatchId: e.detail && e.detail.value !== undefined ? String(e.detail.value) : ''
-    });
-  },
-
-  /**
-   * 查询待审批列表。
-   * @returns {void}
-   */
-  onSearchTap: function () {
-    const id = (this.data.targetMatchId || '').trim();
-    if (!id) {
-      wx.showToast({ title: '请输入母比赛 ID', icon: 'none' });
-      return;
-    }
-    if (!getToken()) {
-      wx.showToast({ title: '请先登录', icon: 'none' });
-      return;
-    }
-    this.loadPending(id);
-  },
-
-  /**
    * 拉取待审批申请。
    * @param {string} matchId
    * @returns {void}
    */
   loadPending: function (matchId) {
     const self = this;
+    if (!getToken()) {
+      wx.showToast({ title: '请先登录', icon: 'none' });
+      return;
+    }
     self.setData({ loading: true, errorText: '', applications: [] });
     listPending(matchId)
       .then(function (body) {
@@ -98,8 +73,8 @@ Page({
       .catch(function (err) {
         const code = err && err.errorCode ? err.errorCode : '';
         let msg = err && err.message ? err.message : '加载失败';
-        if (code === 'FORBIDDEN') {
-          msg = '无权限：您不是该场次推广负责人或管理员';
+        if (code === 'FORBIDDEN' || err.statusCode === 403) {
+          msg = '无权查看该场次';
         }
         self.setData({ loading: false, errorText: msg, applications: [] });
       });
@@ -185,15 +160,5 @@ Page({
     const val = e.currentTarget.dataset.val;
     if (!val) return;
     wx.setClipboardData({ data: String(val) });
-  },
-
-  /**
-   * 返回上一页。
-   * @returns {void}
-   */
-  onBackTap: function () {
-    wx.navigateBack({ delta: 1, fail: function () {
-      wx.switchTab({ url: '/pages/mine/mine' });
-    } });
   }
 });
