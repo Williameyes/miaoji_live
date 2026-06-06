@@ -135,7 +135,7 @@ Page({
     if (!getToken()) {
       wx.showModal({
         title: '需要登录',
-        content: '请先登录后再申请推广',
+        content: '请先登录后再申请',
         confirmText: '去登录',
         success: function (res) {
           if (res.confirm) {
@@ -151,8 +151,8 @@ Page({
           body.profile && typeof body.profile === 'object' ? body.profile : null;
         if (!profile) {
           wx.showModal({
-            title: '尚未绑定抖音主页',
-            content: '申请推广前需先绑定抖音主页，是否前往绑定？',
+            title: '尚未绑定抖音',
+            content: '高级功能需先绑定抖音主页，是否前往绑定？',
             confirmText: '去绑定',
             success: function (res) {
               if (res.confirm) {
@@ -164,16 +164,16 @@ Page({
         }
         if (profile.bind_status === 'pending_radar') {
           wx.showModal({
-            title: '雷达解析中',
-            content: '抖音主页正在解析，请稍后在绑定页查看状态',
+            title: '资料获取中',
+            content: '正在解析资料，请稍后在绑定页查看状态',
             showCancel: false
           });
           return false;
         }
         if (profile.bind_status !== 'resolved') {
           wx.showModal({
-            title: '尚未绑定抖音主页',
-            content: '请先完成抖音主页绑定',
+            title: '尚未绑定抖音',
+            content: '请先完成抖音绑定',
             confirmText: '去绑定',
             success: function (res) {
               if (res.confirm) {

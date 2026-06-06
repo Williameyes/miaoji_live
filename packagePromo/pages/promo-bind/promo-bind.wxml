@@ -1,7 +1,7 @@
 <view class="promo-page">
   <view class="promo-intro">
-    <text class="promo-kicker">商业化推广</text>
-    <text class="promo-intro-desc">绑定抖音主页后，方可申请参与赛事赞助推广活动。</text>
+    <text class="promo-kicker">活动推广（敬请期待）</text>
+    <text class="promo-intro-desc">绑定抖音，后续可申请参与推广活动（敬请期待）。</text>
   </view>
 
   <view class="promo-card">
@@ -10,9 +10,9 @@
       <text class="promo-card-title">绑定状态</text>
     </view>
     <text class="promo-status {{anchorBindStatus === 'resolved' ? 'promo-status--ok' : ''}}">
-      {{anchorBindStatusText}}<text wx:if="{{anchorName}}">（{{anchorName}}）</text>
+      {{anchorBindStatusText}}
     </text>
-    <text wx:if="{{anchorPolling}}" class="promo-polling">雷达解析中，每 4 秒自动刷新…</text>
+    <text wx:if="{{anchorPolling}}" class="promo-polling">资料解析中，每 4 秒自动刷新…</text>
   </view>
 
   <view class="promo-card">
@@ -36,16 +36,6 @@
       disabled="{{bindSubmitting}}"
       bindtap="onBindProfileTap"
     >提交绑定</button>
-    <text class="promo-tip">解析由雷达端完成，请勿在小程序内直接打开短链。</text>
   </view>
 
-  <view class="promo-card promo-card--tip">
-    <view class="promo-card-head">
-      <text class="promo-card-icon">📣</text>
-      <text class="promo-card-title">如何进入推广广场</text>
-    </view>
-    <text class="promo-p">由赛事中介分享小程序链接或小程序码进入，路径需带母比赛 ID，例如：</text>
-    <text class="promo-path">packagePromo/pages/promo-square/promo-square?target_match_id=40</text>
-    <text class="promo-tip">小程序码需在微信公众平台或由服务端接口生成，本应用内不提供扫码生成入口。</text>
-  </view>
 </view>

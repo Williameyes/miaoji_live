@@ -1,4 +1,4 @@
-@import '../../../packageLab/pages/radar-lab/common/common.wxss';
+@import '../../common/rl-common.wxss';
 
 .review-root {
   padding-top: 24rpx;

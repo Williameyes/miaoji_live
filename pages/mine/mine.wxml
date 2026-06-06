@@ -57,7 +57,7 @@
 
   <view class="list-card">
     <view class="list-item" hover-class="list-item-hover" bindtap="onPromoBindTap">
-      <text class="list-label">抖音主页绑定</text>
+      <text class="list-label">抖音绑定</text>
       <text class="list-arrow">›</text>
     </view>
     <view class="list-divider"></view>

@@ -12,7 +12,7 @@ Page({
   data: {
     bindShareText: '',
     bindSubmitting: false,
-    anchorBindStatusText: '尚未绑定抖音主页',
+    anchorBindStatusText: '尚未绑定抖音',
     anchorName: '',
     anchorBindStatus: '',
     anchorPolling: false
@@ -97,11 +97,11 @@ Page({
       return;
     }
     const status = typeof profile.bind_status === 'string' ? profile.bind_status : '';
-    let statusText = '尚未绑定抖音主页';
+    let statusText = '尚未绑定抖音';
     if (status === 'pending_radar') {
-      statusText = '雷达解析中，请稍候…';
+      statusText = '资料解析中，请稍候…';
     } else if (status === 'resolved') {
-      statusText = '已绑定，可申请推广';
+      statusText = '已绑定，后续可使用高级功能';
     } else if (status === 'failed') {
       statusText = '绑定失败，请重新提交';
     }
@@ -179,7 +179,7 @@ Page({
         if (status === 'resolved') {
           wx.showToast({ title: '绑定成功', icon: 'success' });
         } else if (status === 'pending_radar') {
-          wx.showToast({ title: '雷达解析中，请稍候', icon: 'none' });
+          wx.showToast({ title: '资料解析中，请稍候', icon: 'none' });
         } else {
           const msg = typeof body.message === 'string' ? body.message : '已提交';
           wx.showToast({ title: msg, icon: 'none' });
