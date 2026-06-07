@@ -184,6 +184,8 @@ const ROLLING_KICKOFF_WATCHDOG_MS = 4500;
 const MATCH_SWITCH_RESTART_DEFER_MS = 150;
 /** 场次切换 stop 管线超时兜底（ms），避免 pipeline.stop 挂死导致永久 PAUSE。 */
 const MATCH_SWITCH_PIPELINE_STOP_FAILSAFE_MS = 1400;
+/** 场次切换重启后须攒满高光前导窗（ms），与 highlightLeadMs 对齐。 */
+const MATCH_SWITCH_HIGHLIGHT_WARMUP_MS = 8000;
 /** 切后台回前台后 preview record 预热帧数（首帧可能是静止缓存）。 */
 const PREVIEW_RECORD_WARMUP_FRAMES_AFTER_PAGE_HIDE = 12;
 /** 硬恢复完成后禁止保存高光的隔离期（ms），覆盖乒乓双轨坏片轮换周期。 */
@@ -2468,6 +2470,7 @@ Page({
     this._rollingStartPendingBeforeKickoff = false;
     this._matchSwitchRestartTimer = null;
     this._matchSwitchRestartFailsafeTimer = null;
+    this._matchSwitchHighlightWarmupUntil = 0;
     this._opsToolsTimer = null;
     this._opsAckTimer = null;
     this._healthTimer = null;
@@ -4276,6 +4279,13 @@ Page({
         ready: false,
         reason: 'warmup_until',
         remainMs: this._previewRecordWarmupUntil - Date.now()
+      };
+    }
+    if (this._matchSwitchHighlightWarmupUntil && Date.now() < this._matchSwitchHighlightWarmupUntil) {
+      return {
+        ready: false,
+        reason: 'match_switch_warming',
+        remainMs: this._matchSwitchHighlightWarmupUntil - Date.now()
       };
     }
     if (!this._previewRecordFirstFrameAt) {
@@ -7711,6 +7721,22 @@ Page({
       ? pipeline.getRecordingTrackCount()
       : 0;
     const pipelineInactive = !pipeline || !pipeline.isActive();
+    if (this.data.isSavingHighlight || this.pendingHighlight || this.highlightMaterializeRunning) {
+      this.appendHealthLog('highlight_flush_recover_skip_saving', {
+        anchorClickTime: anchorClickTime || 0,
+        trackCount,
+        materializeRunning: !!this.highlightMaterializeRunning
+      });
+      return;
+    }
+    if (!pipelineInactive && trackCount > 0) {
+      this.appendHealthLog('highlight_flush_recover_skip_active_tracks', {
+        anchorClickTime: anchorClickTime || 0,
+        trackCount,
+        recordAgeMs
+      });
+      return;
+    }
     const notReadyForFlush = pipelineInactive
       || recordStartAt <= 0
       || recordAgeMs < minHighlightMs
@@ -7743,6 +7769,24 @@ Page({
       self._highlightFlushRecoverTimer = null;
       if (!self._livePageVisible || !self.rollingActive) return;
       if (self.data.isRecovering || self._recoveryLock) return;
+      if (self.data.isSavingHighlight || self.pendingHighlight || self.highlightMaterializeRunning) {
+        self.appendHealthLog('highlight_flush_recover_skip_saving', {
+          anchorClickTime: anchorClickTime || 0,
+          phase: 'timer'
+        });
+        return;
+      }
+      const liveTracks = pipeline && typeof pipeline.getRecordingTrackCount === 'function'
+        ? pipeline.getRecordingTrackCount()
+        : 0;
+      if (pipeline && pipeline.isActive() && liveTracks > 0) {
+        self.appendHealthLog('highlight_flush_recover_skip_active_tracks', {
+          anchorClickTime: anchorClickTime || 0,
+          trackCount: liveTracks,
+          phase: 'timer'
+        });
+        return;
+      }
       if (self._liveReturnedFromBackground || self._highlightHollowFlushStreak >= 2) {
         self.hardRecoverLivePipeline('highlight_hollow_flush');
         return;
@@ -7760,6 +7804,9 @@ Page({
     const now = Date.now();
     if (this._segmentWatchdogRecovering) return false;
     if (this.data.isRecovering || this._recoveryLock) return false;
+    if (this.data.isSavingHighlight || this.pendingHighlight || this.highlightMaterializeRunning) {
+      return false;
+    }
     if (!this._livePageVisible) return false;
     if (now - (this._lastSegmentWatchdogRecoverAt || 0) < SEGMENT_WATCHDOG_RECOVER_COOLDOWN_MS) {
       return false;
@@ -8239,12 +8286,15 @@ Page({
       const remainSec = highlightGate.remainMs
         ? Math.max(1, Math.ceil(highlightGate.remainMs / 1000))
         : 0;
-      wx.showToast({
-        title: remainSec > 0
+      const fabWarmTitle = highlightGate.reason === 'match_switch_warming'
+        ? (remainSec > 0 ? `新场次缓冲中，约${remainSec}秒后可保存` : '新场次缓冲中，请稍后再保存')
+        : remainSec > 0
           ? (this._liveReturnedFromBackground
             ? `相机恢复中，约${remainSec}秒后可保存`
             : `相机预热中，约${remainSec}秒后可保存`)
-          : '相机预热中，请稍后再保存',
+          : '相机预热中，请稍后再保存';
+      wx.showToast({
+        title: fabWarmTitle,
         icon: 'none',
         duration: 2200
       });
@@ -9511,6 +9561,7 @@ Page({
         source: triggerSource,
         rollingSessionId: this.rollingSessionId
       });
+      this._matchSwitchHighlightWarmupUntil = Date.now() + MATCH_SWITCH_HIGHLIGHT_WARMUP_MS;
       if (this._recorderCore) {
         this._recorderCore.markReady(triggerSource);
       }
@@ -12058,7 +12109,12 @@ Page({
     const highlightGate = this.getPreviewRecordHighlightGate();
     if (!highlightGate.ready) {
       const gateReason = highlightGate.reason || 'unknown';
-      if (gateReason === 'record_warming' || gateReason === 'warmup_until' || gateReason === 'no_first_frame') {
+      if (
+        gateReason === 'record_warming'
+        || gateReason === 'warmup_until'
+        || gateReason === 'no_first_frame'
+        || gateReason === 'match_switch_warming'
+      ) {
         this.appendHealthLog('highlight_skip_record_warming', {
           reason: gateReason,
           recordAgeMs: highlightGate.recordAgeMs || 0,
@@ -12079,11 +12135,13 @@ Page({
       wx.showToast({
         title: gateReason === 'guide_visible'
           ? '请先完成新手引导'
-          : remainSec > 0
-            ? (this._liveReturnedFromBackground
-              ? `相机恢复中，约${remainSec}秒后可保存`
-              : `相机预热中，约${remainSec}秒后可保存`)
-            : '相机预热中，请稍后再保存',
+          : gateReason === 'match_switch_warming'
+            ? (remainSec > 0 ? `新场次缓冲中，约${remainSec}秒后可保存` : '新场次缓冲中，请稍后再保存')
+            : remainSec > 0
+              ? (this._liveReturnedFromBackground
+                ? `相机恢复中，约${remainSec}秒后可保存`
+                : `相机预热中，约${remainSec}秒后可保存`)
+              : '相机预热中，请稍后再保存',
         icon: 'none',
         duration: 2200
       });
@@ -12154,6 +12212,13 @@ Page({
             : -1
         });
         if (sourceTag === 'live_flush') {
+          const retryPlan = pipeline && typeof pipeline.resolveHighlightSeek === 'function'
+            ? pipeline.resolveHighlightSeek(anchorClickTime, leadMs)
+            : null;
+          if (retryPlan && retryPlan.path) {
+            finalizeSeekPlan(retryPlan, 'live_flush_retry');
+            return;
+          }
           self._recoverAfterHighlightFlushMiss(anchorClickTime);
         }
         try {

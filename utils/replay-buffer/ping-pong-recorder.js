@@ -1676,10 +1676,10 @@ class PingPongRecorder {
   }
 
   /**
-   * @returns {void}
+   * @returns {Promise<void>}
    */
   destroy() {
-    this.stop().finally(() => {
+    return this.stop().finally(() => {
       TRACK_IDS.forEach((trackId) => {
         const track = this.tracks[trackId];
         if (!track) return;
