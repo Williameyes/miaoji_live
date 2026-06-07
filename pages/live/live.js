@@ -246,14 +246,101 @@ function formatWxsMainText(totalSec) {
   return ms + ':' + ss;
 }
 
+/** @const {string} 篮球运动类型标识 */
+var SPORT_BASKETBALL = 'basketball';
+/** @const {string} 足球运动类型标识 */
+var SPORT_FOOTBALL = 'football';
+/** @const {string} 羽毛球运动类型标识 */
+var SPORT_BADMINTON = 'badminton';
+
+/**
+ * 规范化运动类型字符串。
+ * @param {unknown} raw
+ * @returns {'basketball'|'football'|'badminton'}
+ */
+function normalizeSportType(raw) {
+  var s = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  if (s === SPORT_FOOTBALL || s === SPORT_BADMINTON) return s;
+  return SPORT_BASKETBALL;
+}
+
+/** @const {object} 羽毛球默认状态机 */
+var DEFAULT_BADMINTON_STATE = {
+  servingTeam: 'A',
+  servingZone: 'right',
+  ruleType: 'single',
+  maxSets: 3,
+  pointsPerSet: 21
+};
+
+/**
+ * 判定羽毛球当前局是否结束。
+ * @param {number} scoreA A 方小分
+ * @param {number} scoreB B 方小分
+ * @param {number} pointsPerSet 单局目标分（11 或 21）
+ * @returns {'A'|'B'|null} 获胜方，未结束则 null
+ */
+function checkBadmintonSetWin(scoreA, scoreB, pointsPerSet) {
+  var a = Math.max(0, Math.floor(Number(scoreA) || 0));
+  var b = Math.max(0, Math.floor(Number(scoreB) || 0));
+  var target = Math.max(1, Math.floor(Number(pointsPerSet) || 21));
+  var cap = 30;
+  if (a >= cap || b >= cap) {
+    if (a > b) return 'A';
+    if (b > a) return 'B';
+    return null;
+  }
+  if (a >= target && a - b >= 2) return 'A';
+  if (b >= target && b - a >= 2) return 'B';
+  return null;
+}
+
+/**
+ * 构建羽毛球历史局分展示列表。
+ * @param {object} mc matchConfig
+ * @returns {Array<{ label: string, scoreA: number, scoreB: number }>}
+ */
+function buildBadmintonSetHistoryDisplay(mc) {
+  if (!mc || normalizeSportType(mc.sportType) !== SPORT_BADMINTON) return [];
+  var subA = (mc.teamA && Array.isArray(mc.teamA.subScores)) ? mc.teamA.subScores : [];
+  var subB = (mc.teamB && Array.isArray(mc.teamB.subScores)) ? mc.teamB.subScores : [];
+  var len = Math.max(subA.length, subB.length);
+  var rows = [];
+  var labels = ['一', '二', '三', '四', '五'];
+  for (var i = 0; i < len; i++) {
+    rows.push({
+      label: '第' + (labels[i] || String(i + 1)) + '局',
+      scoreA: typeof subA[i] === 'number' ? subA[i] : 0,
+      scoreB: typeof subB[i] === 'number' ? subB[i] : 0
+    });
+  }
+  return rows;
+}
+
+/**
+ * 足球上下半场文案。
+ * @param {number} period 节次（1=上半场，2=下半场，≥3=加时）
+ * @returns {string}
+ */
+function getFootballHalfLabel(period) {
+  var p = Math.floor(Number(period) || 1);
+  if (p >= 3) return '加时';
+  return p >= 2 ? '下半场' : '上半场';
+}
+
 /**
  * 根据时钟束与墙钟计算大表 / 24 秒当前显示值。
  * @param {object | null} bundle
+ * @param {string} [sportType] 运动类型
  * @returns {{ mainText: string, shotSec: number, shotWarn: boolean }}
  */
-function computeClockDisplayFromBundle(bundle) {
+function computeClockDisplayFromBundle(bundle, sportType) {
   if (!bundle || typeof bundle !== 'object') {
     return { mainText: '00:00', shotSec: 24, shotWarn: false };
+  }
+  var sport = normalizeSportType(sportType);
+  if (sport === SPORT_BADMINTON) {
+    return { mainText: '', shotSec: 0, shotWarn: false };
   }
   var nowMs = Date.now();
   var mainBase = Math.max(0, Math.floor(Number(bundle.mainBaseSec) || 0));
@@ -261,16 +348,21 @@ function computeClockDisplayFromBundle(bundle) {
   var mainAnchor = Number(bundle.mainAnchorMs) || nowMs;
   var shotAnchor = Number(bundle.shotAnchorMs) || nowMs;
   var running = !!bundle.mainRunning;
+  var elapsedSec = running ? Math.floor((nowMs - mainAnchor) / 1000) : 0;
   var mainSec = mainBase;
   var shotSec = shotBase;
   if (running) {
-    mainSec = Math.max(0, mainBase - Math.floor((nowMs - mainAnchor) / 1000));
-    shotSec = Math.max(0, shotBase - Math.floor((nowMs - shotAnchor) / 1000));
+    if (sport === SPORT_FOOTBALL) {
+      mainSec = mainBase + elapsedSec;
+    } else {
+      mainSec = Math.max(0, mainBase - elapsedSec);
+      shotSec = Math.max(0, shotBase - Math.floor((nowMs - shotAnchor) / 1000));
+    }
   }
   return {
     mainText: formatWxsMainText(mainSec),
-    shotSec: shotSec,
-    shotWarn: shotSec > 0 && shotSec <= 5
+    shotSec: sport === SPORT_FOOTBALL ? 0 : shotSec,
+    shotWarn: sport !== SPORT_FOOTBALL && shotSec > 0 && shotSec <= 5
   };
 }
 
@@ -417,12 +509,60 @@ function buildCornerFabStylesInLetterboxPx(winW, winH, rect, safePx) {
 
 Page({
   data: {
+    /** 当前运动类型：basketball | football | badminton */
+    sportType: SPORT_BASKETBALL,
+    /** 是否展示大钟（羽毛球隐藏） */
+    showMainClock: true,
+    /** 是否展示 24 秒小钟（仅篮球自动模式） */
+    showShotClock: false,
+    /** 足球上下半场文案 */
+    footballHalfLabel: '上半场',
+    /** 羽毛球历史局分展示行 */
+    badmintonSetHistory: [],
+    /** 足球本地正计时显示（手动模式 / 无云端时钟时） */
+    footballTimeText: '00:00',
+    /** 足球界面最终展示时间（优先云端，否则本地） */
+    footballDisplayTime: '00:00',
+    /** 足球/羽毛球是否使用右上角多行记分牌 */
+    useCornerScoreboard: false,
+    /** 可拖动记分牌 movable-area 宽高（px） */
+    proScoreboardAreaW: 375,
+    proScoreboardAreaH: 667,
+    /** 可拖动记分牌位置（px，默认在 16:9 取景区右上内缩，可拖到全屏任意位置） */
+    proScoreboardX: 8,
+    proScoreboardY: 8,
     matchConfig: {
+      sportType: SPORT_BASKETBALL,
       matchName: '',
       matchNameColor: '#E64340',
-      teamA: { name: '队 A', bgColor: '#E64340', textColor: '#FFFFFF', score: 0 },
-      teamB: { name: '队 B', bgColor: '#10AEFF', textColor: '#FFFFFF', score: 0 },
-      period: 0
+      teamA: {
+        name: '队 A',
+        bgColor: '#E64340',
+        textColor: '#FFFFFF',
+        score: 0,
+        currentSetScore: 0,
+        subScores: []
+      },
+      teamB: {
+        name: '队 B',
+        bgColor: '#10AEFF',
+        textColor: '#FFFFFF',
+        score: 0,
+        currentSetScore: 0,
+        subScores: []
+      },
+      period: 0,
+      badmintonState: JSON.parse(JSON.stringify(DEFAULT_BADMINTON_STATE)),
+      sportConfig: {
+        periodMinutes: 10,
+        enable24Sec: true,
+        halfMinutes: 45,
+        ruleType: 'single',
+        pointsPerSet: 21,
+        maxSets: 3
+      },
+      /** 足球累计比赛时间（秒），持久化 */
+      footballElapsedSec: 0
     },
     periods: app.globalData.periods,
     statusBarHeight: 0,
@@ -774,11 +914,20 @@ Page({
       }
     }
     const latestConfig = this.normalizeMatchConfig(sourceConfig);
+    const sportType = normalizeSportType(latestConfig.sportType || this._routeSportType);
+    if (this._routeSportType) {
+      this._routeSportType = null;
+    }
+    latestConfig.sportType = sportType;
     const wSide = this.computeTeamGroupWidthPx();
+    const sportUi = this.buildSportUiPatch(latestConfig, sportType);
     const payload = {
       matchConfig: latestConfig,
+      sportType: sportType,
       teamGroupWidthPxA: wSide,
-      teamGroupWidthPxB: wSide
+      teamGroupWidthPxB: wSide,
+      footballTimeText: formatWxsMainText(latestConfig.footballElapsedSec || 0),
+      ...sportUi
     };
     if (latestConfig.mode === 'manual' && this.data.autoSyncWhitelisted) {
       payload.isAutoMode = false;
@@ -792,6 +941,327 @@ Page({
     });
     app.globalData.matchConfig = latestConfig;
     wx.setStorageSync('matchConfig', latestConfig);
+    if (sportType === SPORT_FOOTBALL) {
+      this._startFootballLocalClock();
+    } else {
+      this._stopFootballLocalClock();
+    }
+    if (sportType === SPORT_FOOTBALL || sportType === SPORT_BADMINTON) {
+      this._initProScoreboardMovableLayout();
+    }
+  },
+
+  /**
+   * 估算足球/羽毛球紧凑记分牌宽度，用于默认避让微信右上角胶囊按钮。
+   * @param {number} areaW
+   * @returns {number}
+   */
+  _estimateProScoreboardWidthPx: function (areaW) {
+    var ww = Math.max(1, Number(areaW) || 375);
+    var sport = normalizeSportType(this.data && this.data.sportType);
+    var widthRpx = sport === SPORT_FOOTBALL ? 154 : 128;
+    return Math.round(widthRpx * ww / 750);
+  },
+
+  /**
+   * 根据真实渲染矩形计算右上默认坐标，避免横屏系统坐标/胶囊坐标不稳定。
+   * @param {{ left: number, top: number, width: number, height: number }} stage
+   * @param {number} areaW
+   * @param {number} boardW
+   * @param {boolean} trustMenuRect
+   * @returns {{ x: number, y: number }}
+   */
+  _computeProScoreboardTopRightPoint: function (stage, areaW, boardW, trustMenuRect) {
+    var safeStage = stage || { left: 0, top: 0, width: areaW || 375, height: 0 };
+    var ww = Math.max(1, Number(areaW) || 375);
+    var sw = Math.max(1, Number(safeStage.width) || ww);
+    var bx = Math.max(1, Number(boardW) || this._estimateProScoreboardWidthPx(ww));
+    var insetX = Math.max(8, Math.round(sw * 0.012));
+    var insetY = Math.max(8, Math.round((Number(safeStage.height) || sw * 9 / 16) * 0.025));
+    var gap = Math.max(10, insetX);
+    var stageLeft = Number(safeStage.left) || 0;
+    var stageTop = Number(safeStage.top) || 0;
+    var stageRight = stageLeft + sw;
+    var fallbackCapsuleReserve = Math.max(52, Math.min(76, Math.round(sw * 0.07)));
+    var x = stageRight - bx - fallbackCapsuleReserve;
+    try {
+      if (trustMenuRect && wx.getMenuButtonBoundingClientRect) {
+        var menu = wx.getMenuButtonBoundingClientRect();
+        var menuLeft = menu && typeof menu.left === 'number' ? menu.left : 0;
+        var menuTop = menu && typeof menu.top === 'number' ? menu.top : -1;
+        var menuInRightStage = menuLeft > stageLeft + sw * 0.7 && menuLeft < stageRight + 24;
+        var menuNearTop = menuTop >= stageTop - 24 && menuTop < stageTop + Math.max(96, (Number(safeStage.height) || 0) * 0.28);
+        if (menuInRightStage && menuNearTop) {
+          x = menuLeft - bx - gap;
+        }
+      }
+    } catch (eMenu) {}
+    var minX = stageLeft + insetX;
+    var maxX = Math.min(stageRight - bx - insetX, ww - bx - 8);
+    x = Math.max(minX, Math.min(maxX, x));
+    return {
+      x: Math.round(x),
+      y: Math.round(stageTop + insetY)
+    };
+  },
+
+  /**
+   * 计算足球/羽毛球可拖动记分牌布局。
+   * movable-area 覆盖整屏，默认坐标按 16:9 取景区右上角内缩，并避让微信胶囊按钮。
+   * @param {number} rawW
+   * @param {number} rawH
+   * @returns {{ areaW: number, areaH: number, x: number, y: number }}
+   */
+  _computeProScoreboardMovableLayout: function (rawW, rawH) {
+    var ww = Math.max(1, Number(rawW) || 375);
+    var wh = Math.max(1, Number(rawH) || 667);
+    if (wh > ww) {
+      var tmp = ww;
+      ww = wh;
+      wh = tmp;
+    }
+    var stage = computeLiveStage16x9RectPx(ww, wh);
+    var boardW = this._estimateProScoreboardWidthPx(ww);
+    var point = this._computeProScoreboardTopRightPoint({
+      left: stage.left,
+      top: stage.top,
+      width: stage.w,
+      height: stage.h
+    }, ww, boardW, false);
+    return {
+      areaW: Math.round(ww),
+      areaH: Math.round(wh),
+      x: point.x,
+      y: point.y
+    };
+  },
+
+  /**
+   * 同步足球/羽毛球可拖动记分牌区域尺寸。
+   * @param {number} rawW
+   * @param {number} rawH
+   * @param {boolean} resetPosition
+   * @returns {void}
+   */
+  _syncProScoreboardMovableLayout: function (rawW, rawH, resetPosition) {
+    var layout = this._computeProScoreboardMovableLayout(rawW, rawH);
+    var patch = {
+      proScoreboardAreaW: layout.areaW,
+      proScoreboardAreaH: layout.areaH
+    };
+    if (resetPosition || !this._proScoreboardUserMoved) {
+      patch.proScoreboardX = layout.x;
+      patch.proScoreboardY = layout.y;
+    }
+    this.setData(patch);
+  },
+
+  /**
+   * 渲染完成后用真实节点尺寸二次校准默认位置。
+   * @param {boolean} resetPosition
+   * @returns {void}
+   */
+  _syncProScoreboardMovableLayoutFromRects: function (resetPosition) {
+    if (!this._proScoreboardMovableInited) return;
+    var self = this;
+    try {
+      wx.createSelectorQuery()
+        .in(this)
+        .select('.overlay')
+        .boundingClientRect()
+        .select('#liveStage')
+        .boundingClientRect()
+        .select('#proScoreboardView')
+        .boundingClientRect()
+        .exec(function (res) {
+          var overlay = res && res[0];
+          var stageRect = res && res[1];
+          var boardRect = res && res[2];
+          if (!overlay || !stageRect || !overlay.width || !stageRect.width) return;
+          var areaW = Math.round(overlay.width);
+          var areaH = Math.round(overlay.height || 1);
+          var boardW = boardRect && boardRect.width ? boardRect.width : self._estimateProScoreboardWidthPx(areaW);
+          var point = self._computeProScoreboardTopRightPoint(stageRect, areaW, boardW, true);
+          var patch = {
+            proScoreboardAreaW: areaW,
+            proScoreboardAreaH: areaH
+          };
+          if (resetPosition || !self._proScoreboardUserMoved) {
+            patch.proScoreboardX = point.x;
+            patch.proScoreboardY = point.y;
+          }
+          self.setData(patch);
+        });
+    } catch (eRect) {}
+  },
+
+  /**
+   * 初始化足球/羽毛球可拖动记分牌区域（仅一次 setData，不影响录制管线）。
+   * @returns {void}
+   */
+  _initProScoreboardMovableLayout: function () {
+    if (this._proScoreboardMovableInited) return;
+    this._proScoreboardMovableInited = true;
+    try {
+      var sys = wx.getSystemInfoSync();
+      var ww = Math.max(1, Number(sys.windowWidth) || 375);
+      var wh = Math.max(1, Number(sys.windowHeight) || 667);
+      this._syncProScoreboardMovableLayout(ww, wh, true);
+      setTimeout(() => {
+        this._syncProScoreboardMovableLayoutFromRects(true);
+      }, 80);
+      setTimeout(() => {
+        this._syncProScoreboardMovableLayoutFromRects(true);
+      }, 260);
+    } catch (eInit) {}
+  },
+
+  /**
+   * 足球/羽毛球记分牌拖动位置变更（原生 movable-view，仅 touch 时写回）。
+   * @param {WechatMiniprogram.MovableViewChange} e
+   * @returns {void}
+   */
+  onProScoreboardPositionChange: function (e) {
+    var detail = e.detail || {};
+    if (detail.source === 'friction') return;
+    if (typeof detail.x !== 'number' || typeof detail.y !== 'number') return;
+    if (detail.x === this.data.proScoreboardX && detail.y === this.data.proScoreboardY) return;
+    this._proScoreboardUserMoved = true;
+    this.setData({
+      proScoreboardX: detail.x,
+      proScoreboardY: detail.y
+    });
+  },
+
+  /**
+   * 切换当前活跃场次：同步 sportType、UI 与足球计时。
+   * @param {object} match 目标场次
+   * @returns {boolean} 是否切换成功
+   */
+  applyMatchSwitchConfig: function (match) {
+    if (!match || !match.teamA || !match.teamB) return false;
+    if (!match.teamA.name || !match.teamB.name) {
+      wx.showToast({ title: '该比赛队名不完整', icon: 'none' });
+      return false;
+    }
+
+    this._stopFootballLocalClock();
+    this._persistFootballClock();
+
+    wx.setStorageSync('currentMatchId', match.id);
+    app.globalData.currentMatchId = match.id;
+    this._routeSportType = null;
+
+    const normalizedConfig = this.normalizeMatchConfig(match);
+    if (match.id != null) normalizedConfig.id = match.id;
+    const sportType = normalizeSportType(normalizedConfig.sportType);
+    normalizedConfig.sportType = sportType;
+
+    app.globalData.matchConfig = normalizedConfig;
+    wx.setStorageSync('matchConfig', normalizedConfig);
+
+    const sportUi = this.buildSportUiPatch(normalizedConfig, sportType);
+    const wSide = this.computeTeamGroupWidthPx();
+    const selfSwitch = this;
+
+    this.setData({
+      matchConfig: normalizedConfig,
+      sportType: sportType,
+      teamGroupWidthPxA: wSide,
+      teamGroupWidthPxB: wSide,
+      footballTimeText: formatWxsMainText(normalizedConfig.footballElapsedSec || 0),
+      ...sportUi
+    }, function () {
+      selfSwitch.updateTeamGroupWidth(true);
+      if (sportType === SPORT_FOOTBALL) {
+        selfSwitch._startFootballLocalClock();
+      }
+      if (sportType === SPORT_FOOTBALL || sportType === SPORT_BADMINTON) {
+        selfSwitch._initProScoreboardMovableLayout();
+      }
+    });
+    return true;
+  },
+
+  /**
+   * 启动足球本地正计时（进入 live / 切换场次后调用，不暂停）。
+   * @returns {void}
+   */
+  _startFootballLocalClock: function () {
+    if (normalizeSportType(this.data.sportType) !== SPORT_FOOTBALL) return;
+    this._stopFootballLocalClock(false);
+    var mc = this.data.matchConfig || {};
+    this._footballClockBaseSec = Math.max(0, Math.floor(Number(mc.footballElapsedSec) || 0));
+    this._footballClockAnchorMs = Date.now();
+    var selfClock = this;
+    this._footballLocalClockTimer = setInterval(function () {
+      selfClock._tickFootballLocalClock();
+    }, 1000);
+    this._tickFootballLocalClock();
+  },
+
+  /**
+   * 停止足球本地正计时。
+   * @param {boolean} [persist] 是否落盘当前秒数，默认 true
+   * @returns {void}
+   */
+  _stopFootballLocalClock: function (persist) {
+    if (persist !== false) {
+      this._persistFootballClock();
+    }
+    if (this._footballLocalClockTimer) {
+      clearInterval(this._footballLocalClockTimer);
+      this._footballLocalClockTimer = null;
+    }
+  },
+
+  /**
+   * 刷新足球本地正计时显示。
+   * @returns {void}
+   */
+  _tickFootballLocalClock: function () {
+    var base = this._footballClockBaseSec || 0;
+    var anchor = this._footballClockAnchorMs || Date.now();
+    var elapsed = base + Math.floor((Date.now() - anchor) / 1000);
+    this._footballLiveElapsedSec = elapsed;
+    var text = formatWxsMainText(elapsed);
+    var display = this._resolveFootballDisplayTime(text);
+    var patch = {};
+    if (text !== this.data.footballTimeText) patch.footballTimeText = text;
+    if (display !== this.data.footballDisplayTime) patch.footballDisplayTime = display;
+    if (Object.keys(patch).length) {
+      this.setData(patch);
+    }
+  },
+
+  /**
+   * 将当前足球累计秒数写入 matchConfig。
+   * @returns {void}
+   */
+  _persistFootballClock: function () {
+    if (normalizeSportType(this.data.sportType) !== SPORT_FOOTBALL) return;
+    if (typeof this._footballLiveElapsedSec !== 'number') return;
+    var sec = Math.max(0, Math.floor(this._footballLiveElapsedSec));
+    if (Number(this.data.matchConfig.footballElapsedSec) === sec) return;
+    this.setData({ 'matchConfig.footballElapsedSec': sec });
+  },
+
+  /**
+   * 解析足球界面展示时间：云端自动计时优先，否则本地正计时。
+   * @param {string} [localText]
+   * @returns {string}
+   */
+  _resolveFootballDisplayTime: function (localText) {
+    var local = localText || this.data.footballTimeText || '00:00';
+    if (
+      this.data.isAutoMode
+      && this.data.wxsClockBundle
+      && this.data.wxsClockBundle.mainRunning
+      && this.data.wxsClockMainText
+    ) {
+      return this.data.wxsClockMainText;
+    }
+    return local;
   },
 
   /**
@@ -1447,7 +1917,8 @@ Page({
   /** Segment Watchdog 最近一次软恢复时间戳，用于恢复冷却。 */
   _lastSegmentWatchdogRecoverAt: 0,
 
-  onLoad: function () {
+  onLoad: function (options) {
+    this._routeSportType = normalizeSportType(options && options.sportType);
     this._previewRecordPipeline = replayBufferMod.createPreviewRecordPipeline(this);
     this._recorderCore = new replayBufferMod.RecorderCore(this);
     this._replayBuffer = replayBufferMod.createReplayBuffer({
@@ -1867,7 +2338,7 @@ Page({
       this._liveWsStopClockTick();
       return;
     }
-    var display = computeClockDisplayFromBundle(bundle);
+    var display = computeClockDisplayFromBundle(bundle, this.data.sportType);
     var sd = {};
     if (display.mainText !== this.data.wxsClockMainText) {
       sd.wxsClockMainText = display.mainText;
@@ -1881,6 +2352,12 @@ Page({
     if (Object.keys(sd).length) {
       this.setData(sd);
     }
+    if (normalizeSportType(this.data.sportType) === SPORT_FOOTBALL) {
+      var fbDisplay = this._resolveFootballDisplayTime(this.data.footballTimeText);
+      if (fbDisplay !== this.data.footballDisplayTime) {
+        this.setData({ footballDisplayTime: fbDisplay });
+      }
+    }
   },
 
   /**
@@ -1889,7 +2366,7 @@ Page({
    * @returns {{ wxsClockMainText: string, wxsClockShotSec: number, wxsClockShotWarn: boolean }}
    */
   _liveWsBuildClockDisplayPatch: function (bundle) {
-    var display = computeClockDisplayFromBundle(bundle);
+    var display = computeClockDisplayFromBundle(bundle, this.data.sportType);
     return {
       wxsClockMainText: display.mainText,
       wxsClockShotSec: display.shotSec,
@@ -3438,6 +3915,15 @@ Page({
       recoverFabStackStyle: corner.recoverStack,
       replayRailStyle: corner.replayRail
     });
+    if (this._proScoreboardMovableInited) {
+      this._syncProScoreboardMovableLayout(sysW, sysH, false);
+      setTimeout(() => {
+        this._syncProScoreboardMovableLayoutFromRects(false);
+      }, 80);
+      setTimeout(() => {
+        this._syncProScoreboardMovableLayoutFromRects(false);
+      }, 260);
+    }
     if (this._renderPipeline && typeof this._renderPipeline.resizeToCssPixels === 'function') {
       try {
         this._renderPipeline.resizeToCssPixels(box.w, box.h);
@@ -5229,27 +5715,117 @@ Page({
     const base = config || this.data.matchConfig;
     const normalizedConfig = JSON.parse(JSON.stringify(base || {}));
     if (!normalizedConfig.matchNameColor) normalizedConfig.matchNameColor = '#E64340';
+    normalizedConfig.sportType = normalizeSportType(normalizedConfig.sportType);
+
+    const teamDefaultsA = {
+      name: '队 A',
+      bgColor: '#E64340',
+      textColor: '#FFFFFF',
+      score: 0,
+      currentSetScore: 0,
+      subScores: []
+    };
+    const teamDefaultsB = {
+      name: '队 B',
+      bgColor: '#10AEFF',
+      textColor: '#FFFFFF',
+      score: 0,
+      currentSetScore: 0,
+      subScores: []
+    };
 
     ['teamA', 'teamB'].forEach((teamKey) => {
-      const teamDefaults = teamKey === 'teamA'
-        ? { name: '队 A', bgColor: '#E64340', textColor: '#FFFFFF', score: 0 }
-        : { name: '队 B', bgColor: '#10AEFF', textColor: '#FFFFFF', score: 0 };
+      const teamDefaults = teamKey === 'teamA' ? teamDefaultsA : teamDefaultsB;
       const sourceTeam = normalizedConfig[teamKey] || {};
       const bgColor = sourceTeam.bgColor || sourceTeam.color || teamDefaults.bgColor;
       const textColor = this.getContrastColor(bgColor);
+      const subScores = Array.isArray(sourceTeam.subScores) ? sourceTeam.subScores.slice() : [];
       normalizedConfig[teamKey] = {
         ...teamDefaults,
         ...sourceTeam,
         bgColor,
         rgbaBg: this.hexToRgba(bgColor, 0.8),
-        textColor
+        textColor,
+        score: Math.max(0, Math.floor(Number(sourceTeam.score) || 0)),
+        currentSetScore: Math.max(0, Math.floor(Number(sourceTeam.currentSetScore) || 0)),
+        subScores: subScores.map((n) => Math.max(0, Math.floor(Number(n) || 0)))
       };
     });
 
     if (typeof normalizedConfig.period !== 'number') {
       normalizedConfig.period = 0;
     }
+
+    const bs = normalizedConfig.badmintonState || {};
+    normalizedConfig.badmintonState = {
+      ...DEFAULT_BADMINTON_STATE,
+      ...bs,
+      servingTeam: bs.servingTeam === 'B' ? 'B' : 'A',
+      servingZone: bs.servingZone === 'left' ? 'left' : 'right',
+      ruleType: bs.ruleType === 'double' ? 'double' : 'single',
+      maxSets: Math.max(1, Math.floor(Number(bs.maxSets) || DEFAULT_BADMINTON_STATE.maxSets)),
+      pointsPerSet: bs.pointsPerSet === 11 ? 11 : 21
+    };
+
+    const sc = normalizedConfig.sportConfig || {};
+    normalizedConfig.sportConfig = {
+      periodMinutes: Math.max(1, Math.floor(Number(sc.periodMinutes) || 10)),
+      enable24Sec: sc.enable24Sec !== false,
+      halfMinutes: Math.max(1, Math.floor(Number(sc.halfMinutes) || 45)),
+      ruleType: sc.ruleType === 'double' ? 'double' : 'single',
+      pointsPerSet: sc.pointsPerSet === 11 ? 11 : 21,
+      maxSets: Math.max(1, Math.floor(Number(sc.maxSets) || 3))
+    };
+
+    if (normalizedConfig.sportType === SPORT_BADMINTON) {
+      normalizedConfig.badmintonState.ruleType = normalizedConfig.sportConfig.ruleType;
+      normalizedConfig.badmintonState.pointsPerSet = normalizedConfig.sportConfig.pointsPerSet;
+      normalizedConfig.badmintonState.maxSets = normalizedConfig.sportConfig.maxSets;
+    }
+
+    if (normalizedConfig.sportType === SPORT_FOOTBALL && normalizedConfig.period < 1) {
+      normalizedConfig.period = 1;
+    }
+    if (normalizedConfig.sportType === SPORT_BADMINTON && normalizedConfig.period < 1) {
+      normalizedConfig.period = 1;
+    }
+    normalizedConfig.footballElapsedSec = Math.max(
+      0,
+      Math.floor(Number(normalizedConfig.footballElapsedSec) || 0)
+    );
+
     return normalizedConfig;
+  },
+
+  /**
+   * 根据 matchConfig 生成运动类型相关的 UI 展示 patch。
+   * @param {object} mc 已规范化的 matchConfig
+   * @param {string} [sportType]
+   * @returns {object}
+   */
+  buildSportUiPatch: function (mc, sportType) {
+    const sport = normalizeSportType(sportType || (mc && mc.sportType));
+    const localFootball = formatWxsMainText((mc && mc.footballElapsedSec) || 0);
+    return {
+      sportType: sport,
+      showMainClock: sport !== SPORT_BADMINTON,
+      showShotClock: sport === SPORT_BASKETBALL && !!this.data.isAutoMode
+        && !!(mc && mc.sportConfig && mc.sportConfig.enable24Sec),
+      footballHalfLabel: getFootballHalfLabel(mc && mc.period),
+      footballDisplayTime: this._resolveFootballDisplayTime(localFootball),
+      badmintonSetHistory: buildBadmintonSetHistoryDisplay(mc),
+      useCornerScoreboard: sport === SPORT_FOOTBALL || sport === SPORT_BADMINTON
+    };
+  },
+
+  /**
+   * 刷新运动类型相关 UI 字段（计分/节次变更后调用）。
+   * @returns {void}
+   */
+  refreshSportUiMeta: function () {
+    const mc = this.data.matchConfig;
+    const patch = this.buildSportUiPatch(mc, this.data.sportType);
+    this.setData(patch);
   },
 
   onShow: function () {
@@ -5313,7 +5889,7 @@ Page({
     this.appendHealthLog('page_show', {});
 
     /**
-     * 须在权益拉起 camera 之前置位，避免引导毛玻璃层盖住原生 camera 时仍 startRecord（部分机型关闭引导后预览永久黑屏）。
+     * 须在权益拉起 camera 之前置位，避免引导层盖住原生 camera 时仍 startRecord（部分机型关闭引导后预览永久黑屏）。
      */
     if (!wx.getStorageSync('hasReadGuide') && !this.data.showGuide) {
       this.setData({ showGuide: true, guideSubStep: 0 });
@@ -6161,6 +6737,7 @@ Page({
   },
 
   onHide: function () {
+    this._stopFootballLocalClock();
     if (this._vkEnvironmentSampler && typeof this._vkEnvironmentSampler.stop === 'function') {
       this._vkEnvironmentSampler.stop({ silent: false, keepCompletedState: false });
     }
@@ -7207,10 +7784,23 @@ Page({
 
   // 节次切换
   onPeriodTap: function () {
-    const len = this.data.periods.length;
-    if (!len) return;
-    const next = (this.data.matchConfig.period + 1) % len;
+    const sport = normalizeSportType(this.data.sportType);
+    const mc = this.data.matchConfig || {};
+    let next = mc.period;
+
+    if (sport === SPORT_FOOTBALL) {
+      next = (Math.floor(Number(mc.period) || 1) % 3) + 1;
+    } else if (sport === SPORT_BADMINTON) {
+      const maxSets = (mc.badmintonState && mc.badmintonState.maxSets) || 3;
+      next = (Math.floor(Number(mc.period) || 1) % maxSets) + 1;
+    } else {
+      const len = this.data.periods.length;
+      if (!len) return;
+      next = (mc.period + 1) % len;
+    }
+
     this.setData({ 'matchConfig.period': next }, () => {
+      this.refreshSportUiMeta();
       this.persistConfig();
     });
     this.vibrate('light');
@@ -7233,6 +7823,11 @@ Page({
   },
 
   applyScoreChange: function (team, type) {
+    const sport = normalizeSportType(this.data.sportType);
+    if (sport === SPORT_BADMINTON) {
+      this.applyBadmintonScoreChange(team, type);
+      return;
+    }
     let score = this.data.matchConfig[team].score;
     if (type === 'plus') {
       score += 1;
@@ -7240,6 +7835,88 @@ Page({
       score = Math.max(0, score - 1);
     }
     this.setData({ [`matchConfig.${team}.score`]: score });
+  },
+
+  /**
+   * 羽毛球小分递增/递减，含发球权轮转与局结束判定。
+   * @param {'teamA'|'teamB'} team
+   * @param {'plus'|'minus'} type
+   * @returns {void}
+   */
+  applyBadmintonScoreChange: function (team, type) {
+    const mc = this.data.matchConfig || {};
+    const bs = mc.badmintonState || DEFAULT_BADMINTON_STATE;
+    const pointsPerSet = bs.pointsPerSet || 21;
+    let scoreA = mc.teamA.currentSetScore || 0;
+    let scoreB = mc.teamB.currentSetScore || 0;
+
+    if (team === 'teamA') {
+      if (type === 'plus') scoreA += 1;
+      else scoreA = Math.max(0, scoreA - 1);
+    } else {
+      if (type === 'plus') scoreB += 1;
+      else scoreB = Math.max(0, scoreB - 1);
+    }
+
+    let servingTeam = bs.servingTeam || 'A';
+    let servingZone = bs.servingZone || 'right';
+    if (type === 'plus') {
+      servingTeam = team === 'teamA' ? 'A' : 'B';
+      const scorerSetScore = team === 'teamA' ? scoreA : scoreB;
+      servingZone = scorerSetScore % 2 === 0 ? 'right' : 'left';
+    }
+
+    const patch = {
+      'matchConfig.teamA.currentSetScore': scoreA,
+      'matchConfig.teamB.currentSetScore': scoreB,
+      'matchConfig.badmintonState.servingTeam': servingTeam,
+      'matchConfig.badmintonState.servingZone': servingZone
+    };
+
+    if (type === 'plus') {
+      const setWinner = checkBadmintonSetWin(scoreA, scoreB, pointsPerSet);
+      if (setWinner) {
+        const subA = (mc.teamA.subScores || []).slice();
+        const subB = (mc.teamB.subScores || []).slice();
+        subA.push(scoreA);
+        subB.push(scoreB);
+        const setsA = (mc.teamA.score || 0) + (setWinner === 'A' ? 1 : 0);
+        const setsB = (mc.teamB.score || 0) + (setWinner === 'B' ? 1 : 0);
+        patch['matchConfig.teamA.subScores'] = subA;
+        patch['matchConfig.teamB.subScores'] = subB;
+        patch['matchConfig.teamA.score'] = setsA;
+        patch['matchConfig.teamB.score'] = setsB;
+        patch['matchConfig.teamA.currentSetScore'] = 0;
+        patch['matchConfig.teamB.currentSetScore'] = 0;
+        patch['matchConfig.period'] = Math.max(1, Math.floor(Number(mc.period) || 1)) + 1;
+        patch['matchConfig.badmintonState.servingTeam'] = setWinner;
+        patch['matchConfig.badmintonState.servingZone'] = 'right';
+        this.flashPeriod();
+      }
+    }
+
+    this.setData(patch, () => {
+      this.refreshSportUiMeta();
+    });
+  },
+
+  /**
+   * 手动切换羽毛球发球方（点击发球指示灯）。
+   * @returns {void}
+   */
+  toggleServingTeamManually: function () {
+    if (normalizeSportType(this.data.sportType) !== SPORT_BADMINTON) return;
+    const bs = this.data.matchConfig.badmintonState || DEFAULT_BADMINTON_STATE;
+    const nextTeam = bs.servingTeam === 'B' ? 'A' : 'B';
+    const teamKey = nextTeam === 'A' ? 'teamA' : 'teamB';
+    const setScore = this.data.matchConfig[teamKey].currentSetScore || 0;
+    this.setData({
+      'matchConfig.badmintonState.servingTeam': nextTeam,
+      'matchConfig.badmintonState.servingZone': setScore % 2 === 0 ? 'right' : 'left'
+    }, () => {
+      this.persistConfig();
+    });
+    this.vibrate('light');
   },
 
   onBackTap: function () {
@@ -11508,7 +12185,7 @@ Page({
 
   /**
    * 关闭引导并写入已读；两步均视为完成。
-   * 引导层含 backdrop-filter，盖住原生 camera 时易导致预览黑屏：关闭后须重建 camera 再拉起 rolling。
+   * 引导层盖住原生 camera 时易导致预览黑屏：关闭后须重建 camera 再拉起 rolling。
    * @returns {void}
    */
   dismissGuide: function () {
@@ -12336,17 +13013,11 @@ Page({
     raw[idx].teamB = { ...found.teamB, ...modal.teamB };
     wx.setStorageSync('MIAOXIE_MATCHES', raw);
     const merged = raw[idx];
-    wx.setStorageSync('currentMatchId', modal.id);
-    app.globalData.currentMatchId = modal.id;
-    const normalizedConfig = this.normalizeMatchConfig(merged);
-    app.globalData.matchConfig = normalizedConfig;
-    wx.setStorageSync('matchConfig', normalizedConfig);
-    this.setData({ matchConfig: normalizedConfig });
-    this.updateTeamGroupWidth(true);
+    if (!this.applyMatchSwitchConfig(merged)) return;
     this._resetRollingPipelineForMatchSwitch('switch_match_from_modal');
     this.closeColorModal();
     this.loadMatchList();
-    this.refreshDrawerHighlights(); // 切换后立即刷新高光列表
+    this.refreshDrawerHighlights();
     this.vibrate('medium');
     wx.showToast({ title: '已切换', icon: 'success', duration: 800 });
   },
@@ -12414,16 +13085,10 @@ Page({
       return;
     }
 
-    wx.setStorageSync('currentMatchId', id);
-    app.globalData.currentMatchId = id;
-    const normalizedConfig = this.normalizeMatchConfig(match);
-    app.globalData.matchConfig = normalizedConfig;
-    wx.setStorageSync('matchConfig', normalizedConfig);
-    this.setData({ matchConfig: normalizedConfig });
-    this.updateTeamGroupWidth(true);
+    if (!this.applyMatchSwitchConfig(match)) return;
     this._resetRollingPipelineForMatchSwitch('switch_match');
     this.closeAllDrawers();
-    this.refreshDrawerHighlights(); // 切换后立即刷新高光列表
+    this.refreshDrawerHighlights();
     this.vibrate('medium');
     wx.showToast({ title: '已切换', icon: 'success', duration: 800 });
   },
@@ -14250,8 +14915,18 @@ Page({
   },
 
   persistConfig: function () {
+    if (normalizeSportType(this.data.sportType) === SPORT_FOOTBALL) {
+      this._persistFootballClock();
+    }
     const normalizedConfig = this.normalizeMatchConfig(this.data.matchConfig);
-    this.setData({ matchConfig: normalizedConfig });
+    const sportType = normalizeSportType(normalizedConfig.sportType);
+    normalizedConfig.sportType = sportType;
+    const sportUi = this.buildSportUiPatch(normalizedConfig, sportType);
+    this.setData({
+      matchConfig: normalizedConfig,
+      sportType: sportType,
+      ...sportUi
+    });
     wx.setStorageSync('matchConfig', normalizedConfig);
     app.globalData.matchConfig = normalizedConfig;
 
@@ -14265,8 +14940,22 @@ Page({
         if (idx >= 0) {
           matches[idx] = {
             ...matches[idx],
-            teamA: { ...matches[idx].teamA, score: normalizedConfig.teamA.score },
-            teamB: { ...matches[idx].teamB, score: normalizedConfig.teamB.score },
+            sportType: normalizedConfig.sportType,
+            sportConfig: normalizedConfig.sportConfig,
+            badmintonState: normalizedConfig.badmintonState,
+            footballElapsedSec: normalizedConfig.footballElapsedSec,
+            teamA: {
+              ...matches[idx].teamA,
+              score: normalizedConfig.teamA.score,
+              currentSetScore: normalizedConfig.teamA.currentSetScore,
+              subScores: normalizedConfig.teamA.subScores
+            },
+            teamB: {
+              ...matches[idx].teamB,
+              score: normalizedConfig.teamB.score,
+              currentSetScore: normalizedConfig.teamB.currentSetScore,
+              subScores: normalizedConfig.teamB.subScores
+            },
             period: normalizedConfig.period
           };
           wx.setStorageSync('MIAOXIE_MATCHES', matches);

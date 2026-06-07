@@ -33,6 +33,10 @@
         </view>
         <view class="card-vs">
           <text class="card-vs-text">VS</text>
+          <view class="card-sport-tag">
+            <text class="card-sport-icon">{{item.sportIcon || '🏀'}}</text>
+            <text class="card-sport-label">{{item.sportLabel || '篮球'}}</text>
+          </view>
         </view>
         <view class="card-team card-team--right">
           <text class="card-team-name">{{item.teamB.name || '客队'}}</text>
@@ -308,6 +312,81 @@
             ></view>
           </view>
           <text class="form-hint">右侧色块为直播页赛名文字颜色</text>
+        </view>
+
+        <!-- 运动类型 -->
+        <view class="form-group">
+          <text class="form-label">运动类型</text>
+          <view class="sport-type-grid">
+            <view
+              wx:for="{{sportOptions}}"
+              wx:key="id"
+              class="sport-type-item {{editingMatch.sportType === item.id ? 'sport-type-item--active' : ''}}"
+              bindtap="onEditSportTypeChange"
+              data-sport="{{item.id}}"
+            >
+              <text class="sport-type-icon">{{item.icon}}</text>
+              <text class="sport-type-label">{{item.label}}</text>
+            </view>
+          </view>
+        </view>
+
+        <!-- 篮球专属配置 -->
+        <view class="form-group" wx:if="{{editingMatch.sportType === 'basketball' || !editingMatch.sportType}}">
+          <text class="form-label">单节时长（分钟）</text>
+          <picker
+            mode="selector"
+            range="{{basketballPeriodOptions}}"
+            bindchange="onEditBasketballPeriodMinutesChange"
+          >
+            <view class="form-input picker-display">{{editingMatch.sportConfig.periodMinutes || 10}} 分钟/节</view>
+          </picker>
+          <view class="sport-toggle-row">
+            <text class="form-hint">开启 24 秒进攻时限</text>
+            <switch checked="{{editingMatch.sportConfig.enable24Sec !== false}}" bindchange="onEditBasketball24SecChange" color="#10AEFF" />
+          </view>
+        </view>
+
+        <!-- 足球专属配置 -->
+        <view class="form-group" wx:if="{{editingMatch.sportType === 'football'}}">
+          <text class="form-label">半场时长（分钟）</text>
+          <picker
+            mode="selector"
+            range="{{footballHalfOptions}}"
+            bindchange="onEditFootballHalfMinutesChange"
+          >
+            <view class="form-input picker-display">{{editingMatch.sportConfig.halfMinutes || 45}} 分钟/半场</view>
+          </picker>
+        </view>
+
+        <!-- 羽毛球专属配置 -->
+        <view class="form-group" wx:if="{{editingMatch.sportType === 'badminton'}}">
+          <text class="form-label">比赛形式</text>
+          <view class="sport-chip-row">
+            <view
+              class="sport-chip {{editingMatch.sportConfig.ruleType !== 'double' ? 'sport-chip--active' : ''}}"
+              bindtap="onEditBadmintonRuleChange"
+              data-rule="single"
+            >单打</view>
+            <view
+              class="sport-chip {{editingMatch.sportConfig.ruleType === 'double' ? 'sport-chip--active' : ''}}"
+              bindtap="onEditBadmintonRuleChange"
+              data-rule="double"
+            >双打</view>
+          </view>
+          <text class="form-label sport-sub-label">计分制</text>
+          <view class="sport-chip-row">
+            <view
+              class="sport-chip {{editingMatch.sportConfig.pointsPerSet !== 11 ? 'sport-chip--active' : ''}}"
+              bindtap="onEditBadmintonPointsChange"
+              data-points="21"
+            >21 分制</view>
+            <view
+              class="sport-chip {{editingMatch.sportConfig.pointsPerSet === 11 ? 'sport-chip--active' : ''}}"
+              bindtap="onEditBadmintonPointsChange"
+              data-points="11"
+            >11 分制</view>
+          </view>
         </view>
 
         <!-- 开赛时间（日期 + 时间，精确到分钟） -->

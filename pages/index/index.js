@@ -169,6 +169,88 @@ const COLOR_PRESETS = [
   '#22D3EE', '#F87171', '#60A5FA', '#34D399'
 ];
 
+/** @const {string} 篮球运动类型 */
+const SPORT_BASKETBALL = 'basketball';
+/** @const {string} 足球运动类型 */
+const SPORT_FOOTBALL = 'football';
+/** @const {string} 羽毛球运动类型 */
+const SPORT_BADMINTON = 'badminton';
+
+/** @const {Array<{ id: string, label: string, icon: string }>} 可选运动类型 */
+const SPORT_OPTIONS = [
+  { id: SPORT_BASKETBALL, label: '篮球', icon: '🏀' },
+  { id: SPORT_FOOTBALL, label: '足球', icon: '⚽' },
+  { id: SPORT_BADMINTON, label: '羽毛球', icon: '🏸' }
+];
+
+/**
+ * 规范化运动类型。
+ * @param {unknown} raw
+ * @returns {string}
+ */
+function normalizeSportType(raw) {
+  const s = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  if (s === SPORT_FOOTBALL || s === SPORT_BADMINTON) return s;
+  return SPORT_BASKETBALL;
+}
+
+/** @const {object} 默认运动配置 */
+const DEFAULT_SPORT_CONFIG = {
+  periodMinutes: 10,
+  enable24Sec: true,
+  halfMinutes: 45,
+  ruleType: 'single',
+  pointsPerSet: 21,
+  maxSets: 3
+};
+
+/**
+ * 确保编辑草稿含完整运动配置字段。
+ * @param {Record<string, unknown>} draft
+ * @returns {Record<string, unknown>}
+ */
+function normalizeEditingMatchDraft(draft) {
+  const next = JSON.parse(JSON.stringify(draft || {}));
+  next.sportType = normalizeSportType(next.sportType);
+  next.sportConfig = { ...DEFAULT_SPORT_CONFIG, ...(next.sportConfig || {}) };
+  if (!next.badmintonState) {
+    next.badmintonState = {
+      servingTeam: 'A',
+      servingZone: 'right',
+      ruleType: next.sportConfig.ruleType,
+      maxSets: next.sportConfig.maxSets,
+      pointsPerSet: next.sportConfig.pointsPerSet
+    };
+  }
+  if (!next.teamA) {
+    next.teamA = {
+      name: '', bgColor: '#E64340', textColor: '#FFFFFF', score: 0, currentSetScore: 0, subScores: []
+    };
+  }
+  if (!next.teamB) {
+    next.teamB = {
+      name: '', bgColor: '#10AEFF', textColor: '#FFFFFF', score: 0, currentSetScore: 0, subScores: []
+    };
+  }
+  return next;
+}
+
+/**
+ * 为列表展示补充运动类型图标与标签。
+ * @param {Record<string, unknown>} match
+ * @returns {Record<string, unknown>}
+ */
+function enrichMatchForList(match) {
+  const sportType = normalizeSportType(match.sportType);
+  const opt = SPORT_OPTIONS.find((o) => o.id === sportType) || SPORT_OPTIONS[0];
+  return {
+    ...match,
+    sportType,
+    sportIcon: opt.icon,
+    sportLabel: opt.label
+  };
+}
+
 /** @const {string[]} 扩展色板 */
 const EXTENDED_COLORS = [
   '#FFFFFF',
@@ -237,6 +319,13 @@ Page({
 
     /** 赛名后缀（用户可编辑部分，前缀《高光记分》固定不可删除） */
     editingMatchSuffix: '',
+
+    /** 运动类型选项（编辑浮层） */
+    sportOptions: SPORT_OPTIONS,
+    /** 篮球单节时长 picker 选项 */
+    basketballPeriodOptions: [8, 10, 12, 15, 20],
+    /** 足球半场时长 picker 选项 */
+    footballHalfOptions: [30, 35, 40, 45],
 
     /** 高光录像列表 */
     highlightList: [],
@@ -398,7 +487,8 @@ Page({
    */
   loadMatches() {
     const raw = wx.getStorageSync(STORAGE_KEY);
-    const matches = Array.isArray(raw) ? sortMatchesForList(raw) : [];
+    const list = Array.isArray(raw) ? raw : [];
+    const matches = sortMatchesForList(list).map((m) => enrichMatchForList(m));
     this.setData({ matches });
   },
 
@@ -407,7 +497,7 @@ Page({
    * @param {Array} matches 要保存的完整比赛列表
    */
   saveMatches(matches) {
-    const sorted = sortMatchesForList(matches);
+    const sorted = sortMatchesForList(matches).map((m) => enrichMatchForList(m));
     wx.setStorageSync(STORAGE_KEY, sorted);
     this.setData({ matches: sorted });
   },
@@ -420,11 +510,35 @@ Page({
   buildDefaultMatch(ts) {
     return {
       id: `${ts}`,
+      sportType: SPORT_BASKETBALL,
       matchName: MATCH_NAME_PREFIX,
       matchNameColor: '#FFFFFF',
-      teamA: { name: '', bgColor: '#E64340', textColor: '#FFFFFF', score: 0 },
-      teamB: { name: '', bgColor: '#10AEFF', textColor: '#FFFFFF', score: 0 },
+      teamA: {
+        name: '',
+        bgColor: '#E64340',
+        textColor: '#FFFFFF',
+        score: 0,
+        currentSetScore: 0,
+        subScores: []
+      },
+      teamB: {
+        name: '',
+        bgColor: '#10AEFF',
+        textColor: '#FFFFFF',
+        score: 0,
+        currentSetScore: 0,
+        subScores: []
+      },
       period: 0,
+      badmintonState: {
+        servingTeam: 'A',
+        servingZone: 'right',
+        ruleType: 'single',
+        maxSets: 3,
+        pointsPerSet: 21
+      },
+      sportConfig: { ...DEFAULT_SPORT_CONFIG },
+      footballElapsedSec: 0,
       isFinished: false,
       /** 开赛时间（毫秒，对齐到分钟） */
       startAt: alignTimestampToMinute(ts),
@@ -434,7 +548,7 @@ Page({
 
   /** 点击「新增比赛」——打开编辑浮层，赛名默认沿用上一场 */
   onAddMatch() {
-    const draft = this.buildDefaultMatch(Date.now());
+    const draft = normalizeEditingMatchDraft(this.buildDefaultMatch(Date.now()));
     const matches = this.data.matches;
     if (matches.length > 0) {
       // 继承最近一场的赛名颜色与后缀，方便同系列多场比赛快速创建
@@ -462,7 +576,7 @@ Page({
     const { id } = e.currentTarget.dataset;
     const match = this.data.matches.find((m) => m.id === id);
     if (!match) return;
-    const copied = JSON.parse(JSON.stringify(match));
+    const copied = normalizeEditingMatchDraft(JSON.parse(JSON.stringify(match)));
     const rawStart =
       typeof copied.startAt === 'number' && copied.startAt > 0
         ? copied.startAt
@@ -538,7 +652,9 @@ Page({
     // 兼容旧版 live.js 的 fallback 读取
     wx.setStorageSync('matchConfig', match);
 
-    wx.navigateTo({ url: '/pages/live/live' });
+    wx.navigateTo({
+      url: '/pages/live/live?sportType=' + encodeURIComponent(normalizeSportType(match.sportType)) + '&matchId=' + encodeURIComponent(id)
+    });
   },
 
   // ─────────────────────────────────────────────
@@ -585,16 +701,31 @@ Page({
         // 保留 score / period 等运行时状态，仅更新用户编辑的字段
         matches[idx] = {
           ...matches[idx],
+          sportType: normalizeSportType(draft.sportType),
+          sportConfig: { ...DEFAULT_SPORT_CONFIG, ...(draft.sportConfig || {}) },
+          badmintonState: draft.badmintonState || matches[idx].badmintonState,
           matchName: fullMatchName,
           matchNameColor: draft.matchNameColor,
           startAt,
-          teamA: { ...matches[idx].teamA, name: draft.teamA.name, bgColor: draft.teamA.bgColor, textColor: draft.teamA.textColor },
-          teamB: { ...matches[idx].teamB, name: draft.teamB.name, bgColor: draft.teamB.bgColor, textColor: draft.teamB.textColor }
+          teamA: {
+            ...matches[idx].teamA,
+            name: draft.teamA.name,
+            bgColor: draft.teamA.bgColor,
+            textColor: draft.teamA.textColor
+          },
+          teamB: {
+            ...matches[idx].teamB,
+            name: draft.teamB.name,
+            bgColor: draft.teamB.bgColor,
+            textColor: draft.teamB.textColor
+          }
         };
       }
     } else {
       const newMatch = {
         ...draft,
+        sportType: normalizeSportType(draft.sportType),
+        sportConfig: { ...DEFAULT_SPORT_CONFIG, ...(draft.sportConfig || {}) },
         matchName: fullMatchName,
         startAt,
         id: `${Date.now()}`,
@@ -665,6 +796,107 @@ Page({
    */
   onMatchNameSuffixInput(e) {
     this.setData({ editingMatchSuffix: e.detail.value });
+  },
+
+  /**
+   * 编辑浮层：切换运动类型。
+   * @param {WechatMiniprogram.TouchEvent} e data-sport
+   * @returns {void}
+   */
+  onEditSportTypeChange(e) {
+    const sportType = normalizeSportType(e.currentTarget.dataset.sport);
+    const draft = normalizeEditingMatchDraft(this.data.editingMatch || this.buildDefaultMatch(Date.now()));
+    draft.sportType = sportType;
+    draft.sportConfig = { ...DEFAULT_SPORT_CONFIG, ...(draft.sportConfig || {}) };
+    if (sportType === SPORT_FOOTBALL) {
+      draft.period = 1;
+    } else if (sportType === SPORT_BADMINTON) {
+      draft.period = 1;
+      draft.badmintonState = {
+        servingTeam: 'A',
+        servingZone: 'right',
+        ruleType: draft.sportConfig.ruleType,
+        maxSets: draft.sportConfig.maxSets,
+        pointsPerSet: draft.sportConfig.pointsPerSet
+      };
+    } else {
+      draft.period = 0;
+    }
+    this.setData({ editingMatch: draft });
+  },
+
+  /**
+   * 编辑浮层：切换羽毛球单打/双打。
+   * @param {WechatMiniprogram.TouchEvent} e data-rule
+   * @returns {void}
+   */
+  onEditBadmintonRuleChange(e) {
+    const ruleType = e.currentTarget.dataset.rule === 'double' ? 'double' : 'single';
+    const draft = JSON.parse(JSON.stringify(this.data.editingMatch));
+    draft.sportConfig = { ...(draft.sportConfig || DEFAULT_SPORT_CONFIG), ruleType };
+    draft.badmintonState = {
+      ...(draft.badmintonState || {}),
+      ruleType
+    };
+    this.setData({ editingMatch: draft });
+  },
+
+  /**
+   * 编辑浮层：切换羽毛球 11/21 分制。
+   * @param {WechatMiniprogram.TouchEvent} e data-points
+   * @returns {void}
+   */
+  onEditBadmintonPointsChange(e) {
+    const points = Number(e.currentTarget.dataset.points) === 11 ? 11 : 21;
+    const draft = JSON.parse(JSON.stringify(this.data.editingMatch));
+    draft.sportConfig = { ...(draft.sportConfig || DEFAULT_SPORT_CONFIG), pointsPerSet: points };
+    draft.badmintonState = {
+      ...(draft.badmintonState || {}),
+      pointsPerSet: points
+    };
+    this.setData({ editingMatch: draft });
+  },
+
+  /**
+   * 编辑浮层：切换篮球单节时长。
+   * @param {{ detail: { value: string } }} e
+   * @returns {void}
+   */
+  onEditBasketballPeriodMinutesChange(e) {
+    const options = this.data.basketballPeriodOptions || [8, 10, 12, 15, 20];
+    const idx = Math.max(0, Math.floor(Number(e.detail.value) || 0));
+    const minutes = options[idx] || 10;
+    const draft = JSON.parse(JSON.stringify(this.data.editingMatch));
+    draft.sportConfig = { ...(draft.sportConfig || DEFAULT_SPORT_CONFIG), periodMinutes: minutes };
+    this.setData({ editingMatch: draft });
+  },
+
+  /**
+   * 编辑浮层：切换篮球是否开启 24 秒。
+   * @param {{ detail: { value: boolean } }} e
+   * @returns {void}
+   */
+  onEditBasketball24SecChange(e) {
+    const draft = JSON.parse(JSON.stringify(this.data.editingMatch));
+    draft.sportConfig = {
+      ...(draft.sportConfig || DEFAULT_SPORT_CONFIG),
+      enable24Sec: !!e.detail.value
+    };
+    this.setData({ editingMatch: draft });
+  },
+
+  /**
+   * 编辑浮层：切换足球半场时长。
+   * @param {{ detail: { value: string } }} e
+   * @returns {void}
+   */
+  onEditFootballHalfMinutesChange(e) {
+    const options = this.data.footballHalfOptions || [30, 35, 40, 45];
+    const idx = Math.max(0, Math.floor(Number(e.detail.value) || 0));
+    const minutes = options[idx] || 45;
+    const draft = JSON.parse(JSON.stringify(this.data.editingMatch));
+    draft.sportConfig = { ...(draft.sportConfig || DEFAULT_SPORT_CONFIG), halfMinutes: minutes };
+    this.setData({ editingMatch: draft });
   },
 
   stopBubbling() { return; },

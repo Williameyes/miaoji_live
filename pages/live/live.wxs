@@ -23,7 +23,7 @@ function ballActive(sel, teamA, teamB, ball) {
 }
 
 /**
- * 队名截断：最多保留前 12 个字符，不追加省略号（与记分栏固定宽度一致）。
+ * 队名截断：最多保留前 12 个字符，不追加省略号（篮球底栏）。
  * @param {string} name
  * @returns {string}
  */
@@ -31,6 +31,40 @@ function limitTeamName(name) {
   var safe = name || '';
   if (safe.length <= 12) return safe;
   return safe.slice(0, 12);
+}
+
+/**
+ * 足球/羽毛球队名：最多 5 字，超出直接截断无省略号。
+ * @param {string} name
+ * @returns {string}
+ */
+function limitTeamNamePro(name) {
+  var safe = name || '';
+  if (safe.length <= 5) return safe;
+  return safe.slice(0, 5);
+}
+
+/**
+ * 足球/羽毛球队名展示宽度（rpx）：按实际字数缩小，最多按 5 字宽。
+ * @param {string} name
+ * @returns {number}
+ */
+function proTeamNameWidthRpx(name) {
+  var display = limitTeamNamePro(name);
+  var len = display.length;
+  if (len < 1) len = 1;
+  return len * 11 + 2;
+}
+
+/**
+ * 记分牌顶栏赛名：最多 10 字，超出直接截断无省略号。
+ * @param {string} name
+ * @returns {string}
+ */
+function limitMatchNameBoard(name) {
+  var safe = name || '';
+  if (safe.length <= 10) return safe;
+  return safe.slice(0, 10);
 }
 
 /**
@@ -55,6 +89,9 @@ module.exports = {
   eqColor: eqColor,
   ballActive: ballActive,
   limitTeamName: limitTeamName,
+  limitTeamNamePro: limitTeamNamePro,
+  proTeamNameWidthRpx: proTeamNameWidthRpx,
+  limitMatchNameBoard: limitMatchNameBoard,
   enhanceModeLabel: enhanceModeLabel,
   zeroPad2: zeroPad2
 };

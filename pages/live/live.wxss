@@ -150,7 +150,7 @@ page {
   color: rgba(255, 255, 255, 0.78) !important;
 }
 
-/* 上飘胶囊：与回放倍速、抽屉毛玻璃同系，竖排以免挡取景 */
+/* 上飘胶囊：与回放倍速、抽屉半透明条同系，竖排以免挡取景 */
 .left-camera-panel {
   display: flex;
   flex-direction: column;
@@ -824,6 +824,378 @@ button.live-ble-btn::after {
   animation: shotClockPulse 0.5s infinite alternate;
 }
 
+.period-strip--football {
+  background: rgba(7, 193, 96, 0.82);
+}
+
+.bottom-center-board--minimal {
+  width: auto;
+  max-width: 70vw;
+}
+
+.bottom-center-board--minimal .match-name-row {
+  margin-bottom: 0;
+}
+
+/* 足球 / 羽毛球：可拖动记分牌（默认右上并避让微信胶囊） */
+.pro-scoreboard-movable-area {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 4;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.pro-scoreboard-movable-view {
+  width: auto !important;
+  height: auto !important;
+  pointer-events: auto;
+}
+
+.pro-scoreboard-container {
+  background: transparent;
+  border-radius: 4rpx;
+  border: 0;
+  box-shadow: 0 2px 8rpx rgba(0, 0, 0, 0.24);
+  overflow: hidden;
+  width: fit-content;
+  max-width: 50vw;
+}
+
+.pro-scoreboard-container--stack {
+  display: flex;
+  flex-direction: column;
+}
+
+.pro-panel-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5rpx;
+  padding: 1rpx 2rpx 3rpx;
+  border-bottom: 0;
+  min-height: 14rpx;
+}
+
+.pro-panel-meta--title {
+  justify-content: flex-start;
+}
+
+.pro-match-name-board {
+  font-size: 7rpx;
+  line-height: 1.2;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  max-width: 100%;
+  text-shadow: 0 1px 3rpx rgba(0, 0, 0, 0.65);
+}
+
+.audit-export-share-btn--board {
+  margin-left: 6rpx;
+  padding: 1rpx 6rpx;
+  font-size: 8rpx;
+  flex-shrink: 0;
+}
+
+.pro-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2rpx;
+  padding: 0;
+}
+
+.pro-panel-body-inner {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 2rpx;
+}
+
+.pro-panel-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2rpx;
+  flex: 0 1 auto;
+}
+
+.pro-panel-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4rpx;
+  min-height: 18rpx;
+}
+
+.pro-panel-row--team {
+  border-radius: 3rpx;
+  padding: 1rpx 5rpx;
+  box-sizing: border-box;
+}
+
+.pro-panel-left {
+  display: flex;
+  align-items: center;
+  gap: 3rpx;
+  flex: 0 0 58rpx;
+  min-width: 0;
+}
+
+.pro-panel-right {
+  display: flex;
+  align-items: center;
+  gap: 3rpx;
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-left: 4rpx;
+}
+
+.pro-football-meta-col {
+  flex: 0 0 40rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 0 4rpx;
+  border-radius: 3rpx;
+  background: rgba(0, 0, 0, 0.42);
+  box-sizing: border-box;
+}
+
+.pro-panel-score {
+  flex: 0 0 16rpx;
+  font-size: 12rpx;
+  color: #ffffff;
+  min-width: 16rpx;
+  text-align: center;
+  justify-content: center;
+}
+
+.pro-score-number {
+  font-family: 'DIN Alternate', 'Helvetica Neue', 'Courier New', monospace;
+  font-weight: bold;
+  font-variant-numeric: tabular-nums;
+}
+
+.pro-team-name {
+  font-size: 8rpx;
+  font-weight: 700;
+}
+
+.pro-team-name--dynamic {
+  flex: 0 0 auto;
+  display: inline-block;
+  width: 54rpx;
+  max-width: 54rpx;
+  overflow: hidden;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.team-color-strip {
+  width: 8rpx;
+  height: 16rpx;
+  flex-shrink: 0;
+  border-radius: 2rpx;
+  align-self: center;
+}
+
+.pro-score-hit {
+  display: flex;
+  align-items: center;
+  min-height: 18rpx;
+}
+
+.pro-meta-phase {
+  font-size: 7rpx;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.72);
+  letter-spacing: 0;
+  flex-shrink: 0;
+  text-align: center;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.pro-meta-time {
+  font-size: 9rpx;
+  color: #ffd700;
+  letter-spacing: 0;
+  flex-shrink: 0;
+  text-align: center;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.pro-serve-indicator {
+  width: 7rpx;
+  height: 7rpx;
+  border-radius: 50%;
+  background: #ffd700;
+  flex-shrink: 0;
+  box-shadow: 0 0 6rpx rgba(255, 215, 0, 0.85);
+}
+
+.pro-sets-num {
+  font-size: 7rpx;
+  opacity: 0.62;
+  min-width: 9rpx;
+  text-align: center;
+}
+
+.pro-sets-sep {
+  font-size: 6rpx;
+  color: currentColor;
+  opacity: 0.36;
+}
+
+.pro-set-score {
+  font-size: 12rpx;
+  min-width: 16rpx;
+  text-align: center;
+  justify-content: center;
+}
+
+/* 羽毛球旧底栏布局（保留类名防引用） */
+.badminton-score-board {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4rpx;
+}
+
+.badminton-main-row {
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  width: 100%;
+  min-height: 72rpx;
+}
+
+.badminton-side {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8rpx;
+  padding: 4rpx 8rpx;
+  box-sizing: border-box;
+  opacity: 0.88;
+}
+
+.badminton-side--a {
+  margin-right: 4rpx;
+}
+
+.badminton-side--b {
+  margin-left: 4rpx;
+}
+
+.badminton-side-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4rpx;
+  width: 100%;
+  min-height: 18rpx;
+}
+
+.badminton-team-name {
+  font-size: 10rpx;
+  font-weight: 600;
+  max-width: 120rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badminton-sets-won {
+  font-size: 9rpx;
+  font-weight: 700;
+  opacity: 0.85;
+}
+
+.badminton-set-score {
+  font-size: 22rpx;
+  font-weight: 800;
+  line-height: 1;
+  min-height: 28rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.badminton-minus-btn {
+  font-size: 11rpx;
+  font-weight: 700;
+  min-height: 18rpx;
+  opacity: 0.75;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.badminton-center {
+  flex: 0 0 auto;
+  min-width: 56rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6rpx;
+}
+
+.badminton-center-label {
+  font-size: 10rpx;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1rpx 3rpx rgba(0, 0, 0, 0.6);
+}
+
+.badminton-center-rule {
+  font-size: 8rpx;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.badminton-serve-dot {
+  width: 8rpx;
+  height: 8rpx;
+  border-radius: 50%;
+  background: #ffbe00;
+  box-shadow: 0 0 6rpx rgba(255, 190, 0, 0.9);
+  flex-shrink: 0;
+}
+
+.badminton-serve-dot--left {
+  background: #ff4d4f;
+}
+
+.badminton-history-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4rpx;
+  max-width: 96vw;
+}
+
+.badminton-history-item {
+  font-size: 8rpx;
+  color: rgba(255, 255, 255, 0.82);
+  text-shadow: 0 1rpx 2rpx rgba(0, 0, 0, 0.5);
+}
+
+.badminton-history-sep {
+  font-size: 8rpx;
+  color: rgba(255, 255, 255, 0.45);
+}
+
 .replay-overlay {
   position: absolute;
   top: 0;
@@ -889,9 +1261,7 @@ button.live-ble-btn::after {
   height: 30rpx;
   padding: 0 12rpx;
   border-radius: 15rpx;
-  background: rgba(0, 0, 0, 0.22);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  background: rgba(0, 0, 0, 0.5);
   pointer-events: none;
   box-sizing: border-box;
 }
@@ -1113,9 +1483,7 @@ button.live-ble-btn::after {
   justify-content: center;
   gap: 12rpx;
   padding: 8rpx 16rpx;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  background: rgba(0, 0, 0, 0.72);
   border: 1rpx solid rgba(255, 255, 255, 0.12);
   border-radius: 999rpx;
   pointer-events: auto;
@@ -1176,9 +1544,7 @@ button.live-ble-btn::after {
   align-items: center;
   justify-content: center;
   padding: 8rpx 6rpx;
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: rgba(255, 255, 255, 0.14);
   border: 1rpx solid rgba(255, 255, 255, 0.1);
 }
 
@@ -1207,11 +1573,9 @@ button.live-ble-btn::after {
   margin: 1rpx 0;
 }
 
-/* 高光视频缩略图：与 lm-card 完全一致的毛玻璃样式 */
+/* 高光视频缩略图：与 lm-card 完全一致的半透明样式 */
 .drawer-item {
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: rgba(255, 255, 255, 0.14);
   border: 1rpx solid rgba(255, 255, 255, 0.1);
   box-shadow: none;
 }
@@ -1327,9 +1691,7 @@ button.live-ble-btn::after {
 .color-modal-container {
   width: 78%;
   max-width: 520rpx;
-  background: rgba(255, 255, 255, 0.42);
-  backdrop-filter: blur(50rpx);
-  -webkit-backdrop-filter: blur(50rpx);
+  background: rgba(245, 247, 250, 0.9);
   border-radius: 24rpx;
   padding: 20rpx 22rpx 24rpx;
   box-sizing: border-box;
@@ -1548,9 +1910,8 @@ button.live-ble-btn::after {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0,0,0,0.14);
+  background: rgba(0,0,0,0.34);
   border: 1px solid rgba(255,255,255,0.10);
-  backdrop-filter: blur(8px);
   pointer-events: auto;
   opacity: 0.55;
 }
@@ -1607,7 +1968,7 @@ button.live-ble-btn::after {
   transform: translate(-50%, -50%) rotate(90deg);
 }
 
-/* ══ 操作指南弹窗（毛玻璃深色双列布局）══ */
+/* ══ 操作指南弹窗（半透明深色双列布局）══ */
 .guide-overlay {
   position: fixed;
   top: 0;
@@ -1623,9 +1984,7 @@ button.live-ble-btn::after {
   padding-right: max(36rpx, env(safe-area-inset-right));
   box-sizing: border-box;
   overflow: visible;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  background: rgba(0, 0, 0, 0.68);
 }
 
 /*
@@ -1670,11 +2029,11 @@ button.live-ble-btn::after {
   box-sizing: border-box;
 }
 
-/* 毛玻璃卡片，与场次矩形风格一致 */
+/* 深色半透明卡片，与场次矩形风格一致 */
 .guide-card {
   width: 88%;
   max-width: 820rpx;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(20, 24, 32, 0.9);
   border-radius: 28rpx;
   border: 1rpx solid rgba(255, 255, 255, 0.16);
   padding: 32rpx 28rpx 24rpx;
@@ -1682,8 +2041,6 @@ button.live-ble-btn::after {
   display: flex;
   flex-direction: column;
   box-shadow: 0 16rpx 48rpx rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
 }
 
 /*
@@ -2221,8 +2578,7 @@ button.live-ble-btn::after {
   content: '';
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.42);
-  backdrop-filter: blur(18px);
+  background: rgba(0, 0, 0, 0.62);
 }
 
 .vip-gate-card {
@@ -2233,10 +2589,9 @@ button.live-ble-btn::after {
   padding: 36rpx 32rpx 28rpx;
   box-sizing: border-box;
   border-radius: 24rpx;
-  background: rgba(30, 31, 35, 0.88);
+  background: rgba(30, 31, 35, 0.96);
   border: 1px solid rgba(255, 255, 255, 0.06);
   box-shadow: 0 24rpx 80rpx rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(22rpx);
 }
 
 .vip-gate-kicker {
@@ -2360,7 +2715,7 @@ button.live-ble-btn::after {
   }
 }
 
-/* ══ 共用 AF/AE（与回放徽标、毛玻璃条风格统一） */
+/* ══ 共用 AF/AE（与回放徽标、半透明条风格统一） */
 .focus-ui-layer {
   position: fixed;
   top: 0;
@@ -2616,10 +2971,9 @@ button.live-ble-btn::after {
   max-height: 76vh;
   padding: 16rpx 18rpx 18rpx;
   border-radius: 20rpx;
-  background: rgba(12, 15, 22, 0.84);
+  background: rgba(12, 15, 22, 0.94);
   border: 1rpx solid rgba(255, 255, 255, 0.12);
   box-shadow: 0 10rpx 36rpx rgba(0, 0, 0, 0.34);
-  backdrop-filter: blur(10px);
   pointer-events: auto;
   display: flex;
   flex-direction: column;
@@ -2976,8 +3330,7 @@ button.live-ble-btn::after {
 .auto-mode-status-box {
   display: flex;
   align-items: center;
-  background: rgba(0, 0, 0, 0.72);
-  backdrop-filter: blur(8px);
+  background: rgba(0, 0, 0, 0.82);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 12rpx;
   padding: 8rpx 20rpx;
@@ -3061,4 +3414,3 @@ button.live-ble-btn::after {
   width: 100%;
   height: 100%;
 }
-

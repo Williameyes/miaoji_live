@@ -239,6 +239,11 @@ page {
 .card-vs {
   padding: 0 18rpx;
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6rpx;
 }
 
 .card-vs-text {
@@ -246,6 +251,28 @@ page {
   font-weight: 700;
   color: #CBD5E1;
   letter-spacing: 2rpx;
+  line-height: 1;
+}
+
+.card-sport-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4rpx;
+  padding: 2rpx 8rpx;
+  border-radius: 999rpx;
+  background: rgba(15, 23, 42, 0.05);
+}
+
+.card-sport-icon {
+  font-size: 18rpx;
+  line-height: 1;
+}
+
+.card-sport-label {
+  font-size: 18rpx;
+  color: #64748B;
+  font-weight: 600;
+  line-height: 1;
 }
 
 /* 比分行 */
@@ -1015,6 +1042,74 @@ page {
   font-size: 20rpx;
   color: #94A3B8;
   padding-left: 4rpx;
+}
+
+.sport-type-grid {
+  display: flex;
+  gap: 12rpx;
+}
+
+.sport-type-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6rpx;
+  padding: 16rpx 8rpx;
+  border-radius: 16rpx;
+  border: 1.5rpx solid #E2E8F0;
+  background: #F8FAFC;
+}
+
+.sport-type-item--active {
+  border-color: #10AEFF;
+  background: rgba(16, 174, 255, 0.08);
+}
+
+.sport-type-icon {
+  font-size: 36rpx;
+  line-height: 1;
+}
+
+.sport-type-label {
+  font-size: 24rpx;
+  color: #334155;
+  font-weight: 600;
+}
+
+.sport-chip-row {
+  display: flex;
+  gap: 12rpx;
+}
+
+.sport-chip {
+  flex: 1;
+  text-align: center;
+  padding: 14rpx 0;
+  border-radius: 14rpx;
+  border: 1.5rpx solid #E2E8F0;
+  background: #F8FAFC;
+  font-size: 26rpx;
+  color: #475569;
+}
+
+.sport-chip--active {
+  border-color: #10AEFF;
+  color: #0284C7;
+  background: rgba(16, 174, 255, 0.1);
+  font-weight: 600;
+}
+
+.sport-sub-label {
+  margin-top: 8rpx;
+}
+
+.sport-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8rpx;
 }
 
 .form-input {
