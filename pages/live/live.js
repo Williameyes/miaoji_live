@@ -665,7 +665,7 @@ Page({
       badmintonState: JSON.parse(JSON.stringify(DEFAULT_BADMINTON_STATE)),
       sportConfig: {
         periodMinutes: 10,
-        enable24Sec: true,
+        enable24Sec: false,
         halfMinutes: 45,
         ruleType: 'single',
         pointsPerSet: 21,
@@ -6272,7 +6272,7 @@ Page({
     const sc = normalizedConfig.sportConfig || {};
     normalizedConfig.sportConfig = {
       periodMinutes: Math.max(1, Math.floor(Number(sc.periodMinutes) || 10)),
-      enable24Sec: sc.enable24Sec !== false,
+      enable24Sec: false,
       halfMinutes: Math.max(1, Math.floor(Number(sc.halfMinutes) || 45)),
       ruleType: sc.ruleType === 'double' ? 'double' : 'single',
       pointsPerSet: sc.pointsPerSet === 11 ? 11 : 21,

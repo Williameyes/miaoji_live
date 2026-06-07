@@ -341,10 +341,6 @@
           >
             <view class="form-input picker-display">{{editingMatch.sportConfig.periodMinutes || 10}} 分钟/节</view>
           </picker>
-          <view class="sport-toggle-row">
-            <text class="form-hint">开启 24 秒进攻时限</text>
-            <switch checked="{{editingMatch.sportConfig.enable24Sec !== false}}" bindchange="onEditBasketball24SecChange" color="#10AEFF" />
-          </view>
         </view>
 
         <!-- 足球专属配置 -->

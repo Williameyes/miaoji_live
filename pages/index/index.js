@@ -197,7 +197,7 @@ function normalizeSportType(raw) {
 /** @const {object} 默认运动配置 */
 const DEFAULT_SPORT_CONFIG = {
   periodMinutes: 10,
-  enable24Sec: true,
+  enable24Sec: false,
   halfMinutes: 45,
   ruleType: 'single',
   pointsPerSet: 21,
@@ -213,6 +213,9 @@ function normalizeEditingMatchDraft(draft) {
   const next = JSON.parse(JSON.stringify(draft || {}));
   next.sportType = normalizeSportType(next.sportType);
   next.sportConfig = { ...DEFAULT_SPORT_CONFIG, ...(next.sportConfig || {}) };
+  if (next.sportType === SPORT_BASKETBALL) {
+    next.sportConfig.enable24Sec = false;
+  }
   if (!next.badmintonState) {
     next.badmintonState = {
       servingTeam: 'A',
@@ -710,7 +713,11 @@ Page({
         matches[idx] = {
           ...matches[idx],
           sportType: normalizeSportType(draft.sportType),
-          sportConfig: { ...DEFAULT_SPORT_CONFIG, ...(draft.sportConfig || {}) },
+          sportConfig: {
+            ...DEFAULT_SPORT_CONFIG,
+            ...(draft.sportConfig || {}),
+            enable24Sec: false
+          },
           badmintonState: draft.badmintonState || matches[idx].badmintonState,
           matchName: fullMatchName,
           matchNameColor: draft.matchNameColor,
@@ -733,7 +740,11 @@ Page({
       const newMatch = {
         ...draft,
         sportType: normalizeSportType(draft.sportType),
-        sportConfig: { ...DEFAULT_SPORT_CONFIG, ...(draft.sportConfig || {}) },
+        sportConfig: {
+          ...DEFAULT_SPORT_CONFIG,
+          ...(draft.sportConfig || {}),
+          enable24Sec: false
+        },
         matchName: fullMatchName,
         startAt,
         id: `${Date.now()}`,
@@ -876,20 +887,6 @@ Page({
     const minutes = options[idx] || 10;
     const draft = JSON.parse(JSON.stringify(this.data.editingMatch));
     draft.sportConfig = { ...(draft.sportConfig || DEFAULT_SPORT_CONFIG), periodMinutes: minutes };
-    this.setData({ editingMatch: draft });
-  },
-
-  /**
-   * 编辑浮层：切换篮球是否开启 24 秒。
-   * @param {{ detail: { value: boolean } }} e
-   * @returns {void}
-   */
-  onEditBasketball24SecChange(e) {
-    const draft = JSON.parse(JSON.stringify(this.data.editingMatch));
-    draft.sportConfig = {
-      ...(draft.sportConfig || DEFAULT_SPORT_CONFIG),
-      enable24Sec: !!e.detail.value
-    };
     this.setData({ editingMatch: draft });
   },
 
