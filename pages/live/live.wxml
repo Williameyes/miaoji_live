@@ -153,16 +153,12 @@
                   >{{matchConfig.teamB.score}}</view>
                 </view>
               </view>
-              <view class="pro-football-meta-col">
-                <view
-                  class="pro-meta-phase pro-score-hit"
-                  bindtap="onPeriodTap"
-                  bindlongpress="onFootballPeriodLongPress"
-                >{{footballHalfLabel}}</view>
-                <view
-                  class="pro-meta-time pro-score-number {{footballClockPaused ? 'pro-meta-time--paused' : ''}}"
-                  bindlongpress="onFootballTimeLongPress"
-                >{{footballDisplayTime}}</view>
+              <view class="pro-football-meta-col pro-football-meta-col--tap" catchtap="onFootballMetaTap">
+                <view class="pro-meta-phase">
+                  <text class="pro-meta-phase-base">{{footballHalfLabelBase}}</text>
+                  <text wx:if="{{footballHalfStoppageText}}" class="pro-meta-stoppage">{{footballHalfStoppageText}}</text>
+                </view>
+                <view class="pro-meta-time pro-score-number {{footballClockPaused ? 'pro-meta-time--paused' : ''}}">{{footballDisplayTime}}</view>
               </view>
             </view>
           </view>
@@ -259,6 +255,38 @@
         </view>
       </movable-view>
     </movable-area>
+  </view>
+
+  <!-- 足球：时间/场次操作面板（取景区右缘，避让胶囊） -->
+  <view
+    wx:if="{{footballOpsPanelOpen && sportType === 'football' && liveStreamAllowed}}"
+    class="football-ops-backdrop"
+    catchtap="onFootballOpsPanelBackdropTap"
+  >
+    <view class="football-ops-panel" style="{{footballOpsPanelStyle}}" catchtap="noopCatchTap">
+      <view class="football-ops-btn football-ops-btn--primary" catchtap="onFootballClockToggleTap">
+        {{footballClockPaused ? '走表' : '停表'}}
+      </view>
+      <view class="football-ops-section-label">场次</view>
+      <view class="football-ops-period-row">
+        <view
+          class="football-ops-btn football-ops-btn--sm {{matchConfig.period === 1 ? 'football-ops-btn--active' : ''}}"
+          catchtap="onFootballPeriodSelectTap"
+          data-period="1"
+        >上半场</view>
+        <view
+          class="football-ops-btn football-ops-btn--sm {{matchConfig.period === 2 ? 'football-ops-btn--active' : ''}}"
+          catchtap="onFootballPeriodSelectTap"
+          data-period="2"
+        >下半场</view>
+        <view
+          class="football-ops-btn football-ops-btn--sm {{matchConfig.period === 3 ? 'football-ops-btn--active' : ''}}"
+          catchtap="onFootballPeriodSelectTap"
+          data-period="3"
+        >加时赛</view>
+      </view>
+      <view class="football-ops-btn football-ops-btn--ghost" catchtap="onFootballStoppageTap">补时</view>
+    </view>
   </view>
 
   <!-- 硬恢复间隙：静态低透明度遮罩（无文字、无 Toast、不盖 live 预览逻辑上的循环 video） -->

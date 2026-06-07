@@ -252,28 +252,92 @@ function formatWxsMainText(totalSec) {
 
 /** 足球下半场起始累计秒数（45:00） */
 var FOOTBALL_HALF2_START_SEC = 45 * 60;
+/** 足球加时赛起始累计秒数（90:00） */
+var FOOTBALL_EXTRA_START_SEC = 90 * 60;
 
-/** @const {object} 足球计时/加时默认状态 */
+/** @const {object} 足球计时/补时默认状态 */
 var DEFAULT_FOOTBALL_STATE = {
-  clockPaused: false,
+  clockPaused: true,
   clockWallMs: 0,
   extraMinutesHalf1: 0,
-  extraMinutesHalf2: 0
+  extraMinutesHalf2: 0,
+  extraMinutesExtra: 0,
+  /** 2=三段场次模型（上/下/加时赛），用于与旧四段模型区分 */
+  periodModel: 2
 };
 
 /**
  * 规范化足球计时状态。
  * @param {unknown} raw
- * @returns {{ clockPaused: boolean, clockWallMs: number, extraMinutesHalf1: number, extraMinutesHalf2: number }}
+ * @returns {{ clockPaused: boolean, clockWallMs: number, extraMinutesHalf1: number, extraMinutesHalf2: number, extraMinutesExtra: number }}
  */
 function normalizeFootballState(raw) {
   var fs = raw && typeof raw === 'object' ? raw : {};
+  var wallMs = Math.max(0, Math.floor(Number(fs.clockWallMs) || 0));
+  var paused;
+  if (fs.clockPaused === true) {
+    paused = true;
+  } else if (fs.clockPaused === false) {
+    paused = false;
+  } else {
+    paused = wallMs <= 0;
+  }
   return {
-    clockPaused: !!fs.clockPaused,
-    clockWallMs: Math.max(0, Math.floor(Number(fs.clockWallMs) || 0)),
+    clockPaused: paused,
+    clockWallMs: wallMs,
     extraMinutesHalf1: Math.max(0, Math.floor(Number(fs.extraMinutesHalf1) || 0)),
-    extraMinutesHalf2: Math.max(0, Math.floor(Number(fs.extraMinutesHalf2) || 0))
+    extraMinutesHalf2: Math.max(0, Math.floor(Number(fs.extraMinutesHalf2) || 0)),
+    extraMinutesExtra: Math.max(0, Math.floor(Number(fs.extraMinutesExtra) || 0)),
+    periodModel: Number(fs.periodModel) === 2 ? 2 : 0
   };
+}
+
+/**
+ * 将旧版四段节次一次性迁移为 1=上 / 2=下 / 3=加时赛（仅 periodModel≠2 时调用）。
+ * @param {number} period
+ * @param {object} [mc] matchConfig，用于结合 elapsed 判断
+ * @returns {number}
+ */
+function migrateLegacyFootballPeriod(period, mc) {
+  var p = Math.floor(Number(period) || 1);
+  var fs = normalizeFootballState(mc && mc.footballState);
+  var elapsed = Math.max(0, Math.floor(Number(mc && mc.footballElapsedSec) || 0));
+  if (p === 2) {
+    if (fs.extraMinutesHalf1 > 0) return 1;
+    if (elapsed >= FOOTBALL_HALF2_START_SEC) return 2;
+    return 1;
+  }
+  if (p === 3 || p === 4) return 2;
+  if (p >= 5) return 3;
+  return Math.min(3, Math.max(1, p));
+}
+
+/**
+ * 足球节次展示文案（场次名与补时分开展示）。
+ * @param {number} period
+ * @param {object} [footballState]
+ * @returns {{ base: string, stoppage: string }}
+ */
+function getFootballHalfLabelParts(period, footballState) {
+  var fs = normalizeFootballState(footballState);
+  var p = Math.min(3, Math.max(1, Math.floor(Number(period) || 1)));
+  var base = p === 3 ? '加时赛' : (p === 2 ? '下半场' : '上半场');
+  var extra = p === 3 ? fs.extraMinutesExtra : (p === 2 ? fs.extraMinutesHalf2 : fs.extraMinutesHalf1);
+  return {
+    base: base,
+    stoppage: extra > 0 ? '+' + extra : ''
+  };
+}
+
+/**
+ * 足球节次完整文案（兼容旧引用）。
+ * @param {number} period
+ * @param {object} [footballState]
+ * @returns {string}
+ */
+function getFootballHalfLabel(period, footballState) {
+  var parts = getFootballHalfLabelParts(period, footballState);
+  return parts.base + parts.stoppage;
 }
 
 /** @const {string} 篮球运动类型标识 */
@@ -345,26 +409,6 @@ function buildBadmintonSetHistoryDisplay(mc) {
     });
   }
   return rows;
-}
-
-/**
- * 足球节次文案（1=上半场，2=上半场加时，3=下半场，4=下半场加时）。
- * @param {number} period
- * @param {object} [footballState]
- * @returns {string}
- */
-function getFootballHalfLabel(period, footballState) {
-  var p = Math.floor(Number(period) || 1);
-  if (p > 4) p = ((p - 1) % 4) + 1;
-  var fs = normalizeFootballState(footballState);
-  if (p === 2) {
-    return fs.extraMinutesHalf1 > 0 ? '加时 +' + fs.extraMinutesHalf1 : '加时';
-  }
-  if (p === 4) {
-    return fs.extraMinutesHalf2 > 0 ? '加时 +' + fs.extraMinutesHalf2 : '加时';
-  }
-  if (p === 3) return '下半场';
-  return '上半场';
 }
 
 /**
@@ -556,8 +600,13 @@ Page({
     showShotClock: false,
     /** 足球上下半场文案 */
     footballHalfLabel: '上半场',
+    footballHalfLabelBase: '上半场',
+    footballHalfStoppageText: '',
     /** 足球走表是否暂停（UI） */
-    footballClockPaused: false,
+    footballClockPaused: true,
+    /** 足球时间/场次操作面板 */
+    footballOpsPanelOpen: false,
+    footballOpsPanelStyle: '',
     /** 羽毛球历史局分展示行 */
     badmintonSetHistory: [],
     /** 足球本地正计时显示（手动模式 / 无云端时钟时） */
@@ -1370,62 +1419,224 @@ Page({
   },
 
   /**
-   * 长按足球时间：暂停 / 继续走表。
+   * 走表：启动 interval 并写入墙钟锚点。
    * @returns {void}
    */
-  onFootballTimeLongPress: function () {
-    if (normalizeSportType(this.data.sportType) !== SPORT_FOOTBALL) return;
-    if (this.data.isAutoMode) return;
-    this._toggleFootballClockPause();
-    this.vibrate('medium');
+  _resumeFootballClock: function () {
+    var mc = this.data.matchConfig || {};
+    var elapsed = Math.max(0, Math.floor(Number(mc.footballElapsedSec) || 0));
+    this._footballClockBaseSec = elapsed;
+    this._footballClockAnchorMs = Date.now();
+    this._footballLiveElapsedSec = elapsed;
+    var selfResume = this;
+    this.setData({
+      'matchConfig.footballState.clockPaused': false,
+      'matchConfig.footballState.clockWallMs': Date.now(),
+      footballClockPaused: false,
+      footballTimeText: formatWxsMainText(elapsed),
+      footballDisplayTime: this._resolveFootballDisplayTime(formatWxsMainText(elapsed))
+    }, function () {
+      if (!selfResume._footballLocalClockTimer) {
+        selfResume._footballLocalClockTimer = setInterval(function () {
+          selfResume._tickFootballLocalClock();
+        }, 1000);
+      }
+    });
   },
 
   /**
-   * 切换足球走表暂停状态。
+   * 停表：冻结当前秒数并清除墙钟锚点。
    * @returns {void}
    */
-  _toggleFootballClockPause: function () {
-    var mc = this.data.matchConfig || {};
-    var fs = normalizeFootballState(mc.footballState);
-    var paused = !!fs.clockPaused;
-    if (paused) {
-      var elapsed = Math.max(0, Math.floor(Number(mc.footballElapsedSec) || 0));
-      this._footballClockBaseSec = elapsed;
-      this._footballClockAnchorMs = Date.now();
-      this._footballLiveElapsedSec = elapsed;
-      var selfResume = this;
-      this.setData({
-        'matchConfig.footballState.clockPaused': false,
-        'matchConfig.footballState.clockWallMs': Date.now(),
-        footballClockPaused: false,
-        footballTimeText: formatWxsMainText(elapsed),
-        footballDisplayTime: this._resolveFootballDisplayTime(formatWxsMainText(elapsed))
-      }, function () {
-        if (!selfResume._footballLocalClockTimer) {
-          selfResume._footballLocalClockTimer = setInterval(function () {
-            selfResume._tickFootballLocalClock();
-          }, 1000);
-        }
-      });
-      wx.showToast({ title: '继续走表', icon: 'none' });
+  _pauseFootballClock: function () {
+    this._syncFootballClockToConfig();
+    var frozen = Math.max(0, Math.floor(this._footballLiveElapsedSec || 0));
+    if (this._footballLocalClockTimer) {
+      clearInterval(this._footballLocalClockTimer);
+      this._footballLocalClockTimer = null;
+    }
+    this.setData({
+      'matchConfig.footballElapsedSec': frozen,
+      'matchConfig.footballState.clockPaused': true,
+      'matchConfig.footballState.clockWallMs': 0,
+      footballClockPaused: true,
+      footballTimeText: formatWxsMainText(frozen),
+      footballDisplayTime: formatWxsMainText(frozen)
+    });
+  },
+
+  /**
+   * 点击时间/场次区域：在取景区右缘弹出操作面板。
+   * @returns {void}
+   */
+  onFootballMetaTap: function () {
+    if (normalizeSportType(this.data.sportType) !== SPORT_FOOTBALL) return;
+    if (this.data.isAutoMode) return;
+    if (this.data.footballOpsPanelOpen) {
+      this.setData({ footballOpsPanelOpen: false });
+      return;
+    }
+    var self = this;
+    this._computeFootballOpsPanelStyle(function (style) {
+      self.setData({ footballOpsPanelOpen: true, footballOpsPanelStyle: style });
+    });
+    this.vibrate('light');
+  },
+
+  /**
+   * 计算足球操作面板 fixed 定位（右缘、避让胶囊）。
+   * @param {function(string): void} cb
+   * @returns {void}
+   */
+  _computeFootballOpsPanelStyle: function (cb) {
+    var fallback = 'left:8px;top:56px;';
+    try {
+      var sys = wx.getSystemInfoSync();
+      var sysW = Math.max(1, Number(sys.windowWidth) || 375);
+      var panelW = Math.max(120, Math.round(240 * sysW / 750));
+      var panelH = Math.max(140, Math.round(280 * sysW / 750));
+      wx.createSelectorQuery()
+        .in(this)
+        .select('#liveStage')
+        .boundingClientRect()
+        .select('.pro-football-meta-col')
+        .boundingClientRect()
+        .exec(function (res) {
+          var stage = res && res[0];
+          var meta = res && res[1];
+          var top = 56;
+          var left = sysW - panelW - 10;
+          if (meta && meta.width) {
+            top = meta.bottom + 10;
+            left = meta.right - panelW;
+          } else if (stage && stage.width) {
+            left = stage.left + stage.width - panelW - 10;
+            top = stage.top + 10;
+          }
+          if (stage && stage.width) {
+            left = Math.max(stage.left + 6, Math.min(left, stage.left + stage.width - panelW - 6));
+            if (top + panelH > stage.bottom - 6) {
+              top = Math.max(stage.top + 6, (meta && meta.top ? meta.top : stage.top + 6));
+            }
+          }
+          try {
+            if (wx.getMenuButtonBoundingClientRect) {
+              var menu = wx.getMenuButtonBoundingClientRect();
+              if (menu && typeof menu.bottom === 'number') {
+                var minTop = menu.bottom + 8;
+                if (top < minTop && meta && meta.bottom) {
+                  top = meta.bottom + 10;
+                }
+                if (typeof menu.left === 'number' && left + panelW > menu.left - 6) {
+                  left = Math.max(6, menu.left - panelW - 10);
+                }
+              }
+            }
+          } catch (eMenu) {}
+          if (typeof cb === 'function') {
+            cb('left:' + Math.round(left) + 'px;top:' + Math.round(top) + 'px;width:' + panelW + 'px;');
+          }
+        });
+    } catch (e) {
+      if (typeof cb === 'function') cb(fallback);
+    }
+  },
+
+  /** 关闭足球操作面板 */
+  onFootballOpsPanelBackdropTap: function () {
+    this.setData({ footballOpsPanelOpen: false });
+  },
+
+  /** 操作面板：走表 / 停表 */
+  onFootballClockToggleTap: function () {
+    if (this.data.footballClockPaused) {
+      this._resumeFootballClock();
     } else {
-      this._syncFootballClockToConfig();
-      var frozen = Math.max(0, Math.floor(this._footballLiveElapsedSec || 0));
-      if (this._footballLocalClockTimer) {
-        clearInterval(this._footballLocalClockTimer);
-        this._footballLocalClockTimer = null;
-      }
-      this.setData({
-        'matchConfig.footballElapsedSec': frozen,
-        'matchConfig.footballState.clockPaused': true,
-        'matchConfig.footballState.clockWallMs': 0,
-        footballClockPaused: true,
-        footballTimeText: formatWxsMainText(frozen),
-        footballDisplayTime: formatWxsMainText(frozen)
-      });
-      wx.showToast({ title: '已暂停', icon: 'none' });
+      this._pauseFootballClock();
     }
     this.persistConfig();
+    this.vibrate('light');
+  },
+
+  /**
+   * 操作面板：切换场次。
+   * @param {WechatMiniprogram.BaseEvent} e
+   * @returns {void}
+   */
+  onFootballPeriodSelectTap: function (e) {
+    var target = Math.min(3, Math.max(1, Math.floor(Number(e.currentTarget.dataset.period) || 1)));
+    this._applyFootballPeriodFromPanel(target);
+    this.vibrate('light');
+  },
+
+  /** 操作面板：设置当前场次补时 */
+  onFootballStoppageTap: function () {
+    var p = Math.min(3, Math.max(1, Math.floor(Number(this.data.matchConfig && this.data.matchConfig.period) || 1)));
+    this._promptFootballStoppageMinutes(p);
+    this.vibrate('light');
+  },
+
+  /**
+   * 从操作面板切换足球场次。
+   * @param {1|2|3} targetPeriod
+   * @returns {void}
+   */
+  _applyFootballPeriodFromPanel: function (targetPeriod) {
+    var target = Math.min(3, Math.max(1, Math.floor(Number(targetPeriod) || 1)));
+    var resetSec = null;
+    var autoStart = false;
+    if (target === 2) {
+      resetSec = FOOTBALL_HALF2_START_SEC;
+      autoStart = true;
+    } else if (target === 3) {
+      resetSec = FOOTBALL_EXTRA_START_SEC;
+      autoStart = true;
+    }
+    var self = this;
+    this.setData({
+      'matchConfig.period': target,
+      'matchConfig.footballState.periodModel': 2
+    }, function () {
+      if (resetSec !== null) {
+        self._resetFootballClockTo(resetSec);
+        if (autoStart) {
+          self._resumeFootballClock();
+        }
+      }
+      self.refreshSportUiMeta();
+      self.persistConfig();
+      self.setData({ footballOpsPanelOpen: false });
+    });
+  },
+
+  /**
+   * 弹出补时分钟输入框。
+   * @param {1|2|3} periodIndex
+   * @returns {void}
+   */
+  _promptFootballStoppageMinutes: function (periodIndex) {
+    var idx = Math.min(3, Math.max(1, Math.floor(Number(periodIndex) || 1)));
+    var key = idx === 3 ? 'extraMinutesExtra' : (idx === 2 ? 'extraMinutesHalf2' : 'extraMinutesHalf1');
+    var title = idx === 3 ? '加时赛补时（分钟）' : (idx === 2 ? '下半场补时（分钟）' : '上半场补时（分钟）');
+    var fs = normalizeFootballState(this.data.matchConfig && this.data.matchConfig.footballState);
+    var current = Math.max(0, Math.floor(Number(fs[key]) || 0));
+    var self = this;
+    wx.showModal({
+      title: title,
+      editable: true,
+      placeholderText: '例如 2',
+      content: current > 0 ? String(current) : '',
+      success: function (res) {
+        if (!res.confirm) return;
+        var minutes = Math.max(0, Math.floor(Number(String(res.content || '').trim()) || 0));
+        var patch = {};
+        patch['matchConfig.footballState.' + key] = minutes;
+        self.setData(patch, function () {
+          self.refreshSportUiMeta();
+          self.persistConfig();
+        });
+      }
+    });
   },
 
   /**
@@ -1455,82 +1666,6 @@ Page({
         selfReset._tickFootballLocalClock();
       }, 1000);
     }
-  },
-
-  /**
-   * 弹出足球加时分钟输入框。
-   * @param {1|2} halfIndex 1=上半场加时，2=下半场加时
-   * @returns {void}
-   */
-  _promptFootballExtraMinutes: function (halfIndex) {
-    var idx = halfIndex === 2 ? 2 : 1;
-    var key = idx === 2 ? 'extraMinutesHalf2' : 'extraMinutesHalf1';
-    var fs = normalizeFootballState(this.data.matchConfig && this.data.matchConfig.footballState);
-    var current = Math.max(0, Math.floor(Number(fs[key]) || 0));
-    var self = this;
-    wx.showModal({
-      title: idx === 2 ? '下半场加时（分钟）' : '上半场加时（分钟）',
-      editable: true,
-      placeholderText: '例如 2',
-      content: current > 0 ? String(current) : '',
-      success: function (res) {
-        if (!res.confirm) return;
-        var raw = String(res.content || '').trim();
-        var minutes = Math.max(0, Math.floor(Number(raw) || 0));
-        var patch = {};
-        patch['matchConfig.footballState.' + key] = minutes;
-        self.setData(patch, function () {
-          self.refreshSportUiMeta();
-          self.persistConfig();
-        });
-      }
-    });
-  },
-
-  /**
-   * 足球节次切换副作用（重置走表 / 弹出加时输入）。
-   * @param {number} next
-   * @param {number} prev
-   * @returns {void}
-   */
-  _applyFootballPeriodChange: function (next, prev) {
-    var resetSec = null;
-    var promptHalf = 0;
-    if (next === 2 && prev === 1) {
-      promptHalf = 1;
-    } else if (next === 3 && prev === 2) {
-      resetSec = FOOTBALL_HALF2_START_SEC;
-    } else if (next === 4 && prev === 3) {
-      promptHalf = 2;
-    } else if (next === 1 && prev === 4) {
-      resetSec = 0;
-    }
-    var self = this;
-    this.setData({ 'matchConfig.period': next }, function () {
-      if (resetSec !== null) {
-        self._resetFootballClockTo(resetSec);
-      }
-      self.refreshSportUiMeta();
-      self.persistConfig();
-      if (promptHalf > 0) {
-        self._promptFootballExtraMinutes(promptHalf);
-      }
-    });
-  },
-
-  /**
-   * 长按足球节次：在加时阶段重新编辑补时分钟。
-   * @returns {void}
-   */
-  onFootballPeriodLongPress: function () {
-    if (normalizeSportType(this.data.sportType) !== SPORT_FOOTBALL) return;
-    var p = Math.floor(Number(this.data.matchConfig && this.data.matchConfig.period) || 1);
-    if (p === 2) {
-      this._promptFootballExtraMinutes(1);
-    } else if (p === 4) {
-      this._promptFootballExtraMinutes(2);
-    }
-    this.vibrate('light');
   },
 
   /**
@@ -6074,11 +6209,16 @@ Page({
       normalizedConfig.badmintonState.maxSets = normalizedConfig.sportConfig.maxSets;
     }
 
+    if (normalizedConfig.sportType === SPORT_FOOTBALL) {
+      normalizedConfig.footballState = normalizeFootballState(normalizedConfig.footballState);
+      if (normalizedConfig.footballState.periodModel !== 2) {
+        normalizedConfig.period = migrateLegacyFootballPeriod(normalizedConfig.period, normalizedConfig);
+      }
+      normalizedConfig.footballState.periodModel = 2;
+      normalizedConfig.period = Math.min(3, Math.max(1, Math.floor(Number(normalizedConfig.period) || 1)));
+    }
     if (normalizedConfig.sportType === SPORT_FOOTBALL && normalizedConfig.period < 1) {
       normalizedConfig.period = 1;
-    }
-    if (normalizedConfig.sportType === SPORT_FOOTBALL && normalizedConfig.period > 4) {
-      normalizedConfig.period = ((Math.floor(normalizedConfig.period) - 1) % 4) + 1;
     }
     if (normalizedConfig.sportType === SPORT_BADMINTON && normalizedConfig.period < 1) {
       normalizedConfig.period = 1;
@@ -6102,12 +6242,15 @@ Page({
     const sport = normalizeSportType(sportType || (mc && mc.sportType));
     const localFootball = formatWxsMainText(this._computeFootballElapsedFromStored(mc));
     const fs = normalizeFootballState(mc && mc.footballState);
+    const labelParts = getFootballHalfLabelParts(mc && mc.period, fs);
     return {
       sportType: sport,
       showMainClock: sport !== SPORT_BADMINTON,
       showShotClock: sport === SPORT_BASKETBALL && !!this.data.isAutoMode
         && !!(mc && mc.sportConfig && mc.sportConfig.enable24Sec),
-      footballHalfLabel: getFootballHalfLabel(mc && mc.period, fs),
+      footballHalfLabel: labelParts.base + labelParts.stoppage,
+      footballHalfLabelBase: labelParts.base,
+      footballHalfStoppageText: labelParts.stoppage,
       footballClockPaused: fs.clockPaused,
       footballDisplayTime: this._resolveFootballDisplayTime(localFootball),
       badmintonSetHistory: buildBadmintonSetHistoryDisplay(mc),
@@ -7054,6 +7197,7 @@ Page({
 
   onHide: function () {
     this._stopFootballLocalClock();
+    this.setData({ footballOpsPanelOpen: false });
     if (this._vkEnvironmentSampler && typeof this._vkEnvironmentSampler.stop === 'function') {
       this._vkEnvironmentSampler.stop({ silent: false, keepCompletedState: false });
     }
@@ -8126,11 +8270,6 @@ Page({
     let next = mc.period;
 
     if (sport === SPORT_FOOTBALL) {
-      var prevPeriod = Math.floor(Number(mc.period) || 1);
-      if (prevPeriod < 1 || prevPeriod > 4) prevPeriod = ((prevPeriod - 1) % 4) + 1;
-      next = prevPeriod >= 4 ? 1 : prevPeriod + 1;
-      this._applyFootballPeriodChange(next, prevPeriod);
-      this.vibrate('light');
       return;
     } else if (sport === SPORT_BADMINTON) {
       const maxSets = (mc.badmintonState && mc.badmintonState.maxSets) || 3;
@@ -12691,7 +12830,7 @@ Page({
   openDrawerMode1: function () {
     this.refreshDrawerHighlights();
     this.loadMatchList();
-    this.setData({ drawerMode: 1, cameraSettingsOpen: false });
+    this.setData({ drawerMode: 1, cameraSettingsOpen: false, footballOpsPanelOpen: false });
     // 仅白名单机型内部拉起 FPS 轮询；内部已二次判定，调用幂等
     this.startEnhanceFpsPolling();
   },
