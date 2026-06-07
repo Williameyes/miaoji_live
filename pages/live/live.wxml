@@ -81,20 +81,8 @@
         y="{{proScoreboardY}}"
         bindchange="onProScoreboardPositionChange"
       >
-        <!-- 足球：赛名顶栏 + 双行；节次/时间在右侧 -->
-        <view wx:if="{{sportType === 'football'}}" class="pro-scoreboard-container pro-scoreboard-container--stack">
-          <view class="pro-panel-meta pro-panel-meta--title">
-            <text
-              class="pro-match-name-board"
-              catchlongpress="onPrepareLiveAuditExport"
-              style="color: {{matchConfig.matchNameColor}};"
-            >{{c.limitMatchNameBoard(matchConfig.matchName || 'HoopsLive')}}</text>
-            <view
-              wx:if="{{auditExportShareVisible}}"
-              class="audit-export-share-btn audit-export-share-btn--board"
-              catchtap="onTapShareLiveAuditFile"
-            >审计</view>
-          </view>
+        <!-- 足球：双行比分；节次/时间在右侧（赛名单独可拖动浮层） -->
+        <view wx:if="{{sportType === 'football'}}" class="pro-scoreboard-container">
           <view class="pro-panel-body">
             <view class="pro-panel-body-inner">
               <view class="pro-panel-rows">
@@ -164,93 +152,148 @@
           </view>
         </view>
 
-        <!-- 羽毛球：赛名顶栏 + 双行小分 -->
-        <view wx:elif="{{sportType === 'badminton'}}" class="pro-scoreboard-container pro-scoreboard-container--stack">
-          <view class="pro-panel-meta pro-panel-meta--title">
+        <!-- 羽毛球：双行小分；局分/发球在右侧（赛名单独可拖动浮层） -->
+        <view wx:elif="{{sportType === 'badminton'}}" class="pro-scoreboard-container">
+          <view class="pro-panel-body">
+            <view class="pro-panel-body-inner">
+              <view class="pro-panel-rows">
+                <view
+                  class="pro-panel-row pro-panel-row--team"
+                  style="background-color: {{matchConfig.teamA.rgbaBg || matchConfig.teamA.bgColor}}; color: {{matchConfig.teamA.textColor}};"
+                >
+                  <view
+                    class="pro-panel-left pro-score-hit"
+                    catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
+                    bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
+                    bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
+                    data-team="teamA"
+                    data-type="plus"
+                  >
+                    <text
+                      class="pro-team-name pro-team-name--dynamic"
+                      style="color: {{matchConfig.teamA.textColor}};"
+                    >{{c.limitTeamNamePro(matchConfig.teamA.name || '队A')}}</text>
+                  </view>
+                  <view
+                    class="pro-set-score pro-score-number pro-score-hit"
+                    catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
+                    bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
+                    bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
+                    data-team="teamA"
+                    data-type="minus"
+                    style="color: {{matchConfig.teamA.textColor}};"
+                  >{{matchConfig.teamA.currentSetScore}}</view>
+                </view>
+                <view
+                  class="pro-panel-row pro-panel-row--team"
+                  style="background-color: {{matchConfig.teamB.rgbaBg || matchConfig.teamB.bgColor}}; color: {{matchConfig.teamB.textColor}};"
+                >
+                  <view
+                    class="pro-panel-left pro-score-hit"
+                    catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
+                    bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
+                    bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
+                    data-team="teamB"
+                    data-type="plus"
+                  >
+                    <text
+                      class="pro-team-name pro-team-name--dynamic"
+                      style="color: {{matchConfig.teamB.textColor}};"
+                    >{{c.limitTeamNamePro(matchConfig.teamB.name || '队B')}}</text>
+                  </view>
+                  <view
+                    class="pro-set-score pro-score-number pro-score-hit"
+                    catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
+                    bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
+                    bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
+                    data-team="teamB"
+                    data-type="minus"
+                    style="color: {{matchConfig.teamB.textColor}};"
+                  >{{matchConfig.teamB.currentSetScore}}</view>
+                </view>
+              </view>
+              <view class="pro-badminton-meta-col">
+                <view class="pro-badminton-meta-inner">
+                  <!-- A队行 -->
+                  <view class="pro-badminton-meta-row">
+                    <text
+                      class="pro-sets-num pro-sets-num--row pro-score-number"
+                    >{{matchConfig.teamA.score}}</text>
+                    <view
+                      wx:if="{{matchConfig.badmintonState.servingTeam === 'A'}}"
+                      class="pro-badminton-serve-wrap"
+                      catchtap="toggleServingTeamManually"
+                    >
+                      <image
+                        class="pro-serve-icon-svg"
+                        src="/assets/icons/badminton-serve.svg"
+                        mode="aspectFit"
+                      />
+                    </view>
+                    <view wx:else class="pro-badminton-serve-placeholder"></view>
+                  </view>
+                  <!-- B队行 -->
+                  <view class="pro-badminton-meta-row">
+                    <text
+                      class="pro-sets-num pro-sets-num--row pro-score-number"
+                    >{{matchConfig.teamB.score}}</text>
+                    <view
+                      wx:if="{{matchConfig.badmintonState.servingTeam === 'B'}}"
+                      class="pro-badminton-serve-wrap"
+                      catchtap="toggleServingTeamManually"
+                    >
+                      <image
+                        class="pro-serve-icon-svg"
+                        src="/assets/icons/badminton-serve.svg"
+                        mode="aspectFit"
+                      />
+                    </view>
+                    <view wx:else class="pro-badminton-serve-placeholder"></view>
+                  </view>
+                </view>
+              </view>
+            </view>
+          </view>
+        </view>
+      </movable-view>
+    </movable-area>
+  </view>
+
+  <!-- 足球 / 羽毛球：可拖动赛名浮层（独立于记分牌，默认取景区底部居中） -->
+  <view
+    wx:if="{{useCornerScoreboard && drawerMode === 0 && liveStreamAllowed}}"
+    class="pro-match-name-layer"
+    style="{{liveStageInlineStyle}}"
+  >
+    <movable-area class="pro-match-name-movable-area">
+      <movable-view
+        wx:if="{{proMatchNameMovableReady}}"
+        id="proMatchNameView"
+        class="pro-match-name-movable-view"
+        width="{{proMatchNameViewW}}"
+        height="{{proMatchNameViewH}}"
+        direction="all"
+        inertia="{{false}}"
+        out-of-bounds="{{false}}"
+        damping="40"
+        friction="3"
+        x="{{proMatchNameX}}"
+        y="{{proMatchNameY}}"
+        bindchange="onProMatchNamePositionChange"
+      >
+        <view class="pro-match-name-float" style="width: {{proMatchNameBarW}}px;">
+          <view class="pro-match-name-float-bg"></view>
+          <view class="pro-match-name-float-inner">
             <text
-              class="pro-match-name-board"
+              class="pro-match-name-float-text"
               catchlongpress="onPrepareLiveAuditExport"
               style="color: {{matchConfig.matchNameColor}};"
-            >{{c.limitMatchNameBoard(matchConfig.matchName || 'HoopsLive')}}</text>
+            >{{matchConfig.matchName || 'HoopsLive'}}</text>
             <view
               wx:if="{{auditExportShareVisible}}"
               class="audit-export-share-btn audit-export-share-btn--board"
               catchtap="onTapShareLiveAuditFile"
             >审计</view>
-          </view>
-          <view class="pro-panel-body">
-            <view
-              class="pro-panel-row pro-panel-row--team"
-              style="background-color: {{matchConfig.teamA.rgbaBg || matchConfig.teamA.bgColor}}; color: {{matchConfig.teamA.textColor}};"
-            >
-              <view
-                class="pro-panel-left pro-score-hit"
-                catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
-                bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
-                bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
-                data-team="teamA"
-                data-type="plus"
-              >
-                <view
-                  wx:if="{{matchConfig.badmintonState.servingTeam === 'A'}}"
-                  class="pro-serve-indicator"
-                  catchtap="toggleServingTeamManually"
-                ></view>
-                <text
-                  class="pro-team-name pro-team-name--dynamic"
-                  style="color: {{matchConfig.teamA.textColor}};"
-                >{{c.limitTeamNamePro(matchConfig.teamA.name || '队A')}}</text>
-              </view>
-              <view class="pro-panel-right">
-                <text class="pro-sets-num pro-score-number" style="color: {{matchConfig.teamA.textColor}};">{{matchConfig.teamA.score}}</text>
-                <text class="pro-sets-sep">──</text>
-                <view
-                  class="pro-set-score pro-score-number pro-score-hit"
-                  catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
-                  bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
-                  bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
-                  data-team="teamA"
-                  data-type="minus"
-                  style="color: {{matchConfig.teamA.textColor}};"
-                >{{matchConfig.teamA.currentSetScore}}</view>
-              </view>
-            </view>
-            <view
-              class="pro-panel-row pro-panel-row--team"
-              style="background-color: {{matchConfig.teamB.rgbaBg || matchConfig.teamB.bgColor}}; color: {{matchConfig.teamB.textColor}};"
-            >
-              <view
-                class="pro-panel-left pro-score-hit"
-                catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
-                bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
-                bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
-                data-team="teamB"
-                data-type="plus"
-              >
-                <view
-                  wx:if="{{matchConfig.badmintonState.servingTeam === 'B'}}"
-                  class="pro-serve-indicator"
-                  catchtap="toggleServingTeamManually"
-                ></view>
-                <text
-                  class="pro-team-name pro-team-name--dynamic"
-                  style="color: {{matchConfig.teamB.textColor}};"
-                >{{c.limitTeamNamePro(matchConfig.teamB.name || '队B')}}</text>
-              </view>
-              <view class="pro-panel-right">
-                <text class="pro-sets-num pro-score-number" style="color: {{matchConfig.teamB.textColor}};">{{matchConfig.teamB.score}}</text>
-                <text class="pro-sets-sep">──</text>
-                <view
-                  class="pro-set-score pro-score-number pro-score-hit"
-                  catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
-                  bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
-                  bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
-                  data-team="teamB"
-                  data-type="minus"
-                  style="color: {{matchConfig.teamB.textColor}};"
-                >{{matchConfig.teamB.currentSetScore}}</view>
-              </view>
-            </view>
           </view>
         </view>
       </movable-view>

@@ -641,6 +641,16 @@ Page({
     /** 记分牌在 16:9 取景区内的相对坐标（px） */
     proScoreboardX: 0,
     proScoreboardY: 8,
+    /** 赛名浮层 movable-view 是否已就绪 */
+    proMatchNameMovableReady: false,
+    /** 赛名浮层 movable-view 尺寸（px） */
+    proMatchNameViewW: 120,
+    proMatchNameViewH: 18,
+    /** 赛名条内容宽度（px，取景区宽 1/3） */
+    proMatchNameBarW: 120,
+    /** 赛名浮层在 16:9 取景区内的相对坐标（px） */
+    proMatchNameX: 0,
+    proMatchNameY: 0,
     matchConfig: {
       sportType: SPORT_BASKETBALL,
       matchName: '',
@@ -1069,21 +1079,59 @@ Page({
    */
   _estimateProScoreboardWidthPx: function (areaW) {
     var ww = Math.max(1, Number(areaW) || 375);
-    var sport = normalizeSportType(this.data && this.data.sportType);
-    var widthRpx = sport === SPORT_FOOTBALL ? 168 : 128;
-    return Math.max(72, Math.round(widthRpx * ww / 750));
+    return Math.max(72, Math.round(168 * ww / 750));
   },
 
   /**
-   * 估算足球/羽毛球紧凑记分牌高度（px）。
+   * 估算足球/羽毛球紧凑记分牌高度（px，不含独立赛名浮层）。
    * @param {number} areaW 窗口宽
    * @returns {number}
    */
   _estimateProScoreboardHeightPx: function (areaW) {
     var ww = Math.max(1, Number(areaW) || 375);
-    var sport = normalizeSportType(this.data && this.data.sportType);
-    var heightRpx = sport === SPORT_FOOTBALL ? 62 : 54;
-    return Math.max(28, Math.round(heightRpx * ww / 750));
+    return Math.max(24, Math.round(40 * ww / 750));
+  },
+
+  /**
+   * 赛名浮层内容条宽度（px）：取景区宽 1/3。
+   * @param {number} stageW 取景区宽
+   * @returns {number}
+   */
+  _estimateProMatchNameBarWidthPx: function (stageW) {
+    var sw = Math.max(1, Number(stageW) || 375);
+    return Math.max(72, Math.round(sw / 2));
+  },
+
+  /**
+   * 赛名浮层高度（px），与队名行高一致。
+   * @param {number} areaW 窗口宽
+   * @returns {number}
+   */
+  _estimateProMatchNameBarHeightPx: function (areaW) {
+    var ww = Math.max(1, Number(areaW) || 375);
+    return Math.max(14, Math.round(27 * ww / 750));
+  },
+
+  /**
+   * 赛名浮层默认位置：取景区底部居中，与底边留间距。
+   * @param {number} stageW 取景区宽
+   * @param {number} stageH 取景区高
+   * @param {number} barW 赛名条宽
+   * @param {number} barH 赛名条高
+   * @returns {{ x: number, y: number }}
+   */
+  _computeProMatchNameDefaultInStage: function (stageW, stageH, barW, barH) {
+    var sw = Math.max(1, Number(stageW) || 375);
+    var sh = Math.max(1, Number(stageH) || 211);
+    var bw = Math.max(1, Number(barW) || 96);
+    var bh = Math.max(1, Number(barH) || 18);
+    var insetX = Math.max(8, Math.round(sw * 0.012));
+    var bottomGap = Math.max(10, Math.round(sh * 0.08));
+    var x = Math.round((sw - bw) * 0.5);
+    var y = Math.round(sh - bh - bottomGap);
+    x = Math.max(insetX, Math.min(sw - bw - insetX, x));
+    y = Math.max(8, Math.min(sh - bh - 8, y));
+    return { x: x, y: y };
   },
 
   /**
@@ -1239,6 +1287,8 @@ Page({
   _initProScoreboardMovableLayout: function () {
     this._proScoreboardMovableInited = true;
     this._proScoreboardUserMoved = false;
+    this._proMatchNameMovableInited = false;
+    this._proMatchNameUserMoved = false;
     try {
       this._updateLiveStageLayout();
     } catch (eLayout) {}
@@ -1252,6 +1302,7 @@ Page({
     setTimeout(function () {
       self._refineProScoreboardLayoutFromDom(true);
     }, 420);
+    this._initProMatchNameMovableLayout();
   },
 
   /**
@@ -1268,6 +1319,137 @@ Page({
     this.setData({
       proScoreboardX: detail.x,
       proScoreboardY: detail.y
+    });
+  },
+
+  /**
+   * 写入赛名浮层 movable-view 位置；必要时先卸载再挂载。
+   * @param {number} x
+   * @param {number} y
+   * @param {number} barW
+   * @param {number} barH
+   * @param {boolean} forceRemount
+   * @returns {void}
+   */
+  _commitProMatchNameMovablePosition: function (x, y, barW, barH, forceRemount) {
+    var self = this;
+    var patch = {
+      proMatchNameBarW: Math.max(1, Math.round(barW)),
+      proMatchNameViewW: Math.max(1, Math.round(barW)),
+      proMatchNameViewH: Math.max(1, Math.round(barH))
+    };
+    if (forceRemount) {
+      patch.proMatchNameMovableReady = false;
+      this.setData(patch, function () {
+        self.setData({
+          proMatchNameX: x,
+          proMatchNameY: y,
+          proMatchNameMovableReady: true
+        });
+      });
+      return;
+    }
+    patch.proMatchNameX = x;
+    patch.proMatchNameY = y;
+    this.setData(patch);
+  },
+
+  /**
+   * 按窗口尺寸同步赛名浮层默认底部居中布局。
+   * @param {boolean} resetPosition
+   * @returns {void}
+   */
+  _syncProMatchNameLayout: function (resetPosition) {
+    if (!this.data.useCornerScoreboard) return;
+    if (!resetPosition && this._proMatchNameUserMoved) return;
+    var sysW = 375;
+    var sysH = 667;
+    try {
+      var si = wx.getSystemInfoSync();
+      sysW = si.windowWidth || sysW;
+      sysH = si.windowHeight || sysH;
+    } catch (eSys) {}
+    var stageSize = computeLiveStage16x9SizePx(sysW, sysH);
+    var barW = this._estimateProMatchNameBarWidthPx(stageSize.w);
+    var barH = this._estimateProMatchNameBarHeightPx(sysW);
+    var point = this._computeProMatchNameDefaultInStage(stageSize.w, stageSize.h, barW, barH);
+    this._commitProMatchNameMovablePosition(point.x, point.y, barW, barH, true);
+  },
+
+  /**
+   * 渲染完成后用真实节点尺寸校准赛名浮层位置。
+   * @param {boolean} resetPosition
+   * @returns {void}
+   */
+  _refineProMatchNameLayoutFromDom: function (resetPosition) {
+    if (!this.data.useCornerScoreboard) return;
+    if (!resetPosition && this._proMatchNameUserMoved) return;
+    var self = this;
+    try {
+      wx.createSelectorQuery()
+        .in(this)
+        .select('#liveStage')
+        .boundingClientRect()
+        .select('.pro-match-name-float')
+        .boundingClientRect()
+        .exec(function (res) {
+          var stageRect = res && res[0];
+          var barRect = res && res[1];
+          if (!stageRect || !stageRect.width) return;
+          var sysW = 375;
+          try {
+            sysW = wx.getSystemInfoSync().windowWidth || sysW;
+          } catch (eW) {}
+          var barW = barRect && barRect.width
+            ? Math.ceil(barRect.width)
+            : self._estimateProMatchNameBarWidthPx(stageRect.width);
+          var barH = barRect && barRect.height
+            ? Math.ceil(barRect.height)
+            : self._estimateProMatchNameBarHeightPx(sysW);
+          var point = self._computeProMatchNameDefaultInStage(
+            stageRect.width,
+            stageRect.height,
+            barW,
+            barH
+          );
+          self._commitProMatchNameMovablePosition(point.x, point.y, barW, barH, true);
+        });
+    } catch (eRect) {}
+  },
+
+  /**
+   * 初始化足球/羽毛球可拖动赛名浮层。
+   * @returns {void}
+   */
+  _initProMatchNameMovableLayout: function () {
+    this._proMatchNameMovableInited = true;
+    this._proMatchNameUserMoved = false;
+    var self = this;
+    setTimeout(function () {
+      self._syncProMatchNameLayout(true);
+    }, 60);
+    setTimeout(function () {
+      self._refineProMatchNameLayoutFromDom(true);
+    }, 180);
+    setTimeout(function () {
+      self._refineProMatchNameLayoutFromDom(true);
+    }, 440);
+  },
+
+  /**
+   * 足球/羽毛球赛名浮层拖动位置变更。
+   * @param {WechatMiniprogram.MovableViewChange} e
+   * @returns {void}
+   */
+  onProMatchNamePositionChange: function (e) {
+    var detail = e.detail || {};
+    if (detail.source === 'friction') return;
+    if (typeof detail.x !== 'number' || typeof detail.y !== 'number') return;
+    if (detail.x === this.data.proMatchNameX && detail.y === this.data.proMatchNameY) return;
+    this._proMatchNameUserMoved = true;
+    this.setData({
+      proMatchNameX: detail.x,
+      proMatchNameY: detail.y
     });
   },
 
@@ -1494,10 +1676,7 @@ Page({
       this.setData({ footballOpsPanelOpen: false });
       return;
     }
-    var self = this;
-    this._computeFootballOpsPanelStyle(function (style) {
-      self.setData({ footballOpsPanelOpen: true, footballOpsPanelStyle: style });
-    });
+    this.setData({ footballOpsPanelOpen: true, footballOpsPanelStyle: '' });
     this.vibrate('light');
   },
 
@@ -1591,6 +1770,7 @@ Page({
   onFootballStoppageTap: function () {
     var p = Math.min(3, Math.max(1, Math.floor(Number(this.data.matchConfig && this.data.matchConfig.period) || 1)));
     this._promptFootballStoppageMinutes(p);
+    this.setData({ footballOpsPanelOpen: false });
     this.vibrate('light');
   },
 
@@ -2411,6 +2591,8 @@ Page({
     this._routeSportType = normalizeSportType(options && options.sportType);
     this._proScoreboardUserMoved = false;
     this._proScoreboardMovableInited = false;
+    this._proMatchNameUserMoved = false;
+    this._proMatchNameMovableInited = false;
     this._previewRecordPipeline = replayBufferMod.createPreviewRecordPipeline(this);
     this._recorderCore = new replayBufferMod.RecorderCore(this);
     this._replayBuffer = replayBufferMod.createReplayBuffer({
@@ -4426,6 +4608,15 @@ Page({
         selfScoreLayout._refineProScoreboardLayoutFromDom(false);
       }, 80);
     }
+    if (this.data.useCornerScoreboard && this._proMatchNameMovableInited) {
+      var selfMatchNameLayout = this;
+      setTimeout(function () {
+        selfMatchNameLayout._syncProMatchNameLayout(false);
+      }, 0);
+      setTimeout(function () {
+        selfMatchNameLayout._refineProMatchNameLayoutFromDom(false);
+      }, 100);
+    }
     if (this._renderPipeline && typeof this._renderPipeline.resizeToCssPixels === 'function') {
       try {
         this._renderPipeline.resizeToCssPixels(box.w, box.h);
@@ -6427,12 +6618,22 @@ Page({
     if (this.data.useCornerScoreboard) {
       if (!this._proScoreboardMovableInited) {
         this._initProScoreboardMovableLayout();
-      } else if (!this._proScoreboardUserMoved) {
+      } else {
         var selfShowSb = this;
-        setTimeout(function () {
-          selfShowSb._syncProScoreboardCornerLayout(false);
-          selfShowSb._refineProScoreboardLayoutFromDom(false);
-        }, 280);
+        if (!this._proScoreboardUserMoved) {
+          setTimeout(function () {
+            selfShowSb._syncProScoreboardCornerLayout(false);
+            selfShowSb._refineProScoreboardLayoutFromDom(false);
+          }, 280);
+        }
+        if (!this._proMatchNameMovableInited) {
+          this._initProMatchNameMovableLayout();
+        } else if (!this._proMatchNameUserMoved) {
+          setTimeout(function () {
+            selfShowSb._syncProMatchNameLayout(false);
+            selfShowSb._refineProMatchNameLayoutFromDom(false);
+          }, 300);
+        }
       }
     }
     try {

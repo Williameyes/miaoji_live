@@ -994,6 +994,9 @@ button.live-ble-btn::after {
 
 .football-ops-panel {
   position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   min-width: 120px;
   padding: 14rpx 12rpx;
   border-radius: 12rpx;
@@ -1168,11 +1171,88 @@ button.live-ble-btn::after {
   box-shadow: 0 0 6rpx rgba(255, 215, 0, 0.85);
 }
 
+.pro-badminton-meta-col {
+  flex: 0 0 auto;
+  min-width: 40rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  padding: 2rpx 4rpx;
+  border-radius: 3rpx;
+  background: rgba(0, 0, 0, 0.42);
+  box-sizing: border-box;
+  overflow: visible;
+}
+
+.pro-badminton-meta-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0rpx;
+  height: 100%;
+  min-height: 32rpx;
+  width: 100%;
+}
+
+.pro-badminton-meta-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4rpx;
+  flex: 1 1 auto;
+  min-height: 16rpx;
+}
+
+.pro-badminton-serve-wrap {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14rpx;
+  height: 100%;
+  min-height: 16rpx;
+  pointer-events: auto;
+}
+
+.pro-badminton-serve-placeholder {
+  flex: 0 0 auto;
+  width: 14rpx;
+  height: 100%;
+  min-height: 16rpx;
+}
+
+.pro-badminton-serve-wrap:active {
+  opacity: 0.82;
+}
+
+.pro-serve-icon-svg {
+  width: 7rpx;
+  height: 7rpx;
+  flex-shrink: 0;
+  opacity: 0.92;
+  transform: rotate(20deg);
+}
+
 .pro-sets-num {
-  font-size: 7rpx;
-  opacity: 0.62;
+  font-size: 10rpx;
+  opacity: 0.85;
   min-width: 9rpx;
   text-align: center;
+  color: rgba(255,255,255,0.9);
+  line-height: 1.1;
+  align-self: center;
+}
+
+.pro-sets-num--row {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 14rpx;
+  line-height: 1.1;
 }
 
 .pro-sets-sep {
@@ -1182,10 +1262,85 @@ button.live-ble-btn::after {
 }
 
 .pro-set-score {
-  font-size: 12rpx;
+  font-size: 11rpx;
   min-width: 16rpx;
   text-align: center;
   justify-content: center;
+  margin-left: auto;
+  flex: 0 0 16rpx;
+}
+
+/* 足球 / 羽毛球：可拖动赛名浮层 */
+.pro-match-name-layer {
+  position: fixed;
+  z-index: 23;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.pro-match-name-movable-area {
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.pro-match-name-movable-view {
+  pointer-events: auto;
+  overflow: visible;
+}
+
+.pro-match-name-float {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 27rpx;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.pro-match-name-float-bg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: 4rpx;
+  background: linear-gradient(
+    90deg,
+    rgba(16, 174, 255, 0) 0%,
+    rgba(16, 174, 255, 0.28) 18%,
+    rgba(16, 174, 255, 0.52) 50%,
+    rgba(16, 174, 255, 0.28) 82%,
+    rgba(16, 174, 255, 0) 100%
+  );
+  pointer-events: none;
+}
+
+.pro-match-name-float-inner {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4rpx;
+  width: 100%;
+  min-height: 27rpx;
+  padding: 2rpx 8rpx;
+  box-sizing: border-box;
+}
+
+.pro-match-name-float-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 10rpx;
+  line-height: 1.3;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-align: center;
+  text-shadow: 0 1px 3rpx rgba(0, 0, 0, 0.65);
 }
 
 /* 羽毛球旧底栏布局（保留类名防引用） */
