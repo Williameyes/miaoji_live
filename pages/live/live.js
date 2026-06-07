@@ -178,6 +178,8 @@ const PREVIEW_RECORD_FIRST_FRAME_TIMEOUT_MS = 3500;
 const PREVIEW_RECORD_MIN_MS_BEFORE_HIGHLIGHT = 3500;
 /** 切后台回前台后起录到可保存高光的额外等待（ms）。 */
 const PREVIEW_RECORD_MIN_MS_BEFORE_HIGHLIGHT_AFTER_PAGE_HIDE = 12000;
+/** 入场 kickoff 后仍未起录时，自动重试 tryStartRolling 的延迟（ms）。 */
+const ROLLING_KICKOFF_WATCHDOG_MS = 4500;
 /** 切后台回前台后 preview record 预热帧数（首帧可能是静止缓存）。 */
 const PREVIEW_RECORD_WARMUP_FRAMES_AFTER_PAGE_HIDE = 12;
 /** 硬恢复完成后禁止保存高光的隔离期（ms），覆盖乒乓双轨坏片轮换周期。 */
@@ -1241,16 +1243,21 @@ Page({
             this._rollingKickoffTimer = null;
           }
           if (this._cameraInitDone) {
-            this.tryStartRollingWhenCameraReady();
-            return;
+            this.tryStartRollingWhenCameraReady('on_show_kickoff');
+          } else {
+            this._rollingKickoffTimer = setTimeout(() => {
+              this._rollingKickoffTimer = null;
+              if (!this.rollingActive || sessionIdForRolling !== this.rollingSessionId) {
+                return;
+              }
+              this.tryStartRollingWhenCameraReady('on_show_kickoff_deferred');
+            }, 1800);
           }
-          this._rollingKickoffTimer = setTimeout(() => {
-            this._rollingKickoffTimer = null;
-            if (!this.rollingActive || sessionIdForRolling !== this.rollingSessionId) {
-              return;
-            }
-            this.tryStartRollingWhenCameraReady();
-          }, 1800);
+          if (this._rollingStartPendingBeforeKickoff && this._cameraInitDone) {
+            this._rollingStartPendingBeforeKickoff = false;
+            this.tryStartRollingWhenCameraReady('kickoff_after_early_camera_init');
+          }
+          this._scheduleRollingKickoffWatchdog(sessionIdForRolling);
         });
     });
     if (this.data.drawerMode === 1) {
@@ -1496,6 +1503,8 @@ Page({
     this._liveWsEnsureClient();
 
     this._rollingKickoffTimer = null;
+    this._rollingKickoffWatchdogTimer = null;
+    this._rollingStartPendingBeforeKickoff = false;
     this._opsToolsTimer = null;
     this._opsAckTimer = null;
     this._healthTimer = null;
@@ -3266,6 +3275,93 @@ Page({
   },
 
   /**
+   * 保存高光所需的最短起录等待（ms）。
+   * @returns {number}
+   */
+  getPreviewRecordMinHighlightMs: function () {
+    return this._liveReturnedFromBackground
+      ? PREVIEW_RECORD_MIN_MS_BEFORE_HIGHLIGHT_AFTER_PAGE_HIDE
+      : PREVIEW_RECORD_MIN_MS_BEFORE_HIGHLIGHT;
+  },
+
+  /**
+   * 保存高光前 preview 乒乓管线是否已就绪（已起录、过预热、至少一条有效轨）。
+   * @returns {{ ready: boolean, reason?: string, remainMs?: number, recordAgeMs?: number, minHighlightMs?: number }}
+   */
+  getPreviewRecordHighlightGate: function () {
+    if (!this.rollingActive || !this._cameraInitDone || !this.data.cameraContext) {
+      return { ready: false, reason: 'camera_not_ready' };
+    }
+    if (this.data.showGuide) {
+      return { ready: false, reason: 'guide_visible' };
+    }
+    const pipeline = this._previewRecordPipeline;
+    if (!pipeline || !pipeline.isSupported()) {
+      return { ready: false, reason: 'unsupported' };
+    }
+    if (!pipeline.isActive()) {
+      return { ready: false, reason: 'pipeline_inactive' };
+    }
+    if (this._previewRecordWarmupUntil && Date.now() < this._previewRecordWarmupUntil) {
+      return {
+        ready: false,
+        reason: 'warmup_until',
+        remainMs: this._previewRecordWarmupUntil - Date.now()
+      };
+    }
+    if (!this._previewRecordFirstFrameAt) {
+      return { ready: false, reason: 'no_first_frame' };
+    }
+    const recordStartAt = Number(this.lastRecordStartAt || 0);
+    const recordAgeMs = recordStartAt > 0 ? Date.now() - recordStartAt : 0;
+    const minHighlightMs = this.getPreviewRecordMinHighlightMs();
+    if (recordStartAt <= 0 || recordAgeMs < minHighlightMs) {
+      return {
+        ready: false,
+        reason: 'record_warming',
+        remainMs: recordStartAt <= 0 ? minHighlightMs : Math.max(1, minHighlightMs - recordAgeMs),
+        recordAgeMs,
+        minHighlightMs
+      };
+    }
+    const trackCount = typeof pipeline.getRecordingTrackCount === 'function'
+      ? pipeline.getRecordingTrackCount()
+      : 0;
+    if (trackCount <= 0) {
+      return { ready: false, reason: 'no_recording_tracks', recordAgeMs, minHighlightMs };
+    }
+    return { ready: true, recordAgeMs, minHighlightMs };
+  },
+
+  /**
+   * 入场 kickoff 后若 rollingActive 但 preview 仍未起录，延迟重试 tryStartRolling。
+   * @param {number} sessionIdForRolling
+   * @returns {void}
+   */
+  _scheduleRollingKickoffWatchdog: function (sessionIdForRolling) {
+    if (this._rollingKickoffWatchdogTimer) {
+      clearTimeout(this._rollingKickoffWatchdogTimer);
+      this._rollingKickoffWatchdogTimer = null;
+    }
+    const self = this;
+    this._rollingKickoffWatchdogTimer = setTimeout(() => {
+      self._rollingKickoffWatchdogTimer = null;
+      if (!self._livePageVisible || !self.rollingActive) return;
+      if (sessionIdForRolling !== self.rollingSessionId) return;
+      if (self.data.showGuide || self.data.isRecovering || self._recoveryLock) return;
+      if (!self._cameraInitDone || !self.data.cameraContext) return;
+      if (self.data.isRecording) return;
+      const pipeline = self._previewRecordPipeline;
+      if (pipeline && pipeline.isActive()) return;
+      self.appendHealthLog('rolling_kickoff_watchdog_retry', {
+        sessionId: sessionIdForRolling,
+        rollingSessionId: self.rollingSessionId
+      });
+      self.tryStartRollingWhenCameraReady('kickoff_watchdog');
+    }, ROLLING_KICKOFF_WATCHDOG_MS);
+  },
+
+  /**
    * 按机型能力（enableEnhanceRender）与内测白名单（enhanceBetaWhitelisted）决定是否拉起增强渲染管线；
    * 与抽屉内「画质增强」工具条可见条件一致，避免仅机型通过的非白名单用户仍走 WebGL 锐化。
    * 幂等：存在旧管线先销毁再重建（硬恢复后调用同样安全）。
@@ -4132,7 +4228,11 @@ Page({
       });
       return;
     }
-    if (!this.rollingActive || !this._cameraInitDone) return;
+    if (!this.rollingActive) {
+      this._rollingStartPendingBeforeKickoff = true;
+      return;
+    }
+    if (!this._cameraInitDone) return;
     if (!this.data.cameraContext) return;
     if (!this._previewRecordPipeline || !this._previewRecordPipeline.isSupported()) {
       this.appendHealthLog('preview_record_unsupported', {});
@@ -5981,6 +6081,11 @@ Page({
       clearTimeout(this._rollingKickoffTimer);
       this._rollingKickoffTimer = null;
     }
+    if (this._rollingKickoffWatchdogTimer) {
+      clearTimeout(this._rollingKickoffWatchdogTimer);
+      this._rollingKickoffWatchdogTimer = null;
+    }
+    this._rollingStartPendingBeforeKickoff = false;
     if (this.pendingHighlight && this.pendingHighlight.timeout) {
       clearTimeout(this.pendingHighlight.timeout);
     }
@@ -6064,6 +6169,11 @@ Page({
       clearTimeout(this._cameraShowInitWatchTimer);
       this._cameraShowInitWatchTimer = null;
     }
+    if (this._rollingKickoffWatchdogTimer) {
+      clearTimeout(this._rollingKickoffWatchdogTimer);
+      this._rollingKickoffWatchdogTimer = null;
+    }
+    this._rollingStartPendingBeforeKickoff = false;
     if (this._liveStorageSevereModalTimer) {
       clearTimeout(this._liveStorageSevereModalTimer);
       this._liveStorageSevereModalTimer = null;
@@ -6236,10 +6346,13 @@ Page({
     const effectiveSegMs = this.getEffectiveSegmentDurationMs
       ? this.getEffectiveSegmentDurationMs()
       : (this.segmentDurationMs || 8000);
+    const idleAnchorAt = Number(this.lastRecordStartAt || 0) > 0
+      ? Number(this.lastRecordStartAt)
+      : Number(this.lastSegmentAt || 0);
     const idleTooLong =
       this.rollingActive
       && this._cameraInitDone
-      && (now - (this.lastSegmentAt || 0) > effectiveSegMs * 3.5)
+      && (now - idleAnchorAt > Math.max(effectiveSegMs * 3.5, ROLLING_KICKOFF_WATCHDOG_MS + 2500))
       && !this.data.isRecording
       && !this.rollingFsBusy
       && !inStorageRecoveryWindow
@@ -6266,6 +6379,13 @@ Page({
     } else if (this.data.isRecording) {
       health = 'recording';
       text = 'REC';
+    } else if (
+      this.rollingActive
+      && this._cameraInitDone
+      && !this.getPreviewRecordHighlightGate().ready
+    ) {
+      health = 'ok';
+      text = '预热';
     } else if (this.data.storageSevereLock) {
       /** 严重水位停分段：非 ERR，避免与采集中断混淆 */
       health = 'ok';
@@ -6472,6 +6592,31 @@ Page({
    * @returns {void}
    */
   _recoverAfterHighlightFlushMiss: function (anchorClickTime) {
+    const pipeline = this._previewRecordPipeline;
+    const recordStartAt = Number(this.lastRecordStartAt || 0);
+    const recordAgeMs = recordStartAt > 0 ? Date.now() - recordStartAt : 0;
+    const minHighlightMs = this.getPreviewRecordMinHighlightMs();
+    const trackCount = pipeline && typeof pipeline.getRecordingTrackCount === 'function'
+      ? pipeline.getRecordingTrackCount()
+      : 0;
+    const pipelineInactive = !pipeline || !pipeline.isActive();
+    const notReadyForFlush = pipelineInactive
+      || recordStartAt <= 0
+      || recordAgeMs < minHighlightMs
+      || trackCount <= 0;
+    if (notReadyForFlush) {
+      this.appendHealthLog('highlight_flush_recover_deferred_not_ready', {
+        anchorClickTime: anchorClickTime || 0,
+        pipelineInactive,
+        recordStartAt,
+        recordAgeMs,
+        minHighlightMs,
+        trackCount,
+        afterPageHide: !!this._liveReturnedFromBackground
+      });
+      this.tryStartRollingWhenCameraReady('highlight_flush_not_ready');
+      return;
+    }
     this._highlightHollowFlushStreak = (this._highlightHollowFlushStreak || 0) + 1;
     this.appendHealthLog('highlight_flush_recover_scheduled', {
       streak: this._highlightHollowFlushStreak,
@@ -6960,12 +7105,39 @@ Page({
       && !!this.data.cameraContext
       && !this.data.isRecovering
       && !this._recoveryLock;
-    if (
-      this.data.pipelineHealth === 'recording'
-      || this.data.enhanceMode === 'vk'
-      || canCaptureWhileRolling
-    ) {
+    if (this.data.enhanceMode === 'vk') {
       this.requestHighlightCapture();
+      return;
+    }
+    const highlightGate = this.getPreviewRecordHighlightGate();
+    if (highlightGate.ready) {
+      this.requestHighlightCapture();
+      return;
+    }
+    if (canCaptureWhileRolling || this.data.pipelineHealth === 'recording') {
+      this.appendHealthLog('recovery_fab_tap_not_ready', {
+        reason: highlightGate.reason || 'unknown',
+        recordAgeMs: highlightGate.recordAgeMs || 0,
+        minHighlightMs: highlightGate.minHighlightMs || 0,
+        remainMs: highlightGate.remainMs || 0
+      });
+      if (highlightGate.reason === 'guide_visible') {
+        wx.showToast({ title: '请先完成新手引导', icon: 'none', duration: 2200 });
+        return;
+      }
+      const remainSec = highlightGate.remainMs
+        ? Math.max(1, Math.ceil(highlightGate.remainMs / 1000))
+        : 0;
+      wx.showToast({
+        title: remainSec > 0
+          ? (this._liveReturnedFromBackground
+            ? `相机恢复中，约${remainSec}秒后可保存`
+            : `相机预热中，约${remainSec}秒后可保存`)
+          : '相机预热中，请稍后再保存',
+        icon: 'none',
+        duration: 2200
+      });
+      this.tryStartRollingWhenCameraReady('recovery_fab_tap');
       return;
     }
     const isErr =
@@ -7415,6 +7587,10 @@ Page({
         self._lastSuccessfulChunkAt = 0;
       }
       self._previewRecordWarmupUntil = 0;
+      if (self._rollingKickoffWatchdogTimer) {
+        clearTimeout(self._rollingKickoffWatchdogTimer);
+        self._rollingKickoffWatchdogTimer = null;
+      }
       self.appendHealthLog('preview_record_started', { source: source || 'startRollingRecording' });
       self.lastSegmentAt = Date.now();
       self.lastRecordStartAt = Date.now();
@@ -10555,38 +10731,39 @@ Page({
       });
       return;
     }
-    const recordStartAt = Number(this.lastRecordStartAt || 0);
-    const recordAgeMs = recordStartAt > 0 ? nowMs - recordStartAt : 0;
-    const minHighlightMs = this._liveReturnedFromBackground
-      ? PREVIEW_RECORD_MIN_MS_BEFORE_HIGHLIGHT_AFTER_PAGE_HIDE
-      : PREVIEW_RECORD_MIN_MS_BEFORE_HIGHLIGHT;
-    if (recordAgeMs > 0 && recordAgeMs < minHighlightMs) {
-      this.appendHealthLog('highlight_skip_record_warming', {
-        recordAgeMs,
-        minHighlightMs,
-        afterPageHide: !!this._liveReturnedFromBackground
-      });
-      const remainSec = Math.max(1, Math.ceil((minHighlightMs - recordAgeMs) / 1000));
+    const highlightGate = this.getPreviewRecordHighlightGate();
+    if (!highlightGate.ready) {
+      const gateReason = highlightGate.reason || 'unknown';
+      if (gateReason === 'record_warming' || gateReason === 'warmup_until' || gateReason === 'no_first_frame') {
+        this.appendHealthLog('highlight_skip_record_warming', {
+          reason: gateReason,
+          recordAgeMs: highlightGate.recordAgeMs || 0,
+          minHighlightMs: highlightGate.minHighlightMs || 0,
+          remainMs: highlightGate.remainMs || 0,
+          afterPageHide: !!this._liveReturnedFromBackground
+        });
+      } else {
+        this.appendHealthLog('highlight_skip_pipeline_not_ready', {
+          reason: gateReason,
+          recordAgeMs: highlightGate.recordAgeMs || 0,
+          minHighlightMs: highlightGate.minHighlightMs || 0
+        });
+      }
+      const remainSec = highlightGate.remainMs
+        ? Math.max(1, Math.ceil(highlightGate.remainMs / 1000))
+        : 0;
       wx.showToast({
-        title: this._liveReturnedFromBackground
-          ? `相机恢复中，约${remainSec}秒后可保存`
-          : '相机预热中，请稍后再保存',
+        title: gateReason === 'guide_visible'
+          ? '请先完成新手引导'
+          : remainSec > 0
+            ? (this._liveReturnedFromBackground
+              ? `相机恢复中，约${remainSec}秒后可保存`
+              : `相机预热中，约${remainSec}秒后可保存`)
+            : '相机预热中，请稍后再保存',
         icon: 'none',
         duration: 2200
       });
-      return;
-    }
-    if (this._previewRecordWarmupUntil && Date.now() < this._previewRecordWarmupUntil) {
-      this.appendHealthLog('highlight_skip_record_warming', {
-        reason: 'warmup_until',
-        remainMs: this._previewRecordWarmupUntil - Date.now()
-      });
-      wx.showToast({ title: '相机预热中，请稍后再保存', icon: 'none', duration: 2000 });
-      return;
-    }
-    if (this._previewRecordPipeline && this._previewRecordPipeline.isActive() && !this._previewRecordFirstFrameAt) {
-      this.appendHealthLog('highlight_skip_no_first_frame', {});
-      wx.showToast({ title: '相机预热中，请稍后再保存', icon: 'none', duration: 2000 });
+      this.tryStartRollingWhenCameraReady('highlight_request_blocked');
       return;
     }
     if (this.data.drawerMode > 0) {
