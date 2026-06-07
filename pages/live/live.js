@@ -525,11 +525,13 @@ Page({
     footballDisplayTime: '00:00',
     /** 足球/羽毛球是否使用右上角多行记分牌 */
     useCornerScoreboard: false,
-    /** 可拖动记分牌 movable-area 宽高（px） */
-    proScoreboardAreaW: 375,
-    proScoreboardAreaH: 667,
-    /** 可拖动记分牌位置（px，默认在 16:9 取景区右上内缩，可拖到全屏任意位置） */
-    proScoreboardX: 8,
+    /** movable-view 是否已就绪（用于重挂载以应用 x/y） */
+    proScoreboardMovableReady: false,
+    /** movable-view 尺寸（px，须与组件 width/height 属性一致） */
+    proScoreboardViewW: 120,
+    proScoreboardViewH: 48,
+    /** 记分牌在 16:9 取景区内的相对坐标（px） */
+    proScoreboardX: 0,
     proScoreboardY: 8,
     matchConfig: {
       sportType: SPORT_BASKETBALL,
@@ -938,6 +940,9 @@ Page({
         selfSyncMc.updateTeamGroupWidth(true);
         selfSyncMc._liveWsTeardownForManualMode();
       }
+      if (sportType === SPORT_FOOTBALL || sportType === SPORT_BADMINTON) {
+        selfSyncMc._initProScoreboardMovableLayout();
+      }
     });
     app.globalData.matchConfig = latestConfig;
     wx.setStorageSync('matchConfig', latestConfig);
@@ -946,174 +951,198 @@ Page({
     } else {
       this._stopFootballLocalClock();
     }
-    if (sportType === SPORT_FOOTBALL || sportType === SPORT_BADMINTON) {
-      this._initProScoreboardMovableLayout();
-    }
   },
 
   /**
-   * 估算足球/羽毛球紧凑记分牌宽度，用于默认避让微信右上角胶囊按钮。
-   * @param {number} areaW
+   * 估算足球/羽毛球紧凑记分牌宽度（px）。
+   * @param {number} areaW 窗口宽
    * @returns {number}
    */
   _estimateProScoreboardWidthPx: function (areaW) {
     var ww = Math.max(1, Number(areaW) || 375);
     var sport = normalizeSportType(this.data && this.data.sportType);
     var widthRpx = sport === SPORT_FOOTBALL ? 154 : 128;
-    return Math.round(widthRpx * ww / 750);
+    return Math.max(72, Math.round(widthRpx * ww / 750));
   },
 
   /**
-   * 根据真实渲染矩形计算右上默认坐标，避免横屏系统坐标/胶囊坐标不稳定。
-   * @param {{ left: number, top: number, width: number, height: number }} stage
-   * @param {number} areaW
-   * @param {number} boardW
-   * @param {boolean} trustMenuRect
+   * 估算足球/羽毛球紧凑记分牌高度（px）。
+   * @param {number} areaW 窗口宽
+   * @returns {number}
+   */
+  _estimateProScoreboardHeightPx: function (areaW) {
+    var ww = Math.max(1, Number(areaW) || 375);
+    var sport = normalizeSportType(this.data && this.data.sportType);
+    var heightRpx = sport === SPORT_FOOTBALL ? 62 : 54;
+    return Math.max(28, Math.round(heightRpx * ww / 750));
+  },
+
+  /**
+   * 计算记分牌在 16:9 取景区内的默认右上角坐标（相对取景区左上角，横屏专用）。
+   * @param {number} stageW 取景区宽
+   * @param {number} stageH 取景区高
+   * @param {number} boardW 记分牌宽
+   * @param {number} boardH 记分牌高
+   * @param {number} stageScreenLeft 取景区相对屏幕左偏移
+   * @param {number} stageScreenTop 取景区相对屏幕上偏移
    * @returns {{ x: number, y: number }}
    */
-  _computeProScoreboardTopRightPoint: function (stage, areaW, boardW, trustMenuRect) {
-    var safeStage = stage || { left: 0, top: 0, width: areaW || 375, height: 0 };
-    var ww = Math.max(1, Number(areaW) || 375);
-    var sw = Math.max(1, Number(safeStage.width) || ww);
-    var bx = Math.max(1, Number(boardW) || this._estimateProScoreboardWidthPx(ww));
+  _computeProScoreboardTopRightInStage: function (stageW, stageH, boardW, boardH, stageScreenLeft, stageScreenTop) {
+    var sw = Math.max(1, Number(stageW) || 375);
+    var sh = Math.max(1, Number(stageH) || 211);
+    var bx = Math.max(1, Number(boardW) || 96);
+    var by = Math.max(1, Number(boardH) || 40);
     var insetX = Math.max(8, Math.round(sw * 0.012));
-    var insetY = Math.max(8, Math.round((Number(safeStage.height) || sw * 9 / 16) * 0.025));
-    var gap = Math.max(10, insetX);
-    var stageLeft = Number(safeStage.left) || 0;
-    var stageTop = Number(safeStage.top) || 0;
-    var stageRight = stageLeft + sw;
-    var fallbackCapsuleReserve = Math.max(52, Math.min(76, Math.round(sw * 0.07)));
-    var x = stageRight - bx - fallbackCapsuleReserve;
+    var insetY = Math.max(8, Math.round(sh * 0.02));
+    var gap = 8;
+    var x = sw - bx - insetX;
+    var y = insetY;
+    var sLeft = Number(stageScreenLeft) || 0;
+    var sTop = Number(stageScreenTop) || 0;
     try {
-      if (trustMenuRect && wx.getMenuButtonBoundingClientRect) {
+      if (wx.getMenuButtonBoundingClientRect) {
         var menu = wx.getMenuButtonBoundingClientRect();
-        var menuLeft = menu && typeof menu.left === 'number' ? menu.left : 0;
-        var menuTop = menu && typeof menu.top === 'number' ? menu.top : -1;
-        var menuInRightStage = menuLeft > stageLeft + sw * 0.7 && menuLeft < stageRight + 24;
-        var menuNearTop = menuTop >= stageTop - 24 && menuTop < stageTop + Math.max(96, (Number(safeStage.height) || 0) * 0.28);
-        if (menuInRightStage && menuNearTop) {
-          x = menuLeft - bx - gap;
+        if (menu && typeof menu.left === 'number' && typeof menu.top === 'number') {
+          var menuW = typeof menu.width === 'number' ? menu.width : 88;
+          var menuH = typeof menu.height === 'number' ? menu.height : 32;
+          var menuLeftInStage = menu.left - sLeft;
+          var menuTopInStage = menu.top - sTop;
+          var menuBottomInStage = menuTopInStage + menuH;
+          if (menuLeftInStage > sw * 0.45 && menuTopInStage < sh * 0.35 && menuBottomInStage > 0) {
+            x = Math.min(x, menuLeftInStage - bx - gap);
+          }
         }
       }
     } catch (eMenu) {}
-    var minX = stageLeft + insetX;
-    var maxX = Math.min(stageRight - bx - insetX, ww - bx - 8);
-    x = Math.max(minX, Math.min(maxX, x));
-    return {
-      x: Math.round(x),
-      y: Math.round(stageTop + insetY)
-    };
+    x = Math.max(insetX, Math.min(sw - bx - insetX, x));
+    y = Math.max(insetY, Math.min(sh - by - insetY, y));
+    return { x: Math.round(x), y: Math.round(y) };
   },
 
   /**
-   * 计算足球/羽毛球可拖动记分牌布局。
-   * movable-area 覆盖整屏，默认坐标按 16:9 取景区右上角内缩，并避让微信胶囊按钮。
-   * @param {number} rawW
-   * @param {number} rawH
-   * @returns {{ areaW: number, areaH: number, x: number, y: number }}
-   */
-  _computeProScoreboardMovableLayout: function (rawW, rawH) {
-    var ww = Math.max(1, Number(rawW) || 375);
-    var wh = Math.max(1, Number(rawH) || 667);
-    if (wh > ww) {
-      var tmp = ww;
-      ww = wh;
-      wh = tmp;
-    }
-    var stage = computeLiveStage16x9RectPx(ww, wh);
-    var boardW = this._estimateProScoreboardWidthPx(ww);
-    var point = this._computeProScoreboardTopRightPoint({
-      left: stage.left,
-      top: stage.top,
-      width: stage.w,
-      height: stage.h
-    }, ww, boardW, false);
-    return {
-      areaW: Math.round(ww),
-      areaH: Math.round(wh),
-      x: point.x,
-      y: point.y
-    };
-  },
-
-  /**
-   * 同步足球/羽毛球可拖动记分牌区域尺寸。
-   * @param {number} rawW
-   * @param {number} rawH
-   * @param {boolean} resetPosition
+   * 写入 movable-view 位置；必要时先卸载再挂载，确保 x/y 生效。
+   * @param {number} x
+   * @param {number} y
+   * @param {number} boardW
+   * @param {number} boardH
+   * @param {boolean} forceRemount
    * @returns {void}
    */
-  _syncProScoreboardMovableLayout: function (rawW, rawH, resetPosition) {
-    var layout = this._computeProScoreboardMovableLayout(rawW, rawH);
+  _commitProScoreboardMovablePosition: function (x, y, boardW, boardH, forceRemount) {
+    var self = this;
     var patch = {
-      proScoreboardAreaW: layout.areaW,
-      proScoreboardAreaH: layout.areaH
+      proScoreboardViewW: Math.max(1, Math.round(boardW)),
+      proScoreboardViewH: Math.max(1, Math.round(boardH))
     };
-    if (resetPosition || !this._proScoreboardUserMoved) {
-      patch.proScoreboardX = layout.x;
-      patch.proScoreboardY = layout.y;
+    if (forceRemount) {
+      patch.proScoreboardMovableReady = false;
+      this.setData(patch, function () {
+        self.setData({
+          proScoreboardX: x,
+          proScoreboardY: y,
+          proScoreboardMovableReady: true
+        });
+      });
+      return;
     }
+    patch.proScoreboardX = x;
+    patch.proScoreboardY = y;
     this.setData(patch);
   },
 
   /**
-   * 渲染完成后用真实节点尺寸二次校准默认位置。
+   * 按窗口尺寸同步记分牌默认右上角布局（坐标相对 16:9 取景区）。
    * @param {boolean} resetPosition
    * @returns {void}
    */
-  _syncProScoreboardMovableLayoutFromRects: function (resetPosition) {
-    if (!this._proScoreboardMovableInited) return;
+  _syncProScoreboardCornerLayout: function (resetPosition) {
+    if (!this.data.useCornerScoreboard) return;
+    if (!resetPosition && this._proScoreboardUserMoved) return;
+    var sysW = 375;
+    var sysH = 667;
+    try {
+      var si = wx.getSystemInfoSync();
+      sysW = si.windowWidth || sysW;
+      sysH = si.windowHeight || sysH;
+    } catch (eSys) {}
+    var stageSize = computeLiveStage16x9SizePx(sysW, sysH);
+    var stageScreen = computeLiveStage16x9RectPx(sysW, sysH);
+    var boardW = this._estimateProScoreboardWidthPx(sysW);
+    var boardH = this._estimateProScoreboardHeightPx(sysW);
+    var point = this._computeProScoreboardTopRightInStage(
+      stageSize.w,
+      stageSize.h,
+      boardW,
+      boardH,
+      stageScreen.left,
+      stageScreen.top
+    );
+    this._commitProScoreboardMovablePosition(point.x, point.y, boardW, boardH, true);
+  },
+
+  /**
+   * 渲染完成后用真实节点尺寸校准默认右上角位置。
+   * @param {boolean} resetPosition
+   * @returns {void}
+   */
+  _refineProScoreboardLayoutFromDom: function (resetPosition) {
+    if (!this.data.useCornerScoreboard) return;
+    if (!resetPosition && this._proScoreboardUserMoved) return;
     var self = this;
     try {
       wx.createSelectorQuery()
         .in(this)
-        .select('.overlay')
-        .boundingClientRect()
         .select('#liveStage')
         .boundingClientRect()
-        .select('#proScoreboardView')
+        .select('.pro-scoreboard-container')
         .boundingClientRect()
         .exec(function (res) {
-          var overlay = res && res[0];
-          var stageRect = res && res[1];
-          var boardRect = res && res[2];
-          if (!overlay || !stageRect || !overlay.width || !stageRect.width) return;
-          var areaW = Math.round(overlay.width);
-          var areaH = Math.round(overlay.height || 1);
-          var boardW = boardRect && boardRect.width ? boardRect.width : self._estimateProScoreboardWidthPx(areaW);
-          var point = self._computeProScoreboardTopRightPoint(stageRect, areaW, boardW, true);
-          var patch = {
-            proScoreboardAreaW: areaW,
-            proScoreboardAreaH: areaH
-          };
-          if (resetPosition || !self._proScoreboardUserMoved) {
-            patch.proScoreboardX = point.x;
-            patch.proScoreboardY = point.y;
-          }
-          self.setData(patch);
+          var stageRect = res && res[0];
+          var boardRect = res && res[1];
+          if (!stageRect || !stageRect.width) return;
+          var sysW = 375;
+          try {
+            sysW = wx.getSystemInfoSync().windowWidth || sysW;
+          } catch (eW) {}
+          var boardW = boardRect && boardRect.width
+            ? Math.ceil(boardRect.width)
+            : self._estimateProScoreboardWidthPx(sysW);
+          var boardH = boardRect && boardRect.height
+            ? Math.ceil(boardRect.height)
+            : self._estimateProScoreboardHeightPx(sysW);
+          var point = self._computeProScoreboardTopRightInStage(
+            stageRect.width,
+            stageRect.height,
+            boardW,
+            boardH,
+            stageRect.left,
+            stageRect.top
+          );
+          self._commitProScoreboardMovablePosition(point.x, point.y, boardW, boardH, true);
         });
     } catch (eRect) {}
   },
 
   /**
-   * 初始化足球/羽毛球可拖动记分牌区域（仅一次 setData，不影响录制管线）。
+   * 初始化足球/羽毛球可拖动记分牌（默认 16:9 取景区右上角）。
    * @returns {void}
    */
   _initProScoreboardMovableLayout: function () {
-    if (this._proScoreboardMovableInited) return;
     this._proScoreboardMovableInited = true;
+    this._proScoreboardUserMoved = false;
     try {
-      var sys = wx.getSystemInfoSync();
-      var ww = Math.max(1, Number(sys.windowWidth) || 375);
-      var wh = Math.max(1, Number(sys.windowHeight) || 667);
-      this._syncProScoreboardMovableLayout(ww, wh, true);
-      setTimeout(() => {
-        this._syncProScoreboardMovableLayoutFromRects(true);
-      }, 80);
-      setTimeout(() => {
-        this._syncProScoreboardMovableLayoutFromRects(true);
-      }, 260);
-    } catch (eInit) {}
+      this._updateLiveStageLayout();
+    } catch (eLayout) {}
+    var self = this;
+    setTimeout(function () {
+      self._syncProScoreboardCornerLayout(true);
+    }, 50);
+    setTimeout(function () {
+      self._refineProScoreboardLayoutFromDom(true);
+    }, 160);
+    setTimeout(function () {
+      self._refineProScoreboardLayoutFromDom(true);
+    }, 420);
   },
 
   /**
@@ -1919,6 +1948,8 @@ Page({
 
   onLoad: function (options) {
     this._routeSportType = normalizeSportType(options && options.sportType);
+    this._proScoreboardUserMoved = false;
+    this._proScoreboardMovableInited = false;
     this._previewRecordPipeline = replayBufferMod.createPreviewRecordPipeline(this);
     this._recorderCore = new replayBufferMod.RecorderCore(this);
     this._replayBuffer = replayBufferMod.createReplayBuffer({
@@ -3915,14 +3946,14 @@ Page({
       recoverFabStackStyle: corner.recoverStack,
       replayRailStyle: corner.replayRail
     });
-    if (this._proScoreboardMovableInited) {
-      this._syncProScoreboardMovableLayout(sysW, sysH, false);
-      setTimeout(() => {
-        this._syncProScoreboardMovableLayoutFromRects(false);
+    if (this.data.useCornerScoreboard && this._proScoreboardMovableInited) {
+      var selfScoreLayout = this;
+      setTimeout(function () {
+        selfScoreLayout._syncProScoreboardCornerLayout(false);
+      }, 0);
+      setTimeout(function () {
+        selfScoreLayout._refineProScoreboardLayoutFromDom(false);
       }, 80);
-      setTimeout(() => {
-        this._syncProScoreboardMovableLayoutFromRects(false);
-      }, 260);
     }
     if (this._renderPipeline && typeof this._renderPipeline.resizeToCssPixels === 'function') {
       try {
@@ -5908,6 +5939,17 @@ Page({
     try {
       this._updateLiveStageLayout();
     } catch (eLs) { }
+    if (this.data.useCornerScoreboard) {
+      if (!this._proScoreboardMovableInited) {
+        this._initProScoreboardMovableLayout();
+      } else if (!this._proScoreboardUserMoved) {
+        var selfShowSb = this;
+        setTimeout(function () {
+          selfShowSb._syncProScoreboardCornerLayout(false);
+          selfShowSb._refineProScoreboardLayoutFromDom(false);
+        }, 280);
+      }
+    }
     try {
       const snap = storageEst.readFileStorageEstimateSnapshot();
       if (
