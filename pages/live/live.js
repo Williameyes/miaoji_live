@@ -180,6 +180,10 @@ const PREVIEW_RECORD_MIN_MS_BEFORE_HIGHLIGHT = 3500;
 const PREVIEW_RECORD_MIN_MS_BEFORE_HIGHLIGHT_AFTER_PAGE_HIDE = 12000;
 /** 入场 kickoff 后仍未起录时，自动重试 tryStartRolling 的延迟（ms）。 */
 const ROLLING_KICKOFF_WATCHDOG_MS = 4500;
+/** 场次切换后合并重启滚动的防抖延迟（ms）。 */
+const MATCH_SWITCH_RESTART_DEFER_MS = 150;
+/** 场次切换 stop 管线超时兜底（ms），避免 pipeline.stop 挂死导致永久 PAUSE。 */
+const MATCH_SWITCH_PIPELINE_STOP_FAILSAFE_MS = 1400;
 /** 切后台回前台后 preview record 预热帧数（首帧可能是静止缓存）。 */
 const PREVIEW_RECORD_WARMUP_FRAMES_AFTER_PAGE_HIDE = 12;
 /** 硬恢复完成后禁止保存高光的隔离期（ms），覆盖乒乓双轨坏片轮换周期。 */
@@ -2007,6 +2011,8 @@ Page({
     this._rollingKickoffTimer = null;
     this._rollingKickoffWatchdogTimer = null;
     this._rollingStartPendingBeforeKickoff = false;
+    this._matchSwitchRestartTimer = null;
+    this._matchSwitchRestartFailsafeTimer = null;
     this._opsToolsTimer = null;
     this._opsAckTimer = null;
     this._healthTimer = null;
@@ -6703,6 +6709,14 @@ Page({
       clearTimeout(this._rollingKickoffWatchdogTimer);
       this._rollingKickoffWatchdogTimer = null;
     }
+    if (this._matchSwitchRestartTimer) {
+      clearTimeout(this._matchSwitchRestartTimer);
+      this._matchSwitchRestartTimer = null;
+    }
+    if (this._matchSwitchRestartFailsafeTimer) {
+      clearTimeout(this._matchSwitchRestartFailsafeTimer);
+      this._matchSwitchRestartFailsafeTimer = null;
+    }
     this._rollingStartPendingBeforeKickoff = false;
     if (this.pendingHighlight && this.pendingHighlight.timeout) {
       clearTimeout(this.pendingHighlight.timeout);
@@ -6791,6 +6805,14 @@ Page({
     if (this._rollingKickoffWatchdogTimer) {
       clearTimeout(this._rollingKickoffWatchdogTimer);
       this._rollingKickoffWatchdogTimer = null;
+    }
+    if (this._matchSwitchRestartTimer) {
+      clearTimeout(this._matchSwitchRestartTimer);
+      this._matchSwitchRestartTimer = null;
+    }
+    if (this._matchSwitchRestartFailsafeTimer) {
+      clearTimeout(this._matchSwitchRestartFailsafeTimer);
+      this._matchSwitchRestartFailsafeTimer = null;
     }
     this._rollingStartPendingBeforeKickoff = false;
     if (this._liveStorageSevereModalTimer) {
@@ -7767,6 +7789,19 @@ Page({
       this.vibrate('light');
       this.appendHealthLog('recovery_fab_tap_recover', {});
       this.hardRecoverLivePipeline('manual_tap');
+      return;
+    }
+    if (
+      !this.rollingActive
+      && this._livePageVisible
+      && this.data.liveStreamAllowed
+      && this._cameraInitDone
+      && !!this.data.cameraContext
+      && !this.data.showGuide
+    ) {
+      this.appendHealthLog('recovery_fab_tap_restart_rolling', {});
+      this.rollingActive = true;
+      this.tryStartRollingWhenCameraReady('recovery_fab_tap_restart');
       return;
     }
     this.appendHealthLog('recovery_fab_tap_ignored', { reason: 'not_recording_or_err' });
@@ -8948,6 +8983,105 @@ Page({
   },
 
   /**
+   * 场次切换后延迟合并重启滚动录制（防抖连点切换）。
+   * @param {string} [source]
+   * @returns {void}
+   */
+  _scheduleRollingRestartAfterMatchSwitch: function (source) {
+    if (this._matchSwitchRestartTimer) {
+      clearTimeout(this._matchSwitchRestartTimer);
+      this._matchSwitchRestartTimer = null;
+    }
+    const sessionId = this.rollingSessionId;
+    const triggerSource = source || 'match_switch';
+    const self = this;
+    this._matchSwitchRestartTimer = setTimeout(() => {
+      self._matchSwitchRestartTimer = null;
+      self._restartRollingAfterMatchSwitchImpl(triggerSource, sessionId);
+    }, MATCH_SWITCH_RESTART_DEFER_MS);
+  },
+
+  /**
+   * 场次切换专用：重启 preview 乒乓管线，保持 rollingActive，不二次 bump rollingSessionId。
+   * @param {string} [source]
+   * @param {number} expectedSessionId
+   * @returns {void}
+   */
+  _restartRollingAfterMatchSwitchImpl: function (source, expectedSessionId) {
+    if (!this._livePageVisible || !this.data.liveStreamAllowed) return;
+    if (this.data.showGuide) return;
+    if (this.data.isRecovering || this._recoveryLock) return;
+    if (this._needManualRelaunch || this.data.storageSevereLock) return;
+    if (expectedSessionId !== this.rollingSessionId) return;
+    if (!this._cameraInitDone || !this.data.cameraContext) {
+      this.appendHealthLog('match_switch_restart_deferred_camera', {
+        source: source || 'match_switch',
+        cameraInitDone: !!this._cameraInitDone
+      });
+      this._rollingStartPendingBeforeKickoff = true;
+      return;
+    }
+
+    this._segmentWatchdogRecovering = false;
+    this.rollingActive = true;
+    this.lastSegmentAt = Date.now();
+    this.lastRecordStartAt = 0;
+    this._lastSuccessfulChunkAt = 0;
+    this._previewRecordLastHeartbeatAt = 0;
+
+    const triggerSource = source || 'match_switch_restart';
+    const kickStart = () => {
+      if (!this._livePageVisible || expectedSessionId !== this.rollingSessionId) return;
+      if (!this.rollingActive) return;
+      if (this._matchSwitchRestartFailsafeTimer) {
+        clearTimeout(this._matchSwitchRestartFailsafeTimer);
+        this._matchSwitchRestartFailsafeTimer = null;
+      }
+      this.appendHealthLog('match_switch_restart_kick', {
+        source: triggerSource,
+        rollingSessionId: this.rollingSessionId
+      });
+      if (this._recorderCore) {
+        this._recorderCore.markReady(triggerSource);
+      }
+      this.tryStartRollingWhenCameraReady(triggerSource);
+    };
+
+    const pipeline = this._previewRecordPipeline;
+    if (!pipeline || !pipeline.isActive()) {
+      kickStart();
+      return;
+    }
+
+    let kicked = false;
+    const runKickOnce = (via) => {
+      if (kicked) return;
+      kicked = true;
+      if (this._matchSwitchRestartFailsafeTimer) {
+        clearTimeout(this._matchSwitchRestartFailsafeTimer);
+        this._matchSwitchRestartFailsafeTimer = null;
+      }
+      if (via) {
+        this.appendHealthLog('match_switch_restart_after_stop', {
+          source: triggerSource,
+          via
+        });
+      }
+      kickStart();
+    };
+
+    this._matchSwitchRestartFailsafeTimer = setTimeout(() => {
+      this._matchSwitchRestartFailsafeTimer = null;
+      this.appendHealthLog('match_switch_restart_failsafe', { source: triggerSource });
+      runKickOnce('failsafe');
+    }, MATCH_SWITCH_PIPELINE_STOP_FAILSAFE_MS);
+
+    pipeline.stop()
+      .then(() => runKickOnce('pipeline_stop'))
+      .catch(() => runKickOnce('pipeline_stop_fail'));
+  },
+
+  /**
    * 切换场次时隔离 rolling 缓冲与会话，避免上一场素材污染新高光时间窗。
    * @param {string} [source] 触发来源
    * @returns {void}
@@ -8989,17 +9123,18 @@ Page({
       segmentCounter: this.segmentCounter || 0
     });
     /**
-     * 若 rolling 仍在跑但缓冲已被清空，软重启分段录制以绑定新 sessionId，
-     * 降低「旧 session 异步落盘 + 新 session 空缓冲」竞态。
+     * 切场次后须重启 preview 管线并绑定新 sessionId。
+     * 勿走 segment_watchdog_soft_recover：会把 rollingActive 置 false 且二次 bump sessionId，
+     * pipeline.stop 偶发不回调时会导致新场次永久 PAUSE。
      */
     if (
-      this.rollingActive
-      && this._livePageVisible
+      this._livePageVisible
       && this.data.liveStreamAllowed
       && !this.data.isRecovering
       && !this._recoveryLock
     ) {
-      this.requestSegmentWatchdogRollingRecover('match_switch');
+      this.rollingActive = true;
+      this._scheduleRollingRestartAfterMatchSwitch(source);
     }
   },
 
