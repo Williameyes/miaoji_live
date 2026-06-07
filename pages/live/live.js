@@ -320,9 +320,25 @@ function migrateLegacyFootballPeriod(period, mc) {
  */
 function getFootballHalfLabelParts(period, footballState) {
   var fs = normalizeFootballState(footballState);
-  var p = Math.min(3, Math.max(1, Math.floor(Number(period) || 1)));
-  var base = p === 3 ? '加时赛' : (p === 2 ? '下半场' : '上半场');
-  var extra = p === 3 ? fs.extraMinutesExtra : (p === 2 ? fs.extraMinutesHalf2 : fs.extraMinutesHalf1);
+  var p = Math.min(5, Math.max(1, Math.floor(Number(period) || 1)));
+  var base = '上半场';
+  var extra = 0;
+  if (p === 1) {
+    base = '上半场';
+    extra = fs.extraMinutesHalf1;
+  } else if (p === 2) {
+    base = '下半场';
+    extra = fs.extraMinutesHalf2;
+  } else if (p === 3) {
+    base = '加时赛';
+    extra = fs.extraMinutesExtra;
+  } else if (p === 4) {
+    base = '热身';
+    extra = 0;
+  } else if (p === 5) {
+    base = '中场休息';
+    extra = 0;
+  }
   return {
     base: base,
     stoppage: extra > 0 ? '+' + extra : ''
@@ -1564,7 +1580,7 @@ Page({
    * @returns {void}
    */
   onFootballPeriodSelectTap: function (e) {
-    var target = Math.min(3, Math.max(1, Math.floor(Number(e.currentTarget.dataset.period) || 1)));
+    var target = Math.min(5, Math.max(1, Math.floor(Number(e.currentTarget.dataset.period) || 1)));
     this._applyFootballPeriodFromPanel(target);
     this.vibrate('light');
   },
@@ -1578,34 +1594,79 @@ Page({
 
   /**
    * 从操作面板切换足球场次。
-   * @param {1|2|3} targetPeriod
+   * @param {1|2|3|4|5} targetPeriod
    * @returns {void}
    */
   _applyFootballPeriodFromPanel: function (targetPeriod) {
-    var target = Math.min(3, Math.max(1, Math.floor(Number(targetPeriod) || 1)));
+    var target = Math.min(5, Math.max(1, Math.floor(Number(targetPeriod) || 1)));
     var resetSec = null;
     var autoStart = false;
-    if (target === 2) {
+    if (target === 1) {
+      resetSec = 0;
+      autoStart = true;
+    } else if (target === 2) {
       resetSec = FOOTBALL_HALF2_START_SEC;
       autoStart = true;
     } else if (target === 3) {
       resetSec = FOOTBALL_EXTRA_START_SEC;
       autoStart = true;
+    } else if (target === 4) {
+      resetSec = 0;
+      autoStart = false;
+    } else if (target === 5) {
+      resetSec = 0;
+      autoStart = false;
     }
+
+    this._stopFootballLocalClock(false);
+
+    var mc = this.data.matchConfig || {};
+    var fs = normalizeFootballState(mc.footballState);
+    fs.clockPaused = !autoStart;
+    fs.clockWallMs = autoStart ? Date.now() : 0;
+    fs.extraMinutesHalf1 = 0;
+    fs.extraMinutesHalf2 = 0;
+    fs.extraMinutesExtra = 0;
+
+    if (resetSec !== null) {
+      this._footballClockBaseSec = resetSec;
+      this._footballLiveElapsedSec = resetSec;
+      this._footballClockAnchorMs = Date.now();
+    } else {
+      resetSec = Math.max(0, Math.floor(Number(mc.footballElapsedSec) || 0));
+    }
+
+    var text = formatWxsMainText(resetSec);
+    var display = this._resolveFootballDisplayTime(text);
+
+    var nextMc = {
+      ...mc,
+      period: target,
+      footballElapsedSec: resetSec,
+      footballState: fs
+    };
+
+    var sportUi = this.buildSportUiPatch(nextMc, this.data.sportType);
+
+    var patch = {
+      matchConfig: nextMc,
+      footballClockPaused: !autoStart,
+      footballTimeText: text,
+      footballDisplayTime: display,
+      footballOpsPanelOpen: false,
+      ...sportUi
+    };
+
     var self = this;
-    this.setData({
-      'matchConfig.period': target,
-      'matchConfig.footballState.periodModel': 2
-    }, function () {
-      if (resetSec !== null) {
-        self._resetFootballClockTo(resetSec);
-        if (autoStart) {
-          self._resumeFootballClock();
+    this.setData(patch, function () {
+      self.persistConfig();
+      if (autoStart) {
+        if (!self._footballLocalClockTimer) {
+          self._footballLocalClockTimer = setInterval(function () {
+            self._tickFootballLocalClock();
+          }, 1000);
         }
       }
-      self.refreshSportUiMeta();
-      self.persistConfig();
-      self.setData({ footballOpsPanelOpen: false });
     });
   },
 
@@ -6215,7 +6276,7 @@ Page({
         normalizedConfig.period = migrateLegacyFootballPeriod(normalizedConfig.period, normalizedConfig);
       }
       normalizedConfig.footballState.periodModel = 2;
-      normalizedConfig.period = Math.min(3, Math.max(1, Math.floor(Number(normalizedConfig.period) || 1)));
+      normalizedConfig.period = Math.min(5, Math.max(1, Math.floor(Number(normalizedConfig.period) || 1)));
     }
     if (normalizedConfig.sportType === SPORT_FOOTBALL && normalizedConfig.period < 1) {
       normalizedConfig.period = 1;

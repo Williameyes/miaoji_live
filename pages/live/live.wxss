@@ -941,8 +941,8 @@ button.live-ble-btn::after {
 .pro-panel-left {
   display: flex;
   align-items: center;
-  gap: 3rpx;
-  flex: 0 0 58rpx;
+  gap: 2rpx;
+  flex: 0 0 46rpx;
   min-width: 0;
 }
 
@@ -957,14 +957,14 @@ button.live-ble-btn::after {
 
 .pro-football-meta-col {
   flex: 0 0 auto;
-  min-width: 56rpx;
+  min-width: 46rpx;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   align-self: stretch;
   gap: 2rpx;
-  padding: 2rpx 6rpx;
+  padding: 2rpx 4rpx;
   border-radius: 3rpx;
   background: rgba(0, 0, 0, 0.42);
   box-sizing: border-box;
@@ -1064,10 +1064,10 @@ button.live-ble-btn::after {
 }
 
 .pro-panel-score {
-  flex: 0 0 16rpx;
-  font-size: 12rpx;
+  flex: 0 0 14rpx;
+  font-size: 11rpx;
   color: #ffffff;
-  min-width: 16rpx;
+  min-width: 14rpx;
   text-align: center;
   justify-content: center;
 }
@@ -1086,8 +1086,8 @@ button.live-ble-btn::after {
 .pro-team-name--dynamic {
   flex: 0 0 auto;
   display: inline-block;
-  width: 54rpx;
-  max-width: 54rpx;
+  width: 42rpx;
+  max-width: 42rpx;
   overflow: hidden;
   white-space: nowrap;
   box-sizing: border-box;
@@ -1143,7 +1143,7 @@ button.live-ble-btn::after {
   justify-content: center;
   text-align: center;
   white-space: nowrap;
-  min-width: 36rpx;
+  min-width: 32rpx;
   width: 100%;
   line-height: 1.2;
   overflow: visible;

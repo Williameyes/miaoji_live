@@ -270,10 +270,20 @@
       <view class="football-ops-section-label">场次</view>
       <view class="football-ops-period-row">
         <view
+          class="football-ops-btn football-ops-btn--sm {{matchConfig.period === 4 ? 'football-ops-btn--active' : ''}}"
+          catchtap="onFootballPeriodSelectTap"
+          data-period="4"
+        >热身</view>
+        <view
           class="football-ops-btn football-ops-btn--sm {{matchConfig.period === 1 ? 'football-ops-btn--active' : ''}}"
           catchtap="onFootballPeriodSelectTap"
           data-period="1"
         >上半场</view>
+        <view
+          class="football-ops-btn football-ops-btn--sm {{matchConfig.period === 5 ? 'football-ops-btn--active' : ''}}"
+          catchtap="onFootballPeriodSelectTap"
+          data-period="5"
+        >中场休息</view>
         <view
           class="football-ops-btn football-ops-btn--sm {{matchConfig.period === 2 ? 'football-ops-btn--active' : ''}}"
           catchtap="onFootballPeriodSelectTap"
