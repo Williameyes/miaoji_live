@@ -34,18 +34,18 @@ function limitTeamName(name) {
 }
 
 /**
- * 足球/羽毛球队名：最多 5 字，超出直接截断无省略号。
+ * 足球/羽毛球队名：最多 8 字，超出直接截断无省略号。
  * @param {string} name
  * @returns {string}
  */
 function limitTeamNamePro(name) {
   var safe = name || '';
-  if (safe.length <= 5) return safe;
-  return safe.slice(0, 5);
+  if (safe.length <= 8) return safe;
+  return safe.slice(0, 8);
 }
 
 /**
- * 足球/羽毛球队名展示宽度（rpx）：按实际字数缩小，最多按 5 字宽。
+ * 足球/羽毛球队名展示宽度（rpx）：按实际字数缩小，最多按 8 字宽。
  * @param {string} name
  * @returns {number}
  */

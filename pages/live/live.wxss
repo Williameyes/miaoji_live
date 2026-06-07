@@ -942,7 +942,7 @@ button.live-ble-btn::after {
   display: flex;
   align-items: center;
   gap: 2rpx;
-  flex: 0 0 46rpx;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -1095,11 +1095,10 @@ button.live-ble-btn::after {
 .pro-team-name--dynamic {
   flex: 0 0 auto;
   display: inline-block;
-  width: 42rpx;
-  max-width: 42rpx;
   overflow: hidden;
   white-space: nowrap;
   box-sizing: border-box;
+  max-width: 90rpx;
 }
 
 .team-color-strip {
