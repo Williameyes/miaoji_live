@@ -1624,9 +1624,14 @@ Page({
     var fs = normalizeFootballState(mc.footballState);
     fs.clockPaused = !autoStart;
     fs.clockWallMs = autoStart ? Date.now() : 0;
-    fs.extraMinutesHalf1 = 0;
-    fs.extraMinutesHalf2 = 0;
-    fs.extraMinutesExtra = 0;
+    // 切换场次时，清空目标场次的补时
+    if (target === 1) {
+      fs.extraMinutesHalf1 = 0;
+    } else if (target === 2) {
+      fs.extraMinutesHalf2 = 0;
+    } else if (target === 3) {
+      fs.extraMinutesExtra = 0;
+    }
 
     if (resetSec !== null) {
       this._footballClockBaseSec = resetSec;

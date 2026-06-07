@@ -1017,18 +1017,20 @@ button.live-ble-btn::after {
 
 .football-ops-period-row {
   display: flex;
-  flex-direction: column;
-  gap: 8rpx;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 6rpx;
+  justify-content: center;
 }
 
 .football-ops-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 32rpx;
-  padding: 8rpx 10rpx;
-  border-radius: 8rpx;
-  font-size: 11rpx;
+  min-height: 28rpx;
+  padding: 4rpx 8rpx;
+  border-radius: 6rpx;
+  font-size: 10rpx;
   font-weight: 600;
   color: rgba(255, 255, 255, 0.94);
   background: rgba(255, 255, 255, 0.1);
@@ -1038,8 +1040,12 @@ button.live-ble-btn::after {
 }
 
 .football-ops-btn--sm {
-  min-height: 30rpx;
-  font-size: 10rpx;
+  min-height: 26rpx;
+  padding: 3rpx 6rpx;
+  font-size: 9rpx;
+  flex: 1;
+  min-width: 0;
+  max-width: 100rpx;
 }
 
 .football-ops-btn--primary {

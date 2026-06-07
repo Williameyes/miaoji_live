@@ -283,7 +283,7 @@
           class="football-ops-btn football-ops-btn--sm {{matchConfig.period === 5 ? 'football-ops-btn--active' : ''}}"
           catchtap="onFootballPeriodSelectTap"
           data-period="5"
-        >中场休息</view>
+        >中场</view>
         <view
           class="football-ops-btn football-ops-btn--sm {{matchConfig.period === 2 ? 'football-ops-btn--active' : ''}}"
           catchtap="onFootballPeriodSelectTap"
@@ -293,7 +293,7 @@
           class="football-ops-btn football-ops-btn--sm {{matchConfig.period === 3 ? 'football-ops-btn--active' : ''}}"
           catchtap="onFootballPeriodSelectTap"
           data-period="3"
-        >加时赛</view>
+        >加时</view>
       </view>
       <view class="football-ops-btn football-ops-btn--ghost" catchtap="onFootballStoppageTap">补时</view>
     </view>
