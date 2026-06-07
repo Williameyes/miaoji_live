@@ -154,8 +154,15 @@
                 </view>
               </view>
               <view class="pro-football-meta-col">
-                <view class="pro-meta-phase pro-score-hit" bindtap="onPeriodTap">{{footballHalfLabel}}</view>
-                <text class="pro-meta-time pro-score-number">{{footballDisplayTime}}</text>
+                <view
+                  class="pro-meta-phase pro-score-hit"
+                  bindtap="onPeriodTap"
+                  bindlongpress="onFootballPeriodLongPress"
+                >{{footballHalfLabel}}</view>
+                <view
+                  class="pro-meta-time pro-score-number {{footballClockPaused ? 'pro-meta-time--paused' : ''}}"
+                  bindlongpress="onFootballTimeLongPress"
+                >{{footballDisplayTime}}</view>
               </view>
             </view>
           </view>

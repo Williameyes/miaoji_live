@@ -913,7 +913,7 @@ button.live-ble-btn::after {
 .pro-panel-body-inner {
   display: flex;
   flex-direction: row;
-  align-items: stretch;
+  align-items: center;
   gap: 2rpx;
 }
 
@@ -956,16 +956,19 @@ button.live-ble-btn::after {
 }
 
 .pro-football-meta-col {
-  flex: 0 0 40rpx;
+  flex: 0 0 auto;
+  min-width: 56rpx;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0;
-  padding: 0 4rpx;
+  align-self: stretch;
+  gap: 2rpx;
+  padding: 2rpx 6rpx;
   border-radius: 3rpx;
   background: rgba(0, 0, 0, 0.42);
   box-sizing: border-box;
+  overflow: visible;
 }
 
 .pro-panel-score {
@@ -1018,9 +1021,13 @@ button.live-ble-btn::after {
   color: rgba(255, 255, 255, 0.72);
   letter-spacing: 0;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   text-align: center;
   white-space: nowrap;
   width: 100%;
+  line-height: 1.2;
 }
 
 .pro-meta-time {
@@ -1028,9 +1035,19 @@ button.live-ble-btn::after {
   color: #ffd700;
   letter-spacing: 0;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   text-align: center;
   white-space: nowrap;
+  min-width: 36rpx;
   width: 100%;
+  line-height: 1.2;
+  overflow: visible;
+}
+
+.pro-meta-time--paused {
+  opacity: 0.55;
 }
 
 .pro-serve-indicator {

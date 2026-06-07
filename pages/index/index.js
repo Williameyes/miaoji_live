@@ -539,6 +539,12 @@ Page({
       },
       sportConfig: { ...DEFAULT_SPORT_CONFIG },
       footballElapsedSec: 0,
+      footballState: {
+        clockPaused: false,
+        clockWallMs: 0,
+        extraMinutesHalf1: 0,
+        extraMinutesHalf2: 0
+      },
       isFinished: false,
       /** 开赛时间（毫秒，对齐到分钟） */
       startAt: alignTimestampToMinute(ts),
