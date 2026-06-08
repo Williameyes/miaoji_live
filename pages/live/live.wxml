@@ -220,7 +220,7 @@
                       class="pro-sets-num pro-sets-num--row pro-score-number"
                     >{{matchConfig.teamA.score}}</text>
                     <view
-                      wx:if="{{matchConfig.badmintonState.servingTeam === 'A'}}"
+                      wx:if="{{matchConfig.badmintonState.servingTeam === 'A' && !(matchConfig.period === 1 && matchConfig.teamA.currentSetScore === 0 && matchConfig.teamB.currentSetScore === 0)}}"
                       class="pro-badminton-serve-wrap"
                       catchtap="toggleServingTeamManually"
                     >
@@ -238,7 +238,7 @@
                       class="pro-sets-num pro-sets-num--row pro-score-number"
                     >{{matchConfig.teamB.score}}</text>
                     <view
-                      wx:if="{{matchConfig.badmintonState.servingTeam === 'B'}}"
+                      wx:if="{{matchConfig.badmintonState.servingTeam === 'B' && !(matchConfig.period === 1 && matchConfig.teamA.currentSetScore === 0 && matchConfig.teamB.currentSetScore === 0)}}"
                       class="pro-badminton-serve-wrap"
                       catchtap="toggleServingTeamManually"
                     >
