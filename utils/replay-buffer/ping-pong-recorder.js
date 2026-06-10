@@ -674,11 +674,13 @@ class PingPongRecorder {
     }
     const recorder = track.recorder;
     const lastFrame = this._lastCameraFrame;
-    return requestFrameRecorder(recorder, () => {
+    const skipRequestFrame = source === 'shutdown';
+    const action = skipRequestFrame ? Promise.resolve() : requestFrameRecorder(recorder, () => {
       if (lastFrame && track.blit) {
         track.blit.drawRgba(lastFrame);
       }
-    })
+    });
+    return action
       .then(() => stopRecorder(recorder))
       .then((res) => this._persistTemp(
         trackId,

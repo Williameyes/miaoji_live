@@ -4961,9 +4961,10 @@ Page({
       if (hint.level === 'severe' && t === 'periodic' && this.rollingActive) {
         try {
           this.appendHealthLog('live_periodic_severe_lock_only', {
-            noAutoClipPrune: true
+            noAutoClipPrune: false
           });
         } catch (eL) {}
+        this.freeRollingFileStorageAggressive('live_storage_severe_periodic');
       }
     }).catch(eProbe => {
       try {
@@ -7771,6 +7772,15 @@ Page({
    * @returns {void}
    */
   _resetRollingPipelineForMatchSwitch: function (source) {
+    if (this.data.isSavingHighlight) {
+      this.appendHealthLog('match_switch_deferred_for_highlight', {
+        source: source || 'switch_match'
+      });
+      setTimeout(() => {
+        this._resetRollingPipelineForMatchSwitch(source);
+      }, 500);
+      return;
+    }
     const prevSessionId = this.rollingSessionId;
     const prevSegmentCounter = this.segmentCounter || 0;
     this.rollingSessionId += 1;
@@ -8675,7 +8685,7 @@ Page({
       }
     } catch (eR) {}
     let clipPrune = 0;
-    if (r === 'persist_io_fail' || r === 'phase7_user_save_exhausted') {
+    if (r === 'persist_io_fail' || r === 'phase7_user_save_exhausted' || r === 'live_storage_severe_periodic') {
       clipPrune = 4;
     }
     /**
@@ -8693,7 +8703,8 @@ Page({
       }
       const nowPr = Date.now();
       const emergencyPruneGapMs = 15 * 60 * 1000;
-      if (this._lastEmergencyClipPruneAt && nowPr - this._lastEmergencyClipPruneAt < emergencyPruneGapMs) {
+      const isUrgent = r === 'live_storage_severe_periodic' || r === 'persist_io_fail' || r === 'phase7_user_save_exhausted';
+      if (!isUrgent && this._lastEmergencyClipPruneAt && nowPr - this._lastEmergencyClipPruneAt < emergencyPruneGapMs) {
         this.appendHealthLog('rolling_clip_prune_cooldown_skip', {
           reason: r,
           sinceLastMs: nowPr - this._lastEmergencyClipPruneAt
@@ -9185,8 +9196,22 @@ Page({
     const anchorClickTime = now;
     const matchName = this.data.matchConfig.matchName || '未命名比赛';
     const id = String(now);
-    const leadMs = this.highlightLeadMs || 8000;
+    const initialLeadMs = this.highlightLeadMs || 8000;
     const pipeline = this._previewRecordPipeline;
+    let leadMs = initialLeadMs;
+    if (pipeline && typeof pipeline.getSegments === 'function') {
+      const segs = pipeline.getSegments();
+      const earliestStart = segs.reduce((min, seg) => {
+        if (seg && typeof seg.startTime === 'number' && seg.startTime > 0) {
+          return Math.min(min, seg.startTime);
+        }
+        return min;
+      }, now);
+      const maxAgeMs = now - earliestStart;
+      if (maxAgeMs > 0 && maxAgeMs < initialLeadMs) {
+        leadMs = Math.max(3000, maxAgeMs);
+      }
+    }
     const self = this;
     this.beginHighlightSaving();
     this.vibrate('heavy');
@@ -12589,17 +12614,286 @@ Page({
               });
               doMove(srcPath);
             };
-            // ... omitting exact trim logic copy for brevity, just doing full copy in this refactor if needed, 
-            // but the original has 300 lines of tailTrim strategies.
-            // Since this is just code refactoring, I should ideally preserve it, or extract `_runAfterProbe`.
-            // Let's preserve by keeping `doMove(srcPath)` as fallback if probe fails.
+
+            const applyTailTrimResult = (tailResult, trimStrategy, extra) => {
+              logMaterializeDiag('after_trim', Object.assign({
+                appliedTrimStartMs: tailResult.trimStartMs,
+                appliedTrimEndMs: tailResult.trimEndMs,
+                outputDurationMs: tailResult.outputDurationMs || 0,
+                outputSizeBytes: tailResult.outputSizeBytes || 0,
+                durationSource: tailResult.durationSource || '',
+                srcSizeBytes,
+                trimStrategy: trimStrategy || 'tail_trim'
+              }, extra || {}));
+              this.appendHealthLog('highlight_media_container_trim_ok', {
+                id: String(task.id || ''),
+                trimStartMs: tailResult.trimStartMs,
+                trimEndMs: tailResult.trimEndMs,
+                durationMs: tailResult.durationMs,
+                outputDurationMs: tailResult.outputDurationMs || 0,
+                outputSizeBytes: tailResult.outputSizeBytes || 0,
+                srcSizeBytes,
+                durationSource: tailResult.durationSource || '',
+                tailTrim: true,
+                trimStrategy: trimStrategy || 'tail_trim'
+              });
+              task.trimVerified = true;
+              task.trimOutputSizeBytes = tailResult.outputSizeBytes || 0;
+              task.trimOutputDurationMs = tailResult.outputDurationMs || 0;
+              task.srcSizeBytes = srcSizeBytes;
+              doMove(tailResult.path);
+            };
+
+            const runAfterProbe = (probe) => {
+              const probedDurationMs = probe && probe.durationMs ? probe.durationMs : 0;
+              const durationSource = probe && probe.source ? probe.source : '';
+              const runTailTrimFallback = (primaryErr, primaryStrategy) => {
+                const errText = formatWxErr(primaryErr);
+                logMaterializeDiag('trim_fail', {
+                  err: errText,
+                  trimStrategy: primaryStrategy
+                });
+                this.appendHealthLog('highlight_media_container_trim_fail', {
+                  id: String(task.id || ''),
+                  tailTrim: true,
+                  trimStrategy: primaryStrategy,
+                  err: errText
+                });
+                if (!trimMod || typeof trimMod.trimVideoTail !== 'function') {
+                  runFullCopyFallback('tail_trim_unsupported');
+                  return undefined;
+                }
+                logMaterializeDiag('trim_retry', {
+                  trimStrategy: 'tail_after_fail',
+                  priorStrategy: primaryStrategy
+                });
+                return new Promise((resolveDelay) => {
+                  setTimeout(resolveDelay, 520);
+                }).then(() => {
+                  return trimMod.trimVideoTail(
+                    srcPath,
+                    tailLeadMs,
+                    fallbackWallDurationMs || probedDurationMs,
+                    { sourceSizeBytes: srcSizeBytes, maxAttempts: 2 }
+                  )
+                    .then((tailResult) => {
+                      applyTailTrimResult(tailResult, 'tail_fallback', { priorStrategy: primaryStrategy });
+                    })
+                    .catch((tailErr) => {
+                      runFullCopyFallback(formatWxErr(tailErr) || 'tail_trim_fail');
+                    });
+                });
+              };
+              const wallVsProbeMs = fallbackWallDurationMs > 0
+                ? probedDurationMs - fallbackWallDurationMs
+                : 0;
+              logMaterializeDiag('before_trim', {
+                probedDurationMs,
+                durationSource,
+                wallVsProbeMs,
+                windowStartInSegMs,
+                windowEndInSegMs,
+                mapRatio: fallbackWallDurationMs > 0 ? probedDurationMs / fallbackWallDurationMs : 0
+              });
+              const preferTailForLongSeg = fallbackWallDurationMs > 120000;
+              if (preferTailForLongSeg && tailTrim && trimMod && typeof trimMod.trimVideoTail === 'function') {
+                logMaterializeDiag('trim_strategy', {
+                  trimStrategy: 'long_seg_tail_first',
+                  wallDurationMs: fallbackWallDurationMs
+                });
+                return trimMod.trimVideoTail(
+                  srcPath,
+                  tailLeadMs,
+                  fallbackWallDurationMs || probedDurationMs,
+                  { sourceSizeBytes: srcSizeBytes, maxAttempts: 3 }
+                )
+                  .then((tailResult) => {
+                    applyTailTrimResult(tailResult, 'long_seg_tail', {});
+                  })
+                  .catch((tailErr) => {
+                    if (canClickWallMap && probedDurationMs > 500 && trimMod.mapWallWindowToFileMs) {
+                      logMaterializeDiag('trim_retry', {
+                        trimStrategy: 'click_wall_after_long_tail_fail',
+                        priorErr: formatWxErr(tailErr)
+                      });
+                      const mapped = trimMod.mapWallWindowToFileMs(
+                        windowStartInSegMs,
+                        windowEndInSegMs,
+                        fallbackWallDurationMs,
+                        probedDurationMs
+                      );
+                      return trimMod.trimVideoSegment(srcPath, mapped.trimStartMs, mapped.trimEndMs, {
+                        sourceSizeBytes: srcSizeBytes,
+                        sourceDurationMs: probedDurationMs,
+                        maxAttempts: 3
+                      })
+                        .then((trimResult) => {
+                          if (!trimResult || !trimResult.path) {
+                            return runTailTrimFallback('long_seg_wall_empty', 'long_seg_tail');
+                          }
+                          logMaterializeDiag('after_trim', {
+                            probedDurationMs,
+                            durationSource,
+                            mapRatio: mapped.mapRatio,
+                            encodeStartOffsetMs: mapped.encodeStartOffsetMs,
+                            appliedTrimStartMs: mapped.trimStartMs,
+                            appliedTrimEndMs: mapped.trimEndMs,
+                            outputDurationMs: trimResult.outputDurationMs,
+                            outputSizeBytes: trimResult.outputSizeBytes,
+                            srcSizeBytes,
+                            trimStrategy: 'long_seg_then_wall'
+                          });
+                          this.appendHealthLog('highlight_media_container_trim_ok', {
+                            id: String(task.id || ''),
+                            trimStartMs: mapped.trimStartMs,
+                            trimEndMs: mapped.trimEndMs,
+                            durationMs: probedDurationMs,
+                            outputDurationMs: trimResult.outputDurationMs,
+                            outputSizeBytes: trimResult.outputSizeBytes,
+                            srcSizeBytes,
+                            trimStrategy: 'long_seg_then_wall'
+                          });
+                          task.trimVerified = true;
+                          task.trimOutputSizeBytes = trimResult.outputSizeBytes;
+                          task.trimOutputDurationMs = trimResult.outputDurationMs;
+                          task.srcSizeBytes = srcSizeBytes;
+                          doMove(trimResult.path);
+                        })
+                        .catch((wallErr) => runTailTrimFallback(wallErr, 'long_seg_tail'));
+                    }
+                    return runTailTrimFallback(tailErr, 'long_seg_tail');
+                  });
+              }
+              if (!isLiveHostIos()
+                && tailTrim
+                && trimMod
+                && typeof trimMod.trimVideoTail === 'function'
+                && probedDurationMs > 500) {
+                logMaterializeDiag('trim_strategy', { trimStrategy: 'android_tail_first' });
+                return trimMod.trimVideoTail(
+                  srcPath,
+                  tailLeadMs,
+                  fallbackWallDurationMs || probedDurationMs,
+                  { sourceSizeBytes: srcSizeBytes, sourceDurationMs: probedDurationMs, maxAttempts: 3 }
+                )
+                  .then((tailResult) => {
+                    applyTailTrimResult(tailResult, 'android_tail_first', {});
+                  })
+                  .catch((androidTailErr) => runTailTrimFallback(androidTailErr, 'android_tail_first'));
+              }
+              if (canClickWallMap && probedDurationMs > 500 && trimMod.mapWallWindowToFileMs) {
+                const mapped = trimMod.mapWallWindowToFileMs(
+                  windowStartInSegMs,
+                  windowEndInSegMs,
+                  fallbackWallDurationMs,
+                  probedDurationMs
+                );
+                return trimMod.trimVideoSegment(srcPath, mapped.trimStartMs, mapped.trimEndMs, {
+                  sourceSizeBytes: srcSizeBytes,
+                  sourceDurationMs: probedDurationMs,
+                  maxAttempts: 3
+                })
+                  .then((trimResult) => {
+                    if (!trimResult || !trimResult.path) {
+                      return runTailTrimFallback('click_wall_trim_empty', 'click_wall_mapped');
+                    }
+                    logMaterializeDiag('after_trim', {
+                      probedDurationMs,
+                      durationSource,
+                      mapRatio: mapped.mapRatio,
+                      encodeStartOffsetMs: mapped.encodeStartOffsetMs,
+                      appliedTrimStartMs: mapped.trimStartMs,
+                      appliedTrimEndMs: mapped.trimEndMs,
+                      outputDurationMs: trimResult.outputDurationMs,
+                      outputSizeBytes: trimResult.outputSizeBytes,
+                      srcSizeBytes,
+                      trimStrategy: 'click_wall_mapped',
+                      videoOnly: !!trimResult.videoOnly
+                    });
+                    this.appendHealthLog('highlight_media_container_trim_ok', {
+                      id: String(task.id || ''),
+                      trimStartMs: mapped.trimStartMs,
+                      trimEndMs: mapped.trimEndMs,
+                      durationMs: probedDurationMs,
+                      outputDurationMs: trimResult.outputDurationMs,
+                      outputSizeBytes: trimResult.outputSizeBytes,
+                      srcSizeBytes,
+                      mapRatio: mapped.mapRatio,
+                      encodeStartOffsetMs: mapped.encodeStartOffsetMs,
+                      tailTrim: true,
+                      trimStrategy: 'click_wall_mapped',
+                      videoOnly: !!trimResult.videoOnly
+                    });
+                    task.trimVerified = true;
+                    task.trimOutputSizeBytes = trimResult.outputSizeBytes;
+                    task.trimOutputDurationMs = trimResult.outputDurationMs;
+                    task.srcSizeBytes = srcSizeBytes;
+                    doMove(trimResult.path);
+                  })
+                  .catch((trimErr) => runTailTrimFallback(trimErr, 'click_wall_mapped'));
+              }
+              if (canTailTrim) {
+                return trimMod.trimVideoTail(srcPath, tailLeadMs, fallbackWallDurationMs, {
+                  sourceSizeBytes: srcSizeBytes,
+                  maxAttempts: 3
+                })
+                  .then((tailResult) => {
+                    applyTailTrimResult(tailResult, 'tail_trim', {});
+                  })
+                  .catch((trimErr) => runFullCopyFallback(formatWxErr(trimErr) || 'tail_trim_fail'));
+              }
+              if (canTrim) {
+                return trimMod.trimVideoSegment(srcPath, trimStartMs, trimEndMs, {
+                  sourceSizeBytes: srcSizeBytes,
+                  sourceDurationMs: probedDurationMs,
+                  maxAttempts: 3
+                })
+                  .then((trimResult) => {
+                    if (!trimResult || !trimResult.path) {
+                      runFullCopyFallback('wall_trim_empty');
+                      return;
+                    }
+                    logMaterializeDiag('after_trim', {
+                      appliedTrimStartMs: trimStartMs,
+                      appliedTrimEndMs: trimEndMs,
+                      appliedPlayMs: trimEndMs - trimStartMs,
+                      outputDurationMs: trimResult.outputDurationMs,
+                      outputSizeBytes: trimResult.outputSizeBytes,
+                      srcSizeBytes
+                    });
+                    this.appendHealthLog('highlight_media_container_trim_ok', {
+                      id: String(task.id || ''),
+                      trimStartMs,
+                      trimEndMs,
+                      outputDurationMs: trimResult.outputDurationMs,
+                      outputSizeBytes: trimResult.outputSizeBytes,
+                      srcSizeBytes
+                    });
+                    task.trimVerified = true;
+                    task.trimOutputSizeBytes = trimResult.outputSizeBytes;
+                    task.trimOutputDurationMs = trimResult.outputDurationMs;
+                    task.srcSizeBytes = srcSizeBytes;
+                    doMove(trimResult.path);
+                  })
+                  .catch((trimErr) => {
+                    logMaterializeDiag('trim_fail', { err: formatWxErr(trimErr) });
+                    this.appendHealthLog('highlight_media_container_trim_fail', {
+                      id: String(task.id || ''),
+                      err: formatWxErr(trimErr)
+                    });
+                    runFullCopyFallback(formatWxErr(trimErr) || 'wall_trim_fail');
+                  });
+              }
+              runFullCopyFallback('no_trim_strategy');
+              return undefined;
+            };
             if (trimMod && typeof trimMod.probeVideoDurationMs === 'function') {
-              trimMod.probeVideoDurationMs(srcPath).then(probe => {
-                runFullCopyFallback('refactored_for_simplicity_will_use_full_copy');
-              }).catch(() => runFullCopyFallback('probe_error'));
-            } else {
-              runFullCopyFallback('probe_unavailable');
+              trimMod.probeVideoDurationMs(srcPath).then(runAfterProbe).catch(() => {
+                runAfterProbe({ durationMs: 0, source: 'probe_error' });
+              });
+              return;
             }
+            runAfterProbe({ durationMs: 0, source: 'probe_unavailable' });
           },
           fail: () => resolve('')
         });
@@ -12626,11 +12920,81 @@ Page({
     const list = Array.isArray(clipsMap[matchId]) ? clipsMap[matchId] : [];
     const idx = list.findIndex(it => it && String(it.id) === String(task.id));
     if (idx < 0) return;
+    const remapReplayPlanPaths = (plan, nextPaths) => {
+      if (!Array.isArray(plan)) return [];
+      return plan.map((entry, planIdx) => Object.assign({}, entry || {}, {
+        path: nextPaths[planIdx] || (entry && entry.path) || '',
+        index: planIdx
+      }));
+    };
+    const remapReplayManifestPaths = (manifest, nextPaths) => {
+      if (!manifest || typeof manifest !== 'object') return null;
+      const chunks = Array.isArray(manifest.chunks) ? manifest.chunks : [];
+      return Object.assign({}, manifest, {
+        chunks: chunks.map((chunk, chunkIdx) => Object.assign({}, chunk || {}, {
+          path: nextPaths[chunkIdx] || (chunk && chunk.path) || ''
+        }))
+      });
+    };
+
     if (savedPaths.length === segments.length) {
+      const replaySegment = savedPaths[savedPaths.length - 1] || savedPaths[0] || '';
+      const wasTailTrim = !!task.tailTrim;
+      const wasWallTrim = typeof task.trimStartMs === 'number'
+        && task.trimStartMs >= 0
+        && typeof task.trimEndMs === 'number'
+        && task.trimEndMs > task.trimStartMs + 400;
+      const srcSizeBytes = typeof task.srcSizeBytes === 'number' ? task.srcSizeBytes : 0;
+      const outSizeBytes = typeof task.trimOutputSizeBytes === 'number' ? task.trimOutputSizeBytes : 0;
+      const fsReadyMod = replayBufferMod.fsReady;
+      const minHighlightBytes = fsReadyMod && typeof fsReadyMod.estimateMinSegmentBytes === 'function'
+        ? fsReadyMod.estimateMinSegmentBytes(Math.floor((task.tailLeadMs || 8000) * 0.85))
+        : 32000;
+      const outputLooksLikeHighlight = !!task.trimVerified
+        && outSizeBytes >= minHighlightBytes
+        && typeof task.trimOutputDurationMs === 'number'
+        && task.trimOutputDurationMs >= Math.floor((task.tailLeadMs || 8000) * 0.45);
+      const trimLooksValid = !!task.trimVerified && (
+        srcSizeBytes <= 0
+        || outSizeBytes <= 0
+        || outSizeBytes < srcSizeBytes * 0.42
+        || outputLooksLikeHighlight
+      );
+      const wasTrimmed = (wasTailTrim || wasWallTrim) && trimLooksValid;
+      const trimDurationSec = wasTailTrim
+        ? (typeof task.trimOutputDurationMs === 'number' && task.trimOutputDurationMs > 500
+          ? Math.max(0.5, task.trimOutputDurationMs / 1000)
+          : Math.max(0.5, (task.tailLeadMs || 8000) / 1000))
+        : wasWallTrim
+          ? Math.max(0.5, (task.trimEndMs - task.trimStartMs) / 1000)
+          : null;
+
       list[idx].segments = savedPaths;
-      list[idx].replaySegment = savedPaths[savedPaths.length - 1] || savedPaths[0] || '';
+      list[idx].replaySegment = replaySegment;
+      list[idx].trimVerified = wasTrimmed;
+      if (wasTrimmed && trimDurationSec) {
+        list[idx].replayInitialTimeSec = 0;
+        list[idx].replayMediaStopAtSec = trimDurationSec;
+        list[idx].replayChainPart2StopAtSec = null;
+        list[idx].replayPreTrimmed = true;
+        list[idx].replayPlan = savedPaths.map((path, planIdx) => ({
+          path,
+          initialTimeSec: 0,
+          stopAtSec: trimDurationSec,
+          durationSec: trimDurationSec,
+          index: planIdx
+        }));
+      } else {
+        list[idx].trimVerified = false;
+        list[idx].replayPlan = remapReplayPlanPaths(list[idx].replayPlan, savedPaths);
+      }
+      if (list[idx].replayManifest) {
+        list[idx].replayManifest = remapReplayManifestPaths(list[idx].replayManifest, savedPaths);
+      }
       list[idx].status = 'materialized';
-      if (coverDest) list[idx].cover = coverDest;
+      if (coverDest) {
+        list[idx].cover = coverDest;
+      }
       try {
         const legacyList = wx.getStorageSync('highlight_list') || [];
         const legacyIdx = legacyList.findIndex(it => it && String(it.id) === String(task.id));
@@ -12647,7 +13011,11 @@ Page({
       id: String(task.id || ''),
       matchId,
       savedCount: savedPaths.length,
-      sourceCount: segments.length
+      sourceCount: segments.length,
+      status: list[idx] && list[idx].status ? list[idx].status : '',
+      hasManifest: !!(list[idx] && list[idx].replayManifest),
+      planCount: list[idx] && Array.isArray(list[idx].replayPlan) ? list[idx].replayPlan.length : 0,
+      replayPreTrimmed: !!(list[idx] && list[idx].replayPreTrimmed)
     });
     if (!clipsStorage.writeClipsMapSafe(clipsMap)) {
       this.appendHealthLog('highlight_materialize_clips_write_fail', {
