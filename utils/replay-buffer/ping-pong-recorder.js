@@ -1495,20 +1495,23 @@ class PingPongRecorder {
 
   /**
    * P1: 获取最早可用的 track/segment 起始时间，用于 leadMs 动态限制。
+   * @param {number} [beforeMs] 仅考虑 startTime <= beforeMs 的数据源，过滤掉
+   *   由 flush 操作刚刚创建的极新轨道（startTime > clickTime）。
    * @returns {number} 0 表示无可用数据
    */
-  _getOldestActiveTrackStartMs() {
+  _getOldestActiveTrackStartMs(beforeMs) {
+    const cutoff = typeof beforeMs === 'number' && beforeMs > 0 ? beforeMs : Infinity;
     let oldest = 0;
-    // 查落盘 segments
+    // 查落盘 segments —— 仅考虑 clickTime 之前已存在的
     (this.segments || []).forEach(seg => {
-      if (seg && seg.startTime > 0) {
+      if (seg && seg.startTime > 0 && seg.startTime <= cutoff) {
         if (!oldest || seg.startTime < oldest) oldest = seg.startTime;
       }
     });
-    // 查 live tracks
+    // 查 live tracks —— 过滤掉在 clickTime 之后才启动的极新轨道
     TRACK_IDS.forEach(trackId => {
       const track = this.tracks[trackId];
-      if (track && track.recording && track.recordStartWallMs > 0) {
+      if (track && track.recording && track.recordStartWallMs > 0 && track.recordStartWallMs <= cutoff) {
         if (!oldest || track.recordStartWallMs < oldest) oldest = track.recordStartWallMs;
       }
     });
@@ -1523,8 +1526,8 @@ class PingPongRecorder {
    */
   resolveHighlightSeek(clickTime, leadMs) {
     let lead = typeof leadMs === 'number' && leadMs > 0 ? leadMs : 8000;
-    // P1: 动态限制 leadMs，防止冷启动越界提取
-    const oldestTrackStartMs = this._getOldestActiveTrackStartMs();
+    // P1: 动态限制 leadMs，防止冷启动越界提取；传入 clickTime 过滤 flush 创建的极新轨道
+    const oldestTrackStartMs = this._getOldestActiveTrackStartMs(clickTime);
     if (oldestTrackStartMs > 0) {
       const maxAvailableLead = Math.max(500, clickTime - oldestTrackStartMs);
       if (lead > maxAvailableLead) {
@@ -1587,8 +1590,8 @@ class PingPongRecorder {
     }
 
     let lead = typeof leadMs === 'number' && leadMs > 0 ? leadMs : 8000;
-    // P1: 动态限制 leadMs，防止冷启动越界提取
-    const oldestTrackStartMs = this._getOldestActiveTrackStartMs();
+    // P1: 动态限制 leadMs，防止冷启动越界提取；传入 clickTime 过滤 flush 创建的极新轨道
+    const oldestTrackStartMs = this._getOldestActiveTrackStartMs(clickTime);
     if (oldestTrackStartMs > 0) {
       const maxAvailableLead = Math.max(500, clickTime - oldestTrackStartMs);
       if (lead > maxAvailableLead) {
