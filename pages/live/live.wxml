@@ -3,13 +3,13 @@
 <view class="container landscape {{isRecording ? 'container--rec-performance' : ''}}">
   <!-- Level 0: 16:9 内接取景框（与 computeLiveStage16x9 一致），避免全屏与相机典型 16:9 输出比例差导致的非等比拉伸感 -->
   <view
-    wx:if="{{liveStreamAllowed && cameraMounted}}"
+    wx:if="{{liveStreamAllowed && cameraMounted && isCameraRendered}}"
     class="live-stage"
     id="liveStage"
     style="{{liveStageInlineStyle}}">
     <!-- 全屏相机：纯预览；后台录制走 offscreen MediaRecorder 乒乓缓冲 -->
     <camera
-      wx:if="{{cameraMounted && liveStreamAllowed}}"
+      wx:if="{{cameraMounted && liveStreamAllowed && isCameraRendered}}"
       device-position="back"
       flash="off"
       frame-size="large"

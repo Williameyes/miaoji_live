@@ -659,6 +659,8 @@ Page({
     statusBarHeight: 0,
     cameraContext: null,
     cameraMounted: false,
+    /** 毁灭性重建控制阀：false 时 wx:if 令微信底层彻底销毁 <camera> 原生节点并释放硬件锁。 */
+    isCameraRendered: true,
     /** 强制 camera 组件重建的渲染序号（每次重建 +1）。 */
     cameraRenderNonce: 0,
     isRecovering: false,
@@ -1875,8 +1877,8 @@ Page({
    * 滚动录制单段时长（毫秒）。8s 单段体积更小，在约 200MB 本机文件配额下可保留更多段/更多次高光；
    * 高光「体感窗口」仍由 {@link highlightPlaybackWindowMs} 控制（默认 8s）。
    */
-  /** 乒乓录制单段时长（毫秒）：3 分钟母片，降低 start/stop 频率避免 iOS 601。 */
-  pingPongChunkDurationMs: 180000,
+  /** 乒乓录制单段时长（毫秒）：1 分钟母片（~15-20MB），平衡 start/stop 频率与存储压力。 */
+  pingPongChunkDurationMs: 60000,
   /** 双轨重叠（毫秒）：B 在 A 结束前 8s 启动；并发编码占比约 4.4%。 */
   pingPongStaggerMs: 8000,
   /** 后台 MediaRecorder 目标帧率（进阶画质档：15fps）。 */
@@ -1885,7 +1887,7 @@ Page({
   pingPongRollingMaxFiles: 2,
   /** 高光强制 flush 最小间隔（毫秒），抑制连按引发 iOS 601。 */
   pingPongHighlightFlushMinIntervalMs: 10000,
-  segmentDurationMs: 180000,
+  segmentDurationMs: 60000,
   /** 用户点击保存后，回放时希望覆盖的精彩窗口长度（毫秒），可与物理切片时长解耦 */
   highlightPlaybackWindowMs: 8000,
   /** 时间驱动高光窗口：保存点击前过去 8s，不等待未来片段。 */
@@ -4746,6 +4748,8 @@ Page({
     this._livePageVisible = true;
     if (this._liveReturnedFromBackground) {
       this._encodeStallGraceUntil = Date.now() + ENCODE_STALL_RECOVER_COOLDOWN_MS;
+      // P0: 硬件交接安全期 — 等待 iOS 系统相机资源完全释放后再 rebuild
+      this.appendHealthLog('camera_hardware_debounce_wait', { delayMs: 400 });
     }
     const enhanceBetaWhitelisted = false;
     const autoSyncWhitelisted = checkSyncLabWhitelist();
@@ -4846,7 +4850,16 @@ Page({
       }
     } catch (eSnap) {}
     if (this._entitlementEverAllowedInSession) {
-      this._ensureLiveCameraReady(() => this._liveCoreOnShowAfterEntitlement());
+      // P0: 切后台回前台时 debounce 400ms，等待 iOS 相机硬件资源释放
+      if (this._liveReturnedFromBackground) {
+        if (this._cameraHardwareDebounceTimer) clearTimeout(this._cameraHardwareDebounceTimer);
+        this._cameraHardwareDebounceTimer = setTimeout(() => {
+          this._cameraHardwareDebounceTimer = null;
+          this._ensureLiveCameraReady(() => this._liveCoreOnShowAfterEntitlement());
+        }, 400);
+      } else {
+        this._ensureLiveCameraReady(() => this._liveCoreOnShowAfterEntitlement());
+      }
       return;
     }
     this.refreshLiveEntitlementAndResume(() => {
@@ -5623,6 +5636,19 @@ Page({
     }
   },
   onHide: function () {
+    // P0: 清除帧脉搏监控与硬件 debounce 定时器
+    if (this._framePulseTimer) {
+      clearTimeout(this._framePulseTimer);
+      this._framePulseTimer = null;
+    }
+    if (this._cameraHardwareDebounceTimer) {
+      clearTimeout(this._cameraHardwareDebounceTimer);
+      this._cameraHardwareDebounceTimer = null;
+    }
+    // P1: 主动暂停录制管线，释放 requestAnimationFrame，避免后台空转超时
+    if (this._previewRecordPipeline && this._previewRecordPipeline.isActive()) {
+      this.appendHealthLog('page_hide_pipeline_graceful_pause', {});
+    }
     this._stopFootballLocalClock();
     this.setData({
       footballOpsPanelOpen: false
@@ -6498,6 +6524,124 @@ Page({
     }, 'hard_recover');
   },
   /**
+   * P0: 主动式帧数脉搏监控。
+   * 仅在切后台回前台时启用（冷启动不需要）——检测 iOS 系统相机假死。
+   * 录制启动 6 秒后检查 pipeline heartbeat + recording track 双信号；
+   * 若两者均无活跃迹象则判定管线假死，触发毁灭性重建。
+   * @returns {void}
+   */
+  _armFramePulseMonitor: function () {
+    if (this._framePulseTimer) {
+      clearTimeout(this._framePulseTimer);
+      this._framePulseTimer = null;
+    }
+    // 仅在切后台回前台时启用——冷启动时 onCameraFrame heartbeat 周期为 5s，
+    // 不需要也不应该触发帧脉搏检测
+    if (!this._liveReturnedFromBackground) return;
+    const pipeline = this._previewRecordPipeline;
+    if (!pipeline || !pipeline.isActive()) return;
+    // heartbeat 刷新周期为 5s，检查延迟须 > 5s 避免误判
+    const checkDelayMs = 6000;
+    const armTs = Date.now();
+    this._framePulseTimer = setTimeout(() => {
+      this._framePulseTimer = null;
+      if (!this._livePageVisible || !this.rollingActive) return;
+      if (!pipeline.isActive()) return;
+      const heartbeatAt = typeof pipeline.getLastHeartbeatAt === 'function'
+        ? pipeline.getLastHeartbeatAt() : 0;
+      const heartbeatAgeMs = heartbeatAt > 0 ? Date.now() - heartbeatAt : -1;
+      // heartbeat 刷新周期 5s，6s 内收到过即视为存活
+      const hasRecentHeartbeat = heartbeatAgeMs >= 0 && heartbeatAgeMs < checkDelayMs;
+      // 双信号：recording track 数量 > 0 也视为管线存活
+      const trackCount = typeof pipeline.getRecordingTrackCount === 'function'
+        ? pipeline.getRecordingTrackCount() : 0;
+      const isAlive = hasRecentHeartbeat || trackCount > 0;
+      this.appendHealthLog('frame_pulse_check', {
+        heartbeatAgeMs,
+        hasRecentHeartbeat,
+        trackCount,
+        isAlive,
+        afterPageHide: !!this._liveReturnedFromBackground
+      });
+      if (!isAlive) {
+        this.appendHealthLog('frame_pulse_dead_detected', {
+          heartbeatAgeMs,
+          trackCount,
+          armTs,
+          afterPageHide: !!this._liveReturnedFromBackground
+        });
+        this._destructiveCameraRemount('frame_pulse_dead');
+      }
+    }, checkDelayMs);
+  },
+  /**
+   * P0: 毁灭性原生组件销毁。
+   * 时序锁串行保证：先 stopRolling（等 I/O 写完）→ setData(isCameraRendered:false) 销毁 →
+   * wx.nextTick + 100ms 等底层清理 → setData(isCameraRendered:true) 重新索取硬件锁 →
+   * rebuildCameraComponent → remountCameraComponent → start pipeline。
+   * @param {string} reason
+   * @returns {void}
+   */
+  _destructiveCameraRemount: function (reason) {
+    if (this._destructiveRemountLock) {
+      this.appendHealthLog('destructive_remount_skip_locked', { reason: reason || '' });
+      return;
+    }
+    if (!this._livePageVisible) {
+      this.appendHealthLog('destructive_remount_skip_hidden', { reason: reason || '' });
+      return;
+    }
+    this._destructiveRemountLock = true;
+    this.appendHealthLog('destructive_camera_remount_start', { reason: reason || '' });
+    const self = this;
+    // Step 1: 停止 pipeline，释放文件句柄
+    this.stopRollingRecording(() => {
+      // Step 2: 销毁原生 <camera> 组件
+      self.setData({ isCameraRendered: false }, () => {
+        // Step 3: wx.nextTick 确保底层彻底抹去节点
+        const afterDestroy = () => {
+          // Step 4: 100ms 延时后重新创建 camera 节点
+          setTimeout(() => {
+            if (!self._livePageVisible) {
+              self._destructiveRemountLock = false;
+              self.appendHealthLog('destructive_camera_remount_abort_hidden', { reason: reason || '' });
+              // 仍需恢复 isCameraRendered，否则回前台后永远黑屏
+              self.setData({ isCameraRendered: true });
+              return;
+            }
+            self.setData({ isCameraRendered: true }, () => {
+              self.appendHealthLog('destructive_camera_remount_dom_restored', { reason: reason || '' });
+              // Step 5: rebuild → remount → start pipeline
+              self._cameraInitDone = false;
+              self._previewRecordWarmupUntil = Date.now() + self.getPreviewRecordWarmupMs();
+              self.rebuildCameraComponent(generation => {
+                self.remountCameraComponent({
+                  generation,
+                  onMounted: () => {
+                    self._destructiveRemountLock = false;
+                    self.rollingActive = true;
+                    self.rollingSessionId += 1;
+                    self.highlightMissStreak = 0;
+                    self._cameraFaultStreak = 0;
+                    self._encodeStallGraceUntil = Date.now() + ENCODE_STALL_RECOVER_COOLDOWN_MS;
+                    self._hardRecoverQuarantineUntil = Date.now() + HARD_RECOVER_HIGHLIGHT_QUARANTINE_MS;
+                    self.appendHealthLog('destructive_camera_remount_done', { reason: reason || '' });
+                    self.tryStartRollingWhenCameraReady('destructive_remount_done');
+                  }
+                });
+              });
+            });
+          }, 100);
+        };
+        if (wx.nextTick) {
+          wx.nextTick(afterDestroy);
+        } else {
+          setTimeout(afterDestroy, 0);
+        }
+      });
+    }, 'destructive_remount');
+  },
+  /**
    * 右下角状态钮：REC 时保存高光；ERR 时单击触发页内硬恢复（不跳页、不挡预览）。
    * @returns {void}
    */
@@ -7074,6 +7218,8 @@ Page({
         isRecording: true
       });
       self.updatePipelineHealth();
+      // P0: 启动帧脉搏监控 — 2s 后检查是否有有效帧，检测 iOS 空壳流假死
+      self._armFramePulseMonitor();
     }).catch(err => {
       self._previewRecordStartInFlight = false;
       const errMsg = String(err && err.message || err);
@@ -8639,7 +8785,9 @@ Page({
   freeRollingFileStorageAggressive: function (reason) {
     const now = Date.now();
     const r = typeof reason === 'string' ? reason : '';
-    const gapMs = r === 'persist_io_fail' || r === 'phase7_user_save_exhausted' ? 450 : r === 'live_storage_severe_kickoff' ? 800 : 2400;
+    // P0: severe 水位或 persist_io_fail 时缩短节流间隔
+    const isSevereBreach = r === 'live_storage_severe_periodic' || r === 'persist_io_fail';
+    const gapMs = isSevereBreach ? 200 : r === 'phase7_user_save_exhausted' ? 450 : r === 'live_storage_severe_kickoff' ? 800 : 2400;
     if (this._lastRollingAggressiveFreeAt && now - this._lastRollingAggressiveFreeAt < gapMs) {
       this.appendHealthLog('rolling_aggressive_free_throttled', {
         reason: r,
@@ -8704,7 +8852,15 @@ Page({
       const nowPr = Date.now();
       const emergencyPruneGapMs = 15 * 60 * 1000;
       const isUrgent = r === 'live_storage_severe_periodic' || r === 'persist_io_fail' || r === 'phase7_user_save_exhausted';
-      if (!isUrgent && this._lastEmergencyClipPruneAt && nowPr - this._lastEmergencyClipPruneAt < emergencyPruneGapMs) {
+      // P0: severe 水位时击穿 15 分钟冷却期，强制清空 rolling 历史
+      if (isSevereBreach) {
+        this.appendHealthLog('severe_gc_cooldown_breach', {
+          reason: r,
+          sinceLastMs: this._lastEmergencyClipPruneAt ? nowPr - this._lastEmergencyClipPruneAt : -1
+        });
+        this.purgeAllRollingMp4('severe_gc_breach');
+      }
+      if (!isUrgent && !isSevereBreach && this._lastEmergencyClipPruneAt && nowPr - this._lastEmergencyClipPruneAt < emergencyPruneGapMs) {
         this.appendHealthLog('rolling_clip_prune_cooldown_skip', {
           reason: r,
           sinceLastMs: nowPr - this._lastEmergencyClipPruneAt
@@ -12605,6 +12761,32 @@ Page({
             }
             const formatWxErr = replayBufferMod.formatWxErr;
             const runFullCopyFallback = reason => {
+              // P0: 禁止全量拷贝 60MB 母片；先尝试 tail trim 兜底
+              if (trimMod && typeof trimMod.trimVideoTail === 'function'
+                  && typeof trimMod.isMediaContainerSupported === 'function'
+                  && trimMod.isMediaContainerSupported()) {
+                logMaterializeDiag('trim_retry_instead_of_full_copy', { reason: reason || '' });
+                trimMod.trimVideoTail(
+                  srcPath,
+                  tailLeadMs,
+                  fallbackWallDurationMs || 8000,
+                  { sourceSizeBytes: srcSizeBytes, maxAttempts: 2 }
+                ).then(tailResult => {
+                  applyTailTrimResult(tailResult, 'full_copy_salvage_tail', { originalReason: reason });
+                }).catch(trimErr => {
+                  logMaterializeDiag('trim_all_failed_forced_copy', {
+                    reason: reason || '',
+                    trimErr: formatWxErr(trimErr)
+                  });
+                  this.appendHealthLog('highlight_materialize_forced_full_copy', {
+                    id: String(task.id || ''),
+                    reason: reason || '',
+                    srcSizeBytes
+                  });
+                  doMove(srcPath);
+                });
+                return;
+              }
               logMaterializeDiag('trim_fallback_full_copy', {
                 reason: reason || ''
               });
@@ -13068,6 +13250,10 @@ Page({
     this._lastHardRecoverAt = 0;
     this._lastTempMissingStormRecoverAt = 0;
     this._hardRecoverMinGapMs = 2200;
+    // P0: 毁灭性重建相关状态
+    this._destructiveRemountLock = false;
+    this._framePulseTimer = null;
+    this._cameraHardwareDebounceTimer = null;
   },
   _initLiveWsState: function () {
     this._liveWsCurrentSeq = 0;

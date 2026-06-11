@@ -1494,13 +1494,49 @@ class PingPongRecorder {
   }
 
   /**
+   * P1: 获取最早可用的 track/segment 起始时间，用于 leadMs 动态限制。
+   * @returns {number} 0 表示无可用数据
+   */
+  _getOldestActiveTrackStartMs() {
+    let oldest = 0;
+    // 查落盘 segments
+    (this.segments || []).forEach(seg => {
+      if (seg && seg.startTime > 0) {
+        if (!oldest || seg.startTime < oldest) oldest = seg.startTime;
+      }
+    });
+    // 查 live tracks
+    TRACK_IDS.forEach(trackId => {
+      const track = this.tracks[trackId];
+      if (track && track.recording && track.recordStartWallMs > 0) {
+        if (!oldest || track.recordStartWallMs < oldest) oldest = track.recordStartWallMs;
+      }
+    });
+    return oldest;
+  }
+
+  /**
    * 按点击时间解析单文件高光（须 wall-clock 完整覆盖 8s 窗）。
    * @param {number} clickTime
    * @param {number} leadMs
    * @returns {{ path: string, replayInitialTimeSec: number, replayMediaStopAtSec: number }|null}
    */
   resolveHighlightSeek(clickTime, leadMs) {
-    const lead = typeof leadMs === 'number' && leadMs > 0 ? leadMs : 8000;
+    let lead = typeof leadMs === 'number' && leadMs > 0 ? leadMs : 8000;
+    // P1: 动态限制 leadMs，防止冷启动越界提取
+    const oldestTrackStartMs = this._getOldestActiveTrackStartMs();
+    if (oldestTrackStartMs > 0) {
+      const maxAvailableLead = Math.max(500, clickTime - oldestTrackStartMs);
+      if (lead > maxAvailableLead) {
+        this._log('highlight_lead_clamped', {
+          requestedLead: lead,
+          clampedLead: maxAvailableLead,
+          clickTime,
+          oldestTrackStart: oldestTrackStartMs
+        });
+        lead = maxAvailableLead;
+      }
+    }
     const windowStart = clickTime - lead;
     const windowEnd = clickTime;
     const best = this._pickBestHighlightSegment(clickTime, lead);
@@ -1550,7 +1586,21 @@ class PingPongRecorder {
       return Promise.reject(err);
     }
 
-    const lead = typeof leadMs === 'number' && leadMs > 0 ? leadMs : 8000;
+    let lead = typeof leadMs === 'number' && leadMs > 0 ? leadMs : 8000;
+    // P1: 动态限制 leadMs，防止冷启动越界提取
+    const oldestTrackStartMs = this._getOldestActiveTrackStartMs();
+    if (oldestTrackStartMs > 0) {
+      const maxAvailableLead = Math.max(500, clickTime - oldestTrackStartMs);
+      if (lead > maxAvailableLead) {
+        this._log('highlight_lead_clamped_flush', {
+          requestedLead: lead,
+          clampedLead: maxAvailableLead,
+          clickTime,
+          oldestTrackStart: oldestTrackStartMs
+        });
+        lead = maxAvailableLead;
+      }
+    }
     const windowStart = clickTime - lead;
     const windowEnd = clickTime;
     const trackId = this._findLiveTrackForHighlightFlush(clickTime, lead);
