@@ -2,6 +2,7 @@
   <view class="help-intro">
     <text class="help-kicker">高光记分</text>
     <text class="help-intro-desc">以下为常用说明与排障指引，建议首次使用前阅读。</text>
+    <text class="help-intro-desc">高光记分是一款专业的篮球比赛计分板、足球比分记录与羽毛球记分工具，支持直播记分、赛事比分统计和高光片段回放，适用于业余篮球赛、校园足球联赛、羽毛球锦标赛等各类体育赛事场景。</text>
   </view>
 
   <view class="help-card help-card--warn">

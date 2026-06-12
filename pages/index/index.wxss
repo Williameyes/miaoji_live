@@ -1432,3 +1432,17 @@ page {
   border-color: #EF4444 !important;
   background: rgba(239, 68, 68, 0.03) !important;
 }
+
+/* ─────────────────────────────────────
+   WSO：SEO 隐藏描述区域
+   对用户视觉完全不可见，供微信搜索爬虫索引
+───────────────────────────────────── */
+.wso-seo-block {
+  height: 0;
+  overflow: hidden;
+  position: absolute;
+  left: -9999rpx;
+  font-size: 1rpx;
+  color: transparent;
+  pointer-events: none;
+}

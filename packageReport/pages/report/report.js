@@ -44,6 +44,23 @@ Page({
       matchTitle: match.matchName || `${teamA.name || 'A'} VS ${teamB.name || 'B'}`,
       scoreInfo: `${teamA.score != null ? teamA.score : 0} : ${teamB.score != null ? teamB.score : 0}`
     });
+    // WSO：动态标题含赛名和队名关键词，供微信搜索爬虫索引
+    try {
+      var aName = teamA.name || '';
+      var bName = teamB.name || '';
+      var mName = match.matchName || '';
+      var wsoTitle = '比赛记分报表 - 高光记分';
+      if (mName && aName && bName) {
+        wsoTitle = mName + ' ' + aName + 'vs' + bName + ' 记分报表';
+      } else if (aName && bName) {
+        wsoTitle = aName + 'vs' + bName + ' 记分报表 - 高光记分';
+      } else if (mName) {
+        wsoTitle = mName + ' 记分报表 - 高光记分';
+      }
+      wx.setNavigationBarTitle({ title: wsoTitle });
+    } catch (e) {
+      // WSO 标题设置失败不影响报表功能
+    }
   },
 
   /**

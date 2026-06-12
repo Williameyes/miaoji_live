@@ -1012,6 +1012,7 @@ resolveMatchIdForHighlightStorage: function () {
       if (sportType === SPORT_FOOTBALL || sportType === SPORT_BADMINTON) {
         selfSyncMc._initProScoreboardMovableLayout();
       }
+      selfSyncMc._updateLiveWsoTitle(latestConfig, sportType);
     });
     app.globalData.matchConfig = latestConfig;
     wx.setStorageSync('matchConfig', latestConfig);
@@ -1019,6 +1020,32 @@ resolveMatchIdForHighlightStorage: function () {
       this._startFootballLocalClock();
     } else {
       this._stopFootballLocalClock();
+    }
+  },
+  /**
+   * WSO：直播页动态标题，包含赛名、队名、运动类型等搜索关键词。
+   * 由于 live 页使用 custom 导航栏，标题对用户视觉不可见，但爬虫可索引。
+   * @param {object} mc matchConfig
+   * @param {string} sport 运动类型
+   */
+  _updateLiveWsoTitle: function (mc, sport) {
+    try {
+      var sportMap = { basketball: '篮球', football: '足球', badminton: '羽毛球' };
+      var sportLabel = sportMap[sport] || '篮球';
+      var matchName = (mc && mc.matchName) || '';
+      var teamA = (mc && mc.teamA && mc.teamA.name) || '';
+      var teamB = (mc && mc.teamB && mc.teamB.name) || '';
+      var title = '比赛记分直播 - 高光记分';
+      if (matchName && teamA && teamB) {
+        title = matchName + ' ' + teamA + 'vs' + teamB + ' - ' + sportLabel + '比赛记分直播';
+      } else if (teamA && teamB) {
+        title = teamA + 'vs' + teamB + ' ' + sportLabel + '比赛记分 - 高光记分';
+      } else if (matchName) {
+        title = matchName + ' - ' + sportLabel + '比赛记分直播';
+      }
+      wx.setNavigationBarTitle({ title: title });
+    } catch (e) {
+      // WSO 标题设置失败不影响直播核心功能
     }
   },
   /**

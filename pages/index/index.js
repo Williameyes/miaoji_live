@@ -533,6 +533,32 @@ Page({
     const list = Array.isArray(raw) ? raw : [];
     const matches = sortMatchesForList(list).map((m) => enrichMatchForList(m));
     this.setData({ matches });
+    this._updateWsoTitle(matches);
+  },
+
+  /**
+   * WSO：根据当前比赛列表动态设置导航栏标题，包含行业关键词供微信搜索爬虫索引。
+   * 由于使用了 custom 导航栏，标题对用户视觉不可见，但爬虫可抓取。
+   * @param {Array} matches 当前比赛列表
+   */
+  _updateWsoTitle(matches) {
+    try {
+      var title = '高光记分 - 篮球足球比赛计分助手';
+      if (Array.isArray(matches) && matches.length > 0) {
+        var latest = matches[0];
+        var sportLabel = latest.sportLabel || '篮球';
+        var teamA = (latest.teamA && latest.teamA.name) || '';
+        var teamB = (latest.teamB && latest.teamB.name) || '';
+        if (teamA && teamB) {
+          title = teamA + 'vs' + teamB + ' ' + sportLabel + '比赛记分 - 高光记分';
+        } else {
+          title = '高光记分 - ' + sportLabel + '比赛记分板计分助手';
+        }
+      }
+      wx.setNavigationBarTitle({ title: title });
+    } catch (e) {
+      // WSO 标题设置失败不影响核心功能
+    }
   },
 
   /**

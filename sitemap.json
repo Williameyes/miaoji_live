@@ -1,7 +1,33 @@
 {
   "desc": "关于本助手的搜索收录配置",
-  "rules": [{
-    "action": "allow",
-    "page": "*"
-  }]
+  "rules": [
+    {
+      "action": "allow",
+      "page": "pages/index/index"
+    },
+    {
+      "action": "allow",
+      "page": "pages/help/help"
+    },
+    {
+      "action": "allow",
+      "page": "pages/mine/mine"
+    },
+    {
+      "action": "allow",
+      "page": "pages/live/live"
+    },
+    {
+      "action": "allow",
+      "page": "packageReport/pages/report/report"
+    },
+    {
+      "action": "disallow",
+      "page": "packageLab/*"
+    },
+    {
+      "action": "allow",
+      "page": "*"
+    }
+  ]
 }
