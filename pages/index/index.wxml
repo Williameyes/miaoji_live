@@ -287,33 +287,6 @@
       <!-- 表单内容 -->
       <view class="modal-body">
 
-        <!-- 比赛名称（选填）+ 直播颜色 -->
-        <view class="form-group">
-          <text class="form-label">比赛名称（选填）</text>
-          <view class="team-input-row">
-            <!-- 固定前缀不可删除 + 用户输入后缀 -->
-            <view class="match-name-field-wrap">
-              <text class="match-name-prefix-tag">《高光记分》</text>
-              <text class="match-name-sep">-</text>
-              <input
-                class="match-name-suffix-input"
-                placeholder="赛事名称（选填）"
-                placeholder-class="input-placeholder"
-                value="{{editingMatchSuffix}}"
-                bindinput="onMatchNameSuffixInput"
-              />
-            </view>
-            <view
-              class="color-pick-btn"
-              style="background-color: {{editingMatch.matchNameColor}}"
-              hover-class="color-pick-btn-hover"
-              bindtap="openColorPicker"
-              data-target="matchName"
-            ></view>
-          </view>
-          <text class="form-hint">右侧色块为直播页赛名文字颜色</text>
-        </view>
-
         <!-- 运动类型 -->
         <view class="form-group">
           <text class="form-label">运动类型</text>
@@ -385,31 +358,72 @@
           </view>
         </view>
 
-        <!-- 开赛时间（日期 + 时间，精确到分钟） -->
+        <!-- 开赛时间（日期 + 时间，精确到5分钟） -->
         <view class="form-group">
           <text class="form-label">开赛时间</text>
           <view class="team-input-row start-time-row">
             <picker mode="date" value="{{editingStartDate}}" start="2020-01-01" end="2035-12-31" bindchange="onMatchStartDateChange">
               <view class="form-input picker-display">{{editingStartDate}}</view>
             </picker>
-            <picker mode="time" value="{{editingStartTime}}" bindchange="onMatchStartTimeChange">
+            <picker
+              mode="multiSelector"
+              range="{{timePickerRange}}"
+              value="{{timePickerValue}}"
+              bindchange="onMatchTimePickerChange"
+            >
               <view class="form-input picker-display">{{editingStartTime}}</view>
             </picker>
           </view>
-          <text class="form-hint">精确到分钟；距现在较近的开赛优先排在列表上方，开赛超过 2 小时的场次会靠后</text>
+          <text class="form-hint">精确到5分钟；距现在较近的开赛优先排在列表上方，开赛超过 2 小时的场次会靠后</text>
+        </view>
+
+        <!-- 比赛名称 + 直播颜色 -->
+        <view class="form-group">
+          <view class="form-label-row">
+            <text class="form-label">比赛名称</text>
+            <text class="error-tip" wx:if="{{showMatchNameError}}">请填写比赛名称</text>
+          </view>
+          <view class="team-input-row">
+            <view class="match-name-field-wrap {{showMatchNameError ? 'match-name-field-wrap--error' : ''}}">
+              <input
+                class="match-name-suffix-input"
+                placeholder="请输入赛事名称"
+                placeholder-class="input-placeholder"
+                value="{{editingMatchSuffix}}"
+                bindinput="onMatchNameSuffixInput"
+                focus="{{focusMatchName}}"
+                confirm-type="next"
+                bindconfirm="onMatchNameConfirm"
+              />
+            </view>
+            <view
+              class="color-pick-btn"
+              style="background-color: {{editingMatch.matchNameColor}}"
+              hover-class="color-pick-btn-hover"
+              bindtap="openColorPicker"
+              data-target="matchName"
+            ></view>
+          </view>
+          <text class="form-hint">右侧色块为直播页赛名文字颜色</text>
         </view>
 
         <!-- 主队 -->
         <view class="form-group">
-          <text class="form-label">主队名称</text>
+          <view class="form-label-row">
+            <text class="form-label">主队名称</text>
+            <text class="error-tip" wx:if="{{showTeamAError}}">请填写主队名称</text>
+          </view>
           <view class="team-input-row">
             <input
-              class="form-input team-name-input"
+              class="form-input team-name-input {{showTeamAError ? 'form-input--error' : ''}}"
               placeholder="队名"
               placeholder-class="input-placeholder"
               value="{{editingMatch.teamA.name}}"
               bindinput="onEditInputChange"
               data-field="teamA.name"
+              focus="{{focusTeamA}}"
+              confirm-type="next"
+              bindconfirm="onTeamAConfirm"
             />
             <view
               class="color-pick-btn color-pick-btn--jersey"
@@ -428,15 +442,21 @@
 
         <!-- 客队 -->
         <view class="form-group">
-          <text class="form-label">客队名称</text>
+          <view class="form-label-row">
+            <text class="form-label">客队名称</text>
+            <text class="error-tip" wx:if="{{showTeamBError}}">请填写客队名称</text>
+          </view>
           <view class="team-input-row">
             <input
-              class="form-input team-name-input"
+              class="form-input team-name-input {{showTeamBError ? 'form-input--error' : ''}}"
               placeholder="队名"
               placeholder-class="input-placeholder"
               value="{{editingMatch.teamB.name}}"
               bindinput="onEditInputChange"
               data-field="teamB.name"
+              focus="{{focusTeamB}}"
+              confirm-type="done"
+              bindconfirm="onTeamBConfirm"
             />
             <view
               class="color-pick-btn color-pick-btn--jersey"

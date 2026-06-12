@@ -1407,3 +1407,28 @@ page {
 .confirm-btn-hover {
   opacity: 0.85;
 }
+
+/* ─────────────────────────────────────
+   表单校验错误提示与高亮
+   ───────────────────────────────────── */
+.form-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.error-tip {
+  font-size: 22rpx;
+  color: #EF4444;
+  font-weight: 500;
+}
+
+.form-input--error {
+  border-color: #EF4444 !important;
+  background: rgba(239, 68, 68, 0.03) !important;
+}
+
+.match-name-field-wrap--error {
+  border-color: #EF4444 !important;
+  background: rgba(239, 68, 68, 0.03) !important;
+}

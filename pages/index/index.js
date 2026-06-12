@@ -34,31 +34,29 @@ function jerseyUrlsFromEditDraft(draft) {
 }
 const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
 
-/** @const {string} 赛名强制前缀（广告标识，不可由用户删除） */
+/** @const {string} 历史遗留赛名前缀 */
 const MATCH_NAME_PREFIX = '《高光记分》';
 
 /**
- * 从完整赛名中提取用户可编辑的后缀部分
+ * 从完整赛名中提取用户可编辑的部分（兼容旧前缀提取）
  * @param {string} matchName 完整赛名
- * @returns {string} 用户输入的后缀（不含前缀和连接符）
+ * @returns {string} 用户可编辑的赛事名称
  */
 function extractMatchSuffix(matchName) {
   if (!matchName) return '';
   const sep = MATCH_NAME_PREFIX + '-';
   if (matchName.startsWith(sep)) return matchName.slice(sep.length);
   if (matchName === MATCH_NAME_PREFIX) return '';
-  // 兼容历史数据：若无前缀，则视整体为后缀
   return matchName;
 }
 
 /**
- * 将用户输入的后缀拼合为完整赛名
+ * 将用户输入拼合为完整赛名
  * @param {string} suffix 用户输入部分
  * @returns {string} 完整赛名
  */
 function buildFullMatchName(suffix) {
-  const s = (suffix || '').trim();
-  return s ? `${MATCH_NAME_PREFIX}-${s}` : MATCH_NAME_PREFIX;
+  return (suffix || '').trim();
 }
 
 /** @const 开赛超过该时长视为「已过去很久」，排到列表下方（毫秒） */
@@ -107,14 +105,44 @@ function sortMatchesForList(matches) {
 }
 
 /**
- * 时间戳对齐到分钟（秒、毫秒归零）
+ * 时间戳对齐到5分钟（秒、毫秒归零，分钟对齐到最接近的5分钟）
  * @param {number} ts
  * @returns {number}
  */
 function alignTimestampToMinute(ts) {
   const d = new Date(ts);
   d.setSeconds(0, 0);
+  const m = d.getMinutes();
+  const roundedM = Math.round(m / 5) * 5;
+  if (roundedM === 60) {
+    d.setHours(d.getHours() + 1);
+    d.setMinutes(0);
+  } else {
+    d.setMinutes(roundedM);
+  }
   return d.getTime();
+}
+
+/** @const {Array<string[]>} 时分多列选择器取值范围（分钟步长为5） */
+const TIME_PICKER_RANGE = [
+  ['00', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23'],
+  ['00', '05', '10', '15', '20', '25', '30', '35', '40', '45', '50', '55']
+];
+
+/**
+ * 根据 "HH:mm" 字符串计算在 TIME_PICKER_RANGE 中的索引值
+ * @param {string} timeStr
+ * @returns {number[]}
+ */
+function getTimePickerIndices(timeStr) {
+  const [hStr, mStr] = (timeStr || '00:00').split(':');
+  const h = parseInt(hStr, 10) || 0;
+  const m = parseInt(mStr, 10) || 0;
+  const roundedM = Math.round(m / 5) * 5;
+  const targetM = roundedM >= 60 ? 55 : roundedM;
+  const hourIndex = Math.min(Math.max(0, h), 23);
+  const minuteIndex = Math.min(Math.max(0, Math.floor(targetM / 5)), 11);
+  return [hourIndex, minuteIndex];
 }
 
 /**
@@ -315,13 +343,25 @@ Page({
     /** 编辑浮层：开赛日期、时间（picker 绑定，精确到分钟） */
     editingStartDate: '',
     editingStartTime: '',
+    timePickerRange: TIME_PICKER_RANGE,
+    timePickerValue: [0, 0],
 
     /** 编辑浮层：主客队球衣剪影图标（随 bgColor 更新） */
     jerseyIconEditTeamA: '',
     jerseyIconEditTeamB: '',
 
-    /** 赛名后缀（用户可编辑部分，前缀《高光记分》固定不可删除） */
+    /** 赛事名称 */
     editingMatchSuffix: '',
+
+    /** 输入聚焦状态 */
+    focusMatchName: false,
+    focusTeamA: false,
+    focusTeamB: false,
+
+    /** 校验错误高亮状态 */
+    showMatchNameError: false,
+    showTeamAError: false,
+    showTeamBError: false,
 
     /** 运动类型选项（编辑浮层） */
     sportOptions: SPORT_OPTIONS,
@@ -514,7 +554,7 @@ Page({
     return {
       id: `${ts}`,
       sportType: SPORT_BASKETBALL,
-      matchName: MATCH_NAME_PREFIX,
+      matchName: '',
       matchNameColor: '#FFFFFF',
       teamA: {
         name: '',
@@ -564,17 +604,25 @@ Page({
     if (matches.length > 0) {
       // 继承最近一场的赛名颜色与后缀，方便同系列多场比赛快速创建
       const last = matches[0];
-      draft.matchName = last.matchName || MATCH_NAME_PREFIX;
+      draft.matchName = last.matchName || '';
       draft.matchNameColor = last.matchNameColor || '#FFFFFF';
     }
     const sa = /** @type {number} */ (draft.startAt);
+    const startStr = timestampToTimeStr(sa);
     this.setData({
       editingId: '',
       editingMatch: draft,
       editingMatchSuffix: extractMatchSuffix(draft.matchName),
       editingStartDate: timestampToDateStr(sa),
-      editingStartTime: timestampToTimeStr(sa),
+      editingStartTime: startStr,
+      timePickerValue: getTimePickerIndices(startStr),
       showEditModal: true,
+      focusMatchName: true,
+      focusTeamA: false,
+      focusTeamB: false,
+      showMatchNameError: false,
+      showTeamAError: false,
+      showTeamBError: false,
       ...jerseyUrlsFromEditDraft(draft)
     });
   },
@@ -594,13 +642,21 @@ Page({
         : copied.createdAt || Date.now();
     const alignedStart = alignTimestampToMinute(rawStart);
     copied.startAt = alignedStart;
+    const startStr = timestampToTimeStr(alignedStart);
     this.setData({
       editingId: id,
       editingMatch: copied,
       editingMatchSuffix: extractMatchSuffix(copied.matchName),
       editingStartDate: timestampToDateStr(alignedStart),
-      editingStartTime: timestampToTimeStr(alignedStart),
+      editingStartTime: startStr,
+      timePickerValue: getTimePickerIndices(startStr),
       showEditModal: true,
+      focusMatchName: true,
+      focusTeamA: false,
+      focusTeamB: false,
+      showMatchNameError: false,
+      showTeamAError: false,
+      showTeamBError: false,
       ...jerseyUrlsFromEditDraft(copied)
     });
   },
@@ -687,7 +743,44 @@ Page({
     } else {
       draft[field] = value;
     }
-    this.setData({ editingMatch: draft });
+
+    const updates = { editingMatch: draft };
+    if (field === 'teamA.name' && value.trim()) {
+      updates.showTeamAError = false;
+    }
+    if (field === 'teamB.name' && value.trim()) {
+      updates.showTeamBError = false;
+    }
+    this.setData(updates);
+  },
+
+  /**
+   * 比赛名称输入确认（点击键盘下一步） -> 自动聚焦主队名称
+   */
+  onMatchNameConfirm() {
+    this.setData({
+      focusMatchName: false,
+      focusTeamA: true,
+      focusTeamB: false
+    });
+  },
+
+  /**
+   * 主队名称输入确认（点击键盘下一步） -> 自动聚焦客队名称
+   */
+  onTeamAConfirm() {
+    this.setData({
+      focusMatchName: false,
+      focusTeamA: false,
+      focusTeamB: true
+    });
+  },
+
+  /**
+   * 客队名称输入确认（点击键盘完成） -> 执行保存
+   */
+  onTeamBConfirm() {
+    this.saveEditMatch();
   },
 
   /**
@@ -695,8 +788,54 @@ Page({
    */
   saveEditMatch() {
     const draft = this.data.editingMatch;
-    if (!draft.teamA.name || !draft.teamB.name) {
-      wx.showToast({ title: '请填写双方队名', icon: 'none' });
+    const suffix = (this.data.editingMatchSuffix || '').trim();
+    const teamAName = (draft.teamA.name || '').trim();
+    const teamBName = (draft.teamB.name || '').trim();
+
+    let hasError = false;
+    let showMatchNameError = false;
+    let showTeamAError = false;
+    let showTeamBError = false;
+
+    if (!suffix) {
+      showMatchNameError = true;
+      hasError = true;
+    }
+    if (!teamAName) {
+      showTeamAError = true;
+      hasError = true;
+    }
+    if (!teamBName) {
+      showTeamBError = true;
+      hasError = true;
+    }
+
+    if (hasError) {
+      this.setData({
+        showMatchNameError,
+        showTeamAError,
+        showTeamBError
+      });
+
+      // 决定 Toast 提示
+      let errorMsg = '';
+      if (showMatchNameError) {
+        errorMsg = '请填写比赛名称';
+      } else if (showTeamAError) {
+        errorMsg = '请填写主队名称';
+      } else {
+        errorMsg = '请填写客队名称';
+      }
+      wx.showToast({ title: errorMsg, icon: 'none', duration: 2000 });
+
+      // 自动聚焦第一个出错的字段
+      if (showMatchNameError) {
+        this.setData({ focusMatchName: true, focusTeamA: false, focusTeamB: false });
+      } else if (showTeamAError) {
+        this.setData({ focusMatchName: false, focusTeamA: true, focusTeamB: false });
+      } else if (showTeamBError) {
+        this.setData({ focusMatchName: false, focusTeamA: false, focusTeamB: true });
+      }
       return;
     }
 
@@ -760,7 +899,13 @@ Page({
       editingId: '',
       editingMatchSuffix: '',
       editingStartDate: '',
-      editingStartTime: ''
+      editingStartTime: '',
+      focusMatchName: false,
+      focusTeamA: false,
+      focusTeamB: false,
+      showMatchNameError: false,
+      showTeamAError: false,
+      showTeamBError: false
     });
   },
 
@@ -772,7 +917,13 @@ Page({
       editingId: '',
       editingMatchSuffix: '',
       editingStartDate: '',
-      editingStartTime: ''
+      editingStartTime: '',
+      focusMatchName: false,
+      focusTeamA: false,
+      focusTeamB: false,
+      showMatchNameError: false,
+      showTeamAError: false,
+      showTeamBError: false
     });
   },
 
@@ -797,6 +948,22 @@ Page({
   },
 
   /**
+   * 开赛时间（时分，多列选择器）变更
+   * @param {{ detail: { value: number[] } }} e
+   */
+  onMatchTimePickerChange(e) {
+    const val = e.detail.value;
+    const hour = this.data.timePickerRange[0][val[0]];
+    const minute = this.data.timePickerRange[1][val[1]];
+    const timeStr = `${hour}:${minute}`;
+    this.setData({
+      timePickerValue: val,
+      editingStartTime: timeStr
+    });
+    this.syncEditingMatchStartAt();
+  },
+
+  /**
    * 将日期时间选择结果写回 editingMatch.startAt
    * @returns {void}
    */
@@ -810,11 +977,16 @@ Page({
   },
 
   /**
-   * 赛名后缀输入变更（前缀《高光记分》固定不可编辑）
+   * 赛事名称输入变更
    * @param {WechatMiniprogram.TouchEvent} e
    */
   onMatchNameSuffixInput(e) {
-    this.setData({ editingMatchSuffix: e.detail.value });
+    const value = e.detail.value;
+    const updates = { editingMatchSuffix: value };
+    if (value.trim()) {
+      updates.showMatchNameError = false;
+    }
+    this.setData(updates);
   },
 
   /**
