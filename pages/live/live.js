@@ -28,7 +28,33 @@ const {
   loadPromoAds
 } = require('../../services/promo-live.service.js');
 const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
+/**
+ * @ai-live-index Live 页单文件分区速查（AI 开发必读）
+ * ─────────────────────────────────────────────────────────
+ * 本页约 1.3 万行，请勿通读。按用户症状在下表找到 @region，再 Grep 搜「@region XXX」跳到分区（行号为约数，以 Grep 为准）。
+ * 用户只 @ 本文件时：先读本表 → Grep 定位分区 → 仅读该分区代码，勿通读全文件。
+ *
+ * | 症状/需求关键词 | 分区标记 | 约行号 | 说明 |
+ * | 改超时/阈值/回放档位/足球计时常量 | @region LIVE_CONSTANTS | L~32 | 阈值常量、运动类型、布局纯函数 |
+ * | 改 UI 默认值、data 字段、wxml 绑定初值 | @region LIVE_DATA | L~595 | Page data 初始状态 |
+ * | 记分/syncMatchConfig/换场次/队名宽度 | @region LIVE_MATCH | L~938 | 场次配置、记分、节次 |
+ * | 记分牌拖动/赛名浮层/角球布局 | @region LIVE_SCOREBOARD | L~1001 | 足球/羽毛球浮层记分牌与赛名条 |
+ * | VIP 门/权益/liveStreamAllowed/黑屏门禁 | @region LIVE_ENTITLEMENT | L~1394 | VIP 权益、直播门禁、camera 准入 |
+ * | audit/appendHealthLog/诊断上传 | @region LIVE_HEALTH | L~2058 | 健康日志、审计导出 |
+ * | isSavingHighlight/保存锁/进度环 | @region LIVE_HIGHLIGHT_LOCK | L~2481 | 高光保存事务锁与进度动画 |
+ * | 相机黑屏/横屏/布局/变焦/曝光/对焦/AE | @region LIVE_CAMERA | L~2705 | 相机、16:9 布局、曝光对焦、变焦机位 |
+ * | 录制/REC 灯/segment/ping-pong/hardRecover | @region LIVE_RECORDING | L~5873 | 滚动录制、看门狗、硬恢复、乒乓缓冲 |
+ * | 保存高光/trim/materialize/高光列表 | @region LIVE_HIGHLIGHT | L~8281 | 高光生成、裁剪、固化、存储淘汰 |
+ * | 存储/severe/缓存灯/空间不足 | @region LIVE_STORAGE | L~4926 | 存储水位、缓存灯、空间弹窗 |
+ * | 抽屉/推广/换场/颜色浮层 | @region LIVE_DRAWER | L~5424 | 抽屉、推广 Logo、场次切换 UI |
+ * | 回放/倍速/replay 缩放/intro-outro | @region LIVE_REPLAY | L~11225 | 回放、双槽播放、捏合缩放 |
+ * | 生命周期/横屏 setPageOrientation/进页初始化 | @region LIVE_LIFECYCLE | L~13487 | onLoad/onShow/onHide/onReady/onUnload、初始化 |
+ *
+ * 辅助文件（非 live.js）：behaviors/live-helpers.js、footballClockBehavior.js、liveWsBehavior.js
+ */
 
+
+/** @region LIVE_CONSTANTS — 阈值常量、运动类型、布局纯函数 */
 /** 推广 Logo 初始展示高度占屏幕高度比例（约 1/10，减轻挡画面） */
 const PROMO_AD_HEIGHT_RATIO = 0.1;
 /** 推广 Logo 双指缩放下限 / 上限 */
@@ -592,6 +618,7 @@ function buildCornerFabStylesInLetterboxPx(winW, winH, rect, safePx) {
     replayRail: 'right:' + rightR + 'rpx;top:50%;transform:translateY(-50%);'
   };
 }
+/** @region LIVE_DATA — Page data 初始状态 */
 Page({
   behaviors: [footballClockBehavior, liveWsBehavior],
   data: {
@@ -935,7 +962,8 @@ Page({
    * 解析当前高光应写入的场次 ID（Storage / globalData / 当前 matchConfig.id）。
    * @returns {string} 空字符串表示无法安全落库，调用方应中止保存并提示用户。
    */
-  resolveMatchIdForHighlightStorage: function () {
+  /** @region LIVE_MATCH — 场次配置、记分、节次 */
+resolveMatchIdForHighlightStorage: function () {
     let id = clipsStorage.normalizeMatchIdKey(wx.getStorageSync('currentMatchId'));
     if (!id) id = clipsStorage.normalizeMatchIdKey(app.globalData && app.globalData.currentMatchId);
     if (!id) {
@@ -998,7 +1026,8 @@ Page({
    * @param {number} areaW 窗口宽
    * @returns {number}
    */
-  _estimateProScoreboardWidthPx: function (areaW) {
+  /** @region LIVE_SCOREBOARD — 足球/羽毛球浮层记分牌与赛名条 */
+_estimateProScoreboardWidthPx: function (areaW) {
     var ww = Math.max(1, Number(areaW) || 375);
     return Math.max(72, Math.round(168 * ww / 750));
   },
@@ -1391,7 +1420,8 @@ Page({
    * @param {unknown} body
    * @returns {{ allow: boolean, title: string, sub: string, minor: string, showRetry: boolean }}
    */
-  buildVipGateStateFromCheckStatus: function (body) {
+  /** @region LIVE_ENTITLEMENT — VIP 权益、直播门禁、camera 准入 */
+buildVipGateStateFromCheckStatus: function (body) {
     const deny = (title, sub, minor, showRetry) => ({
       allow: false,
       title,
@@ -2055,7 +2085,8 @@ Page({
    * 设备信息只采集一次存入 header，避免每条 log 都重复写相同字段浪费体积。
    * @returns {void}
    */
-  initHealthLogs: function () {
+  /** @region LIVE_HEALTH — 健康日志、审计导出 */
+initHealthLogs: function () {
     this._healthLogStorageKey = 'LIVE_HEALTH_LOGS_V1';
     this._healthLogFlushTimer = null;
     try {
@@ -2478,7 +2509,8 @@ Page({
    * 保存高光的事务开始：快速反馈 + UI 锁，防止重复点击引发 I/O 冲突。
    * @returns {void}
    */
-  beginHighlightSaving: function () {
+  /** @region LIVE_HIGHLIGHT_LOCK — 高光保存事务锁与进度动画 */
+beginHighlightSaving: function () {
     if (this._highlightRequestLock) return;
     this._highlightRequestLock = true;
     if (this.data.isSavingHighlight) return;
@@ -2702,7 +2734,8 @@ Page({
     }
   },
   // 相机初始化完成回调
-  onCameraInit: function (e) {
+  /** @region LIVE_CAMERA — 相机、16:9 布局、曝光对焦、变焦机位 */
+onCameraInit: function (e) {
     if (!this.data.cameraMounted) {
       this.appendHealthLog('camera_init_ignored_unmounted', {});
       return;
@@ -4923,7 +4956,8 @@ Page({
    *
    * @returns {void}
    */
-  maybeToastFileStoragePressureFromGlobal: function () {
+  /** @region LIVE_STORAGE — 存储水位、缓存灯、空间弹窗 */
+maybeToastFileStoragePressureFromGlobal: function () {
     try {
       if (this._liveStorageEntryModalShown) return;
 
@@ -5421,7 +5455,8 @@ Page({
    * 分享给好友：路径携带当前用户 openid，供新用户登录时上报邀请关系。
    * @returns {WechatMiniprogram.Page.ICustomShareContent}
    */
-  onShareAppMessage: function () {
+  /** @region LIVE_DRAWER — 抽屉、推广 Logo、场次切换 UI */
+onShareAppMessage: function () {
     let raw = app.globalData.userInfo;
     if (!raw || typeof raw !== 'object') {
       try {
@@ -5870,7 +5905,8 @@ Page({
    * 分段之间 stop→冷却→start 的短瞬间 isRecording 为 false，文案会呈 PAUSE，与墙钟「接缝」基本同量级。
    * @returns {void}
    */
-  updatePipelineHealth: function () {
+  /** @region LIVE_RECORDING — 滚动录制、看门狗、硬恢复、乒乓缓冲 */
+updatePipelineHealth: function () {
     let health = 'ok';
     let text = 'PAUSE';
     let actionable = false;
@@ -8278,7 +8314,8 @@ Page({
    * @param {Record<string, unknown>} detail
    * @returns {void}
    */
-  _logHighlightTrimDiagnostic: function (phase, detail) {
+  /** @region LIVE_HIGHLIGHT — 高光生成、裁剪、固化、存储淘汰 */
+_logHighlightTrimDiagnostic: function (phase, detail) {
     try {
       this.appendHealthLog('highlight_trim_diagnostic', Object.assign({
         phase: phase || 'unknown'
@@ -11222,7 +11259,8 @@ Page({
    * @param {function(): void} [onPaused] 录制已停止、可安全起播时回调
    * @returns {void}
    */
-  pauseRollingForReplay: function (onPaused) {
+  /** @region LIVE_REPLAY — 回放、双槽播放、捏合缩放 */
+pauseRollingForReplay: function (onPaused) {
     this._rollingPausedForReplay = false;
     this.appendHealthLog('replay_pause_ui_only', {
       recorderState: this._recorderCore ? this._recorderCore.state : ''
@@ -13484,7 +13522,8 @@ Page({
     }
     this._maybeStartDeferredMaterializeReplay(task.id, matchId);
   },
-  onLoad: function (options) {
+  /** @region LIVE_LIFECYCLE — onLoad/onShow/onHide/onReady/onUnload、初始化 */
+onLoad: function (options) {
     this.initHealthLogs();
     this.syncMatchConfigFromPageSources();
     this._initLiveCoreState(options);
