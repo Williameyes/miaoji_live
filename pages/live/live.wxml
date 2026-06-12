@@ -460,7 +460,7 @@
 
     <view wx:if="{{autoSyncWhitelisted && liveWsPanelOpen}}" class="live-ble-panel-backdrop" catchtap="onLiveWsPanelBackdropTap">
       <view class="live-ble-panel live-ble-panel--compact" catchtap="noopCatchTap">
-        <view wx:if="{{liveWsQuickBusy}}" class="live-ble-busy-row">
+        <view wx:if="{{liveWsQuickBusy || (liveWsConnected && liveWsStatusText)}}" class="live-ble-busy-row">
           <text class="live-ble-busy-text">{{liveWsStatusText}}</text>
         </view>
         <block wx:if="{{!liveWsConnected && !liveWsQuickBusy}}">
