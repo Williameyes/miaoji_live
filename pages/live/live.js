@@ -1528,6 +1528,7 @@ buildVipGateStateFromCheckStatus: function (body) {
         }, () => {
           this._entitlementEverAllowedInSession = true;
           if (app.globalData) app.globalData.liveEntitlementPassed = true;
+          this.armLiveCameraLock();
           if (typeof onAllowed === 'function') onAllowed();
           const queued = this._entitlementOnAllowedQueue.splice(0, this._entitlementOnAllowedQueue.length);
           queued.forEach(fn => {
@@ -1554,6 +1555,7 @@ buildVipGateStateFromCheckStatus: function (body) {
           onMounted: () => {
             this._entitlementEverAllowedInSession = true;
             if (app.globalData) app.globalData.liveEntitlementPassed = true;
+            this.armLiveCameraLock();
             if (typeof onAllowed === 'function') {
               onAllowed();
             }
@@ -2891,6 +2893,10 @@ onCameraInit: function (e) {
     });
     if (this._recorderCore) {
       this._recorderCore.markReady('camera_init');
+    }
+    // 直播态相机锁定自动重放：硬恢复/重建相机后恢复 AE+AF 锁定状态
+    if (this.data.liveStreamAllowed && this._liveAeCameraLockArmed) {
+      this._applyLiveCameraLock();
     }
     this._schedulePreviewRecordStartAfterCameraInit('camera_init');
   },
@@ -4418,6 +4424,61 @@ onCameraInit: function (e) {
     this.invokeSetTargetFocus(0.5, 0.5);
   },
   /**
+   * 直播态相机锁定：固定对焦中心 + 固定当前曝光值，全程不随云台转动重新评估。
+   * 在进入直播（liveStreamAllowed）且相机就绪后调用一次；相机重建后（onCameraInit）自动重放。
+   * @returns {void}
+   */
+  _applyLiveCameraLock: function () {
+    const ctx = this.data.cameraContext;
+    if (!ctx) return;
+
+    // 1. 把对焦点锁在画面中心（几何中心是篮球场景最合理的锚点）
+    this.invokeSetTargetFocus(0.5, 0.5);
+    this._lastFocusNorm = { nx: 0.5, ny: 0.5 };
+
+    // 2. 固定曝光：用当前环境已测光的值，不强制归中，避免场馆偏暗时画面变黑
+    if (this.data.aeExposureHardwareSupported) {
+      const norm = typeof this._exposureNormPending === 'number'
+        ? this._exposureNormPending
+        : 0.5;
+      this.applyExposureFromNorm(norm);
+    }
+
+    // 3. 锁定状态写入 data，同时隐藏 AE 控件（直播中不需要常驻画面）
+    this.setData({
+      aeFocusUserLocked: true,
+      aeControlsVisible: false,
+      aeContext: '',
+      aeShowDoubleTapHint: false
+    });
+
+    // 4. 清除所有自动隐藏计时器，防止 3s 后误触发 hide 流程
+    this.clearAeLiveHideTimer();
+    if (this._aeDoubleTapHintTimer) {
+      clearTimeout(this._aeDoubleTapHintTimer);
+      this._aeDoubleTapHintTimer = null;
+    }
+
+    this.appendHealthLog('live_camera_lock_applied', {
+      exposureNorm: typeof this._exposureNormPending === 'number'
+        ? this._exposureNormPending
+        : 0.5
+    });
+  },
+
+  /**
+   * 启用直播相机锁定模式：标记 armed 并立即执行一次锁定（若相机已就绪）。
+   * 在权益通过、直播正式开始时由 refreshLiveEntitlementAndResume 调用。
+   * 相机重建后由 onCameraInit 通过 _liveAeCameraLockArmed 标志自动重放锁定。
+   * @returns {void}
+   */
+  armLiveCameraLock: function () {
+    this._liveAeCameraLockArmed = true;
+    if (this._cameraInitDone && this.data.cameraContext && this.data.liveStreamAllowed) {
+      this._applyLiveCameraLock();
+    }
+  },
+  /**
    * 变焦量变化时重置静默对焦定时器；与缩放手势「争用」：仅响应 zoom 的实质变化，而非手指 xy。
    * @returns {void}
    */
@@ -4544,8 +4605,8 @@ onCameraInit: function (e) {
       aeContext: 'live',
       aeFocusIsTapPosition: false,
       aeFocusLockFlash: true,
-      aeFocusUserLocked: false,
-      aeShowDoubleTapHint: true
+      aeFocusUserLocked: this.data.aeFocusUserLocked,
+      aeShowDoubleTapHint: !this.data.aeFocusUserLocked
     });
     this.scheduleAeLiveHide();
     if (this._aeFocusLockFlashTimer) {
@@ -6116,6 +6177,17 @@ updatePipelineHealth: function () {
     const minHighlightMs = this.getPreviewRecordMinHighlightMs();
     const trackCount = pipeline && typeof pipeline.getRecordingTrackCount === 'function' ? pipeline.getRecordingTrackCount() : 0;
     const pipelineInactive = !pipeline || !pipeline.isActive();
+    const hasZombieTracks = pipeline && typeof pipeline.hasZombieTracks === 'function' && pipeline.hasZombieTracks();
+    if (hasZombieTracks && typeof pipeline.recoverZombieTracks === 'function') {
+      this.appendHealthLog('highlight_flush_recover_zombie_tracks', {
+        anchorClickTime: anchorClickTime || 0,
+        trackCount,
+        recordAgeMs,
+        whileSaving: !!(this.data.isSavingHighlight || this.pendingHighlight)
+      });
+      pipeline.recoverZombieTracks('highlight_flush_miss');
+      return;
+    }
     if (this.data.isSavingHighlight || this.pendingHighlight || this.highlightMaterializeRunning) {
       this.appendHealthLog('highlight_flush_recover_skip_saving', {
         anchorClickTime: anchorClickTime || 0,
@@ -7548,7 +7620,6 @@ updatePipelineHealth: function () {
           nextRec.aeControlsVisible = false;
           nextRec.aeContext = '';
           nextRec.aeShowDoubleTapHint = false;
-          nextRec.aeFocusUserLocked = false;
         }
         this.setData(nextRec);
         if (this._highlightSaveAwaitingResume && this._highlightSaveSessionId === sessionId) {

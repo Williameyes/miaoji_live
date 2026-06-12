@@ -624,6 +624,26 @@ function createPreviewRecordPipeline(page) {
   }
 
   /**
+   * 是否存在僵尸录制轨。
+   * @returns {boolean}
+   */
+  function hasZombieTracks() {
+    if (!pingPong || typeof pingPong.hasZombieTracks !== 'function') return false;
+    return pingPong.hasZombieTracks();
+  }
+
+  /**
+   * 回收僵尸录制轨。
+   * @param {string} [source]
+   * @returns {void}
+   */
+  function recoverZombieTracks(source) {
+    if (pingPong && typeof pingPong.recoverZombieTracks === 'function') {
+      pingPong.recoverZombieTracks(source);
+    }
+  }
+
+  /**
    * remount 探针超时后强制轮换 A 轨，尽快落盘以验证编码器。
    * @param {string} [trackId]
    * @returns {void}
@@ -652,6 +672,8 @@ function createPreviewRecordPipeline(page) {
     getRecordingTrackCount,
     isEncoderWarmupComplete,
     ensureDualTrackHealth,
+    hasZombieTracks,
+    recoverZombieTracks,
     forceProbeRotate
   };
 }

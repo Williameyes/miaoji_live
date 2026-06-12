@@ -410,6 +410,14 @@ class PingPongRecorder {
       .then(() => this._stopTrack(trackId, 'recycle'))
       .catch(() => { })
       .then(() => {
+        if (track.recording && !track.hasRealFrame) {
+          track.recording = false;
+          if (track.stopTimer) {
+            clearTimeout(track.stopTimer);
+            track.stopTimer = null;
+          }
+          this._log('ping_pong_recycle_zombie_cleared', { trackId, reason });
+        }
         this._destroyRecorder(track);
         if (wasRecording && this.active) {
           return this._delay(this.stopToStartGapMs).then(() => this._startTrack(trackId, 'recycle_restart'));
@@ -439,6 +447,9 @@ class PingPongRecorder {
    */
   _ensureDualTrackHealth() {
     if (!this.active) return;
+    TRACK_IDS.forEach((id) => {
+      this._maybeRecoverZombieTrack(id, 'health_watch');
+    });
     if (this._singleTrackMode) {
       const trackA = this.tracks.A;
       if (!trackA || !trackA.recording) {
@@ -453,8 +464,14 @@ class PingPongRecorder {
       return t && t.recording;
     });
     if (recording.length >= 2) {
-      this._singleTrackStuckAt = 0;
-      return;
+      const allHealthy = recording.every((id) => {
+        const t = this.tracks[id];
+        return t && t.recorder && t.hasRealFrame;
+      });
+      if (allHealthy) {
+        this._singleTrackStuckAt = 0;
+        return;
+      }
     }
     if (recording.length === 0) {
       this._log('ping_pong_no_recording_tracks', {});
@@ -512,6 +529,80 @@ class PingPongRecorder {
     this._destroyRecorder(track);
     if (!this.active) return Promise.resolve();
     return this._delay(this.stopToStartGapMs).then(() => this._startTrack(trackId, 'empty_temp_restart'));
+  }
+
+  /**
+   * 无首帧自愈阈值：超过该时长仍无 hasRealFrame 则视为僵尸轨。
+   * @returns {number}
+   */
+  _getNoFirstFrameRecoverMs() {
+    return Math.min(20000, Math.max(12000, Math.floor(this.chunkDurationMs * 0.2)));
+  }
+
+  /**
+   * 判断单轨是否处于僵尸态（recording 但 recorder 缺失，或长期无首帧）。
+   * @param {string} trackId
+   * @returns {boolean}
+   */
+  _isZombieTrack(trackId) {
+    const track = this.tracks[trackId];
+    if (!track || !track.recording) return false;
+    if (!track.recorder) return true;
+    const ageMs = Date.now() - (track.recordStartWallMs || 0);
+    return !track.hasRealFrame && ageMs >= this._getNoFirstFrameRecoverMs();
+  }
+
+  /**
+   * 强制回收僵尸轨：清 recording、销毁 recorder、重新 start。
+   * @param {string} trackId
+   * @param {string} source
+   * @returns {Promise<void>}
+   */
+  _recoverZombieTrack(trackId, source) {
+    const track = this.tracks[trackId];
+    if (!track || !this.active) return Promise.resolve();
+    this._log('ping_pong_zombie_track_recover', {
+      trackId,
+      source,
+      hadRecorder: !!track.recorder,
+      hadRealFrame: !!track.hasRealFrame,
+      recordAgeMs: track.recordStartWallMs ? Date.now() - track.recordStartWallMs : 0
+    });
+    if (track.stopTimer) {
+      clearTimeout(track.stopTimer);
+      track.stopTimer = null;
+    }
+    track.rotateSkipStreak = 0;
+    const wasRecording = track.recording;
+    track.recording = false;
+    track.hasRealFrame = false;
+    this._destroyRecorder(track);
+    if (!wasRecording) return Promise.resolve();
+    const peerId = trackId === 'A' ? 'B' : 'A';
+    return this._kickIdleTrack(peerId, `zombie_peer_guard_${source}`)
+      .then(() => this._delay(this.stopToStartGapMs))
+      .then(() => {
+        if (!this.active) return;
+        return this._startTrack(trackId, `${source}_recover`);
+      });
+  }
+
+  /**
+   * 巡检时按需回收僵尸轨，避免与并发 recover 重叠。
+   * @param {string} trackId
+   * @param {string} source
+   * @returns {void}
+   */
+  _maybeRecoverZombieTrack(trackId, source) {
+    if (!this._isZombieTrack(trackId)) return;
+    const track = this.tracks[trackId];
+    if (!track || track.zombieRecoverInFlight) return;
+    track.zombieRecoverInFlight = true;
+    this._recoverZombieTrack(trackId, source)
+      .catch(() => { })
+      .finally(() => {
+        if (track) track.zombieRecoverInFlight = false;
+      });
   }
 
   /**
@@ -590,7 +681,20 @@ class PingPongRecorder {
    */
   _startTrack(trackId, source) {
     const track = this.tracks[trackId];
-    if (!track || track.recording || !this.active) return Promise.resolve();
+    if (!track || !this.active) return Promise.resolve();
+    if (track.recording) {
+      if (!track.recorder) {
+        this._log('ping_pong_start_reset_zombie', { trackId, source });
+        track.recording = false;
+        track.hasRealFrame = false;
+        if (track.stopTimer) {
+          clearTimeout(track.stopTimer);
+          track.stopTimer = null;
+        }
+      } else {
+        return Promise.resolve();
+      }
+    }
     if (track.startInFlight) {
       return new Promise((resolve) => {
         track.pendingStarts = track.pendingStarts || [];
@@ -650,13 +754,26 @@ class PingPongRecorder {
   _rotateTrack(trackId, source) {
     const track = this.tracks[trackId];
     if (track && (track.encoderWarmupRemaining > 0 || !track.hasRealFrame)) {
-      this._log('ping_pong_waiting_first_frame', { trackId, source, stage: 'rotate_skip' });
+      track.rotateSkipStreak = (track.rotateSkipStreak || 0) + 1;
+      const maxStreak = 10;
+      if (track.rotateSkipStreak >= maxStreak || (!track.recorder && track.recording)) {
+        track.rotateSkipStreak = 0;
+        return this._recoverZombieTrack(trackId, 'rotate_skip_exhausted');
+      }
+      this._log('ping_pong_waiting_first_frame', {
+        trackId,
+        source,
+        stage: 'rotate_skip',
+        streak: track.rotateSkipStreak,
+        hasRecorder: !!track.recorder
+      });
       if (track.stopTimer) clearTimeout(track.stopTimer);
       track.stopTimer = setTimeout(() => {
         this._rotateTrack(trackId, source).catch(() => { });
       }, 2000);
       return Promise.resolve();
     }
+    if (track) track.rotateSkipStreak = 0;
     return this._stopTrack(trackId, source)
       .then(() => this._delay(this.stopToStartGapMs))
       .then(() => {
@@ -1899,6 +2016,26 @@ class PingPongRecorder {
    */
   getRecordingTrackCount() {
     return this._countRecordingTracks();
+  }
+
+  /**
+   * 是否存在僵尸轨（recording 但无 recorder 或长期无首帧）。
+   * @returns {boolean}
+   */
+  hasZombieTracks() {
+    return TRACK_IDS.some((id) => this._isZombieTrack(id));
+  }
+
+  /**
+   * 外部触发僵尸轨回收（如高光 flush 失败）。
+   * @param {string} [source]
+   * @returns {void}
+   */
+  recoverZombieTracks(source) {
+    const tag = source || 'external';
+    TRACK_IDS.forEach((id) => {
+      this._maybeRecoverZombieTrack(id, tag);
+    });
   }
 
   /**
