@@ -102,34 +102,37 @@ function requestFrameRecorder(recorder, onDraw) {
   }
   return new Promise((resolve, reject) => {
     let finished = false;
-    /**
-     * @param {Error|unknown} [err]
-     * @returns {void}
-     */
+
+    const performDraw = () => {
+      if (typeof onDraw === 'function') {
+        try { onDraw(); } catch (eDraw) { }
+      }
+    };
+
+    const platform = typeof wx !== 'undefined' && typeof wx.getSystemInfoSync === 'function'
+      ? String(wx.getSystemInfoSync().platform || '').toLowerCase()
+      : '';
+    const isAndroid = platform === 'android';
+    /** remount 后 iOS requestFrame 回调变慢，过短超时会跳过回调内绘制导致空壳 mp4。 */
+    const requestFrameTimeoutMs = isAndroid ? 300 : 800;
+
     const finish = (err) => {
       if (finished) return;
       finished = true;
       if (err) reject(err);
       else resolve();
     };
-    /**
-     * @returns {void}
-     */
-    const drawInCallback = () => {
-      if (typeof onDraw !== 'function') return;
-      try {
-        onDraw();
-      } catch (eDraw) { }
-    };
+
     try {
       const ret = recorder.requestFrame(() => {
-        drawInCallback();
+        // MediaRecorder 须在 requestFrame 回调内绘制；iOS 在回调外绘制无法被编码器采到有效像素。
+        performDraw();
         finish();
       });
       if (isPromiseLike(ret)) {
         ret.then(() => {
           if (!finished) {
-            drawInCallback();
+            performDraw();
             finish();
           }
         }).catch((err) => finish(err));
@@ -138,7 +141,12 @@ function requestFrameRecorder(recorder, onDraw) {
       finish(eReq);
     }
     /** requestFrame 偶发永不回调（尤其 camera remount 后），须超时释放以免 feed 永久锁死。 */
-    setTimeout(() => finish(new Error('requestFrame timeout')), 800);
+    setTimeout(() => {
+      if (!finished) {
+        performDraw();
+        finish(new Error('requestFrame timeout'));
+      }
+    }, requestFrameTimeoutMs);
   });
 }
 
@@ -199,6 +207,7 @@ class PingPongRecorder {
    * @param {number} [opts.canvasWidth]
    * @param {number} [opts.canvasHeight]
    * @param {number} [opts.highlightFlushMinIntervalMs] 强制 flush 最小间隔，防连按引发 601
+   * @param {number} [opts.probeChunkDurationMs] remount 后 A 轨首段探针时长（ms），快速验证编码器
    * @param {function(string): Promise<void>} [opts.onStoragePressure] flush 落盘失败时释放配额
    */
   constructor(opts) {
@@ -209,6 +218,7 @@ class PingPongRecorder {
     this.onStoragePressure = typeof options.onStoragePressure === 'function'
       ? options.onStoragePressure
       : () => Promise.resolve();
+    this.onFatal = typeof options.onFatal === 'function' ? options.onFatal : null;
     this.rollingDir = options.rollingDir || '';
     this.ensureRollingDir = typeof options.ensureRollingDir === 'function'
       ? options.ensureRollingDir
@@ -228,6 +238,9 @@ class PingPongRecorder {
       8000,
       options.highlightFlushMinIntervalMs || 10000
     );
+    this.probeChunkDurationMs = Math.max(0, Number(options.probeChunkDurationMs) || 0);
+    /** A 轨首段是否仍使用探针时长（仅一次）。 */
+    this._probeChunkPending = this.probeChunkDurationMs > 0;
 
     /** @type {Record<string, Object>} */
     this.tracks = {};
@@ -251,6 +264,8 @@ class PingPongRecorder {
     this._lastHighlightFlushAt = 0;
     /** 最近一帧相机 RGBA，stop 前须再绘制一次确保落盘段有画面。 */
     this._lastCameraFrame = null;
+    /** remount 后须先喂足实时帧再启动分段计时（替代静态 preroll）。 */
+    this.encoderLiveWarmupFrames = Math.max(0, Math.floor(Number(options.encoderLiveWarmupFrames) || 0));
     /** Android 默认单轨，避免 B 轨空壳与双 WebGL 并发采帧失败。 */
     this._singleTrackMode = options.singleTrackMode != null
       ? !!options.singleTrackMode
@@ -300,7 +315,16 @@ class PingPongRecorder {
       height: this.canvasHeight
     });
     const blit = createBlit();
-    return blit.init({ canvasNode: canvas, preserveDrawingBuffer: true }).then(() => {
+    return blit.init({
+      canvasNode: canvas,
+      preserveDrawingBuffer: true,
+      onFatal: (err) => {
+        this._log('ping_pong_webgl_fatal', { err: err ? err.message : '' });
+        if (typeof this.onFatal === 'function') {
+          this.onFatal(err);
+        }
+      }
+    }).then(() => {
       this.tracks[trackId] = {
         id: trackId,
         canvas,
@@ -313,7 +337,9 @@ class PingPongRecorder {
         restartTimer: null,
         recycleTimer: null,
         startInFlight: false,
-        pendingStarts: []
+        pendingStarts: [],
+        hasRealFrame: false,
+        consecutiveFailures: 0
       };
     });
   }
@@ -340,6 +366,16 @@ class PingPongRecorder {
       height: this.canvasHeight
     });
     track.createdAt = Date.now();
+    try {
+      if (track.recorder && typeof track.recorder.on === 'function') {
+        track.recorder.on('error', (err) => {
+          this._log('ping_pong_recorder_error', {
+            trackId,
+            err: formatWxErr(err)
+          });
+        });
+      }
+    } catch (eErr) { }
     this._armRecycleTimer(trackId);
     return Promise.resolve();
   }
@@ -485,8 +521,12 @@ class PingPongRecorder {
   _destroyRecorder(track) {
     if (!track || !track.recorder) return;
     try {
-      if (track.recorder.destroy) track.recorder.destroy();
-    } catch (e) { }
+      if (typeof track.recorder.destroy === 'function') {
+        track.recorder.destroy();
+      }
+    } catch (e) {
+      console.warn('[PingPongRecorder] Failed to destroy recorder:', e);
+    }
     track.recorder = null;
   }
 
@@ -511,6 +551,39 @@ class PingPongRecorder {
   }
 
   /**
+   * 启动分段轮换计时器。
+   * @param {string} trackId
+   * @param {number} [durationMs] 显式时长；未传时 A 轨首段可用 probeChunkDurationMs
+   * @returns {void}
+   */
+  _armChunkTimer(trackId, durationMs) {
+    const track = this.tracks[trackId];
+    if (!track || !track.recording) return;
+    if (track.stopTimer) clearTimeout(track.stopTimer);
+    let ms = Number(durationMs) > 0 ? durationMs : this.chunkDurationMs;
+    if (!durationMs && trackId === 'A' && this._probeChunkPending && this.probeChunkDurationMs > 0) {
+      ms = this.probeChunkDurationMs;
+      this._probeChunkPending = false;
+      this._log('ping_pong_probe_chunk_armed', { trackId, probeMs: ms });
+    }
+    track.stopTimer = setTimeout(() => {
+      this._rotateTrack(trackId, 'chunk_duration').catch(() => { });
+    }, ms);
+  }
+
+  /**
+   * 实时帧预热是否已全部完成。
+   * @returns {boolean}
+   */
+  isEncoderWarmupComplete() {
+    return TRACK_IDS.every((trackId) => {
+      const track = this.tracks[trackId];
+      if (!track || !track.recording) return true;
+      return (track.encoderWarmupRemaining || 0) <= 0;
+    });
+  }
+
+  /**
    * @param {string} trackId
    * @param {string} source
    * @returns {Promise<void>}
@@ -525,16 +598,25 @@ class PingPongRecorder {
       });
     }
     track.startInFlight = true;
+    const liveWarmupFrames = source === 'kickoff' || source === 'overlap_kickoff'
+      ? this.encoderLiveWarmupFrames
+      : 0;
     return this._ensureRecorder(trackId)
       .then(() => startRecorder(track.recorder))
       .then(() => {
         track.recording = true;
         track.recordStartWallMs = Date.now();
-        if (track.stopTimer) clearTimeout(track.stopTimer);
-        track.stopTimer = setTimeout(() => {
-          this._rotateTrack(trackId, 'chunk_duration').catch(() => { });
-        }, this.chunkDurationMs);
-        this._log('ping_pong_track_start', { trackId, source });
+        track.hasRealFrame = false;
+        track.consecutiveFailures = 0;
+        track.encoderWarmupRemaining = liveWarmupFrames;
+        if (track.encoderWarmupRemaining <= 0) {
+          this._armChunkTimer(trackId);
+        }
+        this._log('ping_pong_track_start', {
+          trackId,
+          source,
+          encoderWarmupRemaining: track.encoderWarmupRemaining
+        });
         if (typeof this.onTrackActivity === 'function') {
           this.onTrackActivity({ trackId, source, at: Date.now() });
         }
@@ -566,6 +648,15 @@ class PingPongRecorder {
    * @returns {Promise<void>}
    */
   _rotateTrack(trackId, source) {
+    const track = this.tracks[trackId];
+    if (track && (track.encoderWarmupRemaining > 0 || !track.hasRealFrame)) {
+      this._log('ping_pong_waiting_first_frame', { trackId, source, stage: 'rotate_skip' });
+      if (track.stopTimer) clearTimeout(track.stopTimer);
+      track.stopTimer = setTimeout(() => {
+        this._rotateTrack(trackId, source).catch(() => { });
+      }, 2000);
+      return Promise.resolve();
+    }
     return this._stopTrack(trackId, source)
       .then(() => this._delay(this.stopToStartGapMs))
       .then(() => {
@@ -604,6 +695,10 @@ class PingPongRecorder {
           recording: !!(track && track.recording)
         });
       }
+      return Promise.resolve();
+    }
+    if (!track.hasRealFrame && source !== 'shutdown') {
+      this._log('ping_pong_waiting_first_frame', { trackId, source, stage: 'stop_skip' });
       return Promise.resolve();
     }
     const allowSingleTrackStop =
@@ -665,6 +760,7 @@ class PingPongRecorder {
     const track = this.tracks[trackId];
     if (!track || !track.recording) return Promise.resolve();
     this._stopInFlight = true;
+    track.isStopping = true; // Mark as stopping
     const recordStart = track.recordStartWallMs || Date.now();
     const recordEnd = Date.now();
     track.recording = false;
@@ -682,18 +778,37 @@ class PingPongRecorder {
     });
     return action
       .then(() => stopRecorder(recorder))
-      .then((res) => this._persistTemp(
-        trackId,
-        res && res.tempFilePath,
-        recordStart,
-        recordEnd,
-        source
-      ))
+      .then((res) => {
+        return this._persistTemp(
+          trackId,
+          res && res.tempFilePath,
+          recordStart,
+          recordEnd,
+          source
+        ).then(() => {
+          // 在确认分段 resolve 成功之后，安全销毁实例
+          if (track && track.recorder && typeof track.recorder.destroy === 'function') {
+            try {
+              track.recorder.destroy();
+            } catch (err) {
+              console.warn(`[PingPong] 异步安全销毁 track ${trackId} 失败:`, err);
+            }
+            track.recorder = null;
+          }
+        });
+      })
       .catch((err) => {
         const errText = formatWxErr(err);
         this._log('ping_pong_track_stop_fail', { trackId, source, err: errText });
-        this._destroyRecorder(track);
-        track.recorder = null;
+        // 在确认分段被 reject 抛弃之后，安全销毁实例
+        if (track && track.recorder && typeof track.recorder.destroy === 'function') {
+          try {
+            track.recorder.destroy();
+          } catch (e) {
+            console.warn(`[PingPong] 异步安全销毁 track ${trackId} 失败:`, e);
+          }
+          track.recorder = null;
+        }
         if (this.active && source !== 'shutdown') {
           return this._delay(this.stopToStartGapMs).then(() => {
             return this._startTrack(trackId, `${source}_stop_fail_restart`);
@@ -703,6 +818,18 @@ class PingPongRecorder {
       })
       .finally(() => {
         this._stopInFlight = false;
+        track.isStopping = false;
+        // 如果外部调用了 destroy()，在全部异步流程结束后彻底清理该轨道资源
+        if (!this.active) {
+          if (track.blit && track.blit.destroy) {
+            try { track.blit.destroy(); } catch (e) {}
+            track.blit = null;
+          }
+          track.canvas = null;
+          if (this.tracks[trackId] === track) {
+            delete this.tracks[trackId];
+          }
+        }
       });
   }
 
@@ -1094,14 +1221,58 @@ class PingPongRecorder {
    * @returns {Promise<void>}
    */
   feedFrame(frame) {
-    if (!this.active || !frame) return Promise.resolve();
+    if (!this.active || !frame) {
+      this._log('ping_pong_invalid_frame', { reason: 'null_or_empty' });
+      return Promise.resolve();
+    }
+    const w = frame.width;
+    const h = frame.height;
+    const hasData = !!frame.data;
+    if (!w || !h || !hasData) {
+      this._log('ping_pong_invalid_frame', {
+        reason: 'invalid_dimensions_or_data',
+        width: w || 0,
+        height: h || 0,
+        hasData
+      });
+      return Promise.resolve();
+    }
     this._lastCameraFrame = frame;
     const tasks = TRACK_IDS.map((trackId) => {
       const track = this.tracks[trackId];
       if (!track || !track.recording || !track.recorder || !track.blit) return Promise.resolve();
+      if (!track.hasRealFrame) {
+        track.hasRealFrame = true;
+        this._log('ping_pong_first_valid_frame', { trackId, width: w, height: h });
+      }
       return requestFrameRecorder(track.recorder, () => {
         track.blit.drawRgba(frame);
-      }).catch(() => { });
+      }).then(() => {
+        track.consecutiveFailures = 0;
+        if (track.encoderWarmupRemaining > 0) {
+          track.encoderWarmupRemaining -= 1;
+          if (track.encoderWarmupRemaining === 0) {
+            this._log('ping_pong_encoder_live_warmup_done', { trackId });
+            this._armChunkTimer(trackId);
+          }
+        }
+      }).catch((err) => {
+        track.consecutiveFailures = (track.consecutiveFailures || 0) + 1;
+        this._log('ping_pong_request_frame_failed', {
+          trackId,
+          consecutiveFailures: track.consecutiveFailures,
+          err: err ? err.message : ''
+        });
+        if (track.consecutiveFailures >= 4) {
+          this._log('ping_pong_recorder_fatal_error', {
+            trackId,
+            consecutiveFailures: track.consecutiveFailures
+          });
+          if (typeof this.onFatal === 'function') {
+            this.onFatal(new Error('RECORDER_FATAL_ERROR'));
+          }
+        }
+      });
     });
     return Promise.all(tasks).then(() => { });
   }
@@ -1738,12 +1909,17 @@ class PingPongRecorder {
       TRACK_IDS.forEach((trackId) => {
         const track = this.tracks[trackId];
         if (!track) return;
+        if (track.isStopping) {
+          // 正在异步 stop / 写入中，不进行同步强杀，留给 _stopTrackImpl 的 finally 块释放资源
+          return;
+        }
         if (track.blit && track.blit.destroy) track.blit.destroy();
         this._destroyRecorder(track);
         track.canvas = null;
         track.blit = null;
+        delete this.tracks[trackId];
       });
-      this.tracks = {};
+      // 不直接执行 this.tracks = {} 以免丢失正在 isStopping 的轨道的引用
       this.segments = [];
       this.rollingFiles = [];
     });

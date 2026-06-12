@@ -71,15 +71,84 @@ function createCameraBlitRenderer() {
   let aPos = -1;
   let aUv = -1;
   let uTex = null;
+  let canvasNode = null;
+  let contextLost = false;
+  let consecutiveFailures = 0;
+  let onFatalCallback = null;
+
+  const handleContextLost = (e) => {
+    if (e && typeof e.preventDefault === 'function') {
+      e.preventDefault();
+    }
+    contextLost = true;
+    try {
+      console.warn('[WebGL] Context lost detected on offscreen canvas');
+    } catch (_) {}
+  };
+
+  const handleContextRestored = () => {
+    try {
+      console.info('[WebGL] Context restored, reinitializing resources...');
+      contextLost = false;
+      setupWebGL();
+    } catch (err) {
+      console.error('[WebGL] Failed to reinitialize resources after context restore', err);
+    }
+  };
+
+  function setupWebGL() {
+    if (!gl) return false;
+    try {
+      program = createProgram(gl, VERTEX_SRC, FRAGMENT_SRC);
+      if (!program) return false;
+      aPos = gl.getAttribLocation(program, 'aPos');
+      aUv = gl.getAttribLocation(program, 'aUv');
+      uTex = gl.getUniformLocation(program, 'uTex');
+      const data = new Float32Array([
+        -1, -1, 0, 1,
+        1, -1, 1, 1,
+        -1, 1, 0, 0,
+        1, 1, 1, 0
+      ]);
+      vbo = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+      gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+      texture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.disable(gl.DEPTH_TEST);
+      gl.disable(gl.BLEND);
+      gl.clearColor(0, 0, 0, 1);
+      texW = 0;
+      texH = 0;
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function triggerFatal() {
+    consecutiveFailures = 0;
+    if (typeof onFatalCallback === 'function') {
+      try {
+        onFatalCallback(new Error('WEBGL_CONTEXT_FATAL'));
+      } catch (_) {}
+    }
+  }
 
   /**
    * @param {Object} opts
    * @param {Object} opts.canvasNode offscreen 或 wxml canvas node
    * @param {boolean} [opts.preserveDrawingBuffer] MediaRecorder 采帧须 true，否则 Android 易录黑屏
+   * @param {Function} [opts.onFatal] WebGL 发生致命 context 丢失时的回调
    * @returns {Promise<void>}
    */
   function init(opts) {
-    const canvasNode = opts && opts.canvasNode;
+    canvasNode = opts && opts.canvasNode;
+    onFatalCallback = opts && opts.onFatal;
     if (!canvasNode) {
       return Promise.reject(new Error('canvasNode required'));
     }
@@ -98,31 +167,23 @@ function createCameraBlitRenderer() {
     if (!gl) {
       return Promise.reject(new Error('webgl unavailable'));
     }
-    program = createProgram(gl, VERTEX_SRC, FRAGMENT_SRC);
-    if (!program) {
+
+    if (typeof canvasNode.addEventListener === 'function') {
+      canvasNode.addEventListener('webglcontextlost', handleContextLost, false);
+      canvasNode.addEventListener('webglcontextrestored', handleContextRestored, false);
+    } else {
+      canvasNode.onwebglcontextlost = handleContextLost;
+      canvasNode.onwebglcontextrestored = handleContextRestored;
+    }
+
+    if (gl.isContextLost && gl.isContextLost()) {
+      contextLost = true;
+      return Promise.reject(new Error('webgl context lost at init'));
+    }
+
+    if (!setupWebGL()) {
       return Promise.reject(new Error('shader program failed'));
     }
-    aPos = gl.getAttribLocation(program, 'aPos');
-    aUv = gl.getAttribLocation(program, 'aUv');
-    uTex = gl.getUniformLocation(program, 'uTex');
-    const data = new Float32Array([
-      -1, -1, 0, 1,
-      1, -1, 1, 1,
-      -1, 1, 0, 0,
-      1, 1, 1, 0
-    ]);
-    vbo = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
-    texture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.disable(gl.DEPTH_TEST);
-    gl.disable(gl.BLEND);
-    gl.clearColor(0, 0, 0, 1);
     return Promise.resolve();
   }
 
@@ -131,31 +192,87 @@ function createCameraBlitRenderer() {
    * @returns {void}
    */
   function drawRgba(frame) {
-    if (!gl || !program || !frame || !frame.data) return;
+    if (!gl || !frame || !frame.data) {
+      consecutiveFailures++;
+      if (consecutiveFailures >= 3) {
+        triggerFatal();
+      }
+      return;
+    }
+
+    const isLost = gl.isContextLost && gl.isContextLost();
+    const needsSetup = !program || !texture || !vbo;
+
+    if (isLost || needsSetup) {
+      if (isLost) {
+        contextLost = true;
+      }
+      const success = setupWebGL();
+      if (!success || (gl.isContextLost && gl.isContextLost())) {
+        consecutiveFailures++;
+        if (consecutiveFailures >= 3) {
+          triggerFatal();
+        }
+        return;
+      }
+      contextLost = false;
+    }
+
     const w = Math.max(1, Number(frame.width) || 1);
     const h = Math.max(1, Number(frame.height) || 1);
-    gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.useProgram(program);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    if (texW !== w || texH !== h) {
-      texW = w;
-      texH = h;
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(frame.data));
-    } else {
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(frame.data));
+    const pixelBytes = w * h * 4;
+    let rgba = null;
+    try {
+      rgba = frame.data.byteLength >= pixelBytes
+        ? new Uint8Array(frame.data, 0, pixelBytes)
+        : new Uint8Array(frame.data);
+    } catch (copyErr) {
+      try {
+        rgba = new Uint8Array(frame.data);
+      } catch (copyErr2) {
+        consecutiveFailures++;
+        if (consecutiveFailures >= 3) {
+          triggerFatal();
+        }
+        return;
+      }
     }
-    gl.uniform1i(uTex, 0);
-    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-    gl.enableVertexAttribArray(aPos);
-    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 16, 0);
-    gl.enableVertexAttribArray(aUv);
-    gl.vertexAttribPointer(aUv, 2, gl.FLOAT, false, 16, 8);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    /** 确保 GPU 提交后再结束 requestFrame callback，Android MediaRecorder 依赖此缓冲。 */
-    if (typeof gl.finish === 'function') {
-      gl.finish();
+
+    try {
+      gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.useProgram(program);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      if (texW !== w || texH !== h) {
+        texW = w;
+        texH = h;
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
+      } else {
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
+      }
+      gl.uniform1i(uTex, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+      gl.enableVertexAttribArray(aPos);
+      gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 16, 0);
+      gl.enableVertexAttribArray(aUv);
+      gl.vertexAttribPointer(aUv, 2, gl.FLOAT, false, 16, 8);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      if (typeof gl.finish === 'function') {
+        gl.finish();
+      }
+      if (typeof gl.getError === 'function') {
+        const errCode = gl.getError();
+        if (errCode === 0x0507 || (gl.CONTEXT_LOST_WEBGL && errCode === gl.CONTEXT_LOST_WEBGL)) {
+          throw new Error('CONTEXT_LOST_WEBGL');
+        }
+      }
+      consecutiveFailures = 0;
+    } catch (err) {
+      consecutiveFailures++;
+      if (consecutiveFailures >= 3) {
+        triggerFatal();
+      }
     }
   }
 
@@ -163,6 +280,15 @@ function createCameraBlitRenderer() {
    * @returns {void}
    */
   function destroy() {
+    if (canvasNode) {
+      if (typeof canvasNode.removeEventListener === 'function') {
+        canvasNode.removeEventListener('webglcontextlost', handleContextLost, false);
+        canvasNode.removeEventListener('webglcontextrestored', handleContextRestored, false);
+      } else {
+        canvasNode.onwebglcontextlost = null;
+        canvasNode.onwebglcontextrestored = null;
+      }
+    }
     if (gl && texture) {
       try { gl.deleteTexture(texture); } catch (e) { }
     }
@@ -178,6 +304,8 @@ function createCameraBlitRenderer() {
     vbo = null;
     texW = 0;
     texH = 0;
+    canvasNode = null;
+    onFatalCallback = null;
   }
 
   return {

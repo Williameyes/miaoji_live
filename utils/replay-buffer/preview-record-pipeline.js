@@ -54,6 +54,9 @@ function createPreviewRecordPipeline(page) {
   let pipelineStartAt = 0;
   /** @type {Array<function(): void>} */
   let warmupWaiters = [];
+  /** 相机预热阶段采样到的帧尺寸，供延后初始化离屏 canvas。 */
+  let lastWarmupFrameW = 0;
+  let lastWarmupFrameH = 0;
   /**
    * 每次 start() 自增；stop() 时归 0；start() 时分配给当前 pingPong 实例。
    * 切换场次时 pipeline.stop() 触发 pingPong 内部的强制收尾，
@@ -139,6 +142,13 @@ function createPreviewRecordPipeline(page) {
    */
   function onFrame(frame) {
     const now = Date.now();
+    if (frame && frame.width > 0 && frame.height > 0) {
+      lastWarmupFrameW = frame.width;
+      lastWarmupFrameH = frame.height;
+    }
+    if (pingPong) {
+      pingPong._lastCameraFrame = frame;
+    }
     if (!pipelineWarmedUp) {
       warmupFrameCount += 1;
       if (warmupFrameCount === 1) {
@@ -197,14 +207,20 @@ function createPreviewRecordPipeline(page) {
    */
   function applySegmentToPage(segment) {
     if (!page) return;
+    const wallMs = Math.max(0, (segment.endTime || 0) - (segment.startTime || 0));
+    const sizeBytes = segment.sizeBytes || 0;
+    const isHealthy = typeof page._isRollingSegmentQualityHealthy === 'function'
+      ? page._isRollingSegmentQualityHealthy(sizeBytes, wallMs)
+      : sizeBytes > 50 * 1024;
+
+    const recoverPending = !!(page._liveReturnedFromBackground || page._liveNeedsForegroundRecordingRecover);
+    const pageVisible = !!(page && page._livePageVisible);
     if (typeof page._handleDegradedRollingSegment === 'function') {
-      const wallMs = Math.max(0, (segment.endTime || 0) - (segment.startTime || 0));
-      const sizeBytes = segment.sizeBytes || 0;
       if (
-        page._liveReturnedFromBackground
+        recoverPending
+        && pageVisible
         && wallMs >= 8000
-        && typeof page._isRollingSegmentQualityHealthy === 'function'
-        && !page._isRollingSegmentQualityHealthy(sizeBytes, wallMs)
+        && !isHealthy
       ) {
         page._handleDegradedRollingSegment(segment);
         return;
@@ -224,26 +240,36 @@ function createPreviewRecordPipeline(page) {
     page.segmentBuffer = page.rollingSegments;
     page.segmentCounter = (page.segmentCounter || 0) + 1;
     page.setData({ isRecording: true });
-    if (
-      page._liveReturnedFromBackground
-      && typeof page._isRollingSegmentQualityHealthy === 'function'
-    ) {
-      const wallMs = Math.max(0, (segment.endTime || 0) - (segment.startTime || 0));
-      const sizeBytes = segment.sizeBytes || 0;
-      if (page._isRollingSegmentQualityHealthy(sizeBytes, wallMs)) {
-        page._liveReturnedFromBackground = false;
-        page._highlightHollowFlushStreak = 0;
-        page._encodeStallGraceUntil = 0;
-        page._hardRecoverHadTimeoutRebuild = false;
-        page._lastSuccessfulChunkAt = now;
-        if (typeof page.appendHealthLog === 'function') {
-          page.appendHealthLog('preview_record_quality_restored', {
-            trackId: segment.trackId || '',
-            sizeBytes,
-            wallDurationMs: wallMs,
-            bytesPerSec: wallMs > 0 ? Math.round(sizeBytes / Math.max(1, wallMs / 1000)) : 0
-          });
-        }
+    if (page._awaitingFirstSuccessChunkAfterRemount && isHealthy && pageVisible) {
+      page._awaitingFirstSuccessChunkAfterRemount = false;
+      if (page._awaitingChunkTimeout) {
+        clearTimeout(page._awaitingChunkTimeout);
+        page._awaitingChunkTimeout = null;
+      }
+      if (typeof page.appendHealthLog === 'function') {
+        page.appendHealthLog('awaiting_first_chunk_cleared_by_segment', {
+          sizeBytes,
+          wallDurationMs: wallMs
+        });
+      }
+    }
+    // 仅在前台新管线落盘健康段后解除恢复锁；page_hide 期间旧管线 shutdown 段不得提前清标志。
+    if (recoverPending && isHealthy && pageVisible) {
+      page._previewRecordEncoderVerified = true;
+      page._encoderVerifyRestartAttempts = 0;
+      page._liveReturnedFromBackground = false;
+      page._liveNeedsForegroundRecordingRecover = false;
+      page._highlightHollowFlushStreak = 0;
+      page._encodeStallGraceUntil = 0;
+      page._hardRecoverHadTimeoutRebuild = false;
+      page._lastSuccessfulChunkAt = now;
+      if (typeof page.appendHealthLog === 'function') {
+        page.appendHealthLog('preview_record_quality_restored', {
+          trackId: segment.trackId || '',
+          sizeBytes,
+          wallDurationMs: wallMs,
+          bytesPerSec: wallMs > 0 ? Math.round(sizeBytes / Math.max(1, wallMs / 1000)) : 0
+        });
       }
     }
     if (typeof page._tryGenerateHighlight === 'function') {
@@ -291,16 +317,23 @@ function createPreviewRecordPipeline(page) {
        */
       activeSessionId += 1;
       const instanceSessionId = activeSessionId;
+      const pipelineEpoch = page
+        ? (page._rollingPipelineEpoch = (page._rollingPipelineEpoch || 0) + 1)
+        : 0;
       /**
        * @param {Object} segment
        */
       const boundOnSegmentReady = (segment) => {
-        if (!active || instanceSessionId !== activeSessionId) {
+        const epochStale = !!(page && page._rollingPipelineEpoch !== pipelineEpoch);
+        const sessionStale = instanceSessionId !== activeSessionId;
+        if (epochStale || sessionStale) {
           log('preview_record_stale_segment_dropped', {
             path: segment && segment.path ? segment.path : '',
             trackId: segment && segment.trackId ? segment.trackId : '',
             instanceSessionId,
             activeSessionId,
+            pipelineEpoch,
+            pageEpoch: page ? page._rollingPipelineEpoch : 0,
             active,
             startTime: segment && segment.startTime ? segment.startTime : 0,
             endTime: segment && segment.endTime ? segment.endTime : 0,
@@ -308,59 +341,101 @@ function createPreviewRecordPipeline(page) {
           });
           return;
         }
+        if (page && !page._livePageVisible) {
+          log('preview_record_segment_skip_hidden', {
+            trackId: segment && segment.trackId ? segment.trackId : '',
+            sizeBytes: segment && segment.sizeBytes ? segment.sizeBytes : 0,
+            pathTail: segment && segment.path ? String(segment.path).slice(-48) : ''
+          });
+          return;
+        }
         applySegmentToPage(segment);
       };
-      pingPong = new PingPongRecorder({
-        onLog: log,
-        onSegmentReady: boundOnSegmentReady,
-        onTrackActivity: () => touchPipelineHeartbeat('track_start'),
-        onStoragePressure: (reason) => {
-          if (page && typeof page.freeRollingFileStorageAggressive === 'function') {
-            page.freeRollingFileStorageAggressive(reason || 'persist_io_fail');
-          }
-          return Promise.resolve();
-        },
-        rollingDir,
-        ensureRollingDir,
-        chunkDurationMs: options.chunkDurationMs || 180000,
-        staggerMs: options.staggerMs || 8000,
-        highlightFlushMinIntervalMs: options.highlightFlushMinIntervalMs || 10000,
-        fps,
-        stopToStartGapMs: options.stopToStartGapMs || 400,
-        recycleIntervalMs: options.recycleIntervalMs || 25 * 60 * 1000,
-        maxFiles: options.maxFiles || 2,
-        canvasWidth: options.canvasWidth || 854,
-        canvasHeight: options.canvasHeight || 480
-      });
       pipelineWarmedUp = false;
       warmupFrameCount = 0;
+      lastWarmupFrameW = 0;
+      lastWarmupFrameH = 0;
       pipelineStartAt = Date.now();
       warmupWaiters = [];
       feeding = false;
       feedingSince = 0;
+      let capturedCanvasW = Number(options.canvasWidth) || 854;
+      let capturedCanvasH = Number(options.canvasHeight) || 480;
       const requireFirstFrame = options.requireFirstFrame !== false;
       const firstFrameTimeoutMs = Number(options.firstFrameTimeoutMs) || PREVIEW_RECORD_FIRST_FRAME_TIMEOUT_MS;
+      const deferEncoderInit = !!options.deferEncoderInit;
       currentWarmupMinFrames = Math.max(
         PREVIEW_RECORD_WARMUP_MIN_FRAMES,
         Number(options.warmupMinFrames) || PREVIEW_RECORD_WARMUP_MIN_FRAMES
       );
-      return pingPong.init().then(() => {
+      /**
+       * 创建乒乓实例（可在相机预热后按真实帧尺寸初始化离屏 canvas）。
+       * @returns {void}
+       */
+      const mountPingPong = () => {
+        pingPong = new PingPongRecorder({
+          onLog: log,
+          onSegmentReady: boundOnSegmentReady,
+          onTrackActivity: () => touchPipelineHeartbeat('track_start'),
+          onStoragePressure: (reason) => {
+            if (page && typeof page.freeRollingFileStorageAggressive === 'function') {
+              page.freeRollingFileStorageAggressive(reason || 'persist_io_fail');
+            }
+            return Promise.resolve();
+          },
+          onFatal: (err) => {
+            log('preview_record_webgl_fatal', { err: err ? err.message : '' });
+            if (page && typeof page.onWebGLContextFatal === 'function') {
+              page.onWebGLContextFatal();
+            }
+          },
+          rollingDir,
+          ensureRollingDir,
+          chunkDurationMs: options.chunkDurationMs || 180000,
+          staggerMs: options.staggerMs || 8000,
+          highlightFlushMinIntervalMs: options.highlightFlushMinIntervalMs || 10000,
+          fps,
+          stopToStartGapMs: options.stopToStartGapMs || 400,
+          recycleIntervalMs: options.recycleIntervalMs || 25 * 60 * 1000,
+          maxFiles: options.maxFiles || 2,
+          canvasWidth: capturedCanvasW,
+          canvasHeight: capturedCanvasH,
+          encoderLiveWarmupFrames: Number(options.encoderLiveWarmupFrames) || 0,
+          probeChunkDurationMs: Math.max(0, Number(options.probeChunkDurationMs) || 0)
+        });
+      };
+      const startFrameSource = () => {
         frameSource = frameSourceMod.createNativeFrameSource({
           cameraContext,
           onFrame,
           minIntervalMs: 0
         });
         return frameSource.start();
-      }).then(() => {
+      };
+      const afterWarmup = () => {
         if (!requireFirstFrame) {
           pipelineWarmedUp = true;
           return Promise.resolve();
         }
         return waitForWarmupFrames(firstFrameTimeoutMs, currentWarmupMinFrames);
-      }).then(() => {
+      };
+      const bootEncoder = () => {
+        if (deferEncoderInit && lastWarmupFrameW > 0 && lastWarmupFrameH > 0) {
+          capturedCanvasW = lastWarmupFrameW;
+          capturedCanvasH = lastWarmupFrameH;
+          log('preview_record_encoder_canvas_sized', {
+            width: capturedCanvasW,
+            height: capturedCanvasH
+          });
+        }
+        mountPingPong();
+        return pingPong.init();
+      };
+      const activatePipeline = () => {
         active = true;
         return pingPong.start();
-      }).then(() => {
+      };
+      const finishPipelineStart = () => {
         touchPipelineHeartbeat('pipeline_start');
         if (page) {
           page.lastRecordStartAt = Date.now();
@@ -370,9 +445,13 @@ function createPreviewRecordPipeline(page) {
           fps,
           sessionId: instanceSessionId,
           requireFirstFrame,
-          warmupMinFrames: currentWarmupMinFrames
+          warmupMinFrames: currentWarmupMinFrames,
+          deferEncoderInit,
+          canvasWidth: capturedCanvasW,
+          canvasHeight: capturedCanvasH
         });
-      }).catch((err) => {
+      };
+      const handleStartError = (err) => {
         if (frameSource) {
           frameSource.stop();
           frameSource = null;
@@ -389,7 +468,14 @@ function createPreviewRecordPipeline(page) {
         feedingSince = 0;
         active = false;
         throw err;
-      });
+      };
+      const bootChain = deferEncoderInit
+        ? startFrameSource().then(afterWarmup).then(bootEncoder)
+        : bootEncoder().then(startFrameSource).then(afterWarmup);
+      return bootChain
+        .then(activatePipeline)
+        .then(finishPipelineStart)
+        .catch(handleStartError);
     };
     if (stopInFlight) {
       return stopInFlight.then(() => runStart());
@@ -520,12 +606,33 @@ function createPreviewRecordPipeline(page) {
   }
 
   /**
+   * @returns {boolean}
+   */
+  function isEncoderWarmupComplete() {
+    if (!pingPong || typeof pingPong.isEncoderWarmupComplete !== 'function') return true;
+    return pingPong.isEncoderWarmupComplete();
+  }
+
+  /**
    * 外部触发双轨健康巡检（如高光失败时）。
    * @returns {void}
    */
   function ensureDualTrackHealth() {
     if (pingPong && typeof pingPong._ensureDualTrackHealth === 'function') {
       pingPong._ensureDualTrackHealth();
+    }
+  }
+
+  /**
+   * remount 探针超时后强制轮换 A 轨，尽快落盘以验证编码器。
+   * @param {string} [trackId]
+   * @returns {void}
+   */
+  function forceProbeRotate(trackId) {
+    if (!pingPong || !active) return;
+    const tid = trackId || 'A';
+    if (typeof pingPong._rotateTrack === 'function') {
+      pingPong._rotateTrack(tid, 'encoding_probe').catch(() => { });
     }
   }
 
@@ -543,7 +650,9 @@ function createPreviewRecordPipeline(page) {
     releaseSegmentPaths,
     getLastHeartbeatAt,
     getRecordingTrackCount,
-    ensureDualTrackHealth
+    isEncoderWarmupComplete,
+    ensureDualTrackHealth,
+    forceProbeRotate
   };
 }
 

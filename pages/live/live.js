@@ -151,6 +151,10 @@ const MATCH_SWITCH_PIPELINE_STOP_FAILSAFE_MS = 1400;
 const MATCH_SWITCH_HIGHLIGHT_WARMUP_MS = 8000;
 /** 切后台回前台后 preview record 预热帧数（首帧可能是静止缓存）。 */
 const PREVIEW_RECORD_WARMUP_FRAMES_AFTER_PAGE_HIDE = 12;
+/** remount 后首段探针时长（ms）：短段快速验证编码器是否产出健康 mp4。 */
+const POST_RE_MOUNT_PROBE_CHUNK_MS = 15000;
+/** remount 后空壳段触发的管线重启上限，超出则走 hard recover。 */
+const ENCODER_VERIFY_RESTART_MAX = 3;
 /** 硬恢复完成后禁止保存高光的隔离期（ms），覆盖乒乓双轨坏片轮换周期。 */
 const HARD_RECOVER_HIGHLIGHT_QUARANTINE_MS = 90000;
 /** hard_recover_timeout 二次重建后额外禁止保存高光（ms）。 */
@@ -2113,6 +2117,18 @@ Page({
     this.mirrorHealthToAudit(item.e, item.d);
     this.scheduleHealthLogFlush();
     const ev = item.e;
+
+    if (ev === 'ping_pong_segment_rejected_hollow') {
+      if (this.isLiveForegroundRecordingRecoverPending()) {
+        this._highlightHollowFlushStreak = (this._highlightHollowFlushStreak || 0) + 1;
+      }
+      this._scheduleHollowPipelineRestart(item.d || {});
+    }
+    if (ev === 'highlight_soft_timeout_release' && this._pendingHollowPipelineRestart) {
+      this._pendingHollowPipelineRestart = false;
+      this._restartPreviewPipelineForHollow();
+    }
+
     if (ev === 'hard_recover_fail' || ev === 'hard_recover_start' || ev === 'manual_relaunch_required' || ev === 'segment_start_fail_storm_cycle' || ev === 'camera_insert_conflict' || ev === 'hard_recover_skip_page_hidden' || ev === 'camera_fault_recovery_skip_page_hidden' || ev === 'stop_record_fail' || ev === 'rolling_persist_temp_gone_presync' || ev === 'segment_persist_reject_temp_unstable' || ev === 'rolling_persist_phase7_temp_missing_abort' || ev === 'highlight_finalize_no_segments' || ev === 'highlight_abort_no_fresh_rolling' || ev === 'highlight_hard_timeout_unlock' || ev === 'replay_buffer_chunk_reject' || ev === 'temp_missing_storm_hard_recover' || ev === 'temp_missing_storm_observed' || ev === 'match_switch_rolling_reset') {
       this.scheduleRemoteHealthLogUpload(ev);
     }
@@ -2883,8 +2899,17 @@ Page({
    * 保存高光所需的最短起录等待（ms）。
    * @returns {number}
    */
+  /**
+   * 是否仍处于「从后台/外置相机返回后、新管线尚未验证」的增强恢复阶段。
+   * @returns {boolean}
+   */
+  isLiveForegroundRecordingRecoverPending: function () {
+    return !!(this._liveReturnedFromBackground || this._liveNeedsForegroundRecordingRecover);
+  },
   getPreviewRecordMinHighlightMs: function () {
-    return this._liveReturnedFromBackground ? PREVIEW_RECORD_MIN_MS_BEFORE_HIGHLIGHT_AFTER_PAGE_HIDE : PREVIEW_RECORD_MIN_MS_BEFORE_HIGHLIGHT;
+    return this.isLiveForegroundRecordingRecoverPending()
+      ? PREVIEW_RECORD_MIN_MS_BEFORE_HIGHLIGHT_AFTER_PAGE_HIDE
+      : PREVIEW_RECORD_MIN_MS_BEFORE_HIGHLIGHT;
   },
   /**
    * 保存高光前 preview 乒乓管线是否已就绪（已起录、过预热、至少一条有效轨）。
@@ -2897,14 +2922,21 @@ Page({
         reason: 'camera_not_ready'
       };
     }
+    if (this._awaitingFirstSuccessChunkAfterRemount) {
+      return {
+        ready: false,
+        reason: 'awaiting_first_chunk',
+        remainMs: 0
+      };
+    }
     if (this.data.showGuide) {
       return {
         ready: false,
         reason: 'guide_visible'
       };
     }
-    const pipeline = this._previewRecordPipeline;
-    if (!pipeline || !pipeline.isSupported()) {
+    const pipeline = this._ensurePreviewRecordPipeline();
+    if (!pipeline.isSupported()) {
       return {
         ready: false,
         reason: 'unsupported'
@@ -2934,6 +2966,20 @@ Page({
       return {
         ready: false,
         reason: 'no_first_frame'
+      };
+    }
+    if (typeof pipeline.isEncoderWarmupComplete === 'function' && !pipeline.isEncoderWarmupComplete()) {
+      return {
+        ready: false,
+        reason: 'encoder_live_warming',
+        remainMs: 0
+      };
+    }
+    if (this.isLiveForegroundRecordingRecoverPending() && !this._previewRecordEncoderVerified) {
+      return {
+        ready: false,
+        reason: 'encoder_not_verified',
+        remainMs: 0
       };
     }
     const recordStartAt = Number(this.lastRecordStartAt || 0);
@@ -3176,6 +3222,7 @@ Page({
       this.appendHealthLog('camera_stop_preview_only', {
         reason
       });
+      this._liveNeedsForegroundRecordingRecover = true;
       return;
     }
     if (!reason && this.rollingActive && this._livePageVisible) return;
@@ -3597,7 +3644,8 @@ Page({
     }
     if (!this._cameraInitDone) return;
     if (!this.data.cameraContext) return;
-    if (!this._previewRecordPipeline || !this._previewRecordPipeline.isSupported()) {
+    const pipeline = this._ensurePreviewRecordPipeline();
+    if (!pipeline.isSupported()) {
       this.appendHealthLog('preview_record_unsupported', {});
       wx.showToast({
         title: '本机不支持后台录制',
@@ -4746,7 +4794,7 @@ Page({
   },
   onShow: function () {
     this._livePageVisible = true;
-    if (this._liveReturnedFromBackground) {
+    if (this.isLiveForegroundRecordingRecoverPending()) {
       this._encodeStallGraceUntil = Date.now() + ENCODE_STALL_RECOVER_COOLDOWN_MS;
       // P0: 硬件交接安全期 — 等待 iOS 系统相机资源完全释放后再 rebuild
       this.appendHealthLog('camera_hardware_debounce_wait', { delayMs: 400 });
@@ -4849,17 +4897,17 @@ Page({
         this._syncCacheStorageLampData(storageEst.getClipStorageHealthHint(snap.clipBytes, snap.userDataBytes));
       }
     } catch (eSnap) {}
+    if (this.isLiveForegroundRecordingRecoverPending()) {
+      this._hardRecoverQuarantineUntil = 0; // 强制清除背景返回的隔离保护锁
+      if (this._cameraHardwareDebounceTimer) clearTimeout(this._cameraHardwareDebounceTimer);
+      this._cameraHardwareDebounceTimer = setTimeout(() => {
+        this._cameraHardwareDebounceTimer = null;
+        this._destructiveCameraRemount('force_background_recover');
+      }, 400);
+      return;
+    }
     if (this._entitlementEverAllowedInSession) {
-      // P0: 切后台回前台时 debounce 400ms，等待 iOS 相机硬件资源释放
-      if (this._liveReturnedFromBackground) {
-        if (this._cameraHardwareDebounceTimer) clearTimeout(this._cameraHardwareDebounceTimer);
-        this._cameraHardwareDebounceTimer = setTimeout(() => {
-          this._cameraHardwareDebounceTimer = null;
-          this._ensureLiveCameraReady(() => this._liveCoreOnShowAfterEntitlement());
-        }, 400);
-      } else {
-        this._ensureLiveCameraReady(() => this._liveCoreOnShowAfterEntitlement());
-      }
+      this._ensureLiveCameraReady(() => this._liveCoreOnShowAfterEntitlement());
       return;
     }
     this.refreshLiveEntitlementAndResume(() => {
@@ -5703,6 +5751,9 @@ Page({
     this._previewRecordFirstFrameAt = 0;
     this._previewRecordWarmupUntil = Date.now() + this.getPreviewRecordWarmupMs();
     this._liveReturnedFromBackground = true;
+    this._liveNeedsForegroundRecordingRecover = true;
+    this._previewRecordEncoderVerified = false;
+    this._encoderVerifyRestartAttempts = 0;
     if (this._hardRecoverQuarantineUntil && Date.now() < this._hardRecoverQuarantineUntil) {
       this._hardRecoverQuarantineUntil = Math.max(this._hardRecoverQuarantineUntil, Date.now() + PREVIEW_RECORD_MIN_MS_BEFORE_HIGHLIGHT_AFTER_PAGE_HIDE);
     }
@@ -6038,6 +6089,21 @@ Page({
       return;
     }
     if (!pipelineInactive && trackCount > 0) {
+      if (this.isLiveForegroundRecordingRecoverPending()) {
+        this._highlightHollowFlushStreak = (this._highlightHollowFlushStreak || 0) + 1;
+        this.appendHealthLog('highlight_flush_recover_hollow_active_tracks', {
+          anchorClickTime: anchorClickTime || 0,
+          trackCount,
+          recordAgeMs,
+          streak: this._highlightHollowFlushStreak
+        });
+        if (this._highlightHollowFlushStreak >= 2) {
+          this.hardRecoverLivePipeline('highlight_hollow_flush');
+        } else {
+          this._restartPreviewPipelineForHollow();
+        }
+        return;
+      }
       this.appendHealthLog('highlight_flush_recover_skip_active_tracks', {
         anchorClickTime: anchorClickTime || 0,
         trackCount,
@@ -6421,6 +6487,8 @@ Page({
     this._rollingTempMissingStreak = 0;
     this._lastSuccessfulChunkAt = 0;
     this._lastSegmentOperateFailAt = 0;
+    this._previewRecordEncoderVerified = false;
+    this._encoderVerifyRestartAttempts = 0;
     if (String(source || '').indexOf('temp_missing_storm') >= 0) {
       this._tempMissingHardRecoverCycles = (this._tempMissingHardRecoverCycles || 0) + 1;
     }
@@ -6537,7 +6605,7 @@ Page({
     }
     // 仅在切后台回前台时启用——冷启动时 onCameraFrame heartbeat 周期为 5s，
     // 不需要也不应该触发帧脉搏检测
-    if (!this._liveReturnedFromBackground) return;
+    if (!this.isLiveForegroundRecordingRecoverPending()) return;
     const pipeline = this._previewRecordPipeline;
     if (!pipeline || !pipeline.isActive()) return;
     // heartbeat 刷新周期为 5s，检查延迟须 > 5s 避免误判
@@ -6575,6 +6643,14 @@ Page({
     }, checkDelayMs);
   },
   /**
+   * WebGL 渲染上下文发生致命丢失时触发的自愈回调。
+   * @returns {void}
+   */
+  onWebGLContextFatal: function () {
+    this.appendHealthLog('webgl_context_fatal_event', {});
+    this._destructiveCameraRemount('webgl_context_fatal');
+  },
+  /**
    * P0: 毁灭性原生组件销毁。
    * 时序锁串行保证：先 stopRolling（等 I/O 写完）→ setData(isCameraRendered:false) 销毁 →
    * wx.nextTick + 100ms 等底层清理 → setData(isCameraRendered:true) 重新索取硬件锁 →
@@ -6591,6 +6667,18 @@ Page({
       this.appendHealthLog('destructive_remount_skip_hidden', { reason: reason || '' });
       return;
     }
+    this._previewRecordEncoderVerified = false;
+    this._encoderVerifyRestartAttempts = 0;
+    this._awaitingFirstSuccessChunkAfterRemount = true;
+    if (this._awaitingChunkTimeout) {
+      clearTimeout(this._awaitingChunkTimeout);
+    }
+    this._awaitingChunkTimeout = setTimeout(() => {
+      if (this._awaitingFirstSuccessChunkAfterRemount) {
+        this._awaitingFirstSuccessChunkAfterRemount = false;
+        this.appendHealthLog('awaiting_first_chunk_timeout_fallback', { reason: reason || '' });
+      }
+    }, 15000);
     this._destructiveRemountLock = true;
     this.appendHealthLog('destructive_camera_remount_start', { reason: reason || '' });
     const self = this;
@@ -6624,14 +6712,18 @@ Page({
                     self.highlightMissStreak = 0;
                     self._cameraFaultStreak = 0;
                     self._encodeStallGraceUntil = Date.now() + ENCODE_STALL_RECOVER_COOLDOWN_MS;
-                    self._hardRecoverQuarantineUntil = Date.now() + HARD_RECOVER_HIGHLIGHT_QUARANTINE_MS;
+                    if (reason !== 'force_background_recover') {
+                      self._hardRecoverQuarantineUntil = Date.now() + HARD_RECOVER_HIGHLIGHT_QUARANTINE_MS;
+                    } else {
+                      self._hardRecoverQuarantineUntil = 0;
+                    }
                     self.appendHealthLog('destructive_camera_remount_done', { reason: reason || '' });
                     self.tryStartRollingWhenCameraReady('destructive_remount_done');
                   }
                 });
               });
             });
-          }, 100);
+          }, isLiveHostIos() ? 400 : 100);
         };
         if (wx.nextTick) {
           wx.nextTick(afterDestroy);
@@ -6640,6 +6732,107 @@ Page({
         }
       });
     }, 'destructive_remount');
+  },
+  /**
+   * remount 后约 10s 强制探针轮换，空壳则自动重启管线。
+   * @returns {void}
+   */
+  _armPostRemountEncodingProbe: function () {
+    if (this._encodingProbeTimer) {
+      clearTimeout(this._encodingProbeTimer);
+      this._encodingProbeTimer = null;
+    }
+    const self = this;
+    this._encodingProbeTimer = setTimeout(() => {
+      self._encodingProbeTimer = null;
+      self._runPostRemountEncodingProbe();
+    }, 18000);
+  },
+  /**
+   * remount 后探针超时：若仍未验证编码器则强制轮换 A 轨或重启管线。
+   * @returns {void}
+   */
+  _runPostRemountEncodingProbe: function () {
+    if (!this._livePageVisible || !this.rollingActive) return;
+    if (!this.isLiveForegroundRecordingRecoverPending()) return;
+    if (this._previewRecordEncoderVerified) return;
+    const pipeline = this._previewRecordPipeline;
+    if (!pipeline || !pipeline.isActive()) return;
+    if (typeof pipeline.ensureDualTrackHealth === 'function') {
+      pipeline.ensureDualTrackHealth();
+    }
+    this.appendHealthLog('encoding_probe_timeout_no_verify', {
+      segmentCounter: this.segmentCounter || 0,
+      lastSuccessfulChunkAgeMs: this._lastSuccessfulChunkAt
+        ? Date.now() - this._lastSuccessfulChunkAt
+        : -1,
+      verifyAttempts: this._encoderVerifyRestartAttempts || 0
+    });
+    if (typeof pipeline.forceProbeRotate === 'function') {
+      pipeline.forceProbeRotate('A');
+      return;
+    }
+    this._scheduleHollowPipelineRestart({ source: 'encoding_probe' });
+  },
+  /**
+   * 空壳段落盘后调度管线重启（debounce，避免双轨同时空壳重复触发）。
+   * @param {{ source?: string, trackId?: string, sizeBytes?: number }} [detail]
+   * @returns {void}
+   */
+  _scheduleHollowPipelineRestart: function (detail) {
+    const recoverPending = this.isLiveForegroundRecordingRecoverPending();
+    const source = detail && detail.source ? String(detail.source) : '';
+    if (!recoverPending && source !== 'chunk_duration' && source !== 'highlight_flush') {
+      return;
+    }
+    if (this._hollowRestartDebounceTimer) {
+      clearTimeout(this._hollowRestartDebounceTimer);
+      this._hollowRestartDebounceTimer = null;
+    }
+    this._previewRecordEncoderVerified = false;
+    const self = this;
+    this._hollowRestartDebounceTimer = setTimeout(() => {
+      self._hollowRestartDebounceTimer = null;
+      self._encoderVerifyRestartAttempts = (self._encoderVerifyRestartAttempts || 0) + 1;
+      if (self._encoderVerifyRestartAttempts > ENCODER_VERIFY_RESTART_MAX) {
+        self.appendHealthLog('encoder_verify_restart_exhausted', {
+          attempts: self._encoderVerifyRestartAttempts,
+          source
+        });
+        self.hardRecoverLivePipeline('highlight_hollow_flush');
+        return;
+      }
+      if (self.data.isSavingHighlight || self.pendingHighlight || self.highlightMaterializeRunning) {
+        self._pendingHollowPipelineRestart = true;
+        self.appendHealthLog('hollow_restart_deferred_saving', { source });
+        return;
+      }
+      self._restartPreviewPipelineForHollow();
+    }, 400);
+  },
+  /**
+   * 高光 flush 空壳后重启 preview 管线（保留相机不重 mount）。
+   * @returns {void}
+   */
+  _restartPreviewPipelineForHollow: function () {
+    if (!this._livePageVisible || !this.rollingActive) return;
+    if (this.data.isRecovering || this._recoveryLock) return;
+    const pipeline = this._previewRecordPipeline;
+    if (!pipeline) return;
+    this._previewRecordEncoderVerified = false;
+    this.appendHealthLog('preview_pipeline_hollow_restart', {
+      attempts: this._encoderVerifyRestartAttempts || 0
+    });
+    const self = this;
+    const restart = () => {
+      if (!self._livePageVisible || !self.rollingActive) return;
+      self.tryStartRollingWhenCameraReady('hollow_restart');
+    };
+    if (pipeline.isActive()) {
+      pipeline.stop().then(restart).catch(restart);
+    } else {
+      restart();
+    }
   },
   /**
    * 右下角状态钮：REC 时保存高光；ERR 时单击触发页内硬恢复（不跳页、不挡预览）。
@@ -6696,6 +6889,22 @@ Page({
         minHighlightMs: highlightGate.minHighlightMs || 0,
         remainMs: highlightGate.remainMs || 0
       });
+      if (highlightGate.reason === 'awaiting_first_chunk') {
+        wx.showToast({
+          title: '相机恢复中，等待录制数据稳定...',
+          icon: 'none',
+          duration: 2200
+        });
+        return;
+      }
+      if (highlightGate.reason === 'encoder_not_verified' || highlightGate.reason === 'encoder_live_warming') {
+        wx.showToast({
+          title: '编码器校验中，请稍候...',
+          icon: 'none',
+          duration: 2200
+        });
+        return;
+      }
       if (highlightGate.reason === 'guide_visible') {
         wx.showToast({
           title: '请先完成新手引导',
@@ -7164,21 +7373,41 @@ Page({
     return this._startRollingRecordingImpl(source);
   },
   /**
+   * 确保视录分离管线实例存在（onShow kickoff 的 stopRolling 在未起录时不得丢弃实例）。
+   * @returns {Object}
+   */
+  _ensurePreviewRecordPipeline: function () {
+    if (!this._previewRecordPipeline) {
+      this._previewRecordPipeline = replayBufferMod.createPreviewRecordPipeline(this);
+    }
+    return this._previewRecordPipeline;
+  },
+  /**
    * 视录分离：启动 onCameraFrame + 双轨 MediaRecorder 乒乓缓冲（永不 startRecord）。
    * @param {string} [source]
    * @returns {void}
    */
   _startRollingRecordingImpl: function (source) {
-    if (!this._previewRecordPipeline) return;
+    this._ensurePreviewRecordPipeline();
     if (!this.rollingActive || !this._cameraInitDone) return;
     if (!this.data.cameraContext) return;
     if (this._previewRecordPipeline.isActive()) return;
     if (this._previewRecordStartInFlight) return;
     this._previewRecordStartInFlight = true;
     const self = this;
-    this.ensureRollingDir().then(() => {
+    const retireWait = this._previewRecordRetirePromise || Promise.resolve();
+    retireWait.then(() => {
+      if (!self.rollingActive) return Promise.resolve();
+      const afterPageHide = self.isLiveForegroundRecordingRecoverPending();
+      const afterHardRecoverTimeout = !!self._hardRecoverHadTimeoutRebuild;
+      const settleMs = afterPageHide ? 1500 : 0;
+      if (settleMs > 0) {
+        return new Promise((resolve) => setTimeout(resolve, settleMs));
+      }
+      return Promise.resolve();
+    }).then(() => self.ensureRollingDir()).then(() => {
       if (!self.rollingActive) return;
-      const afterPageHide = !!self._liveReturnedFromBackground;
+      const afterPageHide = self.isLiveForegroundRecordingRecoverPending();
       const afterHardRecoverTimeout = !!self._hardRecoverHadTimeoutRebuild;
       let warmupMinFrames = 5;
       if (afterHardRecoverTimeout) {
@@ -7196,12 +7425,15 @@ Page({
         maxFiles: self.pingPongRollingMaxFiles || 2,
         requireFirstFrame: true,
         firstFrameTimeoutMs: afterPageHide || afterHardRecoverTimeout ? 5500 : PREVIEW_RECORD_FIRST_FRAME_TIMEOUT_MS,
-        warmupMinFrames
+        warmupMinFrames,
+        deferEncoderInit: afterPageHide,
+        encoderLiveWarmupFrames: afterPageHide ? 48 : 0,
+        probeChunkDurationMs: afterPageHide ? POST_RE_MOUNT_PROBE_CHUNK_MS : 0
       });
     }).then(() => {
       self._previewRecordStartInFlight = false;
       if (!self.rollingActive || !self._previewRecordPipeline.isActive()) return;
-      if (self._liveReturnedFromBackground) {
+      if (self.isLiveForegroundRecordingRecoverPending()) {
         self._lastSuccessfulChunkAt = 0;
       }
       self._previewRecordWarmupUntil = 0;
@@ -7218,8 +7450,10 @@ Page({
         isRecording: true
       });
       self.updatePipelineHealth();
-      // P0: 启动帧脉搏监控 — 2s 后检查是否有有效帧，检测 iOS 空壳流假死
       self._armFramePulseMonitor();
+      if (self.isLiveForegroundRecordingRecoverPending()) {
+        self._armPostRemountEncodingProbe();
+      }
     }).catch(err => {
       self._previewRecordStartInFlight = false;
       const errMsg = String(err && err.message || err);
@@ -7611,12 +7845,15 @@ Page({
       finish();
       return;
     }
-    pipeline.stop().then(() => {
+    const retirePromise = pipeline.stop().then(() => {
       this.appendHealthLog('preview_record_stopped', {
         source: source || 'stopRollingRecording'
       });
-      finish();
-    }).catch(() => finish());
+    }).catch(() => {}).finally(() => {
+      this._previewRecordPipeline = null;
+    });
+    this._previewRecordRetirePromise = retirePromise;
+    retirePromise.finally(() => finish());
   },
   /**
    * @deprecated 视录分离架构下片段由乒乓调度器落盘。
@@ -8143,6 +8380,24 @@ Page({
     }).filter(Boolean);
   },
   /**
+   * 判断已标记 replayPreTrimmed 的固化文件是否实为「假裁剪」（仍接近母片体积）。
+   * Android 8s 高光码率更高，体积常 >1.8MB，须结合 trimVerified / 源目标体积比。
+   * @param {Record<string, unknown>} item
+   * @param {number} replayFileSizeBytes
+   * @returns {boolean}
+   */
+  _isReplaySuspectFakeTrim: function (item, replayFileSizeBytes) {
+    if (!item || !item.replayPreTrimmed) return false;
+    if (item.trimVerified === true) return false;
+    const srcBytes = typeof item.srcSizeBytes === 'number' ? item.srcSizeBytes : 0;
+    const outBytes = typeof item.trimOutputSizeBytes === 'number' ? item.trimOutputSizeBytes : 0;
+    const fileBytes = Number(replayFileSizeBytes) || 0;
+    if (srcBytes > 0 && outBytes > 0 && outBytes < srcBytes * 0.65) return false;
+    if (srcBytes > 0 && fileBytes > 0 && fileBytes < srcBytes * 0.65) return false;
+    const thresholdMb = isLiveHostIos() ? 1.8 : 5.5;
+    return fileBytes > thresholdMb * 1024 * 1024;
+  },
+  /**
    * 已裁剪固化的高光条目：回放 seek 须从 0 起，不可沿用母片内偏移。
    * 若固化时裁剪失败（整段母片拷贝），不可误判为已裁剪。
    * @param {Record<string, unknown>} item
@@ -8159,8 +8414,7 @@ Page({
       const st = wx.getFileSystemManager().statSync(target);
       replayFileSizeBytes = st && typeof st.size === 'number' ? st.size : 0;
     } catch (eStat) {}
-    /** 8s 高光正常 < ~1.8MB；接近母片体积说明裁剪未生效。 */
-    if (replayFileSizeBytes > 1.8 * 1024 * 1024 && item.trimVerified !== true) {
+    if (this._isReplaySuspectFakeTrim(item, replayFileSizeBytes)) {
       return item;
     }
     const init = typeof item.replayInitialTimeSec === 'number' ? item.replayInitialTimeSec : 0;
@@ -8336,7 +8590,7 @@ Page({
    * @returns {void}
    */
   _handleDegradedRollingSegment: function (segment) {
-    if (!this._liveReturnedFromBackground) return;
+    if (!this.isLiveForegroundRecordingRecoverPending()) return;
     const wallMs = Math.max(0, (segment.endTime || 0) - (segment.startTime || 0));
     const sizeBytes = segment.sizeBytes || 0;
     if (this._isRollingSegmentQualityHealthy(sizeBytes, wallMs)) {
@@ -9300,7 +9554,14 @@ Page({
     const highlightGate = this.getPreviewRecordHighlightGate();
     if (!highlightGate.ready) {
       const gateReason = highlightGate.reason || 'unknown';
-      if (gateReason === 'record_warming' || gateReason === 'warmup_until' || gateReason === 'no_first_frame' || gateReason === 'match_switch_warming') {
+      if (
+        gateReason === 'record_warming'
+        || gateReason === 'warmup_until'
+        || gateReason === 'no_first_frame'
+        || gateReason === 'match_switch_warming'
+        || gateReason === 'encoder_not_verified'
+        || gateReason === 'encoder_live_warming'
+      ) {
         this.appendHealthLog('highlight_skip_record_warming', {
           reason: gateReason,
           recordAgeMs: highlightGate.recordAgeMs || 0,
@@ -9316,8 +9577,17 @@ Page({
         });
       }
       const remainSec = highlightGate.remainMs ? Math.max(1, Math.ceil(highlightGate.remainMs / 1000)) : 0;
+      const gateToastTitle = gateReason === 'encoder_not_verified' || gateReason === 'encoder_live_warming'
+        ? '编码器校验中，请稍候...'
+        : gateReason === 'guide_visible'
+          ? '请先完成新手引导'
+          : gateReason === 'match_switch_warming'
+            ? remainSec > 0 ? `新场次缓冲中，约${remainSec}秒后可保存` : '新场次缓冲中，请稍后再保存'
+            : remainSec > 0
+              ? this._liveReturnedFromBackground ? `相机恢复中，约${remainSec}秒后可保存` : `相机预热中，约${remainSec}秒后可保存`
+              : '相机预热中，请稍后再保存';
       wx.showToast({
-        title: gateReason === 'guide_visible' ? '请先完成新手引导' : gateReason === 'match_switch_warming' ? remainSec > 0 ? `新场次缓冲中，约${remainSec}秒后可保存` : '新场次缓冲中，请稍后再保存' : remainSec > 0 ? this._liveReturnedFromBackground ? `相机恢复中，约${remainSec}秒后可保存` : `相机预热中，约${remainSec}秒后可保存` : '相机预热中，请稍后再保存',
+        title: gateToastTitle,
         icon: 'none',
         duration: 2200
       });
@@ -11128,11 +11398,13 @@ Page({
     const peakMs = 140;
     let initialSec = replayPlan[0] && typeof replayPlan[0].initialTimeSec === 'number' ? replayPlan[0].initialTimeSec : typeof item.replayInitialTimeSec === 'number' ? item.replayInitialTimeSec : 0;
     let replayStopSec = replayPlan[0] && typeof replayPlan[0].stopAtSec === 'number' ? replayPlan[0].stopAtSec : typeof item.replayMediaStopAtSec === 'number' ? item.replayMediaStopAtSec : 0;
-    /** 8s 高光正常 < ~1.8MB；接近母片体积说明 MediaContainer 假裁剪。 */
-    const suspectFakeTrim = !!item.replayPreTrimmed && replayFileSizeBytes > 1.8 * 1024 * 1024;
+    const suspectFakeTrim = this._isReplaySuspectFakeTrim(item, replayFileSizeBytes);
     let mappedRollingSeek = false;
-    if (item.replayPreTrimmed && !suspectFakeTrim) {
+    if ((item.replayPreTrimmed && !suspectFakeTrim) || item.trimVerified === true) {
       initialSec = 0;
+      if (typeof item.replayMediaStopAtSec === 'number' && item.replayMediaStopAtSec > 0) {
+        replayStopSec = item.replayMediaStopAtSec;
+      }
     } else if (item.replayTailTrim && (suspectFakeTrim || typeof target === 'string' && target.indexOf('_rolling/') >= 0)) {
       const wallInitialSec = typeof item.windowStartInSegMs === 'number' && item.windowStartInSegMs >= 0 ? item.windowStartInSegMs / 1000 : initialSec;
       const wallStopSec = typeof item.windowEndInSegMs === 'number' && item.windowEndInSegMs > 0 ? item.windowEndInSegMs / 1000 : replayStopSec;
@@ -13154,6 +13426,9 @@ Page({
       list[idx].segments = savedPaths;
       list[idx].replaySegment = replaySegment;
       list[idx].trimVerified = wasTrimmed;
+      list[idx].srcSizeBytes = srcSizeBytes;
+      list[idx].trimOutputSizeBytes = outSizeBytes;
+      list[idx].trimOutputDurationMs = typeof task.trimOutputDurationMs === 'number' ? task.trimOutputDurationMs : 0;
       if (wasTrimmed && trimDurationSec) {
         list[idx].replayInitialTimeSec = 0;
         list[idx].replayMediaStopAtSec = trimDurationSec;
@@ -13225,6 +13500,7 @@ Page({
     this._proMatchNameUserMoved = false;
     this._proMatchNameMovableInited = false;
     this._previewRecordPipeline = replayBufferMod.createPreviewRecordPipeline(this);
+    this._previewRecordRetirePromise = null;
     this._recorderCore = new replayBufferMod.RecorderCore(this);
     this._replayBuffer = replayBufferMod.createReplayBuffer({
       windowMs: this.replayBufferWindowMs || 45000,
@@ -13254,6 +13530,13 @@ Page({
     this._destructiveRemountLock = false;
     this._framePulseTimer = null;
     this._cameraHardwareDebounceTimer = null;
+    this._awaitingFirstSuccessChunkAfterRemount = false;
+    this._liveNeedsForegroundRecordingRecover = false;
+    this._encodingProbeTimer = null;
+    if (this._awaitingChunkTimeout) {
+      clearTimeout(this._awaitingChunkTimeout);
+      this._awaitingChunkTimeout = null;
+    }
   },
   _initLiveWsState: function () {
     this._liveWsCurrentSeq = 0;
