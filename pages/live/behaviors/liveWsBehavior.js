@@ -225,44 +225,33 @@ _liveWsBuildClockDisplayPatch: function (bundle) {
  */
 _liveWsOnSocketOpen: function () {
   this._liveWsWaitingCollector = false;
-  var self = this;
-  if (this._liveWsOpenTimer) {
-    clearTimeout(this._liveWsOpenTimer);
-    this._liveWsOpenTimer = null;
+  var patch = {
+    liveWsConnected: true,
+    liveWsQuickBusy: false,
+    liveWsStatusText: '',
+    liveWsPanelOpen: false
+  };
+  if (this.data.autoSyncWhitelisted) {
+    patch.isAutoMode = true;
   }
-  if (this.data.isAutoMode) {
-    var patch = {
-      liveWsConnected: true,
-      liveWsQuickBusy: false,
-      liveWsStatusText: '',
-      liveWsPanelOpen: false
-    };
-    this.setData(patch, function () {
+  var self = this;
+  this.setData(patch, function () {
+    if (patch.isAutoMode) {
       self.updateTeamGroupWidth(true);
       self._liveWsRefreshWxsClockDriver();
-    });
-    wx.showToast({
-      title: '云端已连接',
-      icon: 'success',
-      duration: 1400
-    });
-  } else {
-    this.setData({
-      liveWsConnected: true,
-      liveWsQuickBusy: false,
-      liveWsStatusText: '已连接，等待数据同步…'
-    });
-  }
+    }
+  });
+  wx.showToast({
+    title: '云端已连接',
+    icon: 'success',
+    duration: 1400
+  });
 },
     /**
  * WSS onClose：非主动断开时回退手动记分。
  * @returns {void}
  */
 _liveWsOnSocketClose: function () {
-  if (this._liveWsOpenTimer) {
-    clearTimeout(this._liveWsOpenTimer);
-    this._liveWsOpenTimer = null;
-  }
   if (this._liveWsManualTeardown) return;
   var client = this._liveWsClient;
   var stillRetrying = !!(client && client.getRoomId && client.getRoomId());
@@ -297,10 +286,6 @@ _liveWsOnSocketMessage: function (raw) {
       return;
     }
     if (msg.type === 'COLLECTOR_EXIST') {
-      if (this._liveWsOpenTimer) {
-        clearTimeout(this._liveWsOpenTimer);
-        this._liveWsOpenTimer = null;
-      }
       wx.showModal({
         title: '连接失败',
         content: '房间不可用',
@@ -316,10 +301,6 @@ _liveWsOnSocketMessage: function (raw) {
       return;
     }
     if (msg.type === 'ROOM_NOT_FOUND') {
-      if (this._liveWsOpenTimer) {
-        clearTimeout(this._liveWsOpenTimer);
-        this._liveWsOpenTimer = null;
-      }
       wx.showModal({
         title: '房间不存在',
         content: '请确认采集端已开启且房间号一致',
@@ -335,10 +316,6 @@ _liveWsOnSocketMessage: function (raw) {
       return;
     }
     if (msg.type === 'ROOM_FULL') {
-      if (this._liveWsOpenTimer) {
-        clearTimeout(this._liveWsOpenTimer);
-        this._liveWsOpenTimer = null;
-      }
       wx.showModal({
         title: '连接失败',
         content: '房间已满',
@@ -424,10 +401,6 @@ _liveWsApplyDisconnectedUiPatch: function () {
  * @returns {void}
  */
 _liveWsTeardownForManualMode: function () {
-  if (this._liveWsOpenTimer) {
-    clearTimeout(this._liveWsOpenTimer);
-    this._liveWsOpenTimer = null;
-  }
   this._liveWsManualTeardown = true;
   try {
     this._liveWsFlushScorePersist();
@@ -442,10 +415,6 @@ _liveWsTeardownForManualMode: function () {
  * @returns {void}
  */
 _liveWsDisconnect: function (manual) {
-  if (this._liveWsOpenTimer) {
-    clearTimeout(this._liveWsOpenTimer);
-    this._liveWsOpenTimer = null;
-  }
   this._liveWsEnsureClient();
   if (manual) {
     this._liveWsWaitingCollector = false;
@@ -630,10 +599,6 @@ _liveWsFlushScorePersist: function () {
    */
   _consumeWsBroadcast: function (payload) {
     if (!payload || typeof payload.act !== 'string') return;
-    
-    var self = this;
-    var isTransitioning = !this.data.isAutoMode && this.data.autoSyncWhitelisted;
-    
     if (typeof payload.session_id === 'string' && payload.session_id && this._liveWsSessionId !== payload.session_id) {
       console.log('[Live][WS] collector session changed %s -> %s, reset seq', this._liveWsSessionId || 'none', payload.session_id);
       this._liveWsSessionId = payload.session_id;
@@ -688,13 +653,6 @@ _liveWsFlushScorePersist: function () {
       shotAnchorMs = nowMs;
     }
     var patch = {};
-    if (isTransitioning) {
-      patch.isAutoMode = true;
-      patch.liveWsConnected = true;
-      patch.liveWsQuickBusy = false;
-      patch.liveWsStatusText = '';
-      patch.liveWsPanelOpen = false;
-    }
     var timeActs = {
       START: 1,
       STOP: 1,
@@ -726,7 +684,7 @@ _liveWsFlushScorePersist: function () {
         heartbeat: payload.heartbeat ? 1 : 0
       });
     }
-    if ((this.data.isAutoMode || isTransitioning) && this.data.autoSyncWhitelisted) {
+    if (this.data.isAutoMode && this.data.autoSyncWhitelisted) {
       var mc = this.data.matchConfig || {};
       var changed = false;
       var scoreA = Math.max(0, Math.floor(Number(payload.a) || 0));
@@ -766,15 +724,6 @@ _liveWsFlushScorePersist: function () {
     if (Object.keys(patch).length) {
       var selfTick = this;
       this.setData(patch, function () {
-        if (isTransitioning) {
-          selfTick.updateTeamGroupWidth(true);
-          selfTick._liveWsRefreshWxsClockDriver();
-          wx.showToast({
-            title: '云端已连接',
-            icon: 'success',
-            duration: 1400
-          });
-        }
         if (!hadTimeAct) return;
         if (selfTick.data.wxsClockBundle && selfTick.data.wxsClockBundle.mainRunning) {
           selfTick._liveWsStartClockTick();
