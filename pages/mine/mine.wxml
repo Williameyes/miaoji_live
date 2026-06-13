@@ -48,8 +48,8 @@
     <view class="renew-card" catchtap="stopRenewModalBubble">
       <view class="renew-kicker">HoopsLive</view>
       <view class="renew-title">去续期</view>
-      <view class="renew-sub">邀请好友完成登录可续期 5 天</view>
-      <view class="renew-minor">将小程序分享给球友，完成首次登录即可帮你续期</view>
+      <view class="renew-sub">邀请好友完成登录可续期 7 天</view>
+      <view class="renew-minor">将小程序分享给球友，完成首次登录即可帮你续期（邀请多位，可累加）</view>
       <button class="renew-share-btn" open-type="share">立即分享，继续试用</button>
       <view class="renew-dismiss" bindtap="closeRenewModal">我知道了</view>
     </view>

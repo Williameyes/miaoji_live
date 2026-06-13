@@ -1482,7 +1482,7 @@ buildVipGateStateFromCheckStatus: function (body) {
     }
     const now = Date.now();
     if (expMs < now) {
-      return deny('权益续杯', '权益已到期，邀请好友完成登录可续期 5 天', `到期时间：${this.formatExpireForDisplay(expireRaw)}`, false);
+      return deny('权益续杯', '权益已到期，邀请好友完成登录可续期 7 天（邀请多位，可累加）', `到期时间：${this.formatExpireForDisplay(expireRaw)}`, false);
     }
     return deny('权益续杯', '当前账号暂不可使用直播功能', `参考到期时间：${this.formatExpireForDisplay(expireRaw)}`, true);
   },

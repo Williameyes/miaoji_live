@@ -131,7 +131,7 @@ App({
         const shouldCelebrate = consumeVipExtensionCelebrationIfNeeded(isVip, expireAt);
         if (shouldCelebrate) {
           wx.showToast({
-            title: '好友已激活，5天权益已到账',
+            title: '好友已激活，7天权益已到账',
             icon: 'none',
             duration: 2800
           });
