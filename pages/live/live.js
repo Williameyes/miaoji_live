@@ -1059,13 +1059,17 @@ _estimateProScoreboardWidthPx: function (areaW) {
     var ww = Math.max(1, Number(areaW) || 375);
     var sport = normalizeSportType(this.data.sportType);
     if (sport === SPORT_BADMINTON) {
-      const mc = this.data.matchConfig || {};
-      const isScoreEnabled = mc.sportConfig ? mc.sportConfig.isScoreEnabled !== false : true;
-      if (isScoreEnabled) {
-        return Math.max(108, Math.round(252 * ww / 750));
-      } else {
-        return Math.max(68, Math.round(160 * ww / 750));
-      }
+      var mc = this.data.matchConfig || {};
+      var isScoreEnabled = mc.sportConfig ? mc.sportConfig.isScoreEnabled !== false : true;
+      var nameA = mc.teamA && mc.teamA.name ? String(mc.teamA.name) : '';
+      var nameB = mc.teamB && mc.teamB.name ? String(mc.teamB.name) : '';
+      var maxNameLen = Math.max(
+        Math.min(nameA.length, 8) || 1,
+        Math.min(nameB.length, 8) || 1
+      );
+      var nameRpx = Math.min(145, Math.max(18, maxNameLen * 14 + 8));
+      var totalRpx = isScoreEnabled ? nameRpx + 34 + 40 + 14 : nameRpx + 14;
+      return Math.max(isScoreEnabled ? 72 : 52, Math.round(totalRpx * ww / 750));
     }
     return Math.max(72, Math.round(168 * ww / 750));
   },
@@ -1139,9 +1143,9 @@ _estimateProScoreboardWidthPx: function (areaW) {
     var sh = Math.max(1, Number(stageH) || 211);
     var bx = Math.max(1, Number(boardW) || 96);
     var by = Math.max(1, Number(boardH) || 40);
-    var insetX = Math.max(8, Math.round(sw * 0.012));
-    var insetY = Math.max(8, Math.round(sh * 0.02));
-    var gap = 8;
+    var insetX = Math.max(2, Math.round(sw * 0.004));
+    var insetY = Math.max(3, Math.round(sh * 0.005));
+    var gapToCapsule = 6;
     var x = sw - bx - insetX;
     var y = insetY;
     var sLeft = Number(stageScreenLeft) || 0;
@@ -1150,13 +1154,12 @@ _estimateProScoreboardWidthPx: function (areaW) {
       if (wx.getMenuButtonBoundingClientRect) {
         var menu = wx.getMenuButtonBoundingClientRect();
         if (menu && typeof menu.left === 'number' && typeof menu.top === 'number') {
-          var menuW = typeof menu.width === 'number' ? menu.width : 88;
           var menuH = typeof menu.height === 'number' ? menu.height : 32;
           var menuLeftInStage = menu.left - sLeft;
           var menuTopInStage = menu.top - sTop;
           var menuBottomInStage = menuTopInStage + menuH;
           if (menuLeftInStage > sw * 0.45 && menuTopInStage < sh * 0.35 && menuBottomInStage > 0) {
-            x = Math.min(x, menuLeftInStage - bx - gap);
+            x = Math.min(x, menuLeftInStage - bx - gapToCapsule);
           }
         }
       }
@@ -1267,6 +1270,11 @@ _estimateProScoreboardWidthPx: function (areaW) {
     setTimeout(function () {
       self._refineProScoreboardLayoutFromDom(true);
     }, 420);
+    if (normalizeSportType(this.data.sportType) === SPORT_BADMINTON) {
+      setTimeout(function () {
+        self._refineProScoreboardLayoutFromDom(true);
+      }, 720);
+    }
     this._initProMatchNameMovableLayout();
   },
   /**

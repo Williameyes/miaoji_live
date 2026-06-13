@@ -159,7 +159,7 @@
               <view class="pro-panel-rows">
                 <view
                   class="pro-panel-row pro-panel-row--team"
-                  style="background-color: {{matchConfig.teamA.rgbaBg || matchConfig.teamA.bgColor}}; color: {{matchConfig.teamA.textColor}};"
+                  style="background-color: {{matchConfig.teamA.rgbaBg || matchConfig.teamA.bgColor}}; --team-bg: {{matchConfig.teamA.rgbaBg || matchConfig.teamA.bgColor}}; color: {{matchConfig.teamA.textColor}};"
                 >
                   <view
                     class="pro-panel-left pro-score-hit"
@@ -186,8 +186,12 @@
                   >{{matchConfig.teamA.currentSetScore}}</view>
                 </view>
                 <view
+                  wx:if="{{matchConfig.sportConfig.isScoreEnabled === false}}"
+                  class="pro-badminton-vs"
+                >VS</view>
+                <view
                   class="pro-panel-row pro-panel-row--team"
-                  style="background-color: {{matchConfig.teamB.rgbaBg || matchConfig.teamB.bgColor}}; color: {{matchConfig.teamB.textColor}};"
+                  style="background-color: {{matchConfig.teamB.rgbaBg || matchConfig.teamB.bgColor}}; --team-bg: {{matchConfig.teamB.rgbaBg || matchConfig.teamB.bgColor}}; color: {{matchConfig.teamB.textColor}};"
                 >
                   <view
                     class="pro-panel-left pro-score-hit"

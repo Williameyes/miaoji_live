@@ -3702,6 +3702,20 @@ button.live-ble-btn::after {
 /* ── 羽毛球 1.5 倍记分牌尺寸与不记分模式 ── */
 .pro-scoreboard-container--badminton-large {
   max-width: 75vw !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border: none !important;
+}
+
+.pro-scoreboard-container--badminton-noscore {
+  background: transparent !important;
+  box-shadow: none !important;
+  border: none !important;
+}
+
+.pro-scoreboard-container--badminton-large .pro-panel-rows,
+.pro-scoreboard-container--badminton-noscore .pro-panel-rows {
+  position: relative;
 }
 
 .pro-scoreboard-container--badminton-large .pro-panel-row,
@@ -3714,6 +3728,37 @@ button.live-ble-btn::after {
 .pro-scoreboard-container--badminton-noscore .pro-panel-row--team {
   border-radius: 4.5rpx;
   padding: 2rpx 7.5rpx;
+  position: relative;
+  background-color: transparent !important;
+}
+
+.pro-scoreboard-container--badminton-large .pro-panel-row--team::before,
+.pro-scoreboard-container--badminton-noscore .pro-panel-row--team::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 29rpx; /* Visual height of 1.5x version (60rpx total) */
+  background-color: var(--team-bg);
+  z-index: -1;
+  border-radius: 4.5rpx;
+  pointer-events: none;
+}
+
+/* Align first row's visual background to the bottom of the click area */
+.pro-scoreboard-container--badminton-large .pro-panel-row--team:first-child::before,
+.pro-scoreboard-container--badminton-noscore .pro-panel-row--team:first-child::before {
+  bottom: 0;
+  top: auto;
+  transform: none;
+}
+
+/* Align second row's visual background to the top of the click area */
+.pro-scoreboard-container--badminton-large .pro-panel-row--team:last-child::before,
+.pro-scoreboard-container--badminton-noscore .pro-panel-row--team:last-child::before {
+  top: 0;
+  bottom: auto;
+  transform: none;
 }
 
 .pro-scoreboard-container--badminton-large .pro-panel-left,
@@ -3729,6 +3774,7 @@ button.live-ble-btn::after {
 .pro-scoreboard-container--badminton-large .pro-team-name,
 .pro-scoreboard-container--badminton-noscore .pro-team-name {
   font-size: 12rpx;
+  font-weight: 500; /* Do not bold */
 }
 
 .pro-scoreboard-container--badminton-large .pro-set-score {
@@ -3741,6 +3787,22 @@ button.live-ble-btn::after {
   min-width: 40rpx;
   padding: 3rpx 5rpx;
   border-radius: 4.5rpx;
+  position: relative;
+  background-color: transparent !important;
+}
+
+.pro-scoreboard-container--badminton-large .pro-badminton-meta-col::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 60rpx; /* Visual height matching the rows (60rpx total) */
+  background-color: rgba(0, 0, 0, 0.42);
+  z-index: -1;
+  border-radius: 4.5rpx;
+  pointer-events: none;
 }
 
 .pro-scoreboard-container--badminton-large .pro-badminton-meta-inner {
@@ -3765,6 +3827,7 @@ button.live-ble-btn::after {
 .pro-scoreboard-container--badminton-large .pro-sets-num {
   font-size: 15rpx;
   min-width: 13.5rpx;
+  font-weight: 500; /* Do not bold */
 }
 
 .pro-scoreboard-container--badminton-large .pro-serve-icon-svg {
@@ -3774,4 +3837,28 @@ button.live-ble-btn::after {
 
 .pro-scoreboard-container--badminton-noscore {
   /* Dynamic flex shrinks the width automatically when scoring elements are hidden. */
+}
+
+/* Small round VS badge in non-scoring mode */
+.pro-badminton-vs {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) skewX(-15deg);
+  font-size: 8rpx;
+  font-weight: 900;
+  font-style: italic;
+  font-family: 'Impact', 'DIN Alternate', 'Helvetica Neue', sans-serif;
+  color: #ffffff;
+  text-shadow: 0 1rpx 2rpx rgba(0, 0, 0, 0.5);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.06) 100%);
+  border-radius: 2rpx;
+  width: 22rpx;
+  height: 12rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  border: 1rpx solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 2rpx 5rpx rgba(0, 0, 0, 0.35);
 }
