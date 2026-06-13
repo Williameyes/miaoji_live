@@ -369,7 +369,8 @@ var DEFAULT_BADMINTON_STATE = {
   servingZone: 'right',
   ruleType: 'single',
   maxSets: 3,
-  pointsPerSet: 21
+  pointsPerSet: 21,
+  isScoreEnabled: true
 };
 
 /**
@@ -1056,6 +1057,16 @@ resolveMatchIdForHighlightStorage: function () {
   /** @region LIVE_SCOREBOARD — 足球/羽毛球浮层记分牌与赛名条 */
 _estimateProScoreboardWidthPx: function (areaW) {
     var ww = Math.max(1, Number(areaW) || 375);
+    var sport = normalizeSportType(this.data.sportType);
+    if (sport === SPORT_BADMINTON) {
+      const mc = this.data.matchConfig || {};
+      const isScoreEnabled = mc.sportConfig ? mc.sportConfig.isScoreEnabled !== false : true;
+      if (isScoreEnabled) {
+        return Math.max(108, Math.round(252 * ww / 750));
+      } else {
+        return Math.max(68, Math.round(160 * ww / 750));
+      }
+    }
     return Math.max(72, Math.round(168 * ww / 750));
   },
   /**
@@ -1065,6 +1076,10 @@ _estimateProScoreboardWidthPx: function (areaW) {
    */
   _estimateProScoreboardHeightPx: function (areaW) {
     var ww = Math.max(1, Number(areaW) || 375);
+    var sport = normalizeSportType(this.data.sportType);
+    if (sport === SPORT_BADMINTON) {
+      return Math.max(36, Math.round(75 * ww / 750));
+    }
     return Math.max(24, Math.round(40 * ww / 750));
   },
   /**
@@ -4846,7 +4861,8 @@ onCameraInit: function (e) {
       servingZone: bs.servingZone === 'left' ? 'left' : 'right',
       ruleType: bs.ruleType === 'double' ? 'double' : 'single',
       maxSets: Math.max(1, Math.floor(Number(bs.maxSets) || DEFAULT_BADMINTON_STATE.maxSets)),
-      pointsPerSet: bs.pointsPerSet === 11 ? 11 : 21
+      pointsPerSet: bs.pointsPerSet === 11 ? 11 : 21,
+      isScoreEnabled: bs.isScoreEnabled !== false
     };
     const sc = normalizedConfig.sportConfig || {};
     normalizedConfig.sportConfig = {
@@ -4855,7 +4871,8 @@ onCameraInit: function (e) {
       halfMinutes: Math.max(1, Math.floor(Number(sc.halfMinutes) || 45)),
       ruleType: sc.ruleType === 'double' ? 'double' : 'single',
       pointsPerSet: sc.pointsPerSet === 11 ? 11 : 21,
-      maxSets: Math.max(1, Math.floor(Number(sc.maxSets) || 3))
+      maxSets: Math.max(1, Math.floor(Number(sc.maxSets) || 3)),
+      isScoreEnabled: sc.isScoreEnabled !== false
     };
     if (normalizedConfig.sportType === SPORT_BADMINTON) {
       normalizedConfig.badmintonState.ruleType = normalizedConfig.sportConfig.ruleType;
@@ -7143,6 +7160,11 @@ updatePipelineHealth: function () {
   },
   // 核心记分逻辑
   onScoreTap: function (e) {
+    const mc = this.data.matchConfig || {};
+    const sport = normalizeSportType(this.data.sportType);
+    if (sport === SPORT_BADMINTON && mc.sportConfig && mc.sportConfig.isScoreEnabled === false) {
+      return;
+    }
     const {
       team,
       type
@@ -7236,7 +7258,9 @@ updatePipelineHealth: function () {
    */
   toggleServingTeamManually: function () {
     if (normalizeSportType(this.data.sportType) !== SPORT_BADMINTON) return;
-    const bs = this.data.matchConfig.badmintonState || DEFAULT_BADMINTON_STATE;
+    const mc = this.data.matchConfig || {};
+    if (mc.sportConfig && mc.sportConfig.isScoreEnabled === false) return;
+    const bs = mc.badmintonState || DEFAULT_BADMINTON_STATE;
     const nextTeam = bs.servingTeam === 'B' ? 'A' : 'B';
     const teamKey = nextTeam === 'A' ? 'teamA' : 'teamB';
     const setScore = this.data.matchConfig[teamKey].currentSetScore || 0;
@@ -7255,6 +7279,11 @@ updatePipelineHealth: function () {
   },
   // 长按连续记分
   onScoreLongPress: function (e) {
+    const mc = this.data.matchConfig || {};
+    const sport = normalizeSportType(this.data.sportType);
+    if (sport === SPORT_BADMINTON && mc.sportConfig && mc.sportConfig.isScoreEnabled === false) {
+      return;
+    }
     const {
       team,
       type

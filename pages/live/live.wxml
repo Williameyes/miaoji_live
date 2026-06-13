@@ -153,7 +153,7 @@
         </view>
 
         <!-- 羽毛球：双行小分；局分/发球在右侧（赛名单独可拖动浮层） -->
-        <view wx:elif="{{sportType === 'badminton'}}" class="pro-scoreboard-container">
+        <view wx:elif="{{sportType === 'badminton'}}" class="pro-scoreboard-container {{matchConfig.sportConfig.isScoreEnabled !== false ? 'pro-scoreboard-container--badminton-large' : 'pro-scoreboard-container--badminton-noscore'}}">
           <view class="pro-panel-body">
             <view class="pro-panel-body-inner">
               <view class="pro-panel-rows">
@@ -175,6 +175,7 @@
                     >{{c.limitTeamNamePro(matchConfig.teamA.name || '队A')}}</text>
                   </view>
                   <view
+                    wx:if="{{matchConfig.sportConfig.isScoreEnabled !== false}}"
                     class="pro-set-score pro-score-number pro-score-hit"
                     catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
                     bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
@@ -202,6 +203,7 @@
                     >{{c.limitTeamNamePro(matchConfig.teamB.name || '队B')}}</text>
                   </view>
                   <view
+                    wx:if="{{matchConfig.sportConfig.isScoreEnabled !== false}}"
                     class="pro-set-score pro-score-number pro-score-hit"
                     catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
                     bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
@@ -212,7 +214,7 @@
                   >{{matchConfig.teamB.currentSetScore}}</view>
                 </view>
               </view>
-              <view class="pro-badminton-meta-col">
+              <view wx:if="{{matchConfig.sportConfig.isScoreEnabled !== false}}" class="pro-badminton-meta-col">
                 <view class="pro-badminton-meta-inner">
                   <!-- A队行 -->
                   <view class="pro-badminton-meta-row">

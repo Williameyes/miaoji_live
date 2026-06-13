@@ -142,7 +142,8 @@ var DEFAULT_BADMINTON_STATE = {
   servingZone: 'right',
   ruleType: 'single',
   maxSets: 3,
-  pointsPerSet: 21
+  pointsPerSet: 21,
+  isScoreEnabled: true
 };
 
 /**

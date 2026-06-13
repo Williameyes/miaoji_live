@@ -229,7 +229,8 @@ const DEFAULT_SPORT_CONFIG = {
   halfMinutes: 45,
   ruleType: 'single',
   pointsPerSet: 21,
-  maxSets: 3
+  maxSets: 3,
+  isScoreEnabled: true
 };
 
 /**
@@ -250,8 +251,11 @@ function normalizeEditingMatchDraft(draft) {
       servingZone: 'right',
       ruleType: next.sportConfig.ruleType,
       maxSets: next.sportConfig.maxSets,
-      pointsPerSet: next.sportConfig.pointsPerSet
+      pointsPerSet: next.sportConfig.pointsPerSet,
+      isScoreEnabled: next.sportConfig.isScoreEnabled !== false
     };
+  } else if (next.badmintonState.isScoreEnabled === undefined) {
+    next.badmintonState.isScoreEnabled = next.sportConfig.isScoreEnabled !== false;
   }
   if (!next.teamA) {
     next.teamA = {
@@ -604,7 +608,8 @@ Page({
         servingZone: 'right',
         ruleType: 'single',
         maxSets: 3,
-        pointsPerSet: 21
+        pointsPerSet: 21,
+        isScoreEnabled: true
       },
       sportConfig: { ...DEFAULT_SPORT_CONFIG },
       footballElapsedSec: 0,
@@ -1034,7 +1039,8 @@ Page({
         servingZone: 'right',
         ruleType: draft.sportConfig.ruleType,
         maxSets: draft.sportConfig.maxSets,
-        pointsPerSet: draft.sportConfig.pointsPerSet
+        pointsPerSet: draft.sportConfig.pointsPerSet,
+        isScoreEnabled: draft.sportConfig.isScoreEnabled !== false
       };
     } else {
       draft.period = 0;
@@ -1071,6 +1077,21 @@ Page({
       ...(draft.badmintonState || {}),
       pointsPerSet: points
     };
+    this.setData({ editingMatch: draft });
+  },
+
+  /**
+   * 编辑浮层：切换是否记分。
+   * @param {WechatMiniprogram.TouchEvent} e data-enabled
+   * @returns {void}
+   */
+  onEditBadmintonScoreEnabledChange(e) {
+    const isScoreEnabled = e.currentTarget.dataset.enabled === 'true';
+    const draft = JSON.parse(JSON.stringify(this.data.editingMatch));
+    draft.sportConfig = { ...(draft.sportConfig || DEFAULT_SPORT_CONFIG), isScoreEnabled };
+    if (draft.badmintonState) {
+      draft.badmintonState.isScoreEnabled = isScoreEnabled;
+    }
     this.setData({ editingMatch: draft });
   },
 

@@ -356,6 +356,19 @@
               data-points="11"
             >11 分制</view>
           </view>
+          <text class="form-label sport-sub-label">是否记分</text>
+          <view class="sport-chip-row">
+            <view
+              class="sport-chip {{editingMatch.sportConfig.isScoreEnabled !== false ? 'sport-chip--active' : ''}}"
+              bindtap="onEditBadmintonScoreEnabledChange"
+              data-enabled="true"
+            >记分</view>
+            <view
+              class="sport-chip {{editingMatch.sportConfig.isScoreEnabled === false ? 'sport-chip--active' : ''}}"
+              bindtap="onEditBadmintonScoreEnabledChange"
+              data-enabled="false"
+            >不记分</view>
+          </view>
         </view>
 
         <!-- 开赛时间（日期 + 时间，精确到5分钟） -->

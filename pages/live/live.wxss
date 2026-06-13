@@ -3698,3 +3698,80 @@ button.live-ble-btn::after {
   width: 100%;
   height: 100%;
 }
+
+/* ── 羽毛球 1.5 倍记分牌尺寸与不记分模式 ── */
+.pro-scoreboard-container--badminton-large {
+  max-width: 75vw !important;
+}
+
+.pro-scoreboard-container--badminton-large .pro-panel-row,
+.pro-scoreboard-container--badminton-noscore .pro-panel-row {
+  min-height: 33rpx;
+  gap: 6rpx;
+}
+
+.pro-scoreboard-container--badminton-large .pro-panel-row--team,
+.pro-scoreboard-container--badminton-noscore .pro-panel-row--team {
+  border-radius: 4.5rpx;
+  padding: 2rpx 7.5rpx;
+}
+
+.pro-scoreboard-container--badminton-large .pro-panel-left,
+.pro-scoreboard-container--badminton-noscore .pro-panel-left {
+  gap: 3rpx;
+}
+
+.pro-scoreboard-container--badminton-large .pro-team-name--dynamic,
+.pro-scoreboard-container--badminton-noscore .pro-team-name--dynamic {
+  max-width: 145rpx;
+}
+
+.pro-scoreboard-container--badminton-large .pro-team-name,
+.pro-scoreboard-container--badminton-noscore .pro-team-name {
+  font-size: 12rpx;
+}
+
+.pro-scoreboard-container--badminton-large .pro-set-score {
+  font-size: 16rpx;
+  min-width: 34rpx;
+  flex: 0 0 34rpx;
+}
+
+.pro-scoreboard-container--badminton-large .pro-badminton-meta-col {
+  min-width: 40rpx;
+  padding: 3rpx 5rpx;
+  border-radius: 4.5rpx;
+}
+
+.pro-scoreboard-container--badminton-large .pro-badminton-meta-inner {
+  min-height: 48rpx;
+}
+
+.pro-scoreboard-container--badminton-large .pro-badminton-meta-row {
+  gap: 6rpx;
+  min-height: 24rpx;
+}
+
+.pro-scoreboard-container--badminton-large .pro-badminton-serve-wrap {
+  width: 21rpx;
+  min-height: 24rpx;
+}
+
+.pro-scoreboard-container--badminton-large .pro-badminton-serve-placeholder {
+  width: 21rpx;
+  min-height: 24rpx;
+}
+
+.pro-scoreboard-container--badminton-large .pro-sets-num {
+  font-size: 15rpx;
+  min-width: 13.5rpx;
+}
+
+.pro-scoreboard-container--badminton-large .pro-serve-icon-svg {
+  width: 11rpx;
+  height: 11rpx;
+}
+
+.pro-scoreboard-container--badminton-noscore {
+  /* Dynamic flex shrinks the width automatically when scoring elements are hidden. */
+}
