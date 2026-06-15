@@ -3862,3 +3862,99 @@ button.live-ble-btn::after {
   border: 1rpx solid rgba(255, 255, 255, 0.3);
   box-shadow: 0 2rpx 5rpx rgba(0, 0, 0, 0.35);
 }
+
+/* ─── 快捷变焦档位（与 recover-fab 同列、同尺寸） ─────────────── */
+
+.quick-zoom-hit {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40rpx;
+  height: 40rpx;
+  padding: 10rpx;
+  margin: -10rpx;
+  pointer-events: auto;
+  background: transparent;
+  box-sizing: content-box;
+}
+
+.quick-zoom-fab {
+  flex-shrink: 0;
+}
+
+.quick-zoom-fab--active {
+  opacity: 0.88;
+}
+
+.quick-zoom-fab--active .recover-fab-ring {
+  box-shadow: 0 0 0 1rpx rgba(255, 255, 255, 0.42);
+}
+
+.quick-zoom-fab--active .recover-fab-inner {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.quick-zoom-tweak-badge {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(239, 159, 39, 0.88);
+  border-radius: 4rpx;
+  padding: 1rpx 4rpx;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.quick-zoom-tweak-text {
+  font-size: 10rpx;
+  color: #ffffff;
+  line-height: 1;
+}
+
+/* ─── 抽屉内快捷变焦开关 ─────────────────────────────────────── */
+
+.drawer-camera-pill--quick-zoom {
+  justify-content: space-between;
+  gap: 6rpx;
+  padding: 0 10rpx;
+}
+
+.drawer-camera-pill__label {
+  font-size: 16rpx;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.85);
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.drawer-camera-pill__toggle {
+  width: 48rpx;
+  height: 26rpx;
+  border-radius: 13rpx;
+  background: rgba(255, 255, 255, 0.2);
+  position: relative;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.drawer-camera-pill__toggle--on {
+  background: #1d9e75;
+}
+
+.drawer-camera-pill__toggle-thumb {
+  position: absolute;
+  top: 3rpx;
+  left: 3rpx;
+  width: 20rpx;
+  height: 20rpx;
+  border-radius: 50%;
+  background: #ffffff;
+  transition: transform 0.2s;
+}
+
+.drawer-camera-pill__toggle--on .drawer-camera-pill__toggle-thumb {
+  transform: translateX(22rpx);
+}

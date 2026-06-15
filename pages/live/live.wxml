@@ -400,6 +400,44 @@
   <view class="overlay immersive">
     <!-- 底角双灯：上=推流/REC，下=存储；位置在 16:9 外黑边（见 recoverFabStackStyle） -->
     <view class="recover-fab-stack" style="{{recoverFabStackStyle}}">
+      <block wx:if="{{quickZoomEnabled && liveStreamAllowed && !isReplaying && drawerMode === 0 && enhanceMode !== 'vk'}}">
+        <view
+          wx:for="{{quickZoomStops}}"
+          wx:key="label"
+          wx:for-index="stopIdx"
+          wx:for-item="stop"
+          class="quick-zoom-hit"
+          data-index="{{stopIdx}}"
+          catchtap="onQuickZoomStopTap"
+          bindtouchstart="onQuickZoomStopTouchStart"
+          bindtouchend="onQuickZoomStopTouchEnd"
+          bindtouchcancel="onQuickZoomStopTouchEnd"
+        >
+          <view class="recover-fab quick-zoom-fab {{stop.isActive ? 'quick-zoom-fab--active' : ''}}">
+            <view class="recover-fab-ring">
+              <view
+                wx:if="{{quickZoomSaveIdx === stopIdx && quickZoomSaveConicDeg > 0}}"
+                class="recover-fab-progress"
+                style="{{quickZoomSaveProgressStyle}}"
+              ></view>
+              <view
+                wx:else
+                class="recover-fab-progress"
+                style="background: conic-gradient(from -90deg, rgba(48, 52, 58, 0.38) 0deg, rgba(48, 52, 58, 0.38) 360deg);"
+              ></view>
+              <view class="recover-fab-inner">
+                <text class="recover-fab-text">{{stop.isActive && quickZoomTempZoom !== null ? quickZoomTempDisplay : stop.displayZoom}}</text>
+              </view>
+            </view>
+          </view>
+          <view
+            class="quick-zoom-tweak-badge"
+            wx:if="{{stop.isActive && quickZoomTempZoom !== null}}"
+          >
+            <text class="quick-zoom-tweak-text">微调</text>
+          </view>
+        </view>
+      </block>
       <view
         class="recover-fab recover-fab--{{pipelineHealth}} {{isRecovering ? 'recover-fab--busy' : ''}} {{opsControlActionable ? 'recover-fab--actionable' : ''}} {{opsControlAck ? 'recover-fab--ack' : ''}}"
         catchtap="onRecoveryFabTap"
@@ -916,6 +954,12 @@
         data-mode="{{item.mode}}"
       >{{item.label}}</view>
       <view class="drawer-camera-pill drawer-camera-pill--focus" catchtap="onCameraFocusControlTap">锁焦</view>
+      <view class="drawer-camera-pill drawer-camera-pill--quick-zoom" catchtap="onQuickZoomToggle">
+        <text class="drawer-camera-pill__label">快捷变焦</text>
+        <view class="drawer-camera-pill__toggle {{quickZoomEnabled ? 'drawer-camera-pill__toggle--on' : ''}}">
+          <view class="drawer-camera-pill__toggle-thumb"></view>
+        </view>
+      </view>
       <view wx:if="{{autoSyncWhitelisted}}" class="live-lens-toolbar-spacer"></view>
       <view
         wx:if="{{autoSyncWhitelisted}}"

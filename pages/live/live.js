@@ -213,6 +213,12 @@ const CameraViewMode = {
 
 /** 特写机位默认目标变焦（受 {@link data.maxZoom} 夹持） */
 const VIEW_MODE_CLOSE_ZOOM = 2;
+/** 快速变焦开关的 Storage key */
+const QUICK_ZOOM_ENABLED_KEY = 'live_quick_zoom_enabled';
+/** 快速变焦档位保存值的 Storage key */
+const QUICK_ZOOM_STOPS_KEY = 'live_quick_zoom_stops';
+/** 快速变焦长按保存所需时长（ms） */
+const QUICK_ZOOM_LONG_PRESS_MS = 800;
 
 /**
  * Android 超广探测：complete 早于 success 时若用 0ms 会误判失败，略延迟再试下一档。
@@ -953,7 +959,40 @@ Page({
     /** 正在取 Token / 握手中 */
     liveWsQuickBusy: false,
     /** 连房面板状态说明 */
-    liveWsStatusText: ''
+    liveWsStatusText: '',
+    // ─── 快速变焦 ───────────────────────────────────────────────
+    /** 快捷变焦开关：是否在右侧显示三档倍数按钮 */
+    quickZoomEnabled: false,
+    /**
+     * 三个快捷变焦档位（远/中/近，仅内部标识；界面只展示倍数）。
+     * zoom: 保存倍数；displayZoom: 展示文案（如 4x）；isActive: 是否激活。
+     */
+    quickZoomStops: [{
+      label: '远',
+      zoom: 4,
+      displayZoom: '4x',
+      isActive: false
+    }, {
+      label: '中',
+      zoom: 2,
+      displayZoom: '2x',
+      isActive: false
+    }, {
+      label: '近',
+      zoom: 1,
+      displayZoom: '1x',
+      isActive: false
+    }],
+    /** 快捷变焦激活档位的临时 zoom（双指微调后与保存值不同时不为 null） */
+    quickZoomTempZoom: null,
+    /** 临时 zoom 的展示文案（与 quickZoomTempZoom 同步） */
+    quickZoomTempDisplay: '',
+    /** 长按保存圆环进度 0–360（conic-gradient） */
+    quickZoomSaveConicDeg: 0,
+    /** 长按保存圆环内联样式（避免 wxml 内联 CSS 插值触发 IDE 报错） */
+    quickZoomSaveProgressStyle: '',
+    /** 正在长按保存的档位 index，-1 表示无 */
+    quickZoomSaveIdx: -1
   },
   /**
    * 从全局与 Storage 同步当前场次记分配置（与 index、onShow 逻辑一致）。
@@ -4181,6 +4220,307 @@ onCameraInit: function (e) {
       } catch (eP) {}
     }
   },
+  /**
+   * 格式化快捷变焦倍数展示文案（与机位按钮一致，如 4x）。
+   * @param {number} zoomVal
+   * @returns {string}
+   */
+  _formatQuickZoomDisplay: function (zoomVal) {
+    return formatCameraZoomLabel(zoomVal);
+  },
+  /**
+   * 远景档默认倍数：与抽屉机位栏「4x」对齐（iOS max≥4 时为 zoom=4）。
+   * @returns {number}
+   */
+  _resolveQuickZoomDefaultFarZoom: function () {
+    var caps = this._cameraCaps || {};
+    var maxZ = this.data.maxZoom || caps.maxZoom || 10;
+    var isIos = isLiveHostIos();
+    var normZ = isIos && maxZ >= 2 ? 2 : 1;
+    if (maxZ > normZ + 0.05) {
+      var closeZ = isIos && maxZ >= 4 ? 4 : Math.min(VIEW_MODE_CLOSE_ZOOM, maxZ);
+      closeZ = Math.min(closeZ, maxZ);
+      if (closeZ <= normZ) closeZ = maxZ;
+      if (closeZ > normZ) return closeZ;
+    }
+    return Math.min(4, maxZ);
+  },
+  /**
+   * 构建长按保存圆环的内联样式。
+   * @param {number} deg 0–360
+   * @returns {string}
+   */
+  _buildQuickZoomSaveProgressStyle: function (deg) {
+    var d = Math.max(0, Math.min(360, Number(deg) || 0));
+    return 'background: conic-gradient(from -90deg, rgba(29, 158, 117, 0.85) 0deg, rgba(29, 158, 117, 0.85) '
+      + d + 'deg, rgba(48, 52, 58, 0.38) 0deg);';
+  },
+  /**
+   * 构建单个快捷变焦档位对象。
+   * @param {string} label
+   * @param {number} zoom
+   * @param {boolean} isActive
+   * @returns {{ label: string, zoom: number, displayZoom: string, isActive: boolean }}
+   */
+  _buildQuickZoomStopItem: function (label, zoom, isActive) {
+    return {
+      label: label,
+      zoom: zoom,
+      displayZoom: this._formatQuickZoomDisplay(zoom),
+      isActive: !!isActive
+    };
+  },
+  /**
+   * 默认快捷变焦三档（远/中/近）。
+   * @returns {Array<{ label: string, zoom: number, displayZoom: string, isActive: boolean }>}
+   */
+  _getDefaultQuickZoomStops: function () {
+    var farZ = this._resolveQuickZoomDefaultFarZoom();
+    var caps = this._cameraCaps || {};
+    var maxZ = this.data.maxZoom || caps.maxZoom || 10;
+    var isIos = isLiveHostIos();
+    var midZ = isIos && maxZ >= 2 ? 2 : 1;
+    var nearZ = 1;
+    if (caps.hasUltraWide && typeof caps.minZoom === 'number' && caps.minZoom > 0) {
+      nearZ = caps.minZoom;
+    }
+    return [
+      this._buildQuickZoomStopItem('远', farZ, false),
+      this._buildQuickZoomStopItem('中', midZ, false),
+      this._buildQuickZoomStopItem('近', nearZ, false)
+    ];
+  },
+  /**
+   * 从 Storage 加载快速变焦配置，在 onLoad/onShow 时调用。
+   * @returns {void}
+   */
+  _loadQuickZoomStops: function () {
+    try {
+      const enabled = wx.getStorageSync(QUICK_ZOOM_ENABLED_KEY);
+      const savedStops = wx.getStorageSync(QUICK_ZOOM_STOPS_KEY);
+      const defaultStops = this._getDefaultQuickZoomStops();
+      let stops = defaultStops;
+      if (Array.isArray(savedStops) && savedStops.length === 3) {
+        stops = savedStops.map(function (s, i) {
+          const zoom = typeof s.zoom === 'number' && s.zoom > 0 ? s.zoom : defaultStops[i].zoom;
+          return {
+            label: defaultStops[i].label,
+            zoom: zoom,
+            displayZoom: this._formatQuickZoomDisplay(zoom),
+            isActive: false
+          };
+        }.bind(this));
+      }
+      this.setData({
+        quickZoomEnabled: !!enabled,
+        quickZoomStops: stops,
+        quickZoomTempZoom: null,
+        quickZoomTempDisplay: '',
+        quickZoomSaveConicDeg: 0,
+        quickZoomSaveProgressStyle: '',
+        quickZoomSaveIdx: -1
+      });
+    } catch (e) {
+      // Storage 读取失败，保留 data 默认值
+    }
+  },
+  /**
+   * 切换快速变焦开关（来自抽屉）。
+   * @returns {void}
+   */
+  onQuickZoomToggle: function () {
+    const next = !this.data.quickZoomEnabled;
+    this.setData({
+      quickZoomEnabled: next
+    });
+    try {
+      wx.setStorageSync(QUICK_ZOOM_ENABLED_KEY, next);
+    } catch (e) {}
+    if (!next) {
+      const stops = this.data.quickZoomStops.map(function (s) {
+        return Object.assign({}, s, {
+          isActive: false
+        });
+      });
+      this.setData({
+        quickZoomStops: stops,
+        quickZoomTempZoom: null,
+        quickZoomTempDisplay: ''
+      });
+    }
+  },
+  /**
+   * 点击快速变焦档位按钮——跳到该档保存的 zoom 值。
+   * @param {WechatMiniprogram.TouchEvent} e dataset.index: 0|1|2
+   * @returns {void}
+   */
+  onQuickZoomStopTap: function (e) {
+    if (this._quickZoomSuppressTap) return;
+    const idx = e && e.currentTarget && e.currentTarget.dataset
+      ? Number(e.currentTarget.dataset.index)
+      : -1;
+    if (idx < 0 || idx > 2) return;
+    if (this.data.enhanceMode === 'vk') return;
+    if (!this.data.cameraMounted || !this.data.cameraContext || !this._cameraInitDone) return;
+
+    const stops = this.data.quickZoomStops.map(function (s, i) {
+      return Object.assign({}, s, {
+        isActive: i === idx
+      });
+    });
+    this.setData({
+      quickZoomStops: stops,
+      quickZoomTempZoom: null,
+      quickZoomTempDisplay: ''
+    });
+    this.updateZoom(stops[idx].zoom);
+
+    if (this._liveAeCameraLockArmed && this.data.liveStreamAllowed) {
+      if (this._quickZoomAeLockTimer) clearTimeout(this._quickZoomAeLockTimer);
+      this._quickZoomAeLockTimer = setTimeout(function () {
+        this._quickZoomAeLockTimer = null;
+        this._applyLiveCameraLock();
+      }.bind(this), 600);
+    }
+  },
+  /**
+   * 长按快速变焦档位：启动 0.8s 圆环进度，松手后写入当前 zoom。
+   * @param {WechatMiniprogram.TouchEvent} e dataset.index: 0|1|2
+   * @returns {void}
+   */
+  onQuickZoomStopTouchStart: function (e) {
+    const idx = e && e.currentTarget && e.currentTarget.dataset
+      ? Number(e.currentTarget.dataset.index)
+      : -1;
+    if (idx < 0 || idx > 2) return;
+    if (this.data.enhanceMode === 'vk') return;
+    const stops = this.data.quickZoomStops;
+    if (!stops[idx] || !stops[idx].isActive) return;
+
+    this._cancelQuickZoomSaveProgress();
+    this._quickZoomSaveIdx = idx;
+    this._quickZoomSaveReady = false;
+    this._quickZoomSaveStartMs = Date.now();
+    this.setData({
+      quickZoomSaveIdx: idx,
+      quickZoomSaveConicDeg: 0,
+      quickZoomSaveProgressStyle: this._buildQuickZoomSaveProgressStyle(0)
+    });
+    const self = this;
+    this._quickZoomSaveTimer = setInterval(function () {
+      const elapsed = Date.now() - self._quickZoomSaveStartMs;
+      const deg = Math.min(360, elapsed / QUICK_ZOOM_LONG_PRESS_MS * 360);
+      self.setData({
+        quickZoomSaveConicDeg: deg,
+        quickZoomSaveProgressStyle: self._buildQuickZoomSaveProgressStyle(deg)
+      });
+      if (elapsed >= QUICK_ZOOM_LONG_PRESS_MS) {
+        clearInterval(self._quickZoomSaveTimer);
+        self._quickZoomSaveTimer = null;
+        self._quickZoomSaveReady = true;
+        try {
+          self.vibrate('light');
+        } catch (eV) {}
+      }
+    }, 32);
+  },
+  /**
+   * 快速变焦档位松手：进度满则保存当前 zoom 到该档。
+   * @returns {void}
+   */
+  onQuickZoomStopTouchEnd: function () {
+    const idx = this._quickZoomSaveIdx;
+    const ready = !!this._quickZoomSaveReady;
+    this._cancelQuickZoomSaveProgress();
+    if (!ready || idx < 0 || idx > 2) return;
+    this._quickZoomSuppressTap = true;
+    const self = this;
+    setTimeout(function () {
+      self._quickZoomSuppressTap = false;
+    }, 120);
+    this._commitQuickZoomStopSave(idx);
+  },
+  /**
+   * 取消快速变焦长按保存进度动画。
+   * @returns {void}
+   */
+  _cancelQuickZoomSaveProgress: function () {
+    if (this._quickZoomSaveTimer) {
+      clearInterval(this._quickZoomSaveTimer);
+      this._quickZoomSaveTimer = null;
+    }
+    this._quickZoomSaveReady = false;
+    this._quickZoomSaveIdx = -1;
+    this._quickZoomSaveStartMs = 0;
+    this.setData({
+      quickZoomSaveIdx: -1,
+      quickZoomSaveConicDeg: 0,
+      quickZoomSaveProgressStyle: ''
+    });
+  },
+  /**
+   * 将当前实际 zoom 写入指定快速变焦档位并持久化。
+   * @param {number} idx 0|1|2
+   * @returns {void}
+   */
+  _commitQuickZoomStopSave: function (idx) {
+    const stops = this.data.quickZoomStops;
+    if (!stops[idx] || !stops[idx].isActive) return;
+
+    const currentZoom = typeof this.data.quickZoomTempZoom === 'number'
+      ? this.data.quickZoomTempZoom
+      : this.data.zoom;
+    const zoomLabel = this._formatQuickZoomDisplay(currentZoom);
+
+    const newStops = stops.map(function (s, i) {
+      if (i !== idx) return Object.assign({}, s);
+      return Object.assign({}, s, {
+        zoom: currentZoom,
+        displayZoom: this._formatQuickZoomDisplay(currentZoom)
+      });
+    }.bind(this));
+    this.setData({
+      quickZoomStops: newStops,
+      quickZoomTempZoom: null,
+      quickZoomTempDisplay: ''
+    });
+    try {
+      wx.setStorageSync(QUICK_ZOOM_STOPS_KEY, newStops.map(function (s) {
+        return {
+          zoom: s.zoom
+        };
+      }));
+    } catch (e2) {}
+    this._showLightHint('已保存 ' + zoomLabel);
+  },
+  /**
+   * 在双指缩放（pinch）结束时，若有激活的快速变焦档位，记录临时 zoom。
+   * @returns {void}
+   */
+  _syncQuickZoomTempZoom: function () {
+    if (!this.data.quickZoomEnabled) return;
+    const activeIdx = this.data.quickZoomStops.findIndex(function (s) {
+      return s.isActive;
+    });
+    if (activeIdx < 0) return;
+
+    const currentZoom = this.data.zoom;
+    const savedZoom = this.data.quickZoomStops[activeIdx].zoom;
+    const rounded = Math.round(currentZoom * 10) / 10;
+    const isDifferent = Math.abs(currentZoom - savedZoom) > 0.05;
+
+    if (isDifferent) {
+      this.setData({
+        quickZoomTempZoom: rounded,
+        quickZoomTempDisplay: this._formatQuickZoomDisplay(rounded)
+      });
+    } else {
+      this.setData({
+        quickZoomTempZoom: null,
+        quickZoomTempDisplay: ''
+      });
+    }
+  },
   // 辅助变量
   lastZoomVal: 1.0,
   isPinching: false,
@@ -4276,6 +4616,7 @@ onCameraInit: function (e) {
     if (!e.touches || e.touches.length === 0) {
       this.isPinching = false;
       this.pinchStartDistance = 0;
+      this._syncQuickZoomTempZoom();
       // 延迟重置多指锁，避免 touchend 与 longpress 事件时序竞争
       setTimeout(() => {
         this.isMultiTouch = false;
@@ -4283,6 +4624,7 @@ onCameraInit: function (e) {
     } else if (!e.touches || e.touches.length < 2) {
       this.isPinching = false;
       this.pinchStartDistance = 0;
+      this._syncQuickZoomTempZoom();
     } else if (this.isPinching) {
       // 仍然有两个或以上手指在屏幕上，重置缩放基准
       this.pinchStartDistance = this.getDistance(e.touches[0], e.touches[1]);
@@ -4940,6 +5282,7 @@ onCameraInit: function (e) {
   },
   onShow: function () {
     this._livePageVisible = true;
+    this._loadQuickZoomStops();
     if (this.isLiveForegroundRecordingRecoverPending()) {
       this._encodeStallGraceUntil = Date.now() + ENCODE_STALL_RECOVER_COOLDOWN_MS;
       // P0: 硬件交接安全期 — 等待 iOS 系统相机资源完全释放后再 rebuild
@@ -5728,6 +6071,11 @@ onShareAppMessage: function () {
       clearTimeout(this._relaunchPressTimer);
       this._relaunchPressTimer = null;
     }
+    if (this._quickZoomAeLockTimer) {
+      clearTimeout(this._quickZoomAeLockTimer);
+      this._quickZoomAeLockTimer = null;
+    }
+    this._cancelQuickZoomSaveProgress();
     if (this._remoteHealthLogTimer) {
       clearTimeout(this._remoteHealthLogTimer);
       this._remoteHealthLogTimer = null;
@@ -13665,6 +14013,7 @@ onLoad: function (options) {
     this._initCameraState();
     this._initLiveWsState();
     this._initLiveUiSettings();
+    this._loadQuickZoomStops();
   },
   _initLiveCoreState: function (options) {
     const replayBufferMod = require('../../utils/replay-buffer/index.js');
