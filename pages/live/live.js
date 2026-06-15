@@ -2987,6 +2987,8 @@ onCameraInit: function (e) {
     if (this.data.liveStreamAllowed && this._liveAeCameraLockArmed) {
       this._applyLiveCameraLock();
     }
+    // camera_init 后重新初始化快捷变焦默认档位（onLoad 时机位尚未探测）
+    this._loadQuickZoomStops();
     this._schedulePreviewRecordStartAfterCameraInit('camera_init');
   },
   /**
@@ -3930,6 +3932,10 @@ onCameraInit: function (e) {
    */
   _probeAndroidUltraWideZoom: function (maxZ, minRawHint) {
     var self = this;
+    this.appendHealthLog('android_uwzoom_probe_start', {
+      maxZ: maxZ,
+      minRawHint: typeof minRawHint === 'number' ? minRawHint : null
+    });
     var ctx = this.data.cameraContext;
     if (!ctx || typeof ctx.setZoom !== 'function') {
       this._cameraCaps = {
@@ -3938,6 +3944,7 @@ onCameraInit: function (e) {
         maxZoom: maxZ,
         probed: true
       };
+      this.appendHealthLog('android_uwzoom_probe_no_api', { maxZ: maxZ });
       this.rebuildCameraViewModeStops();
       return;
     }
@@ -3992,6 +3999,11 @@ onCameraInit: function (e) {
             maxZoom: maxZ,
             probed: true
           };
+          self.appendHealthLog('android_uwzoom_probe_fallback_hint', {
+            minZoom: minRawHint,
+            maxZ: maxZ,
+            tried: candidates
+          });
           self.rebuildCameraViewModeStops();
         } else {
           self._cameraCaps = {
@@ -4000,6 +4012,10 @@ onCameraInit: function (e) {
             maxZoom: maxZ,
             probed: true
           };
+          self.appendHealthLog('android_uwzoom_probe_failed', {
+            maxZ: maxZ,
+            tried: candidates
+          });
           self.rebuildCameraViewModeStops();
         }
         restore();
@@ -4029,6 +4045,10 @@ onCameraInit: function (e) {
                   maxZoom: maxZ,
                   probed: true
                 };
+                self.appendHealthLog('android_uwzoom_probe_success', {
+                  minZoom: z,
+                  maxZ: maxZ
+                });
                 self.rebuildCameraViewModeStops();
                 restore();
               },
@@ -4105,7 +4125,16 @@ onCameraInit: function (e) {
     this.setData({
       cameraViewModeStops: stops
     });
+    this.appendHealthLog('camera_view_mode_stops_built', {
+      count: stops.length,
+      stops: stops.map(function (s) {
+        return { label: s.label, zoom: s.zoom };
+      }),
+      hasUltraWide: !!(this._cameraCaps && this._cameraCaps.hasUltraWide),
+      isIos: isLiveHostIos()
+    });
     this.syncNativeEnhanceZoomCompensation(this.data.zoom || 1);
+    this._loadQuickZoomStops();
   },
   /**
    * 将机位状态与预览恢复为「标准」1×；画质切换、相机重建、回前台时调用。
@@ -4229,23 +4258,6 @@ onCameraInit: function (e) {
     return formatCameraZoomLabel(zoomVal);
   },
   /**
-   * 远景档默认倍数：与抽屉机位栏「4x」对齐（iOS max≥4 时为 zoom=4）。
-   * @returns {number}
-   */
-  _resolveQuickZoomDefaultFarZoom: function () {
-    var caps = this._cameraCaps || {};
-    var maxZ = this.data.maxZoom || caps.maxZoom || 10;
-    var isIos = isLiveHostIos();
-    var normZ = isIos && maxZ >= 2 ? 2 : 1;
-    if (maxZ > normZ + 0.05) {
-      var closeZ = isIos && maxZ >= 4 ? 4 : Math.min(VIEW_MODE_CLOSE_ZOOM, maxZ);
-      closeZ = Math.min(closeZ, maxZ);
-      if (closeZ <= normZ) closeZ = maxZ;
-      if (closeZ > normZ) return closeZ;
-    }
-    return Math.min(4, maxZ);
-  },
-  /**
    * 构建长按保存圆环的内联样式。
    * @param {number} deg 0–360
    * @returns {string}
@@ -4256,53 +4268,101 @@ onCameraInit: function (e) {
       + d + 'deg, rgba(48, 52, 58, 0.38) 0deg);';
   },
   /**
-   * 构建单个快捷变焦档位对象。
-   * @param {string} label
-   * @param {number} zoom
-   * @param {boolean} isActive
-   * @returns {{ label: string, zoom: number, displayZoom: string, isActive: boolean }}
+   * 根据已探测的原生机位档位（cameraViewModeStops）构建快捷变焦三档默认值。
+   * iOS：zoom=2 ≈ 主摄 1×，zoom=4 ≈ 长焦 2×，三档直接映射 nativeStops。
+   * 安卓：zoom&lt;1 的「广角」为主摄数字上采样，实际等同 1×，默认从 1× 起算并向长焦延伸。
+   * @param {Array<{label:string, zoom:number}>} nativeStops cameraViewModeStops 当前值
+   * @returns {Array<{label:string, zoom:number, isActive:boolean}>}
    */
-  _buildQuickZoomStopItem: function (label, zoom, isActive) {
-    return {
-      label: label,
-      zoom: zoom,
-      displayZoom: this._formatQuickZoomDisplay(zoom),
-      isActive: !!isActive
-    };
-  },
-  /**
-   * 默认快捷变焦三档（远/中/近）。
-   * @returns {Array<{ label: string, zoom: number, displayZoom: string, isActive: boolean }>}
-   */
-  _getDefaultQuickZoomStops: function () {
-    var farZ = this._resolveQuickZoomDefaultFarZoom();
-    var caps = this._cameraCaps || {};
-    var maxZ = this.data.maxZoom || caps.maxZoom || 10;
+  _buildQuickZoomDefaults: function (nativeStops) {
+    var labels = ['远', '中', '近'];
+    var maxZ = this.data.maxZoom || 10;
     var isIos = isLiveHostIos();
-    var midZ = isIos && maxZ >= 2 ? 2 : 1;
-    var nearZ = 1;
-    if (caps.hasUltraWide && typeof caps.minZoom === 'number' && caps.minZoom > 0) {
-      nearZ = caps.minZoom;
+
+    if (!nativeStops || nativeStops.length === 0) {
+      var placeholders = [4, 2, 1];
+      return labels.map(function (label, i) {
+        return {
+          label: label,
+          zoom: placeholders[i],
+          isActive: false
+        };
+      });
     }
+
+    var n = nativeStops.length;
+
+    if (n >= 3) {
+      if (!isIos && nativeStops[0].zoom < 1) {
+        var nearMain = nativeStops[1].zoom;
+        var teleZoom = nativeStops[2].zoom;
+        var extFarZoom = Math.min(Math.round(teleZoom * 2 * 10) / 10, maxZ);
+        if (extFarZoom <= teleZoom) {
+          extFarZoom = Math.min(teleZoom + 0.5, maxZ);
+        }
+        return [
+          { label: '远', zoom: extFarZoom, isActive: false },
+          { label: '中', zoom: teleZoom, isActive: false },
+          { label: '近', zoom: nearMain, isActive: false }
+        ];
+      }
+      return [
+        { label: '远', zoom: nativeStops[2].zoom, isActive: false },
+        { label: '中', zoom: nativeStops[1].zoom, isActive: false },
+        { label: '近', zoom: nativeStops[0].zoom, isActive: false }
+      ];
+    }
+
+    if (n === 2) {
+      var nearZoom = nativeStops[0].zoom;
+      var farZoom = nativeStops[1].zoom;
+      if (!isIos) {
+        var androidExtFar = Math.min(Math.round(farZoom * 2 * 10) / 10, maxZ);
+        if (androidExtFar <= farZoom) {
+          androidExtFar = Math.min(farZoom + 0.5, maxZ);
+        }
+        return [
+          { label: '远', zoom: androidExtFar, isActive: false },
+          { label: '中', zoom: farZoom, isActive: false },
+          { label: '近', zoom: nearZoom, isActive: false }
+        ];
+      }
+      var midZoom = Math.round((nearZoom + farZoom) / 2 * 10) / 10;
+      return [
+        { label: '远', zoom: farZoom, isActive: false },
+        { label: '中', zoom: midZoom, isActive: false },
+        { label: '近', zoom: nearZoom, isActive: false }
+      ];
+    }
+
+    var baseZoom = nativeStops[0].zoom;
     return [
-      this._buildQuickZoomStopItem('远', farZ, false),
-      this._buildQuickZoomStopItem('中', midZ, false),
-      this._buildQuickZoomStopItem('近', nearZ, false)
+      { label: '远', zoom: Math.min(Math.round(baseZoom * 3 * 10) / 10, maxZ), isActive: false },
+      { label: '中', zoom: Math.min(Math.round(baseZoom * 1.5 * 10) / 10, maxZ), isActive: false },
+      { label: '近', zoom: baseZoom, isActive: false }
     ];
   },
   /**
-   * 从 Storage 加载快速变焦配置，在 onLoad/onShow 时调用。
+   * 从 Storage 加载快捷变焦配置；默认值取自 cameraViewModeStops（见 _buildQuickZoomDefaults）。
    * @returns {void}
    */
   _loadQuickZoomStops: function () {
     try {
       const enabled = wx.getStorageSync(QUICK_ZOOM_ENABLED_KEY);
       const savedStops = wx.getStorageSync(QUICK_ZOOM_STOPS_KEY);
-      const defaultStops = this._getDefaultQuickZoomStops();
-      let stops = defaultStops;
+      var rawDefaults = this._buildQuickZoomDefaults(this.data.cameraViewModeStops || []);
+      var defaultStops = rawDefaults.map(function (s) {
+        return {
+          label: s.label,
+          zoom: s.zoom,
+          displayZoom: this._formatQuickZoomDisplay(s.zoom),
+          isActive: false
+        };
+      }.bind(this));
+      var stops = defaultStops;
       if (Array.isArray(savedStops) && savedStops.length === 3) {
         stops = savedStops.map(function (s, i) {
-          const zoom = typeof s.zoom === 'number' && s.zoom > 0 ? s.zoom : defaultStops[i].zoom;
+          var zoom = typeof s.zoom === 'number' && s.zoom > 0 ? s.zoom : defaultStops[i].zoom;
           return {
             label: defaultStops[i].label,
             zoom: zoom,
@@ -4319,6 +4379,14 @@ onCameraInit: function (e) {
         quickZoomSaveConicDeg: 0,
         quickZoomSaveProgressStyle: '',
         quickZoomSaveIdx: -1
+      });
+      this.appendHealthLog('quick_zoom_stops_loaded', {
+        enabled: !!enabled,
+        hasSavedStops: Array.isArray(savedStops) && savedStops.length === 3,
+        nativeStopsCount: (this.data.cameraViewModeStops || []).length,
+        stops: stops.map(function (s) {
+          return { label: s.label, zoom: s.zoom };
+        })
       });
     } catch (e) {
       // Storage 读取失败，保留 data 默认值
@@ -4374,14 +4442,6 @@ onCameraInit: function (e) {
       quickZoomTempDisplay: ''
     });
     this.updateZoom(stops[idx].zoom);
-
-    if (this._liveAeCameraLockArmed && this.data.liveStreamAllowed) {
-      if (this._quickZoomAeLockTimer) clearTimeout(this._quickZoomAeLockTimer);
-      this._quickZoomAeLockTimer = setTimeout(function () {
-        this._quickZoomAeLockTimer = null;
-        this._applyLiveCameraLock();
-      }.bind(this), 600);
-    }
   },
   /**
    * 长按快速变焦档位：启动 0.8s 圆环进度，松手后写入当前 zoom。
@@ -6070,10 +6130,6 @@ onShareAppMessage: function () {
     if (this._relaunchPressTimer) {
       clearTimeout(this._relaunchPressTimer);
       this._relaunchPressTimer = null;
-    }
-    if (this._quickZoomAeLockTimer) {
-      clearTimeout(this._quickZoomAeLockTimer);
-      this._quickZoomAeLockTimer = null;
     }
     this._cancelQuickZoomSaveProgress();
     if (this._remoteHealthLogTimer) {
