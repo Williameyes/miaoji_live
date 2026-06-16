@@ -158,6 +158,39 @@ const SEGMENT_WATCHDOG_RECOVER_COOLDOWN_MS = 15000;
 const SEGMENT_WATCHDOG_RESTART_DELAY_MS = 800;
 /** 视录分离：onCameraFrame 长期无心跳则判定假录制并重启管线。 */
 const PREVIEW_FRAME_FEED_STALL_MS = 18000;
+/** iOS 超广角换镜：渐进变焦过渡常量 */
+
+/**
+ * 换镜前推进阶段时长（ms）。
+ * 在此时间内用超广角数字变焦把画面推进到接近主摄视角，压缩换镜时的横移量。
+ * 建议范围 150~300ms：太短压缩效果差，太长用户感觉变焦太慢。
+ */
+const IOS_ULTRA_WIDE_HANDOFF_PUSH_MS = 220;
+
+/**
+ * 推进目标倍率（相对于目标 zoom 的比例）。
+ * 换镜前先把超广角 zoom 推进到 targetZoom * PUSH_RATIO。
+ * 0.85 意味着换镜前已接近目标倍数的 85%，横移量压缩到约 15%。
+ * 不能 >= 1.0（会提前触发换镜），建议 0.80~0.92。
+ */
+const IOS_ULTRA_WIDE_HANDOFF_PUSH_RATIO = 0.88;
+
+/**
+ * 换镜后稳定阶段时长（ms）。
+ * setZoom 调用后等待 ISP 稳定的时间，之后认为新画面可用。
+ * 不需要很长，仅用于防止换镜后立刻再次触发过渡。
+ */
+const IOS_ULTRA_WIDE_HANDOFF_SETTLE_MS = 300;
+
+/**
+ * 推进动画的 setZoom 调用间隔（ms）。
+ * 约等于 1 帧（16ms），更小的值在 JS 层无意义。
+ */
+const IOS_ULTRA_WIDE_HANDOFF_PUSH_INTERVAL_MS = 16;
+
+/** 保留兼容旧引用（export canvas 路径可能仍有引用） */
+const IOS_ULTRA_WIDE_HANDOFF_EXPORT_SETTLE_MS = 48;
+const IOS_ULTRA_WIDE_HANDOFF_NEW_FRAME_WAIT_MS = 1600;
 /** 相机 remount 后启动 preview record 前的预热（iOS 需更长）。 */
 const PREVIEW_RECORD_WARMUP_IOS_MS = 1800;
 const PREVIEW_RECORD_WARMUP_ANDROID_MS = 1200;
@@ -867,6 +900,11 @@ Page({
     replaySlotBInitialTime: 0,
     // 相机焦距相关
     zoom: 1,
+    zoomHandoffCrossfadeActive: false,
+    zoomHandoffCrossfadeOldImage: '',
+    zoomHandoffCrossfadeNewImage: '',
+    zoomHandoffCrossfadeOldAnim: null,
+    zoomHandoffCoverBoxStyle: '',
     maxZoom: 10,
     minZoom: 1,
     distance: 0,
@@ -2824,6 +2862,12 @@ beginHighlightSaving: function () {
       }, recoverDelayMs);
     }
   },
+  onZoomHandoffCoverLoad: function () {
+    if (this._zoomHandoffImageLoadResolver) {
+      this._zoomHandoffImageLoadResolver();
+      this._zoomHandoffImageLoadResolver = null;
+    }
+  },
   // 相机初始化完成回调
   /** @region LIVE_CAMERA — 相机、16:9 布局、曝光对焦、变焦机位 */
 onCameraInit: function (e) {
@@ -3786,6 +3830,401 @@ onCameraInit: function (e) {
     }
     this._startRollingRecordingImpl(source || 'tryStartRollingWhenCameraReady');
   },
+  _getLastPreviewCameraFrame: function () {
+    if (!this._previewRecordPipeline
+      || typeof this._previewRecordPipeline.getLastCameraFrame !== 'function') {
+      return null;
+    }
+    var frame = this._previewRecordPipeline.getLastCameraFrame();
+    if (!frame || !frame.data || !frame.width || !frame.height) return null;
+    return frame;
+  },
+  _buildZoomHandoffCoverBoxStyle: function () {
+    var sys = wx.getSystemInfoSync();
+    var box = computeLiveStage16x9SizePx(
+      Math.max(1, Number(sys.windowWidth) || 375),
+      Math.max(1, Number(sys.windowHeight) || 667)
+    );
+    return 'width:' + box.width + 'px;height:' + box.height + 'px;';
+  },
+  _exportZoomHandoffFrameToTempPath: function (frame, done) {
+    var selfExport = this;
+    if (!frame || !frame.data || !frame.width || !frame.height) {
+      if (done) done(null);
+      return Promise.resolve(null);
+    }
+
+    return new Promise(function (resolve, reject) {
+      wx.createSelectorQuery()
+        .in(selfExport)
+        .select('#zoomHandoffExportCanvas')
+        .fields({ node: true, size: true })
+        .exec(function (res) {
+          if (!res || !res[0] || !res[0].node) {
+            console.error('致命错误: 获取 #zoomHandoffExportCanvas 节点失败, res:', res);
+            try {
+              selfExport.appendHealthLog('ultra_wide_lens_handoff', {
+                step: 'skipped_export_fail',
+                reason: 'canvas_node_missing',
+                resString: JSON.stringify(res || {})
+              });
+            } catch (eLog) {}
+            if (done) done(null);
+            resolve(null);
+            return;
+          }
+
+          var canvas = res[0].node;
+          var w = frame.width;
+          var h = frame.height;
+          var ctx = canvas.getContext('2d');
+          canvas.width = w;
+          canvas.height = h;
+
+          try {
+            var img = ctx.createImageData(new Uint8ClampedArray(frame.data), w, h);
+            ctx.putImageData(img, 0, 0);
+          } catch (err) {
+            ctx.fillStyle = 'red';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            console.error('putImageData 失败，已降级为红屏测试:', err);
+            try {
+              selfExport.appendHealthLog('ultra_wide_lens_handoff', {
+                step: 'put_image_data_catch_red_screen',
+                err: String(err && err.message || err).slice(0, 80)
+              });
+            } catch (eLog) {}
+          }
+
+          setTimeout(function () {
+            wx.canvasToTempFilePath({
+              canvas: canvas,
+              destWidth: w,
+              destHeight: h,
+              fileType: 'jpg',
+              quality: 0.9,
+              success: function (r) {
+                var path = r.tempFilePath || null;
+                if (done) done(path);
+                resolve(path);
+              },
+              fail: function (err) {
+                console.error('canvasToTempFilePath 导出失败, 完整错误对象:', err);
+                try {
+                  selfExport.appendHealthLog('ultra_wide_lens_handoff', {
+                    step: 'skipped_export_fail',
+                    err: String(err && err.errMsg || err).slice(0, 80)
+                  });
+                } catch (eLog) {}
+                if (done) done(null);
+                resolve(null);
+              }
+            }, selfExport);
+          }, Math.max(20, IOS_ULTRA_WIDE_HANDOFF_EXPORT_SETTLE_MS));
+        });
+    });
+  },
+  _isIosUltraWideLensHandoff: function (fromZ, toZ) {
+    if (!isLiveHostIos()) return false;
+    
+    var ultraWideZoom = 1;
+    if (this.data.quickZoomStops && this.data.quickZoomStops.length > 0) {
+      var nearStop = this.data.quickZoomStops.find(function (s) {
+        return s.label === '近';
+      });
+      if (nearStop && typeof nearStop.zoom === 'number') {
+        ultraWideZoom = nearStop.zoom;
+      }
+    } else if (this.data.cameraViewModeStops && this.data.cameraViewModeStops.length > 0) {
+      var firstStop = this.data.cameraViewModeStops[0];
+      if (firstStop && typeof firstStop.zoom === 'number') {
+        ultraWideZoom = firstStop.zoom;
+      }
+    }
+
+    var fromZoom = Number(fromZ);
+    var toZoom = Number(toZ);
+    var isFromUltraWide = Math.abs(fromZoom - ultraWideZoom) < 0.2 || fromZoom <= ultraWideZoom;
+    var isToHigher = toZoom > ultraWideZoom + 0.2;
+    return isFromUltraWide && isToHigher;
+  },
+  _cancelZoomHandoffCrossfade: function (resetData) {
+    // 标记旧 state 为非活跃，终止推进 interval 的回调
+    if (this._zoomHandoffCrossfadeState) {
+      this._zoomHandoffCrossfadeState.active = false;
+    }
+    this._zoomHandoffCrossfadeState = null;
+    if (this._zoomHandoffCrossfadeTimer) {
+      clearTimeout(this._zoomHandoffCrossfadeTimer);
+      this._zoomHandoffCrossfadeTimer = null;
+    }
+    if (this._zoomHandoffCrossfadeNewFrameWaitTimer) {
+      clearTimeout(this._zoomHandoffCrossfadeNewFrameWaitTimer);
+      this._zoomHandoffCrossfadeNewFrameWaitTimer = null;
+    }
+    if (this._previewRecordPipeline) {
+      if (typeof this._previewRecordPipeline.clearHandoffFrameHook === 'function') {
+        this._previewRecordPipeline.clearHandoffFrameHook();
+      }
+      if (typeof this._previewRecordPipeline.clearLastCameraFrame === 'function') {
+        this._previewRecordPipeline.clearLastCameraFrame();
+      }
+    }
+    if (resetData !== false && this.data.zoomHandoffCrossfadeActive) {
+      this.setData({
+        zoomHandoffCrossfadeActive: false,
+        zoomHandoffCrossfadeOldImage: '',
+        zoomHandoffCrossfadeNewImage: '',
+        zoomHandoffCrossfadeOldAnim: null
+      });
+    }
+  },
+  _finishZoomHandoffCrossfade: function (opts) {
+    this._cancelZoomHandoffCrossfade(false);
+    this.setData({
+      zoomHandoffCrossfadeActive: false,
+      zoomHandoffCrossfadeOldImage: '',
+      zoomHandoffCrossfadeNewImage: '',
+      zoomHandoffCrossfadeOldAnim: null
+    });
+  },
+  _armZoomHandoffFrameHook: function (state, meta) {
+    var selfHook = this;
+    if (!this._previewRecordPipeline
+      || typeof this._previewRecordPipeline.setHandoffFrameHook !== 'function') {
+      return;
+    }
+    var framesAfterZoom = 0;
+    this._previewRecordPipeline.setHandoffFrameHook(function (frame, ts) {
+      if (selfHook._zoomHandoffCrossfadeState !== state || state.newFrameReady) return;
+      if (!state.zoomAppliedAt || ts < state.zoomAppliedAt) return;
+      framesAfterZoom += 1;
+      if (framesAfterZoom < 4) return;
+      state.newFrameReady = true;
+
+      try {
+        selfHook.appendHealthLog('ultra_wide_lens_handoff', {
+          step: 'new_frame_ready',
+          fromZoom: meta.fromZoom,
+          toZoom: meta.toZoom
+        });
+      } catch (eLog) {}
+
+      selfHook._exportZoomHandoffFrameToTempPath(frame, function (newPath) {
+        if (selfHook._zoomHandoffCrossfadeState !== state) return;
+        if (!newPath) {
+          try {
+            selfHook.appendHealthLog('ultra_wide_lens_handoff', {
+              step: 'aborted_new_frame_export_fail',
+              fromZoom: meta.fromZoom,
+              toZoom: meta.toZoom
+            });
+          } catch (eLog) {}
+          selfHook._finishZoomHandoffCrossfade({ aborted: true });
+          return;
+        }
+        state.newImagePath = newPath;
+        selfHook._tryStartZoomHandoffCrossfadeReveal(state, meta);
+      });
+    });
+  },
+  _tryStartZoomHandoffCrossfadeReveal: function (state, meta) {
+    if (!state || state.transitionStarted || !state.newImagePath) return;
+    state.transitionStarted = true;
+
+    if (this._zoomHandoffCrossfadeNewFrameWaitTimer) {
+      clearTimeout(this._zoomHandoffCrossfadeNewFrameWaitTimer);
+      this._zoomHandoffCrossfadeNewFrameWaitTimer = null;
+    }
+
+    var selfAnim = this;
+    selfAnim.setData({
+      zoomHandoffCrossfadeNewImage: state.newImagePath
+    }, function () {
+      if (selfAnim._zoomHandoffCrossfadeState !== state) return;
+
+      var animation = wx.createAnimation({
+        duration: 350,
+        timingFunction: 'ease-in-out'
+      });
+      animation.opacity(0).step();
+      
+      selfAnim.setData({
+        zoomHandoffCrossfadeOldAnim: animation.export()
+      }, function () {
+        if (selfAnim._zoomHandoffCrossfadeState !== state) return;
+
+        selfAnim._zoomHandoffCrossfadeTimer = setTimeout(function () {
+          selfAnim._zoomHandoffCrossfadeTimer = null;
+          if (selfAnim._zoomHandoffCrossfadeState !== state) return;
+
+          try {
+            selfAnim.appendHealthLog('ultra_wide_lens_handoff', {
+              step: 'success',
+              fromZoom: meta.fromZoom,
+              toZoom: meta.toZoom
+            });
+          } catch (eLog) {}
+
+          selfAnim._finishZoomHandoffCrossfade();
+        }, 350 + IOS_ULTRA_WIDE_HANDOFF_SETTLE_MS);
+      });
+    });
+  },
+  _armHandoffSwitchFrameTracker: function (state, fromZ, toZ) {
+    var self = this;
+    if (!this._previewRecordPipeline || typeof this._previewRecordPipeline.setHandoffFrameHook !== 'function') {
+      return;
+    }
+    var triggerTime = Date.now();
+    var frameTimes = [];
+    this._previewRecordPipeline.setHandoffFrameHook(function (frame, ts) {
+      if (self._zoomHandoffCrossfadeState !== state) return;
+      var now = Date.now();
+      frameTimes.push({
+        elapsedMs: now - triggerTime,
+        width: frame.width,
+        height: frame.height
+      });
+      if (frameTimes.length >= 8) {
+        if (self._previewRecordPipeline && typeof self._previewRecordPipeline.clearHandoffFrameHook === 'function') {
+          self._previewRecordPipeline.clearHandoffFrameHook();
+        }
+        try {
+          self.appendHealthLog('ultra_wide_lens_handoff', {
+            step: 'lens_switch_frame_track',
+            fromZoom: fromZ,
+            toZoom: toZ,
+            frames: frameTimes
+          });
+        } catch (e) {}
+      }
+    });
+  },
+  _runIosUltraWideHandoffCrossfade: function (runNativeZoomSync, meta) {
+    var self = this;
+
+    // 取消上一次未完成的过渡（可能有残留 timer）
+    this._cancelZoomHandoffCrossfade(false);
+
+    var fromZ = meta.fromZoom;   // 超广角，iOS 上是 zoom=1
+    var toZ = meta.toZoom;       // 目标，如 zoom=2 或 zoom=4
+
+    // 推进目标：在超广角镜头上用数字变焦推进到目标倍数的 PUSH_RATIO 倍
+    // 例：toZ=2，PUSH_RATIO=0.88 → pushTargetZ=1.76
+    var pushTargetZ = toZ * IOS_ULTRA_WIDE_HANDOFF_PUSH_RATIO;
+    // 确保推进目标不低于起点（否则没意义）
+    if (pushTargetZ <= fromZ + 0.05) {
+      // 视角差太小，直接换镜，不做推进
+      self.appendHealthLog('ultra_wide_lens_handoff', {
+        step: 'skip_push_too_small',
+        fromZoom: fromZ,
+        toZoom: toZ,
+        pushTargetZ: pushTargetZ
+      });
+      runNativeZoomSync();
+      return;
+    }
+
+    var state = { id: Date.now(), active: true };
+    this._zoomHandoffCrossfadeState = state;
+
+    self.appendHealthLog('ultra_wide_lens_handoff', {
+      step: 'push_start',
+      fromZoom: fromZ,
+      toZoom: toZ,
+      pushTargetZ: pushTargetZ,
+      pushMs: IOS_ULTRA_WIDE_HANDOFF_PUSH_MS
+    });
+
+    // ── 推进阶段：easeInQuad 插值，快速推进到 pushTargetZ ──────
+    var startTime = Date.now();
+    var pushDuration = IOS_ULTRA_WIDE_HANDOFF_PUSH_MS;
+    var zoomRange = pushTargetZ - fromZ;
+    var maxZ = self.data.maxZoom || 10;
+
+    var pushInterval = setInterval(function () {
+      if (!state.active || self._zoomHandoffCrossfadeState !== state) {
+        clearInterval(pushInterval);
+        return;
+      }
+
+      var elapsed = Date.now() - startTime;
+      var progress = Math.min(1, elapsed / pushDuration);
+
+      // easeInQuad：开始慢，结束快，让画面看起来是"主动推进"而不是机械匀速
+      var eased = progress * progress;
+      var currentZ = fromZ + zoomRange * eased;
+      currentZ = Math.max(fromZ, Math.min(maxZ, currentZ));
+
+      // 直接调 setZoom，不经过 updateZoom（避免触发再次换镜判断）
+      if (self.data.cameraContext && self.data.cameraContext.setZoom) {
+        try {
+          self.data.cameraContext.setZoom({
+            zoom: currentZ,
+            fail: function () {}
+          });
+        } catch (eCtx) {}
+      }
+
+      if (progress >= 1) {
+        clearInterval(pushInterval);
+
+        if (!state.active || self._zoomHandoffCrossfadeState !== state) return;
+
+        // 推进完成，立即清除 watchdog timer
+        if (self._zoomHandoffCrossfadeTimer) {
+          clearTimeout(self._zoomHandoffCrossfadeTimer);
+          self._zoomHandoffCrossfadeTimer = null;
+        }
+
+        // ── 推进完成，执行换镜 ─────────────────────────────────
+        self.appendHealthLog('ultra_wide_lens_handoff', {
+          step: 'push_done_switching',
+          fromZoom: fromZ,
+          toZoom: toZ,
+          pushedTo: currentZ
+        });
+
+        // runNativeZoomSync 内部会 setData({ zoom: toZ }) + setZoom(toZ)
+        // 换镜在此刻发生，但画面已接近主摄视角，横移量大幅压缩
+        runNativeZoomSync();
+
+        // 开启新帧延迟追踪日志
+        self._armHandoffSwitchFrameTracker(state, fromZ, toZ);
+
+        self.appendHealthLog('ultra_wide_lens_handoff', {
+          step: 'success',
+          fromZoom: fromZ,
+          toZoom: toZ
+        });
+
+        // 换镜后短暂锁定，防止立即再次触发过渡
+        self._zoomHandoffCrossfadeTimer = setTimeout(function () {
+          self._zoomHandoffCrossfadeTimer = null;
+          if (self._zoomHandoffCrossfadeState === state) {
+            self._zoomHandoffCrossfadeState = null;
+          }
+        }, IOS_ULTRA_WIDE_HANDOFF_SETTLE_MS);
+      }
+    }, IOS_ULTRA_WIDE_HANDOFF_PUSH_INTERVAL_MS);
+
+    // 兜底：如果 interval 超时未完成（极端情况），强制换镜
+    this._zoomHandoffCrossfadeTimer = setTimeout(function () {
+      self._zoomHandoffCrossfadeTimer = null;
+      if (!state.active || self._zoomHandoffCrossfadeState !== state) return;
+      clearInterval(pushInterval);
+      state.active = false;
+      self.appendHealthLog('ultra_wide_lens_handoff', {
+        step: 'push_watchdog_fired',
+        fromZoom: fromZ,
+        toZoom: toZ
+      });
+      runNativeZoomSync();
+      // 开启新帧延迟追踪日志
+      self._armHandoffSwitchFrameTracker(state, fromZ, toZ);
+    }, IOS_ULTRA_WIDE_HANDOFF_PUSH_MS + 200);
+  },
   updateZoom: function (zoomVal) {
     /** 超频（VK）模式使用渲染管线数字变焦；原生家族使用 camera.setZoom。 */
     var isVkMode = this.data.enhanceMode === 'vk';
@@ -3803,6 +4242,7 @@ onCameraInit: function (e) {
 
     // 只在数值发生实质变化时更新，减少 setData 频率
     if (Math.abs(this.data.zoom - actualZoom) < 0.01) return;
+    var prevZoom = this.data.zoom;
     var selfZ = this;
     /**
      * @returns {void}
@@ -3831,6 +4271,21 @@ onCameraInit: function (e) {
       return;
     }
     if (isLiveHostIos()) {
+      var needCrossfade = this._isIosUltraWideLensHandoff(prevZoom, actualZoom);
+      if (needCrossfade) {
+        var runNativeZoomSync = function () {
+          selfZ.setData({
+            zoom: actualZoom
+          });
+          applyCtxZoomAndEnhance();
+        };
+        this._runIosUltraWideHandoffCrossfade(runNativeZoomSync, {
+          fromZoom: prevZoom,
+          toZoom: actualZoom,
+          source: 'update_zoom'
+        });
+        return;
+      }
       this.setData({
         zoom: actualZoom
       });

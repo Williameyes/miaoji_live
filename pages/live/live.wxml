@@ -7,9 +7,40 @@
     class="live-stage"
     id="liveStage"
     style="{{liveStageInlineStyle}}">
-    <!-- 全屏相机：纯预览；后台录制走 offscreen MediaRecorder 乒乓缓冲 -->
+    <!-- iOS：不写 zoom 属性，仅 cameraContext.setZoom；换镜溶解用 camera 内 cover-view（必须盖在 native 预览上） -->
     <camera
-      wx:if="{{cameraMounted && liveStreamAllowed && isCameraRendered}}"
+      wx:if="{{cameraMounted && liveStreamAllowed && isCameraRendered && isIosHost}}"
+      device-position="back"
+      flash="off"
+      frame-size="medium"
+      resolution="high"
+      class="camera-bg"
+      mode="normal"
+      bindstop="onCameraStop"
+      binderror="onCameraError"
+      bindinitdone="onCameraInit">
+    </camera>
+
+    <view
+      wx:if="{{zoomHandoffCrossfadeActive && isIosHost}}"
+      class="zoom-handoff-crossfade-overlay"
+    >
+      <image 
+        class="zoom-handoff-crossfade-image zoom-handoff-crossfade-image--new" 
+        src="{{zoomHandoffCrossfadeNewImage}}"
+        mode="aspectFill">
+      </image>
+      <image 
+        class="zoom-handoff-crossfade-image zoom-handoff-crossfade-image--old" 
+        src="{{zoomHandoffCrossfadeOldImage}}" 
+        bindload="onZoomHandoffCoverLoad"
+        animation="{{zoomHandoffCrossfadeOldAnim}}"
+        mode="aspectFill">
+      </image>
+    </view>
+    <!-- Android 等：zoom 属性与 setZoom 须与 data.zoom 同步 -->
+    <camera
+      wx:if="{{cameraMounted && liveStreamAllowed && isCameraRendered && !isIosHost}}"
       device-position="back"
       flash="off"
       frame-size="medium"
@@ -21,6 +52,7 @@
       binderror="onCameraError"
       bindinitdone="onCameraInit">
     </camera>
+
 
   </view>
 
@@ -1189,4 +1221,11 @@
 
     </view>
   </view>
+
+  <!-- iOS 换镜：离屏 canvas，仅用于 RGBA→临时图，不参与预览叠层 -->
+  <canvas
+    type="2d"
+    id="zoomHandoffExportCanvas"
+    class="zoom-handoff-export-canvas"
+  ></canvas>
 </view>

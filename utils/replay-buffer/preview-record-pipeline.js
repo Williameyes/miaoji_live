@@ -6,6 +6,9 @@
 const frameSourceMod = require('../render/frame-source.js');
 const { PingPongRecorder } = require('./ping-pong-recorder.js');
 
+/** iOS 变焦过渡定格帧独立深拷贝缓存 */
+let cachedHandoffFrame = null;
+
 /**
  * @param {number} fps
  * @returns {number}
@@ -33,6 +36,7 @@ function createPreviewRecordPipeline(page) {
   let frameSource = null;
   let pingPong = null;
   let active = false;
+  let handoffFrameHook = null;
   let lastFrameAt = 0;
   let frameInterval = frameIntervalMs(15);
   let feeding = false;
@@ -142,10 +146,46 @@ function createPreviewRecordPipeline(page) {
    */
   function onFrame(frame) {
     const now = Date.now();
-    if (frame && frame.width > 0 && frame.height > 0) {
+    if (frame && frame.width > 0 && frame.height > 0 && frame.data) {
       lastWarmupFrameW = frame.width;
       lastWarmupFrameH = frame.height;
+
+      // iOS 环境下对像素数据进行深拷贝
+      let isIos = false;
+      try {
+        isIos = wx.getSystemInfoSync().platform === 'ios';
+      } catch (e) {}
+      if (isIos) {
+        try {
+          const buf = new ArrayBuffer(frame.data.byteLength);
+          new Uint8Array(buf).set(new Uint8Array(frame.data));
+          cachedHandoffFrame = {
+            width: frame.width,
+            height: frame.height,
+            data: buf
+          };
+        } catch (eCopy) {
+          // ignore
+        }
+      }
     }
+
+    if (handoffFrameHook) {
+      try {
+        let isIos = false;
+        try {
+          isIos = wx.getSystemInfoSync().platform === 'ios';
+        } catch (e) {}
+        if (isIos && cachedHandoffFrame) {
+          handoffFrameHook(cachedHandoffFrame, now);
+        } else {
+          handoffFrameHook(frame, now);
+        }
+      } catch (eHook) {
+        /* ignore */
+      }
+    }
+
     if (pingPong) {
       pingPong._lastCameraFrame = frame;
     }
@@ -499,6 +539,8 @@ function createPreviewRecordPipeline(page) {
     warmupWaiters = [];
     feeding = false;
     feedingSince = 0;
+    handoffFrameHook = null;
+    cachedHandoffFrame = null;
     if (frameSource) {
       frameSource.stop();
       frameSource = null;
@@ -656,6 +698,27 @@ function createPreviewRecordPipeline(page) {
     }
   }
 
+  function getLastCameraFrame() {
+    let isIos = false;
+    try {
+      isIos = wx.getSystemInfoSync().platform === 'ios';
+    } catch (e) {}
+    if (!isIos) return null;
+    return cachedHandoffFrame;
+  }
+
+  function clearLastCameraFrame() {
+    cachedHandoffFrame = null;
+  }
+
+  function setHandoffFrameHook(fn) {
+    handoffFrameHook = typeof fn === 'function' ? fn : null;
+  }
+
+  function clearHandoffFrameHook() {
+    handoffFrameHook = null;
+  }
+
   return {
     isSupported,
     start,
@@ -674,7 +737,11 @@ function createPreviewRecordPipeline(page) {
     ensureDualTrackHealth,
     hasZombieTracks,
     recoverZombieTracks,
-    forceProbeRotate
+    forceProbeRotate,
+    getLastCameraFrame,
+    clearLastCameraFrame,
+    setHandoffFrameHook,
+    clearHandoffFrameHook
   };
 }
 
