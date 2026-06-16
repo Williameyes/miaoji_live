@@ -192,26 +192,36 @@ const IOS_ULTRA_WIDE_HANDOFF_PUSH_INTERVAL_MS = 16;
 const IOS_ULTRA_WIDE_HANDOFF_EXPORT_SETTLE_MS = 48;
 const IOS_ULTRA_WIDE_HANDOFF_NEW_FRAME_WAIT_MS = 1600;
 
-const IOS_LENS_HANDOFF_OFFSETS = {
-  '1.4->2': { x: -28, y: 0 },
-  '1.4->3.6': { x: -36, y: 0 },
-  '1.4->4': { x: -36, y: 0 }
-};
+/**
+ * iOS 换镜视差补偿：每单位 API zoom 对应的横向位移量（rpx/px，相对于取景框宽度）。
+ *
+ * 物理原理：主摄放大倍数越高，超广角 and 主摄的光心偏移在画面上的像素位移越大。
+ * 补偿量 = IOS_LENS_HANDOFF_OFFSET_PER_ZOOM × toZoom（API zoom 值，iOS上1=超广，2=主摄）
+ *
+ * 校准方法：
+ *   用 fromZoom=1.4（超广），对着有明显垂直线的场景测试，
+ *   调整此值直到换镜时垂直线不跳动为止。
+ *   当前估算值 12 基于历史测试数据（28px/2zoom ≈ 14，36px/3.6zoom ≈ 10，取均值 12）。
+ */
+const IOS_LENS_HANDOFF_OFFSET_PER_ZOOM = 12;
 
-function getLensHandoffOffset(fromZ, toZ) {
-  var key = fromZ + '->' + toZ;
-  if (IOS_LENS_HANDOFF_OFFSETS[key]) {
-    return IOS_LENS_HANDOFF_OFFSETS[key];
-  }
-  // Fallback / dynamic interpolation
-  if (Math.abs(fromZ - 1.4) < 0.1) {
-    if (toZ >= 3.0) {
-      return { x: -36, y: 0 };
-    } else {
-      return { x: -28, y: 0 };
-    }
-  }
-  return { x: 0, y: 0 };
+const IOS_LENS_HANDOFF_PRE_SHIFT_RATIO = 1.0;
+const IOS_ULTRA_WIDE_HANDOFF_RETURN_BUFFER_MS = 0;
+
+/**
+ * 动态计算换镜视差补偿量。
+ * 补偿量与目标 zoom 成正比，支持任意 fromZoom/toZoom 组合。
+ * @param {number} fromZoom 换镜前的 zoom 值
+ * @param {number} toZoom  换镜后的 zoom 值
+ * @returns {{ x: number, y: number }} 补偿偏移（px，正值向右）
+ */
+function getLensHandoffOffset(fromZoom, toZoom) {
+  // 视差补偿量 = 每单位 zoom 的基准偏移 × 目标 zoom
+  // 方向：正值（向右）补偿主摄相对超广角的左偏
+  var offsetX = IOS_LENS_HANDOFF_OFFSET_PER_ZOOM * toZoom;
+  // 上限保护：避免极端 zoom 值（如 toZoom=10）产生过大位移
+  offsetX = Math.min(offsetX, 80);
+  return { x: Math.round(offsetX), y: 0 };
 }
 /** 相机 remount 后启动 preview record 前的预热（iOS 需更长）。 */
 const PREVIEW_RECORD_WARMUP_IOS_MS = 1800;
@@ -4183,13 +4193,6 @@ onCameraInit: function (e) {
     var zoomRange = pushTargetZ - fromZ;
     var maxZ = self.data.maxZoom || 10;
 
-    if (finalOffsetX !== 0 || finalOffsetY !== 0) {
-      var pushTranslateStyle = 'transition: transform ' + pushDuration + 'ms cubic-bezier(0.25, 0.46, 0.45, 0.94); transform: translate3d(' + (finalOffsetX * 0.7) + 'px, ' + (finalOffsetY * 0.7) + 'px, 0);';
-      self.setData({
-        cameraTranslateStyle: pushTranslateStyle
-      });
-    }
-
     var pushInterval = setInterval(function () {
       if (!state.active || self._zoomHandoffCrossfadeState !== state) {
         clearInterval(pushInterval);
@@ -4214,6 +4217,28 @@ onCameraInit: function (e) {
         } catch (eCtx) {}
       }
 
+      // Pre-Shift Motion Compensation: 同步渐进位移
+      if (finalOffsetX !== 0 || finalOffsetY !== 0) {
+        var preShiftOffsetX = finalOffsetX * IOS_LENS_HANDOFF_PRE_SHIFT_RATIO;
+        var preShiftOffsetY = finalOffsetY * IOS_LENS_HANDOFF_PRE_SHIFT_RATIO;
+        var currentTranslateX = preShiftOffsetX * eased;
+        var currentTranslateY = preShiftOffsetY * eased;
+        self.setData({
+          cameraTranslateStyle: 'transition: none; transform: translate3d(' + currentTranslateX + 'px, ' + currentTranslateY + 'px, 0);'
+        });
+        try {
+          self.appendHealthLog('lens_handoff_pre_shift', {
+            progress: progress,
+            translateX: currentTranslateX,
+            targetOffsetX: finalOffsetX,
+            preShiftOffset: preShiftOffsetX,
+            offsetSign: finalOffsetX < 0 ? 'negative_left' : 'positive_right',
+            dynamicOffsetX: finalOffsetX,  // 新增：记录本次动态计算的 offset，便于调参
+            toZoom: meta.toZoom            // 新增：记录目标 zoom，便于验证公式
+          });
+        } catch (eLog) {}
+      }
+
       if (progress >= 1) {
         clearInterval(pushInterval);
 
@@ -4233,17 +4258,14 @@ onCameraInit: function (e) {
           pushedTo: currentZ
         });
 
-        // 运动补偿：瞬间切到 100% 偏移，防止换镜瞬间出现跳变
+        // 换镜时 cameraTranslateStyle 维持在 push 阶段最终值（即完整 finalOffsetX）
+        // 不做额外的 setData，减少 bridge 调用和渲染时序风险
         if (finalOffsetX !== 0 || finalOffsetY !== 0) {
-          self.setData({
-            cameraTranslateStyle: 'transition: none; transform: translate3d(' + finalOffsetX + 'px, ' + finalOffsetY + 'px, 0);'
-          });
           try {
-            self.appendHealthLog('lens_handoff_alignment_apply', {
-              fromZoom: fromZ,
-              toZoom: toZ,
-              offsetX: finalOffsetX,
-              offsetY: finalOffsetY
+            self.appendHealthLog('lens_handoff_pre_shift_done', {
+              targetOffsetX: finalOffsetX,
+              appliedOffsetX: finalOffsetX,  // ratio=1.0 时 applied = target
+              remainingOffsetX: 0
             });
           } catch (eLog) {}
         }
@@ -4261,15 +4283,15 @@ onCameraInit: function (e) {
           toZoom: toZ
         });
 
-        // 运动补偿：随后 100~150ms 归位
+        // 运动补偿：归零动画
         if (finalOffsetX !== 0 || finalOffsetY !== 0) {
           self._zoomHandoffReturnTimer = setTimeout(function () {
             self._zoomHandoffReturnTimer = null;
             if (!state.active || self._zoomHandoffCrossfadeState !== state) return;
             self.setData({
-              cameraTranslateStyle: 'transition: transform 120ms cubic-bezier(0.25, 0.46, 0.45, 0.94); transform: translate3d(0, 0, 0);'
+              cameraTranslateStyle: 'transition: transform 200ms cubic-bezier(0.0, 0.0, 0.2, 1.0); transform: translate3d(0, 0, 0);'
             });
-          }, 40);
+          }, IOS_ULTRA_WIDE_HANDOFF_RETURN_BUFFER_MS);
 
           self._zoomHandoffCleanupTimer = setTimeout(function () {
             self._zoomHandoffCleanupTimer = null;
@@ -4277,7 +4299,7 @@ onCameraInit: function (e) {
             self.setData({
               cameraTranslateStyle: ''
             });
-          }, 40 + 120 + 20);
+          }, 230);
         }
 
         // 换镜后短暂锁定，防止立即再次触发过渡
