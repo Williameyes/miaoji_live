@@ -823,6 +823,8 @@ Page({
     }],
     /** 当前选中的机位（与 pinch 变焦可短暂不同步，仅影响药丸高亮） */
     cameraViewMode: CameraViewMode.NORMAL,
+    /** 直播画幅模式：'full' (满屏) | '16x9' (横屏) */
+    liveVideoAspectMode: 'full',
     /**
      * 相机设置呼出条：fixed 定位在 16:9 取景区内左侧（由 _updateLiveStageLayout 写入）。
      * @type {string}
@@ -879,6 +881,8 @@ Page({
     promoAdsVisible: false,
     /** 载入 Ads 紧凑面板（与自动记分房间号面板同款） */
     promoAdsPanelOpen: false,
+    /** 直播画幅设置面板（抽屉工具栏「画幅」弹出） */
+    aspectModePanelOpen: false,
     /** 弹窗内输入的母比赛 ID */
     promoLoadInput: '',
     /** 载入推广请求中 */
@@ -3301,16 +3305,18 @@ onCameraInit: function (e) {
         sR = Math.max(0, sysW - (si.safeArea.left + (si.safeArea.width || 0)));
       }
     } catch (e) {}
-    var box = computeLiveStage16x9SizePx(sysW, sysH);
+    var isFullMode = this.data.liveVideoAspectMode === 'full';
+    var box = isFullMode ? { w: sysW, h: sysH } : computeLiveStage16x9SizePx(sysW, sysH);
     var style = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);' + 'width:' + box.w + 'px;height:' + box.h + 'px;';
-    var r = computeLiveStage16x9RectPx(sysW, sysH);
+    /** 角标/REC/快捷变焦始终锚定在 16:9 黑边位置，与画幅模式无关 */
+    var letterboxRect = computeLiveStage16x9RectPx(sysW, sysH);
     var factor = 750 / Math.max(1, sysW);
     /** 取景区左内缘 + 间距（rpx），呼出条仅在画幅内展示 */
     var panelInsetRpx = 12;
-    var leftRpx = r.left * factor + panelInsetRpx;
-    var topCenterRpx = (r.top + r.h * 0.5) * factor;
+    var leftRpx = letterboxRect.left * factor + panelInsetRpx;
+    var topCenterRpx = (letterboxRect.top + letterboxRect.h * 0.5) * factor;
     var cameraSettingsPanelStyle = 'left:' + leftRpx + 'rpx;top:' + topCenterRpx + 'rpx;transform:translateY(-50%);';
-    var corner = buildCornerFabStylesInLetterboxPx(sysW, sysH, r, {
+    var corner = buildCornerFabStylesInLetterboxPx(sysW, sysH, letterboxRect, {
       sL: sL,
       sR: sR,
       sB: sB
@@ -5297,6 +5303,92 @@ onCameraInit: function (e) {
         drawerMode: 0
       });
     }
+  },
+  /**
+   * 切换直播画幅比例 (从弹出面板触发)
+   * @param {WechatMiniprogram.TouchEvent} e
+   * @returns {void}
+   */
+  onChangeAspectMode: function (e) {
+    const targetMode = e.currentTarget.dataset.mode;
+    if (!targetMode || targetMode === this.data.liveVideoAspectMode) {
+      if (this.data.aspectModePanelOpen) {
+        this.setData({ aspectModePanelOpen: false });
+      }
+      return;
+    }
+
+    const applyMode = () => {
+      this.setData({
+        liveVideoAspectMode: targetMode,
+        aspectModePanelOpen: false
+      });
+      try {
+        wx.setStorageSync('live_video_aspect_mode', targetMode);
+      } catch (err) {}
+
+      if (targetMode === '16x9') {
+        wx.showModal({
+          title: '⚠️ 抖音直播设置提示',
+          content: '切换为 16:9 画幅后，为避免抖音画面出现黑边或被严重压缩，请务必在抖音开播前，将【画面方向】设置为【横屏】。',
+          showCancel: false,
+          confirmText: '我知道了'
+        });
+      }
+
+      wx.showLoading({ title: '切换画幅中' });
+      this._teardownEnhanceRender();
+      this.rebuildCameraComponent((generation) => {
+        if (!this._livePageVisible) return;
+        this.remountCameraComponent({
+          generation,
+          onMounted: () => {
+            wx.hideLoading();
+            this._updateLiveStageLayout();
+            this._showLightHint(targetMode === '16x9' ? '已切为 16:9 画幅' : '已切为满屏画幅');
+          }
+        });
+      }, 'aspect_mode_change');
+    };
+
+    if (this.data.isRecording || this.rollingActive) {
+      wx.showModal({
+        title: '正在录像中',
+        content: '切换画幅需要重启相机，当前录像将会分段。是否确认切换？',
+        success: (res) => {
+          if (res.confirm) {
+            this.rollingActive = false;
+            this.stopRollingRecording(() => applyMode());
+          }
+        }
+      });
+    } else {
+      applyMode();
+    }
+  },
+  /**
+   * 点击抽屉工具条「画幅」：展开/收起画幅选择面板。
+   * @returns {void}
+   */
+  onAspectModePanelTap: function () {
+    if (this.data.aspectModePanelOpen) {
+      this.setData({ aspectModePanelOpen: false });
+      return;
+    }
+    if (this.data.drawerMode === 1) {
+      this.stopEnhanceFpsPolling();
+    }
+    this.setData({
+      drawerMode: 0,
+      aspectModePanelOpen: true
+    });
+  },
+  /**
+   * 轻点遮罩关闭画幅选择面板。
+   * @returns {void}
+   */
+  onAspectModePanelBackdropTap: function () {
+    this.setData({ aspectModePanelOpen: false });
   },
   getDistance: function (p1, p2) {
     const x = p2.pageX - p1.pageX;
@@ -11253,10 +11345,15 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
    * 关闭所有抽屉，回到 mode 0
    */
   closeAllDrawers: function () {
+    const patch = {};
     if (this.data.drawerMode !== 0) {
-      this.setData({
-        drawerMode: 0
-      });
+      patch.drawerMode = 0;
+    }
+    if (this.data.aspectModePanelOpen) {
+      patch.aspectModePanelOpen = false;
+    }
+    if (Object.keys(patch).length > 0) {
+      this.setData(patch);
     }
     this.stopEnhanceFpsPolling();
   },
@@ -14632,6 +14729,10 @@ onLoad: function (options) {
     this._initLiveWsState();
     this._initLiveUiSettings();
     this._loadQuickZoomStops();
+    try {
+      const savedAspectMode = wx.getStorageSync('live_video_aspect_mode') || 'full';
+      this.setData({ liveVideoAspectMode: savedAspectMode });
+    } catch (e) {}
   },
   _initLiveCoreState: function (options) {
     const replayBufferMod = require('../../utils/replay-buffer/index.js');

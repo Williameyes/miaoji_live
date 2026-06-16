@@ -989,11 +989,15 @@
       >{{item.label}}</view>
       <view class="drawer-camera-pill drawer-camera-pill--focus" catchtap="onCameraFocusControlTap">锁焦</view>
       <view class="drawer-camera-pill drawer-camera-pill--quick-zoom" catchtap="onQuickZoomToggle">
-        <text class="drawer-camera-pill__label">快捷变焦</text>
+        <text class="drawer-camera-pill__label">变焦</text>
         <view class="drawer-camera-pill__toggle {{quickZoomEnabled ? 'drawer-camera-pill__toggle--on' : ''}}">
           <view class="drawer-camera-pill__toggle-thumb"></view>
         </view>
       </view>
+      <view
+        class="drawer-camera-pill drawer-camera-pill--aspect {{liveVideoAspectMode === '16x9' ? 'drawer-camera-pill--active' : ''}}"
+        catchtap="onAspectModePanelTap"
+      >画幅</view>
       <view wx:if="{{autoSyncWhitelisted}}" class="live-lens-toolbar-spacer"></view>
       <view
         wx:if="{{autoSyncWhitelisted}}"
@@ -1119,6 +1123,32 @@
           class="live-ble-btn live-ble-btn--primary live-ble-btn--sm {{promoLoadBusy ? 'live-ble-btn--disabled' : ''}}"
           catchtap="onPromoLoadConfirm"
         >{{promoLoadBusy ? '载入中' : '载入'}}</view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 直播画幅选择面板（与 Ads 面板同款） -->
+  <view
+    wx:if="{{aspectModePanelOpen}}"
+    class="live-ble-panel-backdrop"
+    catchtap="onAspectModePanelBackdropTap"
+  >
+    <view class="live-ble-panel live-ble-panel--compact aspect-mode-panel" catchtap="noopCatchTap">
+      <view class="aspect-mode-panel__title">直播画幅比例</view>
+      <view class="aspect-mode-panel__options">
+        <view
+          class="aspect-mode-opt {{liveVideoAspectMode === 'full' ? 'aspect-mode-opt--active' : ''}}"
+          catchtap="onChangeAspectMode"
+          data-mode="full"
+        >满屏 (推荐)</view>
+        <view
+          class="aspect-mode-opt {{liveVideoAspectMode === '16x9' ? 'aspect-mode-opt--active' : ''}}"
+          catchtap="onChangeAspectMode"
+          data-mode="16x9"
+        >16:9</view>
+      </view>
+      <view class="live-ble-actions live-ble-actions--compact">
+        <view class="live-ble-btn live-ble-btn--ghost live-ble-btn--sm" catchtap="onAspectModePanelBackdropTap">关闭</view>
       </view>
     </view>
   </view>
