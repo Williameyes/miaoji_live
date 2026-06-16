@@ -8,18 +8,20 @@
     id="liveStage"
     style="{{liveStageInlineStyle}}">
     <!-- iOS：不写 zoom 属性，仅 cameraContext.setZoom；换镜溶解用 camera 内 cover-view（必须盖在 native 预览上） -->
-    <camera
-      wx:if="{{cameraMounted && liveStreamAllowed && isCameraRendered && isIosHost}}"
-      device-position="back"
-      flash="off"
-      frame-size="medium"
-      resolution="high"
-      class="camera-bg"
-      mode="normal"
-      bindstop="onCameraStop"
-      binderror="onCameraError"
-      bindinitdone="onCameraInit">
-    </camera>
+    <view class="camera-preview-wrapper" style="{{cameraTranslateStyle}}">
+      <camera
+        wx:if="{{cameraMounted && liveStreamAllowed && isCameraRendered && isIosHost}}"
+        device-position="back"
+        flash="off"
+        frame-size="medium"
+        resolution="high"
+        class="camera-bg"
+        mode="normal"
+        bindstop="onCameraStop"
+        binderror="onCameraError"
+        bindinitdone="onCameraInit">
+      </camera>
+    </view>
 
     <view
       wx:if="{{zoomHandoffCrossfadeActive && isIosHost}}"

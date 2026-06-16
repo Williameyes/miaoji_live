@@ -191,6 +191,28 @@ const IOS_ULTRA_WIDE_HANDOFF_PUSH_INTERVAL_MS = 16;
 /** 保留兼容旧引用（export canvas 路径可能仍有引用） */
 const IOS_ULTRA_WIDE_HANDOFF_EXPORT_SETTLE_MS = 48;
 const IOS_ULTRA_WIDE_HANDOFF_NEW_FRAME_WAIT_MS = 1600;
+
+const IOS_LENS_HANDOFF_OFFSETS = {
+  '1.4->2': { x: -28, y: 0 },
+  '1.4->3.6': { x: -36, y: 0 },
+  '1.4->4': { x: -36, y: 0 }
+};
+
+function getLensHandoffOffset(fromZ, toZ) {
+  var key = fromZ + '->' + toZ;
+  if (IOS_LENS_HANDOFF_OFFSETS[key]) {
+    return IOS_LENS_HANDOFF_OFFSETS[key];
+  }
+  // Fallback / dynamic interpolation
+  if (Math.abs(fromZ - 1.4) < 0.1) {
+    if (toZ >= 3.0) {
+      return { x: -36, y: 0 };
+    } else {
+      return { x: -28, y: 0 };
+    }
+  }
+  return { x: 0, y: 0 };
+}
 /** 相机 remount 后启动 preview record 前的预热（iOS 需更长）。 */
 const PREVIEW_RECORD_WARMUP_IOS_MS = 1800;
 const PREVIEW_RECORD_WARMUP_ANDROID_MS = 1200;
@@ -905,6 +927,7 @@ Page({
     zoomHandoffCrossfadeNewImage: '',
     zoomHandoffCrossfadeOldAnim: null,
     zoomHandoffCoverBoxStyle: '',
+    cameraTranslateStyle: '',
     maxZoom: 10,
     minZoom: 1,
     distance: 0,
@@ -3962,6 +3985,14 @@ onCameraInit: function (e) {
       clearTimeout(this._zoomHandoffCrossfadeNewFrameWaitTimer);
       this._zoomHandoffCrossfadeNewFrameWaitTimer = null;
     }
+    if (this._zoomHandoffReturnTimer) {
+      clearTimeout(this._zoomHandoffReturnTimer);
+      this._zoomHandoffReturnTimer = null;
+    }
+    if (this._zoomHandoffCleanupTimer) {
+      clearTimeout(this._zoomHandoffCleanupTimer);
+      this._zoomHandoffCleanupTimer = null;
+    }
     if (this._previewRecordPipeline) {
       if (typeof this._previewRecordPipeline.clearHandoffFrameHook === 'function') {
         this._previewRecordPipeline.clearHandoffFrameHook();
@@ -3969,6 +4000,11 @@ onCameraInit: function (e) {
       if (typeof this._previewRecordPipeline.clearLastCameraFrame === 'function') {
         this._previewRecordPipeline.clearLastCameraFrame();
       }
+    }
+    if (this.data.cameraTranslateStyle) {
+      this.setData({
+        cameraTranslateStyle: ''
+      });
     }
     if (resetData !== false && this.data.zoomHandoffCrossfadeActive) {
       this.setData({
@@ -4137,11 +4173,22 @@ onCameraInit: function (e) {
       pushMs: IOS_ULTRA_WIDE_HANDOFF_PUSH_MS
     });
 
-    // ── 推进阶段：easeInQuad 插值，快速推进到 pushTargetZ ──────
+    var offset = getLensHandoffOffset(fromZ, toZ);
+    var finalOffsetX = offset.x;
+    var finalOffsetY = offset.y;
+
+    // ── 推进阶段：同步启动 CSS 平移补偿 ──────
     var startTime = Date.now();
     var pushDuration = IOS_ULTRA_WIDE_HANDOFF_PUSH_MS;
     var zoomRange = pushTargetZ - fromZ;
     var maxZ = self.data.maxZoom || 10;
+
+    if (finalOffsetX !== 0 || finalOffsetY !== 0) {
+      var pushTranslateStyle = 'transition: transform ' + pushDuration + 'ms cubic-bezier(0.25, 0.46, 0.45, 0.94); transform: translate3d(' + (finalOffsetX * 0.7) + 'px, ' + (finalOffsetY * 0.7) + 'px, 0);';
+      self.setData({
+        cameraTranslateStyle: pushTranslateStyle
+      });
+    }
 
     var pushInterval = setInterval(function () {
       if (!state.active || self._zoomHandoffCrossfadeState !== state) {
@@ -4186,6 +4233,21 @@ onCameraInit: function (e) {
           pushedTo: currentZ
         });
 
+        // 运动补偿：瞬间切到 100% 偏移，防止换镜瞬间出现跳变
+        if (finalOffsetX !== 0 || finalOffsetY !== 0) {
+          self.setData({
+            cameraTranslateStyle: 'transition: none; transform: translate3d(' + finalOffsetX + 'px, ' + finalOffsetY + 'px, 0);'
+          });
+          try {
+            self.appendHealthLog('lens_handoff_alignment_apply', {
+              fromZoom: fromZ,
+              toZoom: toZ,
+              offsetX: finalOffsetX,
+              offsetY: finalOffsetY
+            });
+          } catch (eLog) {}
+        }
+
         // runNativeZoomSync 内部会 setData({ zoom: toZ }) + setZoom(toZ)
         // 换镜在此刻发生，但画面已接近主摄视角，横移量大幅压缩
         runNativeZoomSync();
@@ -4198,6 +4260,25 @@ onCameraInit: function (e) {
           fromZoom: fromZ,
           toZoom: toZ
         });
+
+        // 运动补偿：随后 100~150ms 归位
+        if (finalOffsetX !== 0 || finalOffsetY !== 0) {
+          self._zoomHandoffReturnTimer = setTimeout(function () {
+            self._zoomHandoffReturnTimer = null;
+            if (!state.active || self._zoomHandoffCrossfadeState !== state) return;
+            self.setData({
+              cameraTranslateStyle: 'transition: transform 120ms cubic-bezier(0.25, 0.46, 0.45, 0.94); transform: translate3d(0, 0, 0);'
+            });
+          }, 40);
+
+          self._zoomHandoffCleanupTimer = setTimeout(function () {
+            self._zoomHandoffCleanupTimer = null;
+            if (!state.active || self._zoomHandoffCrossfadeState !== state) return;
+            self.setData({
+              cameraTranslateStyle: ''
+            });
+          }, 40 + 120 + 20);
+        }
 
         // 换镜后短暂锁定，防止立即再次触发过渡
         self._zoomHandoffCrossfadeTimer = setTimeout(function () {
@@ -4219,6 +4300,10 @@ onCameraInit: function (e) {
         step: 'push_watchdog_fired',
         fromZoom: fromZ,
         toZoom: toZ
+      });
+      // 兜底超时重置平移样式
+      self.setData({
+        cameraTranslateStyle: ''
       });
       runNativeZoomSync();
       // 开启新帧延迟追踪日志
