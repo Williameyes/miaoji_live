@@ -161,30 +161,18 @@ const PREVIEW_FRAME_FEED_STALL_MS = 18000;
 /** iOS 超广角换镜：渐进变焦过渡常量 */
 
 /**
- * 换镜前推进阶段时长（ms）。
- * 在此时间内用超广角数字变焦把画面推进到接近主摄视角，压缩换镜时的横移量。
- * 建议范围 150~300ms：太短压缩效果差，太长用户感觉变焦太慢。
+ * 换镜前推进阶段默认时长（ms）；实际按目标 zoom 分档见 {@link getLensHandoffPushProfile}。
  */
 const IOS_ULTRA_WIDE_HANDOFF_PUSH_MS = 220;
 
 /**
- * 推进目标倍率（相对于目标 zoom 的比例）。
- * 换镜前先把超广角 zoom 推进到 targetZoom * PUSH_RATIO。
- * 0.85 意味着换镜前已接近目标倍数的 85%，横移量压缩到约 15%。
- * 不能 >= 1.0（会提前触发换镜），建议 0.80~0.92。
- */
-const IOS_ULTRA_WIDE_HANDOFF_PUSH_RATIO = 0.88;
-
-/**
  * 换镜后稳定阶段时长（ms）。
  * setZoom 调用后等待 ISP 稳定的时间，之后认为新画面可用。
- * 不需要很长，仅用于防止换镜后立刻再次触发过渡。
  */
 const IOS_ULTRA_WIDE_HANDOFF_SETTLE_MS = 300;
 
 /**
  * 推进动画的 setZoom 调用间隔（ms）。
- * 约等于 1 帧（16ms），更小的值在 JS 层无意义。
  */
 const IOS_ULTRA_WIDE_HANDOFF_PUSH_INTERVAL_MS = 16;
 
@@ -193,35 +181,83 @@ const IOS_ULTRA_WIDE_HANDOFF_EXPORT_SETTLE_MS = 48;
 const IOS_ULTRA_WIDE_HANDOFF_NEW_FRAME_WAIT_MS = 1600;
 
 /**
- * iOS 换镜视差补偿：每单位 API zoom 对应的横向位移量（rpx/px，相对于取景框宽度）。
- *
- * 物理原理：主摄放大倍数越高，超广角 and 主摄的光心偏移在画面上的像素位移越大。
- * 补偿量 = IOS_LENS_HANDOFF_OFFSET_PER_ZOOM × toZoom（API zoom 值，iOS上1=超广，2=主摄）
- *
- * 校准方法：
- *   用 fromZoom=1.4（超广），对着有明显垂直线的场景测试，
- *   调整此值直到换镜时垂直线不跳动为止。
- *   当前估算值 12 基于历史测试数据（28px/2zoom ≈ 14，36px/3.6zoom ≈ 10，取均值 12）。
+ * 换镜前 Pre-Shift 占视差补偿总量的比例（余量在换镜后随新帧回正）。
+ * @readonly
  */
-const IOS_LENS_HANDOFF_OFFSET_PER_ZOOM = 12;
+const IOS_LENS_HANDOFF_PRE_SHIFT_RATIO = 0.65;
 
-const IOS_LENS_HANDOFF_PRE_SHIFT_RATIO = 1.0;
-const IOS_ULTRA_WIDE_HANDOFF_RETURN_BUFFER_MS = 0;
+/** 新帧 hook 未触发时，回正动画的兜底延迟（ms）。 */
+const IOS_ULTRA_WIDE_HANDOFF_RETURN_FALLBACK_MS = 120;
+
+/** 新帧就绪后等待回正的最少帧数（与 preview pipeline handoff hook 一致）。 */
+const IOS_ULTRA_WIDE_HANDOFF_RETURN_MIN_FRAMES = 4;
+
+/** 新帧 hook 超时兜底（ms），防止 pipeline 无帧时 translate 卡住。 */
+const IOS_ULTRA_WIDE_HANDOFF_RETURN_WATCHDOG_MS = 800;
+
+/** 回正 CSS 动画时长（ms）。 */
+const IOS_ULTRA_WIDE_HANDOFF_RETURN_ANIM_MS = 250;
 
 /**
- * 动态计算换镜视差补偿量。
- * 补偿量与目标 zoom 成正比，支持任意 fromZoom/toZoom 组合。
+ * 按目标 zoom 返回推进参数（P1：分档 push）。
+ * @param {number} fromZoom
+ * @param {number} toZoom
+ * @returns {{ pushRatio: number, pushMs: number }}
+ */
+function getLensHandoffPushProfile(fromZoom, toZoom) {
+  var toZ = Number(toZoom) || 2;
+  if (toZ >= 3.5) {
+    return {
+      pushRatio: 0.85,
+      pushMs: 260
+    };
+  }
+  return {
+    pushRatio: 0.91,
+    pushMs: 200
+  };
+}
+
+/**
+ * 取换镜补偿所用的取景宽度（px）：满屏用 windowWidth，16:9 用内接宽。
+ * @param {string} [liveVideoAspectMode] 'full' | '16x9'
+ * @returns {number}
+ */
+function getLensHandoffStageWidthPx(liveVideoAspectMode) {
+  try {
+    var sys = wx.getSystemInfoSync();
+    var ww = Math.max(1, Number(sys.windowWidth) || 375);
+    var wh = Math.max(1, Number(sys.windowHeight) || 667);
+    if (liveVideoAspectMode === 'full') {
+      return ww;
+    }
+    return computeLiveStage16x9SizePx(ww, wh).w;
+  } catch (e) {
+    return 375;
+  }
+}
+
+/**
+ * 动态计算换镜视差补偿量（P1：屏宽 × zoom 跨度，按目标分档系数）。
  * @param {number} fromZoom 换镜前的 zoom 值
- * @param {number} toZoom  换镜后的 zoom 值
+ * @param {number} toZoom 换镜后的 zoom 值
+ * @param {number} [stageWidthPx] 取景框宽度（px）
  * @returns {{ x: number, y: number }} 补偿偏移（px，正值向右）
  */
-function getLensHandoffOffset(fromZoom, toZoom) {
-  // 视差补偿量 = 每单位 zoom 的基准偏移 × 目标 zoom
-  // 方向：正值（向右）补偿主摄相对超广角的左偏
-  var offsetX = IOS_LENS_HANDOFF_OFFSET_PER_ZOOM * toZoom;
-  // 上限保护：避免极端 zoom 值（如 toZoom=10）产生过大位移
-  offsetX = Math.min(offsetX, 80);
-  return { x: Math.round(offsetX), y: 0 };
+function getLensHandoffOffset(fromZoom, toZoom, stageWidthPx) {
+  var fromZ = Number(fromZoom);
+  var toZ = Number(toZoom);
+  if (!isFinite(fromZ) || !isFinite(toZ) || toZ <= fromZ + 0.05) {
+    return { x: 0, y: 0 };
+  }
+  var stageW = Math.max(1, Number(stageWidthPx) || 375);
+  var span = toZ - fromZ;
+  var k = toZ >= 3.5 ? 0.14 : 0.12;
+  var offsetX = k * stageW * span / Math.max(toZ, 0.5);
+  var maxCap = Math.round(stageW * (toZ >= 3.5 ? 0.12 : 0.09));
+  offsetX = Math.min(offsetX, maxCap);
+  offsetX = Math.max(0, Math.round(offsetX));
+  return { x: offsetX, y: 0 };
 }
 /** 相机 remount 后启动 preview record 前的预热（iOS 需更长）。 */
 const PREVIEW_RECORD_WARMUP_IOS_MS = 1800;
@@ -284,6 +320,12 @@ const QUICK_ZOOM_ENABLED_KEY = 'live_quick_zoom_enabled';
 const QUICK_ZOOM_STOPS_KEY = 'live_quick_zoom_stops';
 /** 快速变焦长按保存所需时长（ms） */
 const QUICK_ZOOM_LONG_PRESS_MS = 800;
+/** 快捷变焦选中档双指微调区间下界/上界（左闭右开，避免档位重叠） */
+const QUICK_ZOOM_PINCH_NEAR_MIN = 1;
+const QUICK_ZOOM_PINCH_MID_MIN = 2;
+const QUICK_ZOOM_PINCH_FAR_MIN = 4;
+const QUICK_ZOOM_PINCH_NEAR_MAX = 2;
+const QUICK_ZOOM_PINCH_MID_MAX = 4;
 
 /**
  * Android 超广探测：complete 早于 success 时若用 0ms 会误判失败，略延迟再试下一档。
@@ -4009,6 +4051,10 @@ onCameraInit: function (e) {
       clearTimeout(this._zoomHandoffCleanupTimer);
       this._zoomHandoffCleanupTimer = null;
     }
+    if (this._zoomHandoffReturnWatchdogTimer) {
+      clearTimeout(this._zoomHandoffReturnWatchdogTimer);
+      this._zoomHandoffReturnWatchdogTimer = null;
+    }
     if (this._previewRecordPipeline) {
       if (typeof this._previewRecordPipeline.clearHandoffFrameHook === 'function') {
         this._previewRecordPipeline.clearHandoffFrameHook();
@@ -4153,6 +4199,106 @@ onCameraInit: function (e) {
       }
     });
   },
+  /**
+   * P2：换镜后等新镜头帧稳定，再启动 translate 回正（避免与 ISP 跳变对撞）。
+   * @param {object} state handoff 状态
+   * @param {{ fromZoom: number, toZoom: number }} meta
+   * @param {number} holdTranslateX 换镜瞬间应保持的横向补偿（px）
+   * @returns {void}
+   */
+  _startLensHandoffTranslateReturn: function (state, meta, holdTranslateX) {
+    var self = this;
+    var holdX = Math.round(Number(holdTranslateX) || 0);
+    if (!state || !state.active) return;
+    if (holdX === 0) {
+      this.setData({
+        cameraTranslateStyle: ''
+      });
+      return;
+    }
+
+    state.zoomAppliedAt = Date.now();
+    state.returnStarted = false;
+
+    var runReturnAnim = function (source) {
+      if (!state.active || self._zoomHandoffCrossfadeState !== state) return;
+      if (state.returnStarted) return;
+      state.returnStarted = true;
+      if (self._zoomHandoffReturnWatchdogTimer) {
+        clearTimeout(self._zoomHandoffReturnWatchdogTimer);
+        self._zoomHandoffReturnWatchdogTimer = null;
+      }
+      if (self._previewRecordPipeline && typeof self._previewRecordPipeline.clearHandoffFrameHook === 'function') {
+        self._previewRecordPipeline.clearHandoffFrameHook();
+      }
+      self.setData({
+        cameraTranslateStyle: 'transition: none; transform: translate3d(' + holdX + 'px, 0, 0);'
+      });
+      setTimeout(function () {
+        if (!state.active || self._zoomHandoffCrossfadeState !== state) return;
+        self.setData({
+          cameraTranslateStyle: 'transition: transform '
+            + IOS_ULTRA_WIDE_HANDOFF_RETURN_ANIM_MS
+            + 'ms cubic-bezier(0.0, 0.0, 0.2, 1.0); transform: translate3d(0, 0, 0);'
+        });
+        self._zoomHandoffCleanupTimer = setTimeout(function () {
+          self._zoomHandoffCleanupTimer = null;
+          if (!state.active || self._zoomHandoffCrossfadeState !== state) return;
+          self.setData({
+            cameraTranslateStyle: ''
+          });
+        }, IOS_ULTRA_WIDE_HANDOFF_RETURN_ANIM_MS + 30);
+      }, 16);
+      try {
+        self.appendHealthLog('lens_handoff_translate_return', {
+          source: source || 'unknown',
+          holdTranslateX: holdX,
+          fromZoom: meta.fromZoom,
+          toZoom: meta.toZoom
+        });
+      } catch (eLog) {}
+    };
+
+    if (!this._previewRecordPipeline || typeof this._previewRecordPipeline.setHandoffFrameHook !== 'function') {
+      this._zoomHandoffReturnTimer = setTimeout(function () {
+        self._zoomHandoffReturnTimer = null;
+        runReturnAnim('fallback_no_pipeline');
+      }, IOS_ULTRA_WIDE_HANDOFF_RETURN_FALLBACK_MS);
+      return;
+    }
+
+    var framesAfterZoom = 0;
+    var frameTimes = [];
+    var triggerTime = Date.now();
+    this._previewRecordPipeline.setHandoffFrameHook(function (frame, ts) {
+      if (self._zoomHandoffCrossfadeState !== state || !state.active) return;
+      if (!state.zoomAppliedAt || ts < state.zoomAppliedAt) return;
+      framesAfterZoom += 1;
+      frameTimes.push({
+        elapsedMs: Date.now() - triggerTime,
+        width: frame && frame.width,
+        height: frame && frame.height
+      });
+      if (framesAfterZoom >= IOS_ULTRA_WIDE_HANDOFF_RETURN_MIN_FRAMES) {
+        runReturnAnim('new_frame_ready');
+        if (frameTimes.length > 0) {
+          try {
+            self.appendHealthLog('ultra_wide_lens_handoff', {
+              step: 'lens_switch_frame_track',
+              fromZoom: meta.fromZoom,
+              toZoom: meta.toZoom,
+              frames: frameTimes.slice(0, 8)
+            });
+          } catch (e) {}
+        }
+      }
+    });
+
+    this._zoomHandoffReturnWatchdogTimer = setTimeout(function () {
+      self._zoomHandoffReturnWatchdogTimer = null;
+      runReturnAnim('watchdog_timeout');
+    }, IOS_ULTRA_WIDE_HANDOFF_RETURN_WATCHDOG_MS);
+  },
   _runIosUltraWideHandoffCrossfade: function (runNativeZoomSync, meta) {
     var self = this;
 
@@ -4164,7 +4310,10 @@ onCameraInit: function (e) {
 
     // 推进目标：在超广角镜头上用数字变焦推进到目标倍数的 PUSH_RATIO 倍
     // 例：toZ=2，PUSH_RATIO=0.88 → pushTargetZ=1.76
-    var pushTargetZ = toZ * IOS_ULTRA_WIDE_HANDOFF_PUSH_RATIO;
+    var pushProfile = getLensHandoffPushProfile(fromZ, toZ);
+    var pushRatio = pushProfile.pushRatio;
+    var pushDuration = pushProfile.pushMs;
+    var pushTargetZ = fromZ + (toZ - fromZ) * pushRatio;
     // 确保推进目标不低于起点（否则没意义）
     if (pushTargetZ <= fromZ + 0.05) {
       // 视角差太小，直接换镜，不做推进
@@ -4181,21 +4330,26 @@ onCameraInit: function (e) {
     var state = { id: Date.now(), active: true };
     this._zoomHandoffCrossfadeState = state;
 
+    var stageW = getLensHandoffStageWidthPx(this.data.liveVideoAspectMode);
+    var offset = getLensHandoffOffset(fromZ, toZ, stageW);
+    var finalOffsetX = offset.x;
+    var finalOffsetY = offset.y;
+    var preShiftOffsetX = Math.round(finalOffsetX * IOS_LENS_HANDOFF_PRE_SHIFT_RATIO);
+    var preShiftOffsetY = Math.round(finalOffsetY * IOS_LENS_HANDOFF_PRE_SHIFT_RATIO);
+
     self.appendHealthLog('ultra_wide_lens_handoff', {
       step: 'push_start',
       fromZoom: fromZ,
       toZoom: toZ,
       pushTargetZ: pushTargetZ,
-      pushMs: IOS_ULTRA_WIDE_HANDOFF_PUSH_MS
+      pushMs: pushDuration,
+      pushRatio: pushRatio,
+      stageWidthPx: stageW,
+      finalOffsetX: finalOffsetX,
+      preShiftOffsetX: preShiftOffsetX
     });
 
-    var offset = getLensHandoffOffset(fromZ, toZ);
-    var finalOffsetX = offset.x;
-    var finalOffsetY = offset.y;
-
-    // ── 推进阶段：同步启动 CSS 平移补偿 ──────
     var startTime = Date.now();
-    var pushDuration = IOS_ULTRA_WIDE_HANDOFF_PUSH_MS;
     var zoomRange = pushTargetZ - fromZ;
     var maxZ = self.data.maxZoom || 10;
 
@@ -4212,6 +4366,9 @@ onCameraInit: function (e) {
       var eased = progress * progress;
       var currentZ = fromZ + zoomRange * eased;
       currentZ = Math.max(fromZ, Math.min(maxZ, currentZ));
+      var zoomProgress = zoomRange > 0.001
+        ? Math.max(0, Math.min(1, (currentZ - fromZ) / zoomRange))
+        : 1;
 
       // 直接调 setZoom，不经过 updateZoom（避免触发再次换镜判断）
       if (self.data.cameraContext && self.data.cameraContext.setZoom) {
@@ -4223,26 +4380,14 @@ onCameraInit: function (e) {
         } catch (eCtx) {}
       }
 
-      // Pre-Shift Motion Compensation: 同步渐进位移
-      if (finalOffsetX !== 0 || finalOffsetY !== 0) {
-        var preShiftOffsetX = finalOffsetX * IOS_LENS_HANDOFF_PRE_SHIFT_RATIO;
-        var preShiftOffsetY = finalOffsetY * IOS_LENS_HANDOFF_PRE_SHIFT_RATIO;
-        var currentTranslateX = preShiftOffsetX * eased;
-        var currentTranslateY = preShiftOffsetY * eased;
+      // Pre-Shift：横移进度与 zoom 进度绑定（P2）
+      if (preShiftOffsetX !== 0 || preShiftOffsetY !== 0) {
+        var currentTranslateX = Math.round(preShiftOffsetX * zoomProgress);
+        var currentTranslateY = Math.round(preShiftOffsetY * zoomProgress);
         self.setData({
-          cameraTranslateStyle: 'transition: none; transform: translate3d(' + currentTranslateX + 'px, ' + currentTranslateY + 'px, 0);'
+          cameraTranslateStyle: 'transition: none; transform: translate3d('
+            + currentTranslateX + 'px, ' + currentTranslateY + 'px, 0);'
         });
-        try {
-          self.appendHealthLog('lens_handoff_pre_shift', {
-            progress: progress,
-            translateX: currentTranslateX,
-            targetOffsetX: finalOffsetX,
-            preShiftOffset: preShiftOffsetX,
-            offsetSign: finalOffsetX < 0 ? 'negative_left' : 'positive_right',
-            dynamicOffsetX: finalOffsetX,  // 新增：记录本次动态计算的 offset，便于调参
-            toZoom: meta.toZoom            // 新增：记录目标 zoom，便于验证公式
-          });
-        } catch (eLog) {}
       }
 
       if (progress >= 1) {
@@ -4256,57 +4401,30 @@ onCameraInit: function (e) {
           self._zoomHandoffCrossfadeTimer = null;
         }
 
-        // ── 推进完成，执行换镜 ─────────────────────────────────
+        if (preShiftOffsetX !== 0 || preShiftOffsetY !== 0) {
+          self.setData({
+            cameraTranslateStyle: 'transition: none; transform: translate3d('
+              + preShiftOffsetX + 'px, ' + preShiftOffsetY + 'px, 0);'
+          });
+        }
+
         self.appendHealthLog('ultra_wide_lens_handoff', {
           step: 'push_done_switching',
           fromZoom: fromZ,
           toZoom: toZ,
-          pushedTo: currentZ
+          pushedTo: currentZ,
+          preShiftOffsetX: preShiftOffsetX
         });
 
-        // 换镜时 cameraTranslateStyle 维持在 push 阶段最终值（即完整 finalOffsetX）
-        // 不做额外的 setData，减少 bridge 调用和渲染时序风险
-        if (finalOffsetX !== 0 || finalOffsetY !== 0) {
-          try {
-            self.appendHealthLog('lens_handoff_pre_shift_done', {
-              targetOffsetX: finalOffsetX,
-              appliedOffsetX: finalOffsetX,  // ratio=1.0 时 applied = target
-              remainingOffsetX: 0
-            });
-          } catch (eLog) {}
-        }
-
-        // runNativeZoomSync 内部会 setData({ zoom: toZ }) + setZoom(toZ)
-        // 换镜在此刻发生，但画面已接近主摄视角，横移量大幅压缩
         runNativeZoomSync();
 
-        // 开启新帧延迟追踪日志
-        self._armHandoffSwitchFrameTracker(state, fromZ, toZ);
-
         self.appendHealthLog('ultra_wide_lens_handoff', {
-          step: 'success',
+          step: 'switch_applied',
           fromZoom: fromZ,
           toZoom: toZ
         });
 
-        // 运动补偿：归零动画
-        if (finalOffsetX !== 0 || finalOffsetY !== 0) {
-          self._zoomHandoffReturnTimer = setTimeout(function () {
-            self._zoomHandoffReturnTimer = null;
-            if (!state.active || self._zoomHandoffCrossfadeState !== state) return;
-            self.setData({
-              cameraTranslateStyle: 'transition: transform 200ms cubic-bezier(0.0, 0.0, 0.2, 1.0); transform: translate3d(0, 0, 0);'
-            });
-          }, IOS_ULTRA_WIDE_HANDOFF_RETURN_BUFFER_MS);
-
-          self._zoomHandoffCleanupTimer = setTimeout(function () {
-            self._zoomHandoffCleanupTimer = null;
-            if (!state.active || self._zoomHandoffCrossfadeState !== state) return;
-            self.setData({
-              cameraTranslateStyle: ''
-            });
-          }, 230);
-        }
+        self._startLensHandoffTranslateReturn(state, meta, preShiftOffsetX);
 
         // 换镜后短暂锁定，防止立即再次触发过渡
         self._zoomHandoffCrossfadeTimer = setTimeout(function () {
@@ -4334,9 +4452,7 @@ onCameraInit: function (e) {
         cameraTranslateStyle: ''
       });
       runNativeZoomSync();
-      // 开启新帧延迟追踪日志
-      self._armHandoffSwitchFrameTracker(state, fromZ, toZ);
-    }, IOS_ULTRA_WIDE_HANDOFF_PUSH_MS + 200);
+    }, pushDuration + 200);
   },
   updateZoom: function (zoomVal) {
     /** 超频（VK）模式使用渲染管线数字变焦；原生家族使用 camera.setZoom。 */
@@ -4811,6 +4927,9 @@ onCameraInit: function (e) {
       cameraViewMode: mode
     });
     this.updateZoom(target);
+    this._syncQuickZoomActiveByZoom(target, {
+      clearTemp: true
+    });
     if (this._renderPipeline && typeof this._renderPipeline.pauseAutoDegradeOnce === 'function') {
       try {
         this._renderPipeline.pauseAutoDegradeOnce();
@@ -4911,49 +5030,273 @@ onCameraInit: function (e) {
     ];
   },
   /**
-   * 从 Storage 加载快捷变焦配置；默认值取自 cameraViewModeStops（见 _buildQuickZoomDefaults）。
+   * 快捷变焦合法 zoom 区间（与 updateZoom 钳位逻辑一致）。
+   * @returns {{ minZ: number, maxZ: number }}
+   */
+  _getQuickZoomClampRange: function () {
+    var minZ = 1;
+    if (this._cameraCaps && typeof this._cameraCaps.minZoom === 'number' && this._cameraCaps.minZoom > 0) {
+      minZ = this._cameraCaps.minZoom;
+    } else if (this._cameraCaps && this._cameraCaps.hasUltraWide) {
+      minZ = isLiveHostIos() ? 1 : 0.5;
+    } else if (!isLiveHostIos() && (!this._cameraCaps || !this._cameraCaps.probed)) {
+      minZ = 0.5;
+    }
+    return {
+      minZ: minZ,
+      maxZ: this.data.maxZoom || 10
+    };
+  },
+  /**
+   * 将 zoom 钳位到当前设备可用范围并保留一位小数。
+   * @param {number} zoomVal
+   * @returns {number}
+   */
+  _clampQuickZoomValue: function (zoomVal) {
+    var range = this._getQuickZoomClampRange();
+    var z = Number(zoomVal);
+    if (!isFinite(z) || z <= 0) {
+      z = range.minZ;
+    }
+    return Math.round(Math.max(range.minZ, Math.min(range.maxZ, z)) * 10) / 10;
+  },
+  /**
+   * 按档位 label 返回双指微调区间（未选中档时不调用）。
+   * @param {'远'|'中'|'近'} label
+   * @returns {{ minZ: number, maxZ: number, maxExclusive: boolean }|null}
+   */
+  _getQuickZoomPinchBandByLabel: function (label) {
+    var deviceMax = this.data.maxZoom || 10;
+    if (label === '近') {
+      return {
+        minZ: QUICK_ZOOM_PINCH_NEAR_MIN,
+        maxZ: QUICK_ZOOM_PINCH_NEAR_MAX,
+        maxExclusive: true
+      };
+    }
+    if (label === '中') {
+      return {
+        minZ: QUICK_ZOOM_PINCH_MID_MIN,
+        maxZ: QUICK_ZOOM_PINCH_MID_MAX,
+        maxExclusive: true
+      };
+    }
+    if (label === '远') {
+      return {
+        minZ: QUICK_ZOOM_PINCH_FAR_MIN,
+        maxZ: deviceMax,
+        maxExclusive: false
+      };
+    }
+    return null;
+  },
+  /**
+   * 当前激活快捷档的双指微调区间；未开启或无选中档时返回 null。
+   * @returns {{ minZ: number, maxZ: number, maxExclusive: boolean }|null}
+   */
+  _getQuickZoomActivePinchRange: function () {
+    if (!this.data.quickZoomEnabled) return null;
+    var stops = this.data.quickZoomStops || [];
+    var active = null;
+    var i;
+    for (i = 0; i < stops.length; i++) {
+      if (stops[i].isActive) {
+        active = stops[i];
+        break;
+      }
+    }
+    if (!active) return null;
+    return this._getQuickZoomPinchBandByLabel(active.label);
+  },
+  /**
+   * 将双指缩放值钳位到当前激活档的微调区间（未选中档时不钳位）。
+   * @param {number} zoomVal
+   * @returns {number}
+   */
+  _clampQuickZoomPinchValue: function (zoomVal) {
+    var band = this._getQuickZoomActivePinchRange();
+    if (!band) return zoomVal;
+    var z = Number(zoomVal);
+    if (!isFinite(z)) return zoomVal;
+    var maxZ = band.maxZ;
+    if (band.maxExclusive) {
+      maxZ = Math.round((band.maxZ - 0.1) * 10) / 10;
+    }
+    maxZ = Math.max(band.minZ, maxZ);
+    z = Math.max(band.minZ, Math.min(maxZ, z));
+    return Math.round(z * 10) / 10;
+  },
+  /**
+   * 按固定区间 [1,2) / [2,4) / [4,max] 判定 zoom 所属快捷档 index。
+   * @param {number} zoomVal
+   * @returns {number} 0|1|2 或 -1
+   */
+  _findQuickZoomStopIndexByBand: function (zoomVal) {
+    var stops = this.data.quickZoomStops || [];
+    if (stops.length !== 3) return -1;
+    var z = Number(zoomVal);
+    if (!isFinite(z)) return -1;
+    var label = null;
+    if (z >= QUICK_ZOOM_PINCH_FAR_MIN) {
+      label = '远';
+    } else if (z >= QUICK_ZOOM_PINCH_MID_MIN) {
+      label = '中';
+    } else if (z >= QUICK_ZOOM_PINCH_NEAR_MIN) {
+      label = '近';
+    } else {
+      return -1;
+    }
+    for (var i = 0; i < stops.length; i++) {
+      if (stops[i].label === label) return i;
+    }
+    return -1;
+  },
+  /**
+   * 按当前 zoom 同步快捷变焦档位高亮（与机位药丸切换联动）。
+   * @param {number} zoomVal
+   * @param {{ clearTemp?: boolean }} [opts] clearTemp 默认 true
    * @returns {void}
    */
-  _loadQuickZoomStops: function () {
+  _syncQuickZoomActiveByZoom: function (zoomVal, opts) {
+    if (!this.data.quickZoomEnabled) return;
+    var options = opts || {};
+    var clearTemp = options.clearTemp !== false;
+    var stops = this.data.quickZoomStops;
+    if (!stops || stops.length !== 3) return;
+    var z = Number(zoomVal);
+    if (!isFinite(z)) return;
+    var activeIdx = this._findQuickZoomStopIndexByBand(z);
+    var changed = false;
+    var newStops = stops.map(function (s, idx) {
+      var nextActive = idx === activeIdx;
+      if (s.isActive !== nextActive) changed = true;
+      return Object.assign({}, s, {
+        isActive: nextActive
+      });
+    });
+    var patch = {};
+    if (changed) patch.quickZoomStops = newStops;
+    if (clearTemp && (this.data.quickZoomTempZoom !== null || this.data.quickZoomTempDisplay)) {
+      patch.quickZoomTempZoom = null;
+      patch.quickZoomTempDisplay = '';
+    }
+    if (Object.keys(patch).length > 0) {
+      this.setData(patch);
+    }
+  },
+  /**
+   * 按 zoom 同步抽屉机位药丸高亮（与快捷档点击联动）。
+   * @param {number} zoomVal
+   * @returns {void}
+   */
+  _syncCameraViewModeFromZoom: function (zoomVal) {
+    var stops = this.data.cameraViewModeStops || [];
+    var z = Number(zoomVal);
+    if (!isFinite(z) || stops.length === 0) return;
+    var best = null;
+    var bestDist = Infinity;
+    var i;
+    for (i = 0; i < stops.length; i++) {
+      var dist = Math.abs(stops[i].zoom - z);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = stops[i];
+      }
+    }
+    if (best && bestDist <= 0.25 && best.mode !== this.data.cameraViewMode) {
+      this.setData({
+        cameraViewMode: best.mode
+      });
+    }
+  },
+  /**
+   * 从 Storage 加载快捷变焦配置；默认值取自 cameraViewModeStops（见 _buildQuickZoomDefaults）。
+   * 默认保留运行时 isActive / 微调态，避免 onShow、相机 init 后 UI 与 zoom 脱节。
+   * @param {{ resetRuntime?: boolean }} [opts] resetRuntime=true 时清空激活档与微调态
+   * @returns {void}
+   */
+  _loadQuickZoomStops: function (opts) {
+    var options = opts || {};
+    var resetRuntime = options.resetRuntime === true;
+    var prevStops = this.data.quickZoomStops || [];
+    var prevActiveIdx = resetRuntime ? -1 : prevStops.findIndex(function (s) {
+      return s.isActive;
+    });
+    var prevTempZoom = resetRuntime ? null : this.data.quickZoomTempZoom;
+    if (this._quickZoomSaveTimer) {
+      this._cancelQuickZoomSaveProgress();
+    }
     try {
       const enabled = wx.getStorageSync(QUICK_ZOOM_ENABLED_KEY);
       const savedStops = wx.getStorageSync(QUICK_ZOOM_STOPS_KEY);
+      var selfLoad = this;
       var rawDefaults = this._buildQuickZoomDefaults(this.data.cameraViewModeStops || []);
       var defaultStops = rawDefaults.map(function (s) {
+        var zoom = selfLoad._clampQuickZoomValue(s.zoom);
         return {
           label: s.label,
-          zoom: s.zoom,
-          displayZoom: this._formatQuickZoomDisplay(s.zoom),
+          zoom: zoom,
+          displayZoom: selfLoad._formatQuickZoomDisplay(zoom),
           isActive: false
         };
-      }.bind(this));
+      });
       var stops = defaultStops;
       if (Array.isArray(savedStops) && savedStops.length === 3) {
         stops = savedStops.map(function (s, i) {
-          var zoom = typeof s.zoom === 'number' && s.zoom > 0 ? s.zoom : defaultStops[i].zoom;
+          var rawZoom = typeof s.zoom === 'number' && s.zoom > 0 ? s.zoom : defaultStops[i].zoom;
+          var zoom = selfLoad._clampQuickZoomValue(rawZoom);
           return {
             label: defaultStops[i].label,
             zoom: zoom,
-            displayZoom: this._formatQuickZoomDisplay(zoom),
+            displayZoom: selfLoad._formatQuickZoomDisplay(zoom),
             isActive: false
           };
-        }.bind(this));
+        });
       }
-      this.setData({
+      if (prevActiveIdx >= 0 && prevActiveIdx < stops.length) {
+        stops = stops.map(function (s, i) {
+          return Object.assign({}, s, {
+            isActive: i === prevActiveIdx
+          });
+        });
+      }
+      var patch = {
         quickZoomEnabled: !!enabled,
-        quickZoomStops: stops,
-        quickZoomTempZoom: null,
-        quickZoomTempDisplay: '',
-        quickZoomSaveConicDeg: 0,
-        quickZoomSaveProgressStyle: '',
-        quickZoomSaveIdx: -1
-      });
+        quickZoomStops: stops
+      };
+      if (resetRuntime) {
+        patch.quickZoomTempZoom = null;
+        patch.quickZoomTempDisplay = '';
+        patch.quickZoomSaveConicDeg = 0;
+        patch.quickZoomSaveProgressStyle = '';
+        patch.quickZoomSaveIdx = -1;
+      } else if (typeof prevTempZoom === 'number') {
+        var activeIdx = stops.findIndex(function (s) {
+          return s.isActive;
+        });
+        if (activeIdx >= 0) {
+          var clampedTemp = this._clampQuickZoomValue(prevTempZoom);
+          var savedZoom = stops[activeIdx].zoom;
+          if (Math.abs(clampedTemp - savedZoom) > 0.05) {
+            patch.quickZoomTempZoom = clampedTemp;
+            patch.quickZoomTempDisplay = this._formatQuickZoomDisplay(clampedTemp);
+          } else {
+            patch.quickZoomTempZoom = null;
+            patch.quickZoomTempDisplay = '';
+          }
+        } else {
+          patch.quickZoomTempZoom = null;
+          patch.quickZoomTempDisplay = '';
+        }
+      }
+      this.setData(patch);
       this.appendHealthLog('quick_zoom_stops_loaded', {
         enabled: !!enabled,
         hasSavedStops: Array.isArray(savedStops) && savedStops.length === 3,
         nativeStopsCount: (this.data.cameraViewModeStops || []).length,
+        preservedActiveIdx: prevActiveIdx,
         stops: stops.map(function (s) {
-          return { label: s.label, zoom: s.zoom };
+          return { label: s.label, zoom: s.zoom, isActive: s.isActive };
         })
       });
     } catch (e) {
@@ -5010,6 +5353,7 @@ onCameraInit: function (e) {
       quickZoomTempDisplay: ''
     });
     this.updateZoom(stops[idx].zoom);
+    this._syncCameraViewModeFromZoom(stops[idx].zoom);
   },
   /**
    * 长按快速变焦档位：启动 0.8s 圆环进度，松手后写入当前 zoom。
@@ -5022,6 +5366,7 @@ onCameraInit: function (e) {
       : -1;
     if (idx < 0 || idx > 2) return;
     if (this.data.enhanceMode === 'vk') return;
+    if (!this.data.cameraMounted || !this.data.cameraContext || !this._cameraInitDone) return;
     const stops = this.data.quickZoomStops;
     if (!stops[idx] || !stops[idx].isActive) return;
 
@@ -5035,7 +5380,12 @@ onCameraInit: function (e) {
       quickZoomSaveProgressStyle: this._buildQuickZoomSaveProgressStyle(0)
     });
     const self = this;
-    this._quickZoomSaveTimer = setInterval(function () {
+    /**
+     * 递归 setTimeout 降低 setData 频率（约 64ms），录制中减轻主线程压力。
+     * @returns {void}
+     */
+    var tickSaveProgress = function () {
+      if (self._quickZoomSaveIdx !== idx) return;
       const elapsed = Date.now() - self._quickZoomSaveStartMs;
       const deg = Math.min(360, elapsed / QUICK_ZOOM_LONG_PRESS_MS * 360);
       self.setData({
@@ -5043,14 +5393,16 @@ onCameraInit: function (e) {
         quickZoomSaveProgressStyle: self._buildQuickZoomSaveProgressStyle(deg)
       });
       if (elapsed >= QUICK_ZOOM_LONG_PRESS_MS) {
-        clearInterval(self._quickZoomSaveTimer);
         self._quickZoomSaveTimer = null;
         self._quickZoomSaveReady = true;
         try {
           self.vibrate('light');
         } catch (eV) {}
+        return;
       }
-    }, 32);
+      self._quickZoomSaveTimer = setTimeout(tickSaveProgress, 64);
+    };
+    this._quickZoomSaveTimer = setTimeout(tickSaveProgress, 64);
   },
   /**
    * 快速变焦档位松手：进度满则保存当前 zoom 到该档。
@@ -5074,7 +5426,7 @@ onCameraInit: function (e) {
    */
   _cancelQuickZoomSaveProgress: function () {
     if (this._quickZoomSaveTimer) {
-      clearInterval(this._quickZoomSaveTimer);
+      clearTimeout(this._quickZoomSaveTimer);
       this._quickZoomSaveTimer = null;
     }
     this._quickZoomSaveReady = false;
@@ -5095,9 +5447,10 @@ onCameraInit: function (e) {
     const stops = this.data.quickZoomStops;
     if (!stops[idx] || !stops[idx].isActive) return;
 
-    const currentZoom = typeof this.data.quickZoomTempZoom === 'number'
+    const rawZoom = typeof this.data.quickZoomTempZoom === 'number'
       ? this.data.quickZoomTempZoom
       : this.data.zoom;
+    const currentZoom = this._clampQuickZoomValue(rawZoom);
     const zoomLabel = this._formatQuickZoomDisplay(currentZoom);
 
     const newStops = stops.map(function (s, i) {
@@ -5218,7 +5571,8 @@ onCameraInit: function (e) {
     const currentDistance = this.getDistance(e.touches[0], e.touches[1]);
     if (currentDistance <= 0) return;
     const ratio = currentDistance / this.pinchStartDistance;
-    const newZoomVal = this.pinchStartZoom * ratio;
+    var newZoomVal = this.pinchStartZoom * ratio;
+    newZoomVal = this._clampQuickZoomPinchValue(newZoomVal);
     this.updateZoom(newZoomVal);
   },
   onTouchEnd: function (e) {
