@@ -461,8 +461,9 @@ function createPreviewRecordPipeline(page) {
       };
       const bootEncoder = () => {
         if (deferEncoderInit && lastWarmupFrameW > 0 && lastWarmupFrameH > 0) {
-          capturedCanvasW = lastWarmupFrameW;
-          capturedCanvasH = lastWarmupFrameH;
+          // Ensure even dimensions (divisible by 2) for H.264 video encoding compatibility
+          capturedCanvasW = lastWarmupFrameW - (lastWarmupFrameW % 2);
+          capturedCanvasH = lastWarmupFrameH - (lastWarmupFrameH % 2);
           log('preview_record_encoder_canvas_sized', {
             width: capturedCanvasW,
             height: capturedCanvasH

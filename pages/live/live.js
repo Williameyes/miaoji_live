@@ -2016,8 +2016,8 @@ buildVipGateStateFromCheckStatus: function (body) {
   pingPongChunkDurationMs: 60000,
   /** 双轨重叠（毫秒）：B 在 A 结束前 8s 启动；并发编码占比约 4.4%。 */
   pingPongStaggerMs: 8000,
-  /** 后台 MediaRecorder 目标帧率（进阶画质档：15fps）。 */
-  pingPongRecordFps: 15,
+  /** 后台 MediaRecorder 目标帧率（提升至 24fps）。 */
+  pingPongRecordFps: 24,
   /** 滚动目录最多保留母片数量（约 2×60MB≈120MB 峰值，随码率/分辨率浮动）。 */
   pingPongRollingMaxFiles: 2,
   /** 高光强制 flush 最小间隔（毫秒），抑制连按引发 iOS 601。 */
@@ -8331,7 +8331,7 @@ updatePipelineHealth: function () {
         requireFirstFrame: true,
         firstFrameTimeoutMs: afterPageHide || afterHardRecoverTimeout ? 5500 : PREVIEW_RECORD_FIRST_FRAME_TIMEOUT_MS,
         warmupMinFrames,
-        deferEncoderInit: afterPageHide,
+        deferEncoderInit: true,
         encoderLiveWarmupFrames: afterPageHide ? 48 : 0,
         probeChunkDurationMs: afterPageHide ? POST_RE_MOUNT_PROBE_CHUNK_MS : 0
       });
