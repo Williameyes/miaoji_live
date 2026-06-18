@@ -7,33 +7,37 @@
     class="live-stage"
     id="liveStage"
     style="{{liveStageInlineStyle}}">
-    <!-- iOS：不写 zoom 属性，仅 cameraContext.setZoom -->
-    <camera
-      wx:if="{{cameraMounted && liveStreamAllowed && isCameraRendered && isIosHost}}"
-      device-position="back"
-      flash="off"
-      frame-size="medium"
-      resolution="high"
-      class="camera-bg"
-      mode="normal"
-      bindstop="onCameraStop"
-      binderror="onCameraError"
-      bindinitdone="onCameraInit">
-    </camera>
-    <!-- Android 等：zoom 属性与 setZoom 须与 data.zoom 同步 -->
-    <camera
-      wx:if="{{cameraMounted && liveStreamAllowed && isCameraRendered && !isIosHost}}"
-      device-position="back"
-      flash="off"
-      frame-size="medium"
-      resolution="high"
-      class="camera-bg"
-      mode="normal"
-      zoom="{{zoom}}"
-      bindstop="onCameraStop"
-      binderror="onCameraError"
-      bindinitdone="onCameraInit">
-    </camera>
+    <view
+      class="camera-lens-switch-layer"
+      style="position:absolute;left:0;top:0;width:100%;height:100%;transform:scale({{cameraLensSwitchScale}});transition:transform {{cameraLensSwitchScaleDuration}}ms ease-out;transform-origin:center center;">
+      <!-- iOS：不写 zoom 属性，仅 cameraContext.setZoom -->
+      <camera
+        wx:if="{{cameraMounted && liveStreamAllowed && isCameraRendered && isIosHost}}"
+        device-position="back"
+        flash="off"
+        frame-size="medium"
+        resolution="high"
+        class="camera-bg"
+        mode="normal"
+        bindstop="onCameraStop"
+        binderror="onCameraError"
+        bindinitdone="onCameraInit">
+      </camera>
+      <!-- Android 等：zoom 属性与 setZoom 须与 data.zoom 同步 -->
+      <camera
+        wx:if="{{cameraMounted && liveStreamAllowed && isCameraRendered && !isIosHost}}"
+        device-position="back"
+        flash="off"
+        frame-size="medium"
+        resolution="high"
+        class="camera-bg"
+        mode="normal"
+        zoom="{{zoom}}"
+        bindstop="onCameraStop"
+        binderror="onCameraError"
+        bindinitdone="onCameraInit">
+      </camera>
+    </view>
 
 
   </view>

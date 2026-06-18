@@ -764,6 +764,10 @@ Page({
     }],
     /** 当前选中的机位（与 pinch 变焦可短暂不同步，仅影响药丸高亮） */
     cameraViewMode: CameraViewMode.NORMAL,
+    /** 镜头切换过渡：相机容器视觉缩放比例（CSS scale，1.0 为正常） */
+    cameraLensSwitchScale: 1.0,
+    /** 镜头切换过渡：scale CSS transition 时长（ms） */
+    cameraLensSwitchScaleDuration: 200,
     /** 直播画幅模式：'full' (满屏) | '16x9' (横屏) */
     liveVideoAspectMode: 'full',
     /**
@@ -3556,6 +3560,7 @@ onCameraInit: function (e) {
     return this._rebuildCameraComponentImpl(onRebuilt);
   },
   _rebuildCameraComponentImpl: function (onRebuilt) {
+    this._clearLensSwitchScaleTransitionTimers(true);
     if (this._cameraRebuildLock) {
       if (typeof onRebuilt === 'function') {
         this._cameraRebuildQueue.push(onRebuilt);
@@ -4244,18 +4249,95 @@ onCameraInit: function (e) {
       var minTarget = 1;
       target = Math.max(minTarget, Math.min(maxZ, Number(stop.zoom) || 1));
     }
-    this.setData({
-      cameraViewMode: mode
-    });
-    this.updateZoom(target);
-    this._syncQuickZoomActiveByZoom(target, {
-      clearTemp: true
-    });
+    var fromMode = this.data.cameraViewMode;
+    var switchCaps = this._cameraCaps || {};
+    var isUltraWideSwitch = !!(switchCaps.hasUltraWide && switchCaps.probed) &&
+      ((fromMode === CameraViewMode.WIDE) !== (mode === CameraViewMode.WIDE));
+    if (isUltraWideSwitch) {
+      this._applyLensSwitchWithScaleTransition(target, mode);
+    } else {
+      this.setData({
+        cameraViewMode: mode
+      });
+      this.updateZoom(target);
+      this._syncQuickZoomActiveByZoom(target, {
+        clearTemp: true
+      });
+    }
     if (this._renderPipeline && typeof this._renderPipeline.pauseAutoDegradeOnce === 'function') {
       try {
         this._renderPipeline.pauseAutoDegradeOnce();
       } catch (eP) {}
     }
+  },
+  /**
+   * 清理超广 ↔ 主摄视觉过渡 timer；相机卸载/重建时可同步复位 scale。
+   * @param {boolean} resetScale 是否立即复位视觉缩放
+   * @returns {void}
+   */
+  _clearLensSwitchScaleTransitionTimers: function (resetScale) {
+    if (this._lensSwitchAnimTimer) {
+      clearTimeout(this._lensSwitchAnimTimer);
+      this._lensSwitchAnimTimer = null;
+    }
+    if (this._lensSwitchResetTimer) {
+      clearTimeout(this._lensSwitchResetTimer);
+      this._lensSwitchResetTimer = null;
+    }
+    if (resetScale && this.data && this.data.cameraLensSwitchScale !== 1.0) {
+      this.setData({
+        cameraLensSwitchScale: 1.0,
+        cameraLensSwitchScaleDuration: 0
+      });
+    }
+  },
+  /**
+   * 超广 ↔ 主摄切换时的视觉过渡编排。
+   * CSS scale 动画先跑，setZoom 在动画中段（scale≥1.15x）时才触发，
+   * 使镜头物理切换产生的横移落在画面运动中，降低用户感知。
+   * 不影响录制链路、相机重建、变焦钳位任何路径。
+   * @param {number} targetZoom 目标 zoom 值
+   * @param {'wide'|'normal'|'close'} mode 目标机位
+   * @returns {void}
+   */
+  _applyLensSwitchWithScaleTransition: function (targetZoom, mode) {
+    this._clearLensSwitchScaleTransitionTimers(false);
+
+    const isIos = isLiveHostIos();
+    // 放大阶段时长：须覆盖 AF/AE 收敛最大值（iOS ≈ 200ms，Android ≈ 280ms）
+    const scaleUpMs = isIos ? 260 : 310;
+    // setZoom 在放大动画跑约 48% 时触发（scale 约 1.15~1.2x）
+    const zoomTriggerMs = Math.round(scaleUpMs * 0.48);
+    // 还原阶段时长：缓慢还原，视觉连续感更好
+    const scaleDownMs = 160;
+
+    // Step 1：立即启动视觉放大（CSS transition 在渲染线程运行）
+    this.setData({
+      cameraLensSwitchScale: 1.35,
+      cameraLensSwitchScaleDuration: scaleUpMs
+    });
+
+    // Step 2：放大中段触发真正的镜头切换
+    this._lensSwitchAnimTimer = setTimeout(() => {
+      this._lensSwitchAnimTimer = null;
+      this.setData({
+        cameraViewMode: mode
+      });
+      this.updateZoom(targetZoom);
+      this._syncQuickZoomActiveByZoom(targetZoom, {
+        clearTemp: true
+      });
+
+      // Step 3：AF/AE 收敛后还原 scale
+      const resetDelay = (scaleUpMs - zoomTriggerMs) + 50;
+      this._lensSwitchResetTimer = setTimeout(() => {
+        this._lensSwitchResetTimer = null;
+        this.setData({
+          cameraLensSwitchScale: 1.0,
+          cameraLensSwitchScaleDuration: scaleDownMs
+        });
+      }, resetDelay);
+    }, zoomTriggerMs);
   },
   /**
    * 格式化快捷变焦倍数展示文案（与机位按钮一致，如 4x）。
@@ -6470,6 +6552,7 @@ onShareAppMessage: function () {
     this._needManualRelaunch = false;
     this._hardRecoverAwaitingCamera = false;
     this._cameraInitDone = false;
+    this._clearLensSwitchScaleTransitionTimers(true);
     if (this._previewRecordStartTimer) {
       clearTimeout(this._previewRecordStartTimer);
       this._previewRecordStartTimer = null;
@@ -6633,6 +6716,7 @@ onShareAppMessage: function () {
     this._previewRecordWarmupUntil = Date.now() + this.getPreviewRecordWarmupMs();
     this._liveReturnedFromBackground = true;
     this._liveNeedsForegroundRecordingRecover = true;
+    this._clearLensSwitchScaleTransitionTimers(true);
     this._previewRecordEncoderVerified = false;
     this._encoderVerifyRestartAttempts = 0;
     if (this._hardRecoverQuarantineUntil && Date.now() < this._hardRecoverQuarantineUntil) {
@@ -7560,6 +7644,7 @@ updatePipelineHealth: function () {
       this.appendHealthLog('destructive_remount_skip_hidden', { reason: reason || '' });
       return;
     }
+    this._clearLensSwitchScaleTransitionTimers(true);
     this._previewRecordEncoderVerified = false;
     this._encoderVerifyRestartAttempts = 0;
     this._awaitingFirstSuccessChunkAfterRemount = true;
@@ -14515,6 +14600,8 @@ onLoad: function (options) {
     this._awaitingFirstSuccessChunkAfterRemount = false;
     this._liveNeedsForegroundRecordingRecover = false;
     this._encodingProbeTimer = null;
+    this._lensSwitchAnimTimer = null;
+    this._lensSwitchResetTimer = null;
     if (this._awaitingChunkTimeout) {
       clearTimeout(this._awaitingChunkTimeout);
       this._awaitingChunkTimeout = null;
