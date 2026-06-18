@@ -11630,9 +11630,6 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
     patch['promoAds[' + idx + '].x'] = detail.x;
     patch['promoAds[' + idx + '].y'] = detail.y;
     this.setData(patch);
-    if (detail.source === 'touch') {
-      this._schedulePromoAdEdgeSnap(idx);
-    }
   },
   /**
    * 推广 Logo 双指捏合起始。
