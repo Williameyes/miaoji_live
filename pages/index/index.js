@@ -404,7 +404,12 @@ Page({
     fileStorageTotalMb: 0,
     fileStorageHealthLevel: 'ok',
     fileStorageHint: '',
-    fileStorageKvText: ''
+    fileStorageKvText: '',
+
+    /* 本地广告设置相关状态 */
+    showLocalAdModal: false,
+    adMatchConfig: null,
+    localAdsPool: []
   },
 
   /**
@@ -955,6 +960,334 @@ Page({
       showMatchNameError: false,
       showTeamAError: false,
       showTeamBError: false
+    });
+  },
+
+  // ─────────────────────────────────────────────
+  // 本地广告配置
+  // ─────────────────────────────────────────────
+
+  /** 打开本地广告配置浮层 */
+  onManageLocalAds(e) {
+    const { id } = e.currentTarget.dataset;
+    const match = this.data.matches.find((m) => m.id === id);
+    if (!match) return;
+
+    // 读取本地素材池
+    let pool = wx.getStorageSync('LOCAL_ADS_POOL');
+    if (!Array.isArray(pool)) {
+      pool = [];
+    }
+
+    // 过滤掉当前场次已被选中的广告素材，避免混淆
+    const localAds = match.localAds || [];
+    const localAdsPool = pool.filter(item => {
+      return !localAds.some(ad => ad.id === item.id);
+    });
+
+    this.setData({
+      showLocalAdModal: true,
+      adMatchConfig: JSON.parse(JSON.stringify(match)),
+      localAdsPool
+    });
+  },
+
+  /** 关闭本地广告配置浮层 */
+  closeLocalAdModal() {
+    this.setData({
+      showLocalAdModal: false,
+      adMatchConfig: null,
+      localAdsPool: []
+    });
+  },
+
+  /** 上传新广告图到本地素材池 */
+  onUploadAdImage() {
+    const self = this;
+    let pool = wx.getStorageSync('LOCAL_ADS_POOL');
+    if (!Array.isArray(pool)) {
+      pool = [];
+    }
+
+    if (pool.length >= 10) {
+      wx.showToast({ title: '已满10张，请从素材池选择，或者删除素材后再上传新的素材', icon: 'none', duration: 3000 });
+      return;
+    }
+
+    const remainingCount = 10 - pool.length;
+
+    const processFiles = (tempFiles) => {
+      if (!Array.isArray(tempFiles) || tempFiles.length === 0) return;
+
+      const fs = wx.getFileSystemManager();
+      const localAdsDir = `${wx.env.USER_DATA_PATH}/local_ads`;
+
+      // 确保本地目录存在
+      try {
+        fs.mkdirSync(localAdsDir, true);
+      } catch (err) {}
+
+      wx.showLoading({ title: '保存中...', mask: true });
+
+      const attemptedFiles = tempFiles.slice(0, remainingCount);
+      const attemptedCount = attemptedFiles.length;
+
+      const savePromises = attemptedFiles.map((tempFile, idx) => {
+        return new Promise((resolve) => {
+          if (!tempFile || !tempFile.tempFilePath) {
+            resolve(null);
+            return;
+          }
+
+          // 限制 256KB
+          const limitBytes = 256 * 1024;
+          let fileSize = tempFile.size;
+          if (!fileSize && tempFile.tempFilePath) {
+            try {
+              const stat = fs.statSync(tempFile.tempFilePath);
+              fileSize = stat.size;
+            } catch (err) {
+              console.error('获取临时文件大小失败:', err);
+            }
+          }
+
+          if (fileSize && fileSize > limitBytes) {
+            resolve(null); // Size limit exceeded, skip
+            return;
+          }
+
+          const tempPath = tempFile.tempFilePath;
+          const ext = tempPath.split('.').pop() || 'png';
+          const filename = `ad_${Date.now()}_${idx}.${ext}`;
+          const destPath = `${localAdsDir}/${filename}`;
+
+          fs.saveFile({
+            tempFilePath: tempPath,
+            filePath: destPath,
+            success: (res) => {
+              const savedPath = res.savedFilePath;
+              resolve({
+                id: `ad_${Date.now()}_${idx}`,
+                path: savedPath,
+                createdAt: Date.now()
+              });
+            },
+            fail: () => {
+              resolve(null);
+            }
+          });
+        });
+      });
+
+      Promise.all(savePromises).then((results) => {
+        wx.hideLoading();
+        const newAds = results.filter(item => item !== null);
+
+        if (newAds.length === 0) {
+          wx.showToast({ title: '没有图片成功保存，单张限制256KB以内', icon: 'none', duration: 3000 });
+          return;
+        }
+
+        // 保存至素材池 storage
+        let updatedPool = wx.getStorageSync('LOCAL_ADS_POOL');
+        if (!Array.isArray(updatedPool)) {
+          updatedPool = [];
+        }
+        updatedPool.push(...newAds);
+        wx.setStorageSync('LOCAL_ADS_POOL', updatedPool);
+
+        // 自动选中到当前比赛
+        const adMatchConfig = self.data.adMatchConfig;
+        if (adMatchConfig) {
+          if (!Array.isArray(adMatchConfig.localAds)) {
+            adMatchConfig.localAds = [];
+          }
+          newAds.forEach(newAd => {
+            adMatchConfig.localAds.push({
+              id: newAd.id,
+              path: newAd.path
+            });
+          });
+
+          // 保存到 matches
+          const matches = [...self.data.matches];
+          const idx = matches.findIndex((m) => m.id === adMatchConfig.id);
+          if (idx >= 0) {
+            matches[idx].localAds = adMatchConfig.localAds;
+            self.saveMatches(matches);
+          }
+
+          // 过滤掉已选中广告
+          const localAdsPool = updatedPool.filter(item => {
+            return !adMatchConfig.localAds.some(ad => ad.id === item.id);
+          });
+
+          self.setData({
+            adMatchConfig,
+            localAdsPool
+          });
+        }
+
+        if (newAds.length < attemptedCount) {
+          wx.showToast({ title: `成功保存 ${newAds.length} 张，部分超256KB已过滤`, icon: 'none', duration: 3000 });
+        } else {
+          wx.showToast({ title: `已成功保存并选中 ${newAds.length} 张`, icon: 'success', duration: 2000 });
+        }
+      });
+    };
+
+    if (wx.chooseMedia) {
+      wx.chooseMedia({
+        count: remainingCount,
+        mediaType: ['image'],
+        sizeType: ['compressed'],
+        sourceType: ['album', 'camera'],
+        success: (res) => {
+          if (res.tempFiles) {
+            processFiles(res.tempFiles);
+          }
+        }
+      });
+    } else {
+      wx.chooseImage({
+        count: remainingCount,
+        sizeType: ['compressed'],
+        sourceType: ['album', 'camera'],
+        success: (res) => {
+          if (res.tempFilePaths) {
+            const tempFiles = res.tempFilePaths.map((path, index) => {
+              return {
+                tempFilePath: path,
+                size: res.tempFiles && res.tempFiles[index] ? res.tempFiles[index].size : 0
+              };
+            });
+            processFiles(tempFiles);
+          }
+        }
+      });
+    }
+  },
+
+  /** 切换选择某广告素材 */
+  onToggleAdSelection(e) {
+    const { id } = e.currentTarget.dataset;
+    const adMatchConfig = this.data.adMatchConfig;
+    if (!adMatchConfig) return;
+
+    if (!Array.isArray(adMatchConfig.localAds)) {
+      adMatchConfig.localAds = [];
+    }
+
+    const foundIdx = adMatchConfig.localAds.findIndex(item => item.id === id);
+    if (foundIdx >= 0) {
+      // 已选中，则取消选中
+      adMatchConfig.localAds.splice(foundIdx, 1);
+    } else {
+      // 未选中，从素材池找到并添加
+      const poolItem = this.data.localAdsPool.find(item => item.id === id);
+      if (poolItem) {
+        adMatchConfig.localAds.push({
+          id: poolItem.id,
+          path: poolItem.path
+        });
+      }
+    }
+
+    // 保存比赛数据
+    const matches = [...this.data.matches];
+    const idx = matches.findIndex((m) => m.id === adMatchConfig.id);
+    if (idx >= 0) {
+      matches[idx].localAds = adMatchConfig.localAds;
+      this.saveMatches(matches);
+    }
+
+    // 重新从本地存储中获取完整 pool，并过滤掉已选中的广告，避免混淆
+    let pool = wx.getStorageSync('LOCAL_ADS_POOL');
+    if (!Array.isArray(pool)) pool = [];
+    const localAdsPool = pool.filter(item => {
+      return !adMatchConfig.localAds.some(ad => ad.id === item.id);
+    });
+
+    this.setData({
+      adMatchConfig,
+      localAdsPool
+    });
+  },
+
+  /** 从本场移除已选广告 */
+  onDeselectAdFromMatch(e) {
+    this.onToggleAdSelection(e);
+  },
+
+  /** 从素材池物理删除某广告 */
+  onDeleteAdFromPool(e) {
+    const { id } = e.currentTarget.dataset;
+    const self = this;
+
+    wx.showModal({
+      title: '彻底删除素材',
+      content: '确定要彻底删除该广告素材吗？此操作会从本地物理删除文件并取消所有场次的关联。',
+      confirmColor: '#EF4444',
+      success: (res) => {
+        if (!res.confirm) return;
+
+        let pool = wx.getStorageSync('LOCAL_ADS_POOL');
+        if (!Array.isArray(pool)) pool = [];
+
+        const adIdx = pool.findIndex(item => item.id === id);
+        if (adIdx < 0) return;
+
+        const adItem = pool[adIdx];
+
+        // 1. 物理删除文件
+        if (adItem.path) {
+          const fs = wx.getFileSystemManager();
+          try {
+            fs.unlinkSync(adItem.path);
+          } catch (err) {
+            console.error('物理删除广告文件失败:', err);
+          }
+        }
+
+        // 2. 从 pool 移除
+        pool.splice(adIdx, 1);
+        wx.setStorageSync('LOCAL_ADS_POOL', pool);
+
+        // 3. 从所有场次清除关联
+        let matches = [...self.data.matches];
+        let updated = false;
+        matches.forEach(m => {
+          if (Array.isArray(m.localAds)) {
+            const beforeLen = m.localAds.length;
+            m.localAds = m.localAds.filter(ad => ad.id !== id);
+            if (m.localAds.length !== beforeLen) {
+              updated = true;
+            }
+          }
+        });
+        if (updated) {
+          self.saveMatches(matches);
+        }
+
+        // 4. 更新当前 modal 的数据
+        const adMatchConfig = self.data.adMatchConfig;
+        if (adMatchConfig && Array.isArray(adMatchConfig.localAds)) {
+          adMatchConfig.localAds = adMatchConfig.localAds.filter(ad => ad.id !== id);
+        }
+
+        const localAdsPool = pool.filter(item => {
+          return adMatchConfig && Array.isArray(adMatchConfig.localAds)
+            ? !adMatchConfig.localAds.some(ad => ad.id === item.id)
+            : true;
+        });
+
+        self.setData({
+          adMatchConfig,
+          localAdsPool
+        });
+
+        wx.showToast({ title: '已彻底删除', icon: 'success' });
+      }
     });
   },
 

@@ -65,7 +65,10 @@
       <!-- 操作栏 -->
       <view class="card-actions">
         <view class="btn-card-edit" hover-class="btn-card-hover" bindtap="onEditMatch" data-id="{{item.id}}">
-          <text>编辑资料</text>
+          <text>编辑</text>
+        </view>
+        <view class="btn-card-ad" hover-class="btn-card-hover" bindtap="onManageLocalAds" data-id="{{item.id}}">
+          <text>广告</text>
         </view>
         <view class="btn-card-delete" hover-class="btn-card-hover" bindtap="onDeleteMatch" data-id="{{item.id}}">
           <text>删除</text>
@@ -544,6 +547,73 @@
         <view class="confirm-btn" hover-class="confirm-btn-hover" bindtap="confirmColorSelection">确定</view>
       </view>
 
+    </view>
+  </view>
+
+  <!-- ===== 本地广告设置浮层 ===== -->
+  <view class="modal-overlay" wx:if="{{showLocalAdModal}}" bindtap="closeLocalAdModal">
+    <view class="modal-panel" catchtap="stopBubbling">
+      <view class="modal-header">
+        <text class="modal-title">本场广告设置</text>
+        <view class="modal-close-btn" bindtap="closeLocalAdModal">×</view>
+      </view>
+
+      <view class="modal-body ad-modal-body">
+        <!-- 比赛队名对阵提示 -->
+        <view class="ad-match-versus">
+          <text class="ad-team-a" style="color: {{adMatchConfig.teamA.bgColor || '#E64340'}}">{{adMatchConfig.teamA.name || '主队'}}</text>
+          <text class="ad-vs-label">VS</text>
+          <text class="ad-team-b" style="color: {{adMatchConfig.teamB.bgColor || '#10AEFF'}}">{{adMatchConfig.teamB.name || '客队'}}</text>
+        </view>
+
+        <!-- 本场已选广告 -->
+        <view class="ad-section">
+          <view class="ad-section-title">本场展示的广告 (点击右上角 ✕ 可移除)</view>
+          <view class="ad-selected-list">
+            <!-- 已选广告列表 -->
+            <view
+              class="ad-item ad-item--selected"
+              wx:for="{{adMatchConfig.localAds}}"
+              wx:key="id"
+              bindtap="onDeselectAdFromMatch"
+              data-id="{{item.id}}"
+            >
+              <image class="ad-thumb" src="{{item.path}}" mode="aspectFit"></image>
+              <view class="ad-remove-badge">✕</view>
+            </view>
+
+            <!-- 新增上传按钮 -->
+            <view class="ad-upload-card" bindtap="onUploadAdImage" hover-class="ad-upload-card--hover">
+              <text class="ad-upload-icon">+</text>
+              <text class="ad-upload-text">上传新广告</text>
+            </view>
+          </view>
+        </view>
+
+        <!-- 广告素材池 -->
+        <view class="ad-section">
+          <view class="ad-section-title">本地素材池 (点击添加至本场，长按素材彻底删除)</view>
+          <view class="ad-pool-grid">
+            <!-- 每一个已有的广告素材 -->
+            <view
+              class="ad-item {{item.isActive ? 'ad-item--active' : ''}}"
+              wx:for="{{localAdsPool}}"
+              wx:key="id"
+              bindtap="onToggleAdSelection"
+              bindlongpress="onDeleteAdFromPool"
+              data-id="{{item.id}}"
+            >
+              <image class="ad-thumb" src="{{item.path}}" mode="aspectFit"></image>
+              <view class="ad-check-badge" wx:if="{{item.isActive}}">✓</view>
+            </view>
+          </view>
+          <view class="ad-section-hint">注：单张图片限256KB以内，长按可物理删除并释放本地空间。</view>
+        </view>
+      </view>
+
+      <view class="modal-footer">
+        <view class="btn-save" hover-class="btn-save-hover" bindtap="closeLocalAdModal">完 成</view>
+      </view>
     </view>
   </view>
 

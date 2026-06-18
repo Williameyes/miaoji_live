@@ -11141,12 +11141,15 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
           });
         });
       })).then(function (promoAds) {
-        const margin = PROMO_AD_EDGE_MARGIN_PX;
+        const margin = PROMO_AD_EDGE_MARGIN_PX || 8;
+        let currentX = margin;
         const positioned = promoAds.map(function (ad, index) {
-          const rowH = (ad.displayHeight || 1) + margin;
+          const x = currentX;
+          const y = margin;
+          currentX += (ad.displayWidth || 0);
           return Object.assign({}, ad, {
-            x: margin,
-            y: margin + index * rowH
+            x: x,
+            y: y
           });
         });
         self.setData({
@@ -11192,6 +11195,67 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
     wx.showToast({
       title: '已清除推广 Logo',
       icon: 'none'
+    });
+  },
+  /**
+   * 初始化本场比赛的本地广告
+   */
+  _initLocalAds: function () {
+    const mc = this.data.matchConfig;
+    if (!mc || !Array.isArray(mc.localAds) || mc.localAds.length === 0) {
+      return;
+    }
+    const self = this;
+    const baseAds = mc.localAds.map(function (ad, index) {
+      return {
+        id: ad.id || ('local_ad_' + index),
+        brand_name: String(ad.brandName || ad.brand_name || ''),
+        image_url: String(ad.path || ad.image_url || ''),
+        width: 1,
+        height: 1,
+        displayWidth: 1,
+        displayHeight: 1,
+        scale: ad.scale || 1,
+        x: ad.x !== undefined ? ad.x : (12 + index % 3 * 140),
+        y: ad.y !== undefined ? ad.y : (12 + Math.floor(index / 3) * 100)
+      };
+    });
+
+    Promise.all(baseAds.map(function (entry) {
+      const url = entry.image_url;
+      if (!url) {
+        return Promise.resolve(entry);
+      }
+      return new Promise(function (resolve) {
+        wx.getImageInfo({
+          src: url,
+          success: function (info) {
+            const sized = self._applyPromoAdBaseSize(entry, info.width, info.height);
+            resolve(sized);
+          },
+          fail: function () {
+            resolve(entry);
+          }
+        });
+      });
+    })).then(function (promoAds) {
+      const margin = PROMO_AD_EDGE_MARGIN_PX || 8;
+      let currentX = margin;
+      const positioned = promoAds.map(function (ad, index) {
+        const defaultX = 12 + index % 3 * 140;
+        const defaultY = 12 + Math.floor(index / 3) * 100;
+        const x = ad.x !== defaultX ? ad.x : currentX;
+        const y = ad.y !== defaultY ? ad.y : margin;
+        currentX += (ad.displayWidth || 0);
+        return Object.assign({}, ad, {
+          x: x,
+          y: y
+        });
+      });
+      self.setData({
+        promoAds: positioned,
+        promoAdsVisible: positioned.length > 0
+      });
     });
   },
   /**
@@ -14408,6 +14472,7 @@ onLoad: function (options) {
       const savedAspectMode = wx.getStorageSync('live_video_aspect_mode') || 'full';
       this.setData({ liveVideoAspectMode: savedAspectMode });
     } catch (e) {}
+    this._initLocalAds();
   },
   _initLiveCoreState: function (options) {
     const replayBufferMod = require('../../utils/replay-buffer/index.js');

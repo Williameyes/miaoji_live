@@ -355,7 +355,7 @@ page {
 }
 
 .btn-card-edit {
-  flex: 1;
+  flex: 0.7;
   height: 68rpx;
   line-height: 68rpx;
   text-align: center;
@@ -368,9 +368,9 @@ page {
 }
 
 .btn-card-delete {
+  flex: 0.7;
   height: 68rpx;
   line-height: 68rpx;
-  padding: 0 22rpx;
   text-align: center;
   font-size: 24rpx;
   font-weight: 600;
@@ -381,7 +381,7 @@ page {
 }
 
 .btn-card-live {
-  flex: 1.4;
+  flex: 1.8;
   height: 68rpx;
   line-height: 68rpx;
   text-align: center;
@@ -1445,4 +1445,176 @@ page {
   font-size: 1rpx;
   color: transparent;
   pointer-events: none;
+}
+
+/* ─────────────────────────────────────
+   本地广告配置与素材池样式
+───────────────────────────────────── */
+.btn-card-ad {
+  flex: 0.7;
+  height: 68rpx;
+  line-height: 68rpx;
+  text-align: center;
+  font-size: 24rpx;
+  font-weight: 600;
+  color: #2563EB;
+  background: #EFF6FF;
+  border: 1rpx solid #BFDBFE;
+  border-radius: 16rpx;
+}
+
+.ad-modal-body {
+  padding: 20rpx 0;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.ad-match-versus {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 16rpx;
+  margin-bottom: 24rpx;
+  padding: 16rpx;
+  background: #F8FAFC;
+  border-radius: 16rpx;
+}
+
+.ad-team-a, .ad-team-b {
+  font-size: 28rpx;
+  font-weight: 700;
+  max-width: 220rpx;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ad-vs-label {
+  font-size: 20rpx;
+  color: #94A3B8;
+  font-weight: 800;
+}
+
+.ad-section {
+  margin-bottom: 28rpx;
+}
+
+.ad-section-title {
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #64748B;
+  margin-bottom: 16rpx;
+}
+
+.ad-selected-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18rpx;
+  padding: 18rpx;
+  background: #F8FAFC;
+  border-radius: 16rpx;
+}
+
+.ad-pool-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16rpx;
+}
+
+.ad-item {
+  position: relative;
+  width: 140rpx;
+  height: 140rpx;
+  background: #FFFFFF;
+  border: 2rpx solid #E2E8F0;
+  border-radius: 16rpx;
+  overflow: visible;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+.ad-item--active {
+  border-color: #2563EB;
+  background: rgba(37, 99, 235, 0.02);
+}
+
+.ad-thumb {
+  width: 85%;
+  height: 85%;
+  border-radius: 12rpx;
+}
+
+.ad-check-badge {
+  position: absolute;
+  top: 4rpx;
+  right: 4rpx;
+  width: 32rpx;
+  height: 32rpx;
+  border-radius: 50%;
+  background: #2563EB;
+  color: #FFFFFF;
+  font-size: 20rpx;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ad-remove-badge {
+  position: absolute;
+  top: -10rpx;
+  right: -10rpx;
+  width: 36rpx;
+  height: 36rpx;
+  border-radius: 50%;
+  background: #EF4444;
+  color: #FFFFFF;
+  font-size: 20rpx;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2rpx 8rpx rgba(239, 68, 68, 0.4);
+  z-index: 10;
+}
+
+.ad-upload-card {
+  position: relative;
+  width: 140rpx;
+  height: 140rpx;
+  background: #F8FAFC;
+  border: 2rpx dashed #CBD5E1;
+  border-radius: 16rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+.ad-upload-card--hover {
+  background: #EFF6FF;
+  border-color: #3B82F6;
+}
+
+.ad-upload-icon {
+  font-size: 44rpx;
+  color: #94A3B8;
+  line-height: 1;
+  margin-bottom: 4rpx;
+  font-weight: 300;
+}
+
+.ad-upload-text {
+  font-size: 16rpx;
+  color: #94A3B8;
+  font-weight: 500;
+}
+
+.ad-section-hint {
+  font-size: 20rpx;
+  color: #94A3B8;
+  margin-top: 12rpx;
 }
