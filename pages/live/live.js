@@ -4197,8 +4197,15 @@ onCameraInit: function (e) {
    * 超频（VK）模式不支持，入口应已隐藏 UI，本函数仍做守卫。
    * @param {'wide'|'normal'|'close'} mode
    * @returns {void}
-   */
+  */
   applyViewMode: function (mode) {
+    try {
+      this.appendHealthLog('apply_view_mode_enter', {
+        mode: mode,
+        currentMode: this.data.cameraViewMode,
+        zoom: this.data.zoom
+      });
+    } catch (eApplyViewModeEnter) {}
     if (this.data.enhanceMode === 'vk') {
       try {
         wx.showToast({
@@ -4253,6 +4260,19 @@ onCameraInit: function (e) {
     var switchCaps = this._cameraCaps || {};
     var isUltraWideSwitch = !!(switchCaps.hasUltraWide && switchCaps.probed) &&
       ((fromMode === CameraViewMode.WIDE) !== (mode === CameraViewMode.WIDE));
+    var ultraWideZoom = typeof switchCaps.minZoom === 'number' ? switchCaps.minZoom : null;
+    try {
+      this.appendHealthLog('lens_switch_decision', {
+        fromMode: fromMode,
+        toMode: mode,
+        fromZoom: this.data.zoom,
+        targetZoom: target,
+        hasUltraWide: !!(switchCaps.hasUltraWide),
+        capsProbed: !!(switchCaps.probed),
+        ultraWideZoom: ultraWideZoom,
+        isRealUltraWideSwitch: isUltraWideSwitch
+      });
+    } catch (eLensDecision) {}
     if (isUltraWideSwitch) {
       this._applyLensSwitchWithScaleTransition(target, mode);
     } else {
@@ -4293,7 +4313,7 @@ onCameraInit: function (e) {
   },
   /**
    * 超广 ↔ 主摄切换时的视觉过渡编排。
-   * CSS scale 动画先跑，setZoom 在动画中段（scale≥1.15x）时才触发，
+   * CSS scale 微小爬升先跑，setZoom 在爬升后段（scale≈1.05x）时才触发，
    * 使镜头物理切换产生的横移落在画面运动中，降低用户感知。
    * 不影响录制链路、相机重建、变焦钳位任何路径。
    * @param {number} targetZoom 目标 zoom 值
@@ -4301,37 +4321,80 @@ onCameraInit: function (e) {
    * @returns {void}
    */
   _applyLensSwitchWithScaleTransition: function (targetZoom, mode) {
-    this._clearLensSwitchScaleTransitionTimers(false);
+    try {
+      this.appendHealthLog('lens_switch_anim_start', {
+        targetZoom: targetZoom,
+        mode: mode,
+        peakScale: 1.08,
+        scaleUpMs: isLiveHostIos() ? 200 : 240,
+        zoomTriggerMs: isLiveHostIos() ? Math.round(200 * 0.70) : Math.round(240 * 0.70)
+      });
+    } catch (eLensAnimStart) {}
+    this._lensSwitchAnimStartAt = Date.now();
+
+    if (this._lensSwitchAnimTimer) {
+      clearTimeout(this._lensSwitchAnimTimer);
+      this._lensSwitchAnimTimer = null;
+    }
+    if (this._lensSwitchResetTimer) {
+      clearTimeout(this._lensSwitchResetTimer);
+      this._lensSwitchResetTimer = null;
+    }
 
     const isIos = isLiveHostIos();
-    // 放大阶段时长：须覆盖 AF/AE 收敛最大值（iOS ≈ 200ms，Android ≈ 280ms）
-    const scaleUpMs = isIos ? 260 : 310;
-    // setZoom 在放大动画跑约 48% 时触发（scale 约 1.15~1.2x）
-    const zoomTriggerMs = Math.round(scaleUpMs * 0.48);
-    // 还原阶段时长：缓慢还原，视觉连续感更好
-    const scaleDownMs = 160;
 
-    // Step 1：立即启动视觉放大（CSS transition 在渲染线程运行）
+    // 放大幅度：只需覆盖传感器光学中心偏差（约画面宽度 4-6%）。
+    // 1.08 在视觉上几乎不可察觉，但足以让横移量落在裁切区域内被稀释。
+    // 不使用 1.3+ 的大幅放大——那会让用户明显感知到放大动画本身。
+    const PEAK_SCALE = 1.08;
+
+    // 整个过渡分三段：
+    // 1. 缓慢爬升到峰值（ease-out，用户几乎感知不到）
+    // 2. 在峰值附近触发 setZoom（横移发生在这里，被裁切稀释）
+    // 3. 缓慢还原到 1.0（ease-in，比爬升更慢，避免缩回动作突兀）
+
+    // iOS AF/AE 收敛约 80-200ms；setZoom 在爬升到约 70% 时触发（约 140ms），
+    // 此时 scale 约 1.05x，横移量约被压缩到视觉宽度的 3-4%。
+    const scaleUpMs = isIos ? 200 : 240;   // 爬升总时长
+    const zoomTriggerMs = Math.round(scaleUpMs * 0.70); // setZoom 触发时刻
+    // 还原时长故意比爬升长，让整体动感更像"呼吸"而非"缩放"
+    const scaleDownMs = isIos ? 280 : 320;
+
+    // Step 1：启动微小爬升（CSS transition，渲染线程，不阻塞 JS）
     this.setData({
-      cameraLensSwitchScale: 1.35,
+      cameraLensSwitchScale: PEAK_SCALE,
       cameraLensSwitchScaleDuration: scaleUpMs
     });
 
-    // Step 2：放大中段触发真正的镜头切换
+    // Step 2：爬升到约 70% 时触发真正的镜头切换
     this._lensSwitchAnimTimer = setTimeout(() => {
       this._lensSwitchAnimTimer = null;
       this.setData({
         cameraViewMode: mode
       });
+      try {
+        this.appendHealthLog('lens_switch_zoom_fired', {
+          targetZoom: targetZoom,
+          mode: mode,
+          elapsedSinceAnimStart: Date.now() - (this._lensSwitchAnimStartAt || 0)
+        });
+      } catch (eLensZoomFired) {}
       this.updateZoom(targetZoom);
       this._syncQuickZoomActiveByZoom(targetZoom, {
         clearTemp: true
       });
 
-      // Step 3：AF/AE 收敛后还原 scale
+      // Step 3：给 AF/AE 收敛留足余量后，缓慢还原 scale
+      // 剩余爬升时间 + 50ms AF/AE 余量后开始还原
       const resetDelay = (scaleUpMs - zoomTriggerMs) + 50;
       this._lensSwitchResetTimer = setTimeout(() => {
         this._lensSwitchResetTimer = null;
+        try {
+          this.appendHealthLog('lens_switch_anim_done', {
+            targetZoom: targetZoom,
+            totalMs: Date.now() - (this._lensSwitchAnimStartAt || 0)
+          });
+        } catch (eLensAnimDone) {}
         this.setData({
           cameraLensSwitchScale: 1.0,
           cameraLensSwitchScaleDuration: scaleDownMs
