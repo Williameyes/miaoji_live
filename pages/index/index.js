@@ -15,6 +15,14 @@ const {
 } = require('../../utils/file-storage-estimate.js');
 const clipsStorage = require('../../utils/miaoxie-clips-storage.js');
 const mediaContainerTrim = require('../../utils/replay-buffer/media-container-trim.js');
+const {
+  MERGE_MAX_CLIPS,
+  mergeClipsToSingleFile
+} = require('../../utils/replay-buffer/media-container-merge.js');
+const {
+  appendMergeExportDiag,
+  buildMergeExportDiagText
+} = require('../../utils/merge-export-diag.js');
 
 /**
  * 根据编辑草稿中的队服色生成球衣剪影 data URL，供浮层内 `<image>` 绑定。
@@ -36,6 +44,78 @@ const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
 
 /** @const {string} 历史遗留赛名前缀 */
 const MATCH_NAME_PREFIX = '《高光记分》';
+
+/**
+ * 清理合并导出文件名中的非法字符（合规：不含路径/控制符/特殊符号，长度受限）。
+ * @param {string} text
+ * @param {number} [maxLen]
+ * @returns {string}
+ */
+function sanitizeMergeFileNamePart(text, maxLen) {
+  const limit = typeof maxLen === 'number' && maxLen > 0 ? maxLen : 20;
+  return String(text || '')
+    .replace(/[\u202e\u202d\u200b-\u200f\ufeff]/g, '')
+    .replace(/[/\\?%*:|"<>#\r\n\t]/g, '')
+    .replace(/[^\u4e00-\u9fa5a-zA-Z0-9_-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^[_-]+|[_-]+$/g, '')
+    .slice(0, limit);
+}
+
+/**
+ * 构造合并导出文件名：赛名 + 对阵双方 + 场次 id + 随机码（总长度 ≤80）。
+ * @param {{ matchName?: string, matchTitle?: string }|null} matchGroup
+ * @param {string} matchId
+ * @returns {string}
+ */
+function buildMergeExportFileName(matchGroup, matchId) {
+  const group = matchGroup && typeof matchGroup === 'object' ? matchGroup : {};
+  const matchName = sanitizeMergeFileNamePart(group.matchName || '高光', 16);
+  const vsPart = sanitizeMergeFileNamePart(
+    (group.matchTitle || '').replace(/\s+/g, ''),
+    18
+  );
+  const idPart = sanitizeMergeFileNamePart(String(matchId || '').slice(-10), 10);
+  const rand = Math.random().toString(36).slice(2, 8);
+  let name = `${matchName}_${vsPart}_${idPart}_${rand}.mp4`;
+  if (name.length > 80) {
+    name = `高光合并_${idPart || 'clip'}_${rand}.mp4`;
+  }
+  return name.replace(/_+/g, '_');
+}
+
+/**
+ * 将合并导出错误转为用户可读文案。
+ * @param {unknown} err
+ * @returns {string}
+ */
+function mapMergeExportError(err) {
+  const msg = String(err && (err.message || err.errMsg) || err || '');
+  const stage = err && err.stage ? String(err.stage) : '';
+  if (msg.indexOf('merge_need_at_least_two') >= 0) return '请至少选择2个片段';
+  if (msg.indexOf('merge_too_many_clips') >= 0) return `最多合并 ${MERGE_MAX_CLIPS} 个片段`;
+  if (msg.indexOf('merge_duration_exceeded') >= 0) return '选中片段总时长过长，请减少选择';
+  if (msg.indexOf('merge_media_container_unsupported') >= 0) return '当前微信版本不支持视频合并';
+  if (stage === 'normalize' || msg.indexOf('normalize_') >= 0) {
+    return '片段预处理失败，请升级微信后重试';
+  }
+  if (msg.indexOf('codec_mismatch') >= 0 || msg.indexOf('stts_incompatible') >= 0) {
+    return '片段分辨率/编码不一致，请选同场同源片段';
+  }
+  if (msg.indexOf('mp4_structure_incomplete') >= 0 || msg.indexOf('mp4_stbl_missing') >= 0) {
+    return '视频文件结构异常，请先单独下载验证';
+  }
+  if (msg.indexOf('mp4_stbl_replace_fail') >= 0 || msg.indexOf('mp4_stts_replace_fail') >= 0) {
+    return '视频索引表重建失败，请升级小程序后重试';
+  }
+  if (stage === 'validate' || msg.indexOf('merge_output_') >= 0) {
+    return '合并结果校验失败，请重试或反馈诊断信息';
+  }
+  if (msg.indexOf('scope.writePhotosAlbum') >= 0 || msg.indexOf('auth deny') >= 0) {
+    return '需要相册写入权限';
+  }
+  return '合并导出失败，请查看诊断信息';
+}
 
 /**
  * 从完整赛名中提取用户可编辑的部分（兼容旧前缀提取）
@@ -2076,6 +2156,194 @@ Page({
     });
     this.saveClipsToAlbum(clips, () => {
       this.setData({ batchMode: false, selectedIdsMap: {}, selectedCount: 0 });
+    });
+  },
+
+  /**
+   * 批量合并导出：将选中片段按时间顺序合并为一条视频并保存到相册。
+   * @returns {void}
+   */
+  batchMergeExport() {
+    const ids = Object.keys(this.data.selectedIdsMap);
+    if (ids.length < 2) {
+      wx.showToast({ title: '请至少选择2个片段', icon: 'none' });
+      return;
+    }
+    if (ids.length > MERGE_MAX_CLIPS) {
+      wx.showToast({ title: `最多合并 ${MERGE_MAX_CLIPS} 个片段`, icon: 'none' });
+      return;
+    }
+    if (!mediaContainerTrim || typeof mediaContainerTrim.isMediaContainerSupported !== 'function'
+      || !mediaContainerTrim.isMediaContainerSupported()) {
+      wx.showToast({ title: '当前微信版本不支持视频合并', icon: 'none', duration: 2800 });
+      return;
+    }
+
+    /** @type {Record<string, unknown>|null} */
+    let matchGroup = null;
+    /** @type {string} */
+    let matchId = '';
+    /** @type {Record<string, unknown>[]} */
+    const clips = [];
+
+    ids.forEach((id) => {
+      const item = this.findClipById(id);
+      if (!item || !Array.isArray(item.segments) || !item.segments.length) return;
+      clips.push(item);
+      const clipMatchId = item.matchId != null ? String(item.matchId) : '';
+      if (clipMatchId) {
+        if (matchId && matchId !== clipMatchId) {
+          matchId = '__mixed__';
+        } else {
+          matchId = clipMatchId;
+        }
+      }
+    });
+
+    if (clips.length < 2) {
+      wx.showToast({ title: '所选片段无有效视频', icon: 'none' });
+      return;
+    }
+    if (matchId === '__mixed__') {
+      wx.showToast({ title: '请选择同一场比赛内的片段', icon: 'none', duration: 2800 });
+      return;
+    }
+
+    this.data.groupedHighlights.forEach((g) => {
+      const hasSelected = Array.isArray(g.videos) && g.videos.some((v) => v && ids.includes(String(v.id)));
+      if (hasSelected) {
+        matchGroup = g;
+        matchId = g.matchId || matchId;
+      }
+    });
+
+    clips.sort((a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0));
+
+    wx.showModal({
+      title: `合并导出 ${clips.length} 个片段`,
+      content: '将按时间顺序合并为一条视频保存到相册，便于导入剪映编辑。',
+      confirmText: '合并导出',
+      success: (res) => {
+        if (!res.confirm) return;
+        this.runMergeExport(clips, matchGroup, matchId);
+      }
+    });
+  },
+
+  /**
+   * 执行合并导出流程。
+   * @param {Record<string, unknown>[]} clips
+   * @param {Record<string, unknown>|null} matchGroup
+   * @param {string} matchId
+   * @returns {void}
+   */
+  runMergeExport(clips, matchGroup, matchId) {
+    const userDataPath = wx.env && wx.env.USER_DATA_PATH ? wx.env.USER_DATA_PATH : '';
+    const fileName = buildMergeExportFileName(matchGroup, matchId);
+    const destPath = `${userDataPath}/${fileName}`;
+
+    wx.showLoading({ title: '准备片段 0%', mask: true });
+    mergeClipsToSingleFile(clips, destPath, {
+      onProgress: (stage, done, total) => {
+        if (stage === 'prepare') {
+          const pct = total > 0 ? Math.floor((done / total) * 80) : 0;
+          wx.showLoading({ title: `准备片段 ${pct}%`, mask: true });
+          return;
+        }
+        wx.showLoading({ title: '正在合成 90%', mask: true });
+      }
+    })
+      .then((mergedPath) => this.saveSingleVideoToAlbum(mergedPath))
+      .then(() => {
+        wx.hideLoading();
+        wx.showToast({ title: '已合并导出到相册', icon: 'success', duration: 2500 });
+        this.setData({ batchMode: false, selectedIdsMap: {}, selectedCount: 0 });
+      })
+      .catch((err) => {
+        wx.hideLoading();
+        appendMergeExportDiag('merge_ui_fail', {
+          message: mapMergeExportError(err),
+          raw: String(err && (err.message || err.errMsg) || err || '').slice(0, 200),
+          stage: err && err.stage ? String(err.stage) : ''
+        });
+        this.showMergeExportFailDialog(mapMergeExportError(err));
+      });
+  },
+
+  /**
+   * 合并失败时展示诊断弹窗，支持复制日志以便反馈排查。
+   * @param {string} brief 简短错误说明
+   * @returns {void}
+   */
+  showMergeExportFailDialog(brief) {
+    const diagText = buildMergeExportDiagText();
+    wx.showModal({
+      title: '合并导出失败',
+      content: `${brief}\n\n可点击「复制诊断」将技术日志发给开发者排查（不含视频内容）。`,
+      confirmText: '复制诊断',
+      cancelText: '关闭',
+      success: (res) => {
+        if (!res.confirm) return;
+        wx.setClipboardData({
+          data: diagText,
+          success: () => {
+            wx.showToast({ title: '诊断信息已复制', icon: 'success' });
+          },
+          fail: () => {
+            wx.showToast({ title: '复制失败，请重试', icon: 'none' });
+          }
+        });
+      }
+    });
+  },
+
+  /**
+   * 将单个视频文件保存到系统相册（含权限处理）。
+   * @param {string} filePath
+   * @returns {Promise<void>}
+   */
+  saveSingleVideoToAlbum(filePath) {
+    const fs = wx.getFileSystemManager();
+    const path = typeof filePath === 'string' ? filePath : '';
+    if (!path) return Promise.reject(new Error('video_path_missing'));
+    try {
+      fs.accessSync(path);
+    } catch (e) {
+      return Promise.reject(new Error('video_file_missing'));
+    }
+
+    return new Promise((resolve, reject) => {
+      const proceed = () => {
+        wx.saveVideoToPhotosAlbum({
+          filePath: path,
+          success: () => resolve(),
+          fail: (err) => reject(err || new Error('save_album_fail'))
+        });
+      };
+      wx.getSetting({
+        success: (res) => {
+          if (res.authSetting['scope.writePhotosAlbum']) {
+            proceed();
+            return;
+          }
+          wx.authorize({
+            scope: 'scope.writePhotosAlbum',
+            success: proceed,
+            fail: () => {
+              wx.showModal({
+                title: '需要相册权限',
+                content: '请在设置中允许访问相册，以便保存合并视频',
+                confirmText: '去设置',
+                success: (r) => {
+                  if (r.confirm) wx.openSetting({});
+                }
+              });
+              reject(new Error('scope.writePhotosAlbum denied'));
+            }
+          });
+        },
+        fail: (err) => reject(err || new Error('get_setting_fail'))
+      });
     });
   },
 

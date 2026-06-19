@@ -194,9 +194,25 @@ function delayMs(delayMs) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, delayMs || 0)));
 }
 
+/** 720p 高光裁剪产物码率上限（kbps），用于估算合法体积。 */
+const TRIM_OUTPUT_BITRATE_KBPS_720P = 5200;
+
+/**
+ * 按目标时长与码率估算裁剪产物合理体积上限（MediaContainer 重封装可能略大于按比例折算值）。
+ * @param {number} durationMs
+ * @param {number} [videoBitsPerSecondKbps]
+ * @returns {number}
+ */
+function estimateMaxTrimOutputBytesForDuration(durationMs, videoBitsPerSecondKbps) {
+  const durSec = Math.max(0.5, (Number(durationMs) || 0) / 1000);
+  const kbps = Math.max(1800, Math.floor(Number(videoBitsPerSecondKbps) || TRIM_OUTPUT_BITRATE_KBPS_720P));
+  /** kbps→bytes/s，再留 35% 余量应对 iOS remux 膨胀。 */
+  return Math.ceil(durSec * kbps * 1000 / 8 * 1.35);
+}
+
 /**
  * 按母片/期望时长比例估算裁剪产物允许的最大体积（防假裁剪，且不误伤 iOS 短 flush 段）。
- * iOS 实测：9.6s 母片裁 8s 窗，输出可达母片 ~43%，固定 42% 阈值会误拒。
+ * 720p 下 MediaContainer 输出常大于母片比例折算值，须与 {@link estimateMaxTrimOutputBytesForDuration} 取较大值。
  * @param {number} sourceSizeBytes
  * @param {number} expectedDurationMs
  * @param {number} [sourceDurationMs]
@@ -206,11 +222,16 @@ function computeMaxAllowedTrimOutputBytes(sourceSizeBytes, expectedDurationMs, s
   const srcSize = Math.max(0, Math.floor(Number(sourceSizeBytes) || 0));
   const expected = Math.max(500, Math.floor(Number(expectedDurationMs) || 0));
   const srcDur = Math.max(expected, Math.floor(Number(sourceDurationMs) || 0));
-  if (!srcSize) return 0;
+  if (!srcSize) return estimateMaxTrimOutputBytesForDuration(expected);
   const durationRatio = Math.min(1, expected / srcDur);
   /** 长母片裁短窗仍用 42% 下限；短母片按 durationRatio + 12% 放宽。 */
   const sizeRatio = Math.min(0.96, Math.max(0.42, durationRatio + 0.12));
-  return Math.max(256 * 1024, Math.floor(srcSize * sizeRatio));
+  const ratioCap = Math.max(256 * 1024, Math.floor(srcSize * sizeRatio));
+  const bitrateCap = estimateMaxTrimOutputBytesForDuration(expected);
+  /** 裁切窗口接近全段时 remux 可能略大于母片。 */
+  const nearFullClip = durationRatio >= 0.72;
+  const srcBloatCap = Math.ceil(srcSize * (nearFullClip ? 1.5 : 1.12));
+  return Math.max(ratioCap, bitrateCap, srcBloatCap);
 }
 
 /**
@@ -239,7 +260,21 @@ function validateTrimOutput(outputPath, expectedDurationMs, sourceSizeBytes, sou
     if (durationMs > maxAllowedDurationMs) {
       return Promise.reject(new Error(`trim_output_too_long:${durationMs}/${expected}`));
     }
-    if (srcSize > 0 && sizeBytes > maxAllowedSizeBytes) {
+    /** 时长已落在高光窗内时，以码率上限为准，避免 720p remux 误拒。 */
+    const durationInHighlightWindow = durationMs >= Math.floor(expected * 0.45)
+      && durationMs <= maxAllowedDurationMs;
+    const effectiveMaxSizeBytes = durationInHighlightWindow
+      ? Math.max(maxAllowedSizeBytes, estimateMaxTrimOutputBytesForDuration(durationMs))
+      : maxAllowedSizeBytes;
+    /** 假裁剪：体积接近母片且时长接近母片总长。 */
+    const suspectFullMotherCopy = srcDur > expected + 2000
+      && durationMs > expected + 3500
+      && srcSize > 0
+      && sizeBytes >= Math.floor(srcSize * 0.88);
+    if (suspectFullMotherCopy) {
+      return Promise.reject(new Error(`trim_output_suspect_full:${sizeBytes}/${srcSize}:${durationMs}/${srcDur}`));
+    }
+    if (srcSize > 0 && sizeBytes > effectiveMaxSizeBytes) {
       return Promise.reject(new Error(`trim_output_too_large:${sizeBytes}/${srcSize}`));
     }
     if (sizeBytes < minAllowedSizeBytes) {
@@ -474,8 +509,8 @@ function mapWallWindowToFileMs(windowStartInSegMs, windowEndInSegMs, wallDuratio
   return { trimStartMs, trimEndMs, mapRatio, encodeStartOffsetMs };
 }
 
-/** 8s 高光正常体积上限（字节），超出视为未裁剪母片。 */
-const EXPORT_TRIM_SIZE_THRESHOLD_BYTES = Math.floor(1.8 * 1024 * 1024);
+/** 8s 720p 高光正常体积上限（字节），超出视为未裁剪母片。 */
+const EXPORT_TRIM_SIZE_THRESHOLD_BYTES = Math.floor(5 * 1024 * 1024);
 
 /**
  * 判断导出相册前是否需补裁剪。
@@ -544,6 +579,7 @@ module.exports = {
   isMediaContainerSupported,
   probeVideoDurationMs,
   mapWallWindowToFileMs,
+  estimateMaxTrimOutputBytesForDuration,
   trimVideoTail,
   trimVideoSegment,
   clipNeedsExportTrim,

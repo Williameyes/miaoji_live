@@ -709,6 +709,11 @@ Page({
     isCameraRendered: true,
     /** 强制 camera 组件重建的渲染序号（每次重建 +1）。 */
     cameraRenderNonce: 0,
+    /**
+     * camera onCameraFrame 抽帧档位（初始化后不可变）：large≈720p 原生像素；medium≈480p 负载更低。
+     * @type {'small'|'medium'|'large'}
+     */
+    recordFrameSize: 'large',
     isRecovering: false,
     /** 硬恢复相机卸载间隙：静态遮罩（无 Toast、无循环 video），减轻黑屏与推流观感问题。 */
     showRecoveryVeil: false,
@@ -14161,6 +14166,23 @@ pauseRollingForReplay: function (onPaused) {
             }
             const formatWxErr = replayBufferMod.formatWxErr;
             const runFullCopyFallback = reason => {
+              /** 720p 母片常 3–10MB，全量拷贝会导致超长视频与 save 失败。 */
+              const fullCopyMaxBytes = Math.floor(3.2 * 1024 * 1024);
+              if (srcSizeBytes > fullCopyMaxBytes) {
+                logMaterializeDiag('full_copy_blocked_oversize', {
+                  reason: reason || '',
+                  srcSizeBytes,
+                  fullCopyMaxBytes
+                });
+                this.appendHealthLog('highlight_materialize_full_copy_blocked', {
+                  id: String(task.id || ''),
+                  reason: reason || '',
+                  srcSizeBytes,
+                  fullCopyMaxBytes
+                });
+                resolve('');
+                return;
+              }
               // P0: 禁止全量拷贝 60MB 母片；先尝试 tail trim 兜底
               if (trimMod && typeof trimMod.trimVideoTail === 'function'
                   && typeof trimMod.isMediaContainerSupported === 'function'
@@ -14535,12 +14557,13 @@ pauseRollingForReplay: function (onPaused) {
       const outputLooksLikeHighlight = !!task.trimVerified
         && outSizeBytes >= minHighlightBytes
         && typeof task.trimOutputDurationMs === 'number'
-        && task.trimOutputDurationMs >= Math.floor((task.tailLeadMs || 8000) * 0.45);
+        && task.trimOutputDurationMs >= Math.floor((task.tailLeadMs || 8000) * 0.45)
+        && task.trimOutputDurationMs <= Math.floor((task.tailLeadMs || 8000) + 2500);
       const trimLooksValid = !!task.trimVerified && (
         srcSizeBytes <= 0
         || outSizeBytes <= 0
-        || outSizeBytes < srcSizeBytes * 0.42
         || outputLooksLikeHighlight
+        || (outSizeBytes <= srcSizeBytes * 0.96 && outputLooksLikeHighlight)
       );
       const wasTrimmed = (wasTailTrim || wasWallTrim) && trimLooksValid;
       const trimDurationSec = wasTailTrim

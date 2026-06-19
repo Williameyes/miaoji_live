@@ -32,7 +32,8 @@ function segmentDurationSec(wallDurationMs) {
  */
 function estimateMinSegmentBytes(wallDurationMs) {
   const durSec = segmentDurationSec(wallDurationMs);
-  return Math.max(HOLLOW_SHORT_ABSOLUTE_MIN_BYTES, durSec * 4000);
+  /** 720p@~4800kbps 下 8s 约 2.5MB+；下限按 ~300KB/s 估算，避免误拒合法裁剪。 */
+  return Math.max(HOLLOW_SHORT_ABSOLUTE_MIN_BYTES, durSec * 280000);
 }
 
 /**

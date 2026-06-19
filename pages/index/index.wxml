@@ -203,6 +203,7 @@
         <text wx:else>全选</text>
       </view>
       <view class="batch-btn batch-btn--download" hover-class="batch-btn-hover" bindtap="batchDownload">下载选中</view>
+      <view class="batch-btn batch-btn--merge" hover-class="batch-btn-hover" bindtap="batchMergeExport">合并导出</view>
       <view class="batch-btn batch-btn--delete" hover-class="batch-btn-hover" bindtap="batchDelete">删除选中</view>
     </view>
   </view>

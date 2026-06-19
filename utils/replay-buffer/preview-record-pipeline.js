@@ -99,6 +99,12 @@ function createPreviewRecordPipeline(page) {
   let lastFrameAt = 0;
   let frameInterval = frameIntervalMs(15);
   let feeding = false;
+  /** MediaRecorder 声明 CFR（如 24）；与相机实测帧率解耦。 */
+  let encoderFps = 24;
+  /** CFR 泵：最新相机帧，供定频 feedFrame（不足目标 fps 时重复上一帧）。 */
+  let latestFeedFrame = null;
+  /** CFR 定频喂帧 timer。 */
+  let cfrPumpTimer = null;
   /** 最近一次帧/轨道活动，供 segment watchdog 识别乒乓假死。 */
   let lastPipelineHeartbeatAt = 0;
   /** 当前 start() 是否已完成预热（收到足够帧）。 */
@@ -131,6 +137,94 @@ function createPreviewRecordPipeline(page) {
    * 污染 segmentCounter、_lastSuccessfulChunkAt 等状态，并误触 _tryGenerateHighlight。
    */
   let activeSessionId = 0;
+
+  /**
+   * 停止 CFR 定频喂帧泵。
+   * @returns {void}
+   */
+  function stopCfrPump() {
+    if (cfrPumpTimer) {
+      clearTimeout(cfrPumpTimer);
+      cfrPumpTimer = null;
+    }
+  }
+
+  /**
+   * 将 latestFeedFrame 送入编码器（单飞，避免 requestFrame 并发）。
+   * @returns {Promise<void>}
+   */
+  function feedLatestFrameToEncoder() {
+    if (!active || !pingPong || !latestFeedFrame) {
+      return Promise.resolve();
+    }
+    if (feeding) {
+      return Promise.resolve();
+    }
+    const now = Date.now();
+    if (now - lastPipelineHeartbeatAt >= 5000) {
+      touchPipelineHeartbeat('frame_feed');
+    }
+    feeding = true;
+    feedingSince = now;
+    lastFrameAt = now;
+    return pingPong.feedFrame(latestFeedFrame).finally(() => {
+      feeding = false;
+      feedingSince = 0;
+    });
+  }
+
+  /**
+   * 按 encoderFps 墙钟定频喂帧；相机送帧低于目标 fps 时自动重复上一帧，保证 1.0x 且元数据为 24fps。
+   * @returns {void}
+   */
+  function scheduleCfrPumpTick() {
+    if (!active || !pingPong) return;
+    const intervalMs = frameIntervalMs(encoderFps);
+    cfrPumpTimer = setTimeout(() => {
+      cfrPumpTimer = null;
+      if (feedingSince > 0 && Date.now() - feedingSince > 1200) {
+        log('preview_record_feeding_force_reset', {
+          stuckMs: Date.now() - feedingSince
+        });
+        feeding = false;
+        feedingSince = 0;
+      }
+      feedLatestFrameToEncoder().finally(() => {
+        if (active && pingPong) {
+          scheduleCfrPumpTick();
+        }
+      });
+    }, intervalMs);
+  }
+
+  /**
+   * @param {number} fps
+   * @returns {void}
+   */
+  function startCfrPump(fps) {
+    stopCfrPump();
+    encoderFps = Math.max(5, Math.min(24, Math.floor(Number(fps) || 15)));
+    frameInterval = frameIntervalMs(encoderFps);
+    scheduleCfrPumpTick();
+  }
+
+  /**
+   * 更新 CFR 帧缓存（iOS 使用深拷贝后的 handoff 帧，避免 buffer 被覆写）。
+   * @param {{ data: ArrayBuffer, width: number, height: number }} frame
+   * @returns {void}
+   */
+  function updateLatestFeedFrame(frame) {
+    if (!frame || !frame.data || !frame.width || !frame.height) return;
+    let isIos = false;
+    try {
+      isIos = wx.getSystemInfoSync().platform === 'ios';
+    } catch (e) {}
+    if (isIos && cachedHandoffFrame) {
+      latestFeedFrame = cachedHandoffFrame;
+      return;
+    }
+    latestFeedFrame = frame;
+  }
 
   /**
    * @param {string} eventName
@@ -282,28 +376,7 @@ function createPreviewRecordPipeline(page) {
       }
     }
     if (!active || !pingPong) return;
-    if (now - lastFrameAt < frameInterval) return;
-    lastFrameAt = now;
-    if (now - lastPipelineHeartbeatAt >= 5000) {
-      touchPipelineHeartbeat('frame_feed');
-    }
-    if (feeding) {
-      if (feedingSince > 0 && now - feedingSince > 1200) {
-        log('preview_record_feeding_force_reset', {
-          stuckMs: now - feedingSince
-        });
-        feeding = false;
-        feedingSince = 0;
-      } else {
-        return;
-      }
-    }
-    feeding = true;
-    feedingSince = now;
-    pingPong.feedFrame(frame).finally(() => {
-      feeding = false;
-      feedingSince = 0;
-    });
+    updateLatestFeedFrame(frame);
   }
 
   /**
@@ -415,8 +488,6 @@ function createPreviewRecordPipeline(page) {
         ? () => page.ensureRollingDir()
         : () => Promise.resolve(rollingDir);
       const targetFpsCap = Math.max(5, Math.min(24, Number(options.fps) || 15));
-      let effectiveFps = targetFpsCap;
-      frameInterval = frameIntervalMs(effectiveFps);
       /**
        * 给本次 pingPong 实例分配独立 sessionId；绑定到 boundOnSegmentReady 闭包内，
        * stop() 后再有同一实例的迟到 segment 时，sessionId 已不匹配，自动丢弃。
@@ -504,7 +575,7 @@ function createPreviewRecordPipeline(page) {
           chunkDurationMs: options.chunkDurationMs || 180000,
           staggerMs: options.staggerMs || 8000,
           highlightFlushMinIntervalMs: options.highlightFlushMinIntervalMs || 10000,
-          fps: effectiveFps,
+          fps: encoderFps,
           stopToStartGapMs: options.stopToStartGapMs || 400,
           recycleIntervalMs: options.recycleIntervalMs || 25 * 60 * 1000,
           maxFiles: options.maxFiles || 2,
@@ -536,12 +607,14 @@ function createPreviewRecordPipeline(page) {
           warmupLastFrameAt,
           warmupFrameCount
         );
-        effectiveFps = adaptive.effectiveFps;
-        frameInterval = frameIntervalMs(effectiveFps);
+        /** 编码器始终用目标 CFR；相机实测偏低时由 CFR 泵重复上一帧，避免 15fps 元数据。 */
+        encoderFps = targetFpsCap;
+        frameInterval = frameIntervalMs(encoderFps);
         log('preview_record_adaptive_fps', {
           targetFpsCap,
-          effectiveFps,
-          measuredFps: adaptive.measuredFps,
+          encoderFps,
+          measuredCameraFps: adaptive.measuredFps,
+          cfrFrameDuplication: adaptive.measuredFps > 0 && adaptive.measuredFps < targetFpsCap - 0.5,
           fallback: adaptive.fallback,
           warmupFrameCount,
           warmupSpanMs: warmupLastFrameAt > warmupFirstFrameAt
@@ -579,13 +652,14 @@ function createPreviewRecordPipeline(page) {
       };
       const finishPipelineStart = () => {
         touchPipelineHeartbeat('pipeline_start');
+        startCfrPump(targetFpsCap);
         if (page) {
           page.lastRecordStartAt = Date.now();
           page.setData({ isRecording: true });
         }
         log('preview_record_pipeline_start', {
           targetFpsCap,
-          effectiveFps,
+          encoderFps,
           sessionId: instanceSessionId,
           requireFirstFrame,
           warmupMinFrames: currentWarmupMinFrames,
@@ -597,6 +671,8 @@ function createPreviewRecordPipeline(page) {
         });
       };
       const handleStartError = (err) => {
+        stopCfrPump();
+        latestFeedFrame = null;
         if (frameSource) {
           frameSource.stop();
           frameSource = null;
@@ -640,6 +716,8 @@ function createPreviewRecordPipeline(page) {
      * 不再污染新场次的 page.rollingSegments / segmentCounter / _lastSuccessfulChunkAt。
      */
     active = false;
+    stopCfrPump();
+    latestFeedFrame = null;
     pipelineWarmedUp = false;
     warmupFrameCount = 0;
     warmupFirstFrameAt = 0;

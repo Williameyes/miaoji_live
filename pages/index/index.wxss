@@ -724,6 +724,12 @@ page {
   border: 1px solid rgba(37, 99, 235, 0.2);
 }
 
+.batch-btn--merge {
+  color: #7C3AED;
+  background: rgba(124, 58, 237, 0.08);
+  border: 1px solid rgba(124, 58, 237, 0.22);
+}
+
 .batch-btn--toggle-all {
   flex-shrink: 0;
   color: #475569;
