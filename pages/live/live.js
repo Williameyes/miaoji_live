@@ -163,6 +163,8 @@ const PREVIEW_RECORD_WARMUP_IOS_MS = 1800;
 const PREVIEW_RECORD_WARMUP_ANDROID_MS = 1200;
 /** 等待首帧回调的最长时限（ms）。 */
 const PREVIEW_RECORD_FIRST_FRAME_TIMEOUT_MS = 3500;
+/** 正常起录时预热最少帧数（用于自适应 fps 测速，须 ≥ pipeline 内 FPS_MEASURE_MIN）。 */
+const PREVIEW_RECORD_WARMUP_FRAMES_DEFAULT = 10;
 /** 起录后允许保存高光的最早时刻（ms），避免刚重建相机的空壳段。 */
 const PREVIEW_RECORD_MIN_MS_BEFORE_HIGHLIGHT = 3500;
 /** 切后台回前台后起录到可保存高光的额外等待（ms）。 */
@@ -2020,9 +2022,13 @@ buildVipGateStateFromCheckStatus: function (body) {
   pingPongChunkDurationMs: 60000,
   /** 双轨重叠（毫秒）：B 在 A 结束前 8s 启动；并发编码占比约 4.4%。 */
   pingPongStaggerMs: 8000,
-  /** 后台 MediaRecorder 目标帧率（提升至 24fps）。 */
+  /** 后台 MediaRecorder 目标帧率上限（预热测速后取 min(实测, 24) 写入编码器，保证 1.0x 播放）。 */
   pingPongRecordFps: 24,
-  /** 滚动目录最多保留母片数量（约 2×60MB≈120MB 峰值，随码率/分辨率浮动）。 */
+  /** 后台录制离屏 canvas 目标宽（720p；实际以 onCameraFrame 尺寸为准，不足时 WebGL 放大）。 */
+  pingPongRecordCanvasWidth: 1280,
+  /** 后台录制离屏 canvas 目标高（720p）。 */
+  pingPongRecordCanvasHeight: 720,
+  /** 滚动目录最多保留母片数量（720p 下单段约 30–45MB，2 段峰值约 60–90MB）。 */
   pingPongRollingMaxFiles: 2,
   /** 高光强制 flush 最小间隔（毫秒），抑制连按引发 iOS 601。 */
   pingPongHighlightFlushMinIntervalMs: 10000,
@@ -8462,7 +8468,7 @@ updatePipelineHealth: function () {
       if (!self.rollingActive) return;
       const afterPageHide = self.isLiveForegroundRecordingRecoverPending();
       const afterHardRecoverTimeout = !!self._hardRecoverHadTimeoutRebuild;
-      let warmupMinFrames = 5;
+      let warmupMinFrames = PREVIEW_RECORD_WARMUP_FRAMES_DEFAULT;
       if (afterHardRecoverTimeout) {
         warmupMinFrames = PREVIEW_RECORD_WARMUP_FRAMES_AFTER_HARD_RECOVER_TIMEOUT;
       } else if (afterPageHide) {
@@ -8475,6 +8481,8 @@ updatePipelineHealth: function () {
         highlightFlushMinIntervalMs: self.pingPongHighlightFlushMinIntervalMs || 10000,
         recycleIntervalMs: 25 * 60 * 1000,
         fps: self.pingPongRecordFps || 15,
+        canvasWidth: self.pingPongRecordCanvasWidth || 1280,
+        canvasHeight: self.pingPongRecordCanvasHeight || 720,
         maxFiles: self.pingPongRollingMaxFiles || 2,
         requireFirstFrame: true,
         firstFrameTimeoutMs: afterPageHide || afterHardRecoverTimeout ? 5500 : PREVIEW_RECORD_FIRST_FRAME_TIMEOUT_MS,

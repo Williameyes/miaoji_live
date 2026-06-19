@@ -150,20 +150,33 @@ function requestFrameRecorder(recorder, onDraw) {
   });
 }
 
+/** 判定 720p 的像素面积下限（1280×720 的 90%）。 */
+const PREVIEW_RECORD_720P_PIXELS = Math.floor(1280 * 720 * 0.9);
+
 /**
- * 按平台返回 MediaRecorder 视频码率（与 camera.startRecord 对齐，避免 Android 极低码率黑场）。
+ * 按平台与分辨率返回 MediaRecorder 视频码率（kbps 量级，与 wx.createMediaRecorder 一致）。
+ * @param {number} [canvasWidth]
+ * @param {number} [canvasHeight]
  * @returns {number}
  */
-function resolveRecorderVideoBitsPerSecond() {
+function resolveRecorderVideoBitsPerSecond(canvasWidth, canvasHeight) {
+  const w = Math.max(0, Math.floor(Number(canvasWidth) || 0));
+  const h = Math.max(0, Math.floor(Number(canvasHeight) || 0));
+  const is720p = h >= 704 || w * h >= PREVIEW_RECORD_720P_PIXELS;
   if (typeof wx === 'undefined' || typeof wx.getSystemInfoSync !== 'function') {
-    return 3000;
+    return is720p ? 4800 : 3000;
   }
   try {
     const platform = String(wx.getSystemInfoSync().platform || '').toLowerCase();
+    if (is720p) {
+      if (platform === 'android') return 5200;
+      if (platform === 'ios') return 4800;
+      return 4500;
+    }
     if (platform === 'android') return 3600;
     if (platform === 'ios') return 3000;
   } catch (eSys) { }
-  return 2800;
+  return is720p ? 4500 : 2800;
 }
 
 /**
@@ -231,8 +244,8 @@ class PingPongRecorder {
     this.recycleIntervalMs = options.recycleIntervalMs || 25 * 60 * 1000;
     this.maxFiles = options.maxFiles || 2;
     this.fps = Math.max(5, Math.min(24, options.fps || 15));
-    this.canvasWidth = options.canvasWidth || 854;
-    this.canvasHeight = options.canvasHeight || 480;
+    this.canvasWidth = options.canvasWidth || 1280;
+    this.canvasHeight = options.canvasHeight || 720;
     /** 高光强制 flush 最小间隔（毫秒），抑制 1 分钟内频繁启停管线。 */
     this.highlightFlushMinIntervalMs = Math.max(
       8000,
@@ -357,13 +370,21 @@ class PingPongRecorder {
     }
     const chunkSec = Math.ceil(this.chunkDurationMs / 1000);
     const durationSec = Math.max(60, chunkSec * 2 + 12);
+    const videoBps = resolveRecorderVideoBitsPerSecond(this.canvasWidth, this.canvasHeight);
     track.recorder = wx.createMediaRecorder(track.canvas, {
       duration: Math.min(7200, durationSec),
       fps: this.fps,
-      videoBitsPerSecond: resolveRecorderVideoBitsPerSecond(),
+      videoBitsPerSecond: videoBps,
       gop: Math.max(6, Math.floor(this.fps)),
       width: this.canvasWidth,
       height: this.canvasHeight
+    });
+    this._log('ping_pong_recorder_create', {
+      trackId,
+      fps: this.fps,
+      width: this.canvasWidth,
+      height: this.canvasHeight,
+      videoBitsPerSecond: videoBps
     });
     track.createdAt = Date.now();
     try {

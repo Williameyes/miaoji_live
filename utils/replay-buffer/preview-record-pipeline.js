@@ -9,6 +9,15 @@ const { PingPongRecorder } = require('./ping-pong-recorder.js');
 /** iOS 变焦过渡定格帧独立深拷贝缓存 */
 let cachedHandoffFrame = null;
 
+/** 录制目标画布宽（720p）。 */
+const PREVIEW_RECORD_TARGET_CANVAS_W = 1280;
+/** 录制目标画布高（720p）。 */
+const PREVIEW_RECORD_TARGET_CANVAS_H = 720;
+/** 预热测速至少帧数，不足则回退保守 fps。 */
+const PREVIEW_RECORD_FPS_MEASURE_MIN_FRAMES = 8;
+/** 测速窗口至少毫秒数。 */
+const PREVIEW_RECORD_FPS_MEASURE_MIN_SPAN_MS = 320;
+
 /**
  * @param {number} fps
  * @returns {number}
@@ -17,6 +26,56 @@ function frameIntervalMs(fps) {
   const n = Number(fps);
   if (!Number.isFinite(n) || n <= 0) return 83;
   return Math.max(40, Math.floor(1000 / n));
+}
+
+/**
+ * 根据预热阶段 onCameraFrame 送达间隔估算有效 fps，避免 MediaRecorder 声明帧率高于实际采帧导致快进。
+ * @param {number} targetFpsCap 配置上限（如 24）
+ * @param {number} firstFrameAt 首帧墙钟（ms）
+ * @param {number} lastFrameAt 末帧墙钟（ms）
+ * @param {number} frameCount 预热累计帧数
+ * @returns {{ effectiveFps: number, measuredFps: number, fallback: boolean }}
+ */
+function computeAdaptiveRecordFps(targetFpsCap, firstFrameAt, lastFrameAt, frameCount) {
+  const cap = Math.max(5, Math.min(24, Math.floor(Number(targetFpsCap) || 15)));
+  const count = Math.max(0, Math.floor(Number(frameCount) || 0));
+  const first = Math.floor(Number(firstFrameAt) || 0);
+  const last = Math.floor(Number(lastFrameAt) || 0);
+  const spanMs = last > first ? last - first : 0;
+  if (count < PREVIEW_RECORD_FPS_MEASURE_MIN_FRAMES || spanMs < PREVIEW_RECORD_FPS_MEASURE_MIN_SPAN_MS) {
+    /** 样本不足时用 15fps 保守值，避免声明过高导致快进。 */
+    const safeFps = Math.min(cap, 15);
+    return { effectiveFps: safeFps, measuredFps: 0, fallback: true };
+  }
+  const measured = ((count - 1) * 1000) / spanMs;
+  const effectiveFps = Math.round(Math.max(5, Math.min(cap, measured)));
+  return { effectiveFps, measuredFps: Math.round(measured * 10) / 10, fallback: false };
+}
+
+/**
+ * 将相机帧尺寸对齐为 H.264 偶数像素；若低于 720p 目标则放大 canvas（WebGL 拉伸）。
+ * @param {number} frameW
+ * @param {number} frameH
+ * @param {number} targetW
+ * @param {number} targetH
+ * @returns {{ width: number, height: number, upscaled: boolean }}
+ */
+function resolveEncoderCanvasSize(frameW, frameH, targetW, targetH) {
+  let w = Math.max(2, Math.floor(Number(frameW) || targetW));
+  let h = Math.max(2, Math.floor(Number(frameH) || targetH));
+  w -= w % 2;
+  h -= h % 2;
+  const tw = Math.max(2, Math.floor(Number(targetW) || PREVIEW_RECORD_TARGET_CANVAS_W));
+  const th = Math.max(2, Math.floor(Number(targetH) || PREVIEW_RECORD_TARGET_CANVAS_H));
+  const upscaled = h < th - 4 || w < tw - 4;
+  if (upscaled) {
+    return {
+      width: tw - (tw % 2),
+      height: th - (th % 2),
+      upscaled: true
+    };
+  }
+  return { width: w, height: h, upscaled: false };
 }
 
 /**
@@ -61,6 +120,9 @@ function createPreviewRecordPipeline(page) {
   /** 相机预热阶段采样到的帧尺寸，供延后初始化离屏 canvas。 */
   let lastWarmupFrameW = 0;
   let lastWarmupFrameH = 0;
+  /** 预热测速：首帧与末帧墙钟（ms）。 */
+  let warmupFirstFrameAt = 0;
+  let warmupLastFrameAt = 0;
   /**
    * 每次 start() 自增；stop() 时归 0；start() 时分配给当前 pingPong 实例。
    * 切换场次时 pipeline.stop() 触发 pingPong 内部的强制收尾，
@@ -192,6 +254,7 @@ function createPreviewRecordPipeline(page) {
     if (!pipelineWarmedUp) {
       warmupFrameCount += 1;
       if (warmupFrameCount === 1) {
+        warmupFirstFrameAt = now;
         const lagMs = pipelineStartAt > 0 ? now - pipelineStartAt : 0;
         log('preview_record_first_frame', {
           lagMs,
@@ -202,13 +265,15 @@ function createPreviewRecordPipeline(page) {
           page._previewRecordFirstFrameAt = now;
         }
       }
+      warmupLastFrameAt = now;
       const needFrames = currentWarmupMinFrames || PREVIEW_RECORD_WARMUP_MIN_FRAMES;
       if (warmupFrameCount >= needFrames) {
         pipelineWarmedUp = true;
         log('preview_record_warmup_ready', {
           frameCount: warmupFrameCount,
           needFrames,
-          elapsedMs: pipelineStartAt > 0 ? now - pipelineStartAt : 0
+          elapsedMs: pipelineStartAt > 0 ? now - pipelineStartAt : 0,
+          warmupSpanMs: warmupFirstFrameAt > 0 ? now - warmupFirstFrameAt : 0
         });
         const waiters = warmupWaiters.splice(0, warmupWaiters.length);
         waiters.forEach((fn) => {
@@ -349,8 +414,9 @@ function createPreviewRecordPipeline(page) {
       const ensureRollingDir = typeof page.ensureRollingDir === 'function'
         ? () => page.ensureRollingDir()
         : () => Promise.resolve(rollingDir);
-      const fps = options.fps || 15;
-      frameInterval = frameIntervalMs(fps);
+      const targetFpsCap = Math.max(5, Math.min(24, Number(options.fps) || 15));
+      let effectiveFps = targetFpsCap;
+      frameInterval = frameIntervalMs(effectiveFps);
       /**
        * 给本次 pingPong 实例分配独立 sessionId；绑定到 boundOnSegmentReady 闭包内，
        * stop() 后再有同一实例的迟到 segment 时，sessionId 已不匹配，自动丢弃。
@@ -395,12 +461,16 @@ function createPreviewRecordPipeline(page) {
       warmupFrameCount = 0;
       lastWarmupFrameW = 0;
       lastWarmupFrameH = 0;
+      warmupFirstFrameAt = 0;
+      warmupLastFrameAt = 0;
       pipelineStartAt = Date.now();
       warmupWaiters = [];
       feeding = false;
       feedingSince = 0;
-      let capturedCanvasW = Number(options.canvasWidth) || 854;
-      let capturedCanvasH = Number(options.canvasHeight) || 480;
+      const targetCanvasW = Number(options.canvasWidth) || PREVIEW_RECORD_TARGET_CANVAS_W;
+      const targetCanvasH = Number(options.canvasHeight) || PREVIEW_RECORD_TARGET_CANVAS_H;
+      let capturedCanvasW = targetCanvasW;
+      let capturedCanvasH = targetCanvasH;
       const requireFirstFrame = options.requireFirstFrame !== false;
       const firstFrameTimeoutMs = Number(options.firstFrameTimeoutMs) || PREVIEW_RECORD_FIRST_FRAME_TIMEOUT_MS;
       const deferEncoderInit = !!options.deferEncoderInit;
@@ -434,7 +504,7 @@ function createPreviewRecordPipeline(page) {
           chunkDurationMs: options.chunkDurationMs || 180000,
           staggerMs: options.staggerMs || 8000,
           highlightFlushMinIntervalMs: options.highlightFlushMinIntervalMs || 10000,
-          fps,
+          fps: effectiveFps,
           stopToStartGapMs: options.stopToStartGapMs || 400,
           recycleIntervalMs: options.recycleIntervalMs || 25 * 60 * 1000,
           maxFiles: options.maxFiles || 2,
@@ -460,14 +530,45 @@ function createPreviewRecordPipeline(page) {
         return waitForWarmupFrames(firstFrameTimeoutMs, currentWarmupMinFrames);
       };
       const bootEncoder = () => {
+        const adaptive = computeAdaptiveRecordFps(
+          targetFpsCap,
+          warmupFirstFrameAt,
+          warmupLastFrameAt,
+          warmupFrameCount
+        );
+        effectiveFps = adaptive.effectiveFps;
+        frameInterval = frameIntervalMs(effectiveFps);
+        log('preview_record_adaptive_fps', {
+          targetFpsCap,
+          effectiveFps,
+          measuredFps: adaptive.measuredFps,
+          fallback: adaptive.fallback,
+          warmupFrameCount,
+          warmupSpanMs: warmupLastFrameAt > warmupFirstFrameAt
+            ? warmupLastFrameAt - warmupFirstFrameAt
+            : 0
+        });
         if (deferEncoderInit && lastWarmupFrameW > 0 && lastWarmupFrameH > 0) {
-          // Ensure even dimensions (divisible by 2) for H.264 video encoding compatibility
-          capturedCanvasW = lastWarmupFrameW - (lastWarmupFrameW % 2);
-          capturedCanvasH = lastWarmupFrameH - (lastWarmupFrameH % 2);
+          const sized = resolveEncoderCanvasSize(
+            lastWarmupFrameW,
+            lastWarmupFrameH,
+            targetCanvasW,
+            targetCanvasH
+          );
+          capturedCanvasW = sized.width;
+          capturedCanvasH = sized.height;
           log('preview_record_encoder_canvas_sized', {
+            sourceWidth: lastWarmupFrameW,
+            sourceHeight: lastWarmupFrameH,
             width: capturedCanvasW,
-            height: capturedCanvasH
+            height: capturedCanvasH,
+            upscaled: sized.upscaled,
+            targetWidth: targetCanvasW,
+            targetHeight: targetCanvasH
           });
+        } else {
+          capturedCanvasW = targetCanvasW - (targetCanvasW % 2);
+          capturedCanvasH = targetCanvasH - (targetCanvasH % 2);
         }
         mountPingPong();
         return pingPong.init();
@@ -483,13 +584,16 @@ function createPreviewRecordPipeline(page) {
           page.setData({ isRecording: true });
         }
         log('preview_record_pipeline_start', {
-          fps,
+          targetFpsCap,
+          effectiveFps,
           sessionId: instanceSessionId,
           requireFirstFrame,
           warmupMinFrames: currentWarmupMinFrames,
           deferEncoderInit,
           canvasWidth: capturedCanvasW,
-          canvasHeight: capturedCanvasH
+          canvasHeight: capturedCanvasH,
+          sourceFrameWidth: lastWarmupFrameW,
+          sourceFrameHeight: lastWarmupFrameH
         });
       };
       const handleStartError = (err) => {
@@ -503,6 +607,8 @@ function createPreviewRecordPipeline(page) {
         }
         pipelineWarmedUp = false;
         warmupFrameCount = 0;
+        warmupFirstFrameAt = 0;
+        warmupLastFrameAt = 0;
         pipelineStartAt = 0;
         warmupWaiters = [];
         feeding = false;
@@ -536,6 +642,8 @@ function createPreviewRecordPipeline(page) {
     active = false;
     pipelineWarmedUp = false;
     warmupFrameCount = 0;
+    warmupFirstFrameAt = 0;
+    warmupLastFrameAt = 0;
     pipelineStartAt = 0;
     warmupWaiters = [];
     feeding = false;
