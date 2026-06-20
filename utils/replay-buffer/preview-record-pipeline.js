@@ -17,6 +17,32 @@ const PREVIEW_RECORD_TARGET_CANVAS_H = 720;
 const PREVIEW_RECORD_FPS_MEASURE_MIN_FRAMES = 8;
 /** 测速窗口至少毫秒数。 */
 const PREVIEW_RECORD_FPS_MEASURE_MIN_SPAN_MS = 320;
+/** Android 1280×720 单轨 requestFrame 串行 p50 经验值（ms）。 */
+const ANDROID_FEED_MS_BASE_720P = 78;
+
+/**
+ * @returns {boolean}
+ */
+function isAndroidPlatform() {
+  try {
+    return String(wx.getSystemInfoSync().platform || '').toLowerCase() === 'android';
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Android 按 canvas 像素估算 requestFrame 可达 fps（探测失败时的保守回退）。
+ * @param {number} canvasW
+ * @param {number} canvasH
+ * @returns {number}
+ */
+function estimateAndroidAchievableEncoderFps(canvasW, canvasH) {
+  const pixels = Math.max(1, Math.floor(Number(canvasW) || 0) * Math.floor(Number(canvasH) || 0));
+  const basePixels = PREVIEW_RECORD_TARGET_CANVAS_W * PREVIEW_RECORD_TARGET_CANVAS_H;
+  const feedMs = ANDROID_FEED_MS_BASE_720P * Math.sqrt(pixels / basePixels);
+  return Math.max(10, Math.min(24, Math.floor(1000 / (feedMs + 3))));
+}
 
 /**
  * @param {number} fps
@@ -105,6 +131,12 @@ function createPreviewRecordPipeline(page) {
   let latestFeedFrame = null;
   /** CFR 定频喂帧 timer。 */
   let cfrPumpTimer = null;
+  /** CFR 墙钟锚点（ms），用于与 feed 耗时解耦。 */
+  let cfrAnchorMs = 0;
+  /** CFR 已调度 tick 序号（从 1 递增）。 */
+  let cfrTickSeq = 0;
+  /** feed 忙时错过的墙钟 tick 数，完成后以重复帧补回。 */
+  let cfrMissedTicks = 0;
   /** 最近一次帧/轨道活动，供 segment watchdog 识别乒乓假死。 */
   let lastPipelineHeartbeatAt = 0;
   /** 当前 start() 是否已完成预热（收到足够帧）。 */
@@ -147,6 +179,9 @@ function createPreviewRecordPipeline(page) {
       clearTimeout(cfrPumpTimer);
       cfrPumpTimer = null;
     }
+    cfrAnchorMs = 0;
+    cfrTickSeq = 0;
+    cfrMissedTicks = 0;
   }
 
   /**
@@ -158,6 +193,7 @@ function createPreviewRecordPipeline(page) {
       return Promise.resolve();
     }
     if (feeding) {
+      cfrMissedTicks += 1;
       return Promise.resolve();
     }
     const now = Date.now();
@@ -170,16 +206,55 @@ function createPreviewRecordPipeline(page) {
     return pingPong.feedFrame(latestFeedFrame).finally(() => {
       feeding = false;
       feedingSince = 0;
+      /** 补回 feed 阻塞期间错过的墙钟 tick（重复上一帧，保证 1.0x）。 */
+      const catchup = Math.min(4, cfrMissedTicks);
+      cfrMissedTicks -= catchup;
+      if (catchup <= 0 || !active || !pingPong || !latestFeedFrame) {
+        return undefined;
+      }
+      let left = catchup;
+      const chainCatchup = () => {
+        if (left <= 0 || !active || !pingPong || !latestFeedFrame) {
+          return Promise.resolve();
+        }
+        if (feeding) {
+          cfrMissedTicks += left;
+          return Promise.resolve();
+        }
+        left -= 1;
+        feeding = true;
+        feedingSince = Date.now();
+        return pingPong.feedFrame(latestFeedFrame).finally(() => {
+          feeding = false;
+          feedingSince = 0;
+          return chainCatchup();
+        });
+      };
+      return chainCatchup();
     });
   }
 
   /**
-   * 按 encoderFps 墙钟定频喂帧；相机送帧低于目标 fps 时自动重复上一帧，保证 1.0x 且元数据为 24fps。
+   * 按 encoderFps 墙钟定频喂帧；调度与 feed 完成解耦，相机帧不足时重复上一帧。
    * @returns {void}
    */
   function scheduleCfrPumpTick() {
     if (!active || !pingPong) return;
     const intervalMs = frameIntervalMs(encoderFps);
+    if (!cfrAnchorMs) {
+      cfrAnchorMs = Date.now();
+      cfrTickSeq = 0;
+    }
+    cfrTickSeq += 1;
+    const targetAt = cfrAnchorMs + (cfrTickSeq - 1) * intervalMs;
+    let delay = targetAt - Date.now();
+    /** 落后超过 1s 则重置锚点，避免长时间暂停后突发补帧。 */
+    if (delay < -1000) {
+      cfrAnchorMs = Date.now();
+      cfrTickSeq = 1;
+      cfrMissedTicks = 0;
+      delay = 0;
+    }
     cfrPumpTimer = setTimeout(() => {
       cfrPumpTimer = null;
       if (feedingSince > 0 && Date.now() - feedingSince > 1200) {
@@ -189,12 +264,9 @@ function createPreviewRecordPipeline(page) {
         feeding = false;
         feedingSince = 0;
       }
-      feedLatestFrameToEncoder().finally(() => {
-        if (active && pingPong) {
-          scheduleCfrPumpTick();
-        }
-      });
-    }, intervalMs);
+      feedLatestFrameToEncoder();
+      scheduleCfrPumpTick();
+    }, Math.max(0, delay));
   }
 
   /**
@@ -607,20 +679,8 @@ function createPreviewRecordPipeline(page) {
           warmupLastFrameAt,
           warmupFrameCount
         );
-        /** 编码器始终用目标 CFR；相机实测偏低时由 CFR 泵重复上一帧，避免 15fps 元数据。 */
+        /** 编码器 CFR：iOS 用目标 fps；Android 在 canvas 尺寸确定后再保守估计，启动前再实测校准。 */
         encoderFps = targetFpsCap;
-        frameInterval = frameIntervalMs(encoderFps);
-        log('preview_record_adaptive_fps', {
-          targetFpsCap,
-          encoderFps,
-          measuredCameraFps: adaptive.measuredFps,
-          cfrFrameDuplication: adaptive.measuredFps > 0 && adaptive.measuredFps < targetFpsCap - 0.5,
-          fallback: adaptive.fallback,
-          warmupFrameCount,
-          warmupSpanMs: warmupLastFrameAt > warmupFirstFrameAt
-            ? warmupLastFrameAt - warmupFirstFrameAt
-            : 0
-        });
         if (deferEncoderInit && lastWarmupFrameW > 0 && lastWarmupFrameH > 0) {
           const sized = resolveEncoderCanvasSize(
             lastWarmupFrameW,
@@ -643,8 +703,60 @@ function createPreviewRecordPipeline(page) {
           capturedCanvasW = targetCanvasW - (targetCanvasW % 2);
           capturedCanvasH = targetCanvasH - (targetCanvasH % 2);
         }
+        if (isAndroidPlatform()) {
+          encoderFps = Math.min(
+            targetFpsCap,
+            estimateAndroidAchievableEncoderFps(capturedCanvasW, capturedCanvasH)
+          );
+        }
+        frameInterval = frameIntervalMs(encoderFps);
+        log('preview_record_adaptive_fps', {
+          targetFpsCap,
+          encoderFps,
+          measuredCameraFps: adaptive.measuredFps,
+          cfrFrameDuplication: adaptive.measuredFps > 0 && adaptive.measuredFps < targetFpsCap - 0.5,
+          fallback: adaptive.fallback,
+          androidFeedEstimate: isAndroidPlatform(),
+          warmupFrameCount,
+          warmupSpanMs: warmupLastFrameAt > warmupFirstFrameAt
+            ? warmupLastFrameAt - warmupFirstFrameAt
+            : 0
+        });
         mountPingPong();
         return pingPong.init();
+      };
+      /**
+       * Android：启动录制前实测 requestFrame 吞吐，使 MediaRecorder fps 与可达编码率一致。
+       * @returns {Promise<void>}
+       */
+      const calibrateAndroidEncoderFpsIfNeeded = () => {
+        if (!isAndroidPlatform() || !pingPong) {
+          return Promise.resolve();
+        }
+        const probeFrame = latestFeedFrame;
+        if (!probeFrame) {
+          return Promise.resolve();
+        }
+        return pingPong.probeRequestFrameThroughput(probeFrame, 6).then((result) => {
+          const p50 = Number(result && result.p50Ms) || 0;
+          const suggested = Number(result && result.suggestedFps) || encoderFps;
+          if (p50 >= 20 && suggested > 0 && suggested < encoderFps) {
+            encoderFps = suggested;
+            pingPong.fps = suggested;
+            frameInterval = frameIntervalMs(encoderFps);
+          } else if (p50 >= 20 && suggested > encoderFps && suggested <= targetFpsCap) {
+            encoderFps = suggested;
+            pingPong.fps = suggested;
+            frameInterval = frameIntervalMs(encoderFps);
+          }
+          log('preview_record_android_feed_probe', {
+            p50Ms: p50,
+            encoderFps,
+            targetFpsCap,
+            canvasWidth: capturedCanvasW,
+            canvasHeight: capturedCanvasH
+          });
+        });
       };
       const activatePipeline = () => {
         active = true;
@@ -652,7 +764,7 @@ function createPreviewRecordPipeline(page) {
       };
       const finishPipelineStart = () => {
         touchPipelineHeartbeat('pipeline_start');
-        startCfrPump(targetFpsCap);
+        startCfrPump(encoderFps);
         if (page) {
           page.lastRecordStartAt = Date.now();
           page.setData({ isRecording: true });
@@ -696,6 +808,7 @@ function createPreviewRecordPipeline(page) {
         ? startFrameSource().then(afterWarmup).then(bootEncoder)
         : bootEncoder().then(startFrameSource).then(afterWarmup);
       return bootChain
+        .then(() => calibrateAndroidEncoderFpsIfNeeded())
         .then(activatePipeline)
         .then(finishPipelineStart)
         .catch(handleStartError);

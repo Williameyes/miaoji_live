@@ -1354,6 +1354,65 @@ class PingPongRecorder {
   }
 
   /**
+   * Android 启动前测量 requestFrame 串行耗时，校准 MediaRecorder 声明 fps（避免 24fps 元数据 + ~12fps 实际编码 → 2x 快进）。
+   * @param {{ data: ArrayBuffer, width: number, height: number }} frame
+   * @param {number} [samples=6]
+   * @returns {Promise<{ p50Ms: number, suggestedFps: number }>}
+   */
+  probeRequestFrameThroughput(frame, samples) {
+    const track = this.tracks.A;
+    if (!track || !frame || !track.blit) {
+      return Promise.resolve({ p50Ms: 0, suggestedFps: this.fps });
+    }
+    const count = Math.max(3, Math.min(10, Math.floor(Number(samples) || 6)));
+    /** @type {number[]} */
+    const latencies = [];
+    return this._ensureRecorder('A')
+      .then(() => startRecorder(track.recorder))
+      .then(() => {
+        let chain = Promise.resolve();
+        for (let i = 0; i < count; i += 1) {
+          chain = chain.then(() => {
+            const t0 = Date.now();
+            return requestFrameRecorder(track.recorder, () => {
+              track.blit.drawRgba(frame);
+            }).then(() => {
+              latencies.push(Date.now() - t0);
+            });
+          });
+        }
+        return chain;
+      })
+      .then(() => stopRecorder(track.recorder).catch(() => { }))
+      .then(() => {
+        this._destroyRecorder(track);
+        track.recording = false;
+        track.hasRealFrame = false;
+        track.recordStartWallMs = 0;
+        latencies.sort((a, b) => a - b);
+        const p50 = latencies[Math.floor(latencies.length / 2)] || 0;
+        const suggestedFps = p50 >= 20
+          ? Math.max(10, Math.min(24, Math.floor(1000 / (p50 + 2))))
+          : this.fps;
+        this._log('ping_pong_probe_throughput', {
+          p50Ms: p50,
+          suggestedFps,
+          samples: latencies.length
+        });
+        return { p50Ms: p50, suggestedFps };
+      })
+      .catch((err) => {
+        this._log('ping_pong_probe_failed', { err: formatWxErr(err) });
+        if (track.recorder) {
+          stopRecorder(track.recorder).catch(() => { });
+          this._destroyRecorder(track);
+          track.recording = false;
+        }
+        return { p50Ms: 0, suggestedFps: this.fps };
+      });
+  }
+
+  /**
    * 将相机帧绘制到所有正在录制的轨道。
    * @param {{ data: ArrayBuffer, width: number, height: number }} frame
    * @returns {Promise<void>}

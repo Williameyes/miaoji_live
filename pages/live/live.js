@@ -14110,8 +14110,8 @@ pauseRollingForReplay: function (onPaused) {
             if (!savedPath) {
               this.appendHealthLog('highlight_materialize_save_fail', {
                 id: String(task.id || ''),
-                fromPath: typeof fromPath === 'string' ? fromPath.slice(-48) : '',
-                destPath: filePath.slice(-48)
+                fromPathTail: typeof fromPath === 'string' ? fromPath.slice(-96) : '',
+                destPathTail: typeof filePath === 'string' ? filePath.slice(-96) : ''
               });
               handleFail();
               return;
@@ -14367,23 +14367,6 @@ pauseRollingForReplay: function (onPaused) {
                     }
                     return runTailTrimFallback(tailErr, 'long_seg_tail');
                   });
-              }
-              if (!isLiveHostIos()
-                && tailTrim
-                && trimMod
-                && typeof trimMod.trimVideoTail === 'function'
-                && probedDurationMs > 500) {
-                logMaterializeDiag('trim_strategy', { trimStrategy: 'android_tail_first' });
-                return trimMod.trimVideoTail(
-                  srcPath,
-                  tailLeadMs,
-                  fallbackWallDurationMs || probedDurationMs,
-                  { sourceSizeBytes: srcSizeBytes, sourceDurationMs: probedDurationMs, maxAttempts: 3 }
-                )
-                  .then((tailResult) => {
-                    applyTailTrimResult(tailResult, 'android_tail_first', {});
-                  })
-                  .catch((androidTailErr) => runTailTrimFallback(androidTailErr, 'android_tail_first'));
               }
               if (canClickWallMap && probedDurationMs > 500 && trimMod.mapWallWindowToFileMs) {
                 const mapped = trimMod.mapWallWindowToFileMs(

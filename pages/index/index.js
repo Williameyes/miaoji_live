@@ -102,6 +102,18 @@ function mapMergeExportError(err) {
   if (msg.indexOf('codec_mismatch') >= 0 || msg.indexOf('stts_incompatible') >= 0) {
     return '片段分辨率/编码不一致，请选同场同源片段';
   }
+  if (msg.indexOf('storage limit') >= 0 || msg.indexOf('maximum size') >= 0 || msg.indexOf('file storage') >= 0) {
+    return '本地存储空间不足，请删除旧片段或先「下载至相册并清空」后重试';
+  }
+  if (msg.indexOf('read_file_fail') >= 0 || msg.indexOf('readFile:fail') >= 0) {
+    return '读取片段文件失败，请重试';
+  }
+  if (msg.indexOf('write_file_fail') >= 0 || msg.indexOf('writeFile:fail') >= 0) {
+    return '写入合并文件失败，多半是存储空间不足，请清理后重试';
+  }
+  if (stage === 'concat') {
+    return '视频合成失败，请减少片段数量或清理存储后重试';
+  }
   if (msg.indexOf('mp4_structure_incomplete') >= 0 || msg.indexOf('mp4_stbl_missing') >= 0) {
     return '视频文件结构异常，请先单独下载验证';
   }

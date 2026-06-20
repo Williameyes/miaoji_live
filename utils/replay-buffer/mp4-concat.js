@@ -144,6 +144,28 @@ function parseVisualSampleFingerprint(stsdBytes) {
 }
 
 /**
+ * 将微信文件系统 fail 回调规范为带 message 的 Error（避免日志里出现 [object Object]）。
+ * @param {unknown} err
+ * @param {string} [fallback]
+ * @returns {Error}
+ */
+function normalizeFsError(err, fallback) {
+  if (err instanceof Error) {
+    if (!err.message && err.errMsg) err.message = String(err.errMsg);
+    return err;
+  }
+  const msg = err && typeof err === 'object' && (err.errMsg || err.message)
+    ? String(err.errMsg || err.message)
+    : (typeof err === 'string' && err ? err : fallback || 'fs_fail');
+  const wrapped = new Error(msg);
+  if (err && typeof err === 'object') {
+    if (err.errMsg) wrapped.errMsg = String(err.errMsg);
+    if (err.errno != null) wrapped.errno = err.errno;
+  }
+  return wrapped;
+}
+
+/**
  * 读取本地文件。
  * @param {string} filePath
  * @returns {Promise<Uint8Array>}
@@ -160,7 +182,7 @@ function readFileBytes(filePath) {
         }
         reject(new Error('read_file_fail'));
       },
-      fail: (err) => reject(err || new Error('read_file_fail'))
+      fail: (err) => reject(normalizeFsError(err, 'read_file_fail'))
     });
   });
 }
@@ -179,7 +201,7 @@ function writeFileBytes(filePath, bytes) {
       filePath,
       data,
       success: () => resolve(),
-      fail: (err) => reject(err || new Error('write_file_fail'))
+      fail: (err) => reject(normalizeFsError(err, 'write_file_fail'))
     });
   });
 }
@@ -382,7 +404,11 @@ function partsCompatible(a, b) {
   const fa = a.fingerprint || parseVisualSampleFingerprint(a.stsdBytes);
   const fb = b.fingerprint || parseVisualSampleFingerprint(b.stsdBytes);
   if (fa.codec !== 'unknown' && fb.codec !== 'unknown') {
-    return fa.codec === fb.codec && fa.width === fb.width && fa.height === fb.height;
+    if (fa.codec !== fb.codec) return false;
+    /** MediaContainer 导出常解析不出宽高（均为 0），此时回退 stsd 字节比对 */
+    if (fa.width > 0 && fb.width > 0 && fa.height > 0 && fb.height > 0) {
+      return fa.width === fb.width && fa.height === fb.height;
+    }
   }
   /** 无法解析时回退 stsd 长度 + 前 64 字节 */
   if (a.stsdBytes.length !== b.stsdBytes.length) return false;
@@ -830,7 +856,7 @@ function concatMp4Files(filePaths, destPath) {
       try {
         acc.push(extractMp4Parts(buf));
       } catch (e) {
-        const err = e instanceof Error ? e : new Error(String(e));
+        const err = normalizeFsError(e, 'mp4_extract_fail');
         err.pathTail = p.slice(-48);
         err.fileBytes = buf.length;
         throw err;
@@ -839,17 +865,24 @@ function concatMp4Files(filePaths, destPath) {
     })),
     Promise.resolve(/** @type {ReturnType<typeof extractMp4Parts>[]} */ ([]))
   ).then((partsList) => {
+    let mergedBytes = null;
     try {
-      return writeFileBytes(outPath, buildMergedMp4(partsList)).then(() => outPath);
+      mergedBytes = buildMergedMp4(partsList);
     } catch (e) {
-      const err = e instanceof Error ? e : new Error(String(e));
+      const err = normalizeFsError(e, 'mp4_build_fail');
       err.stage = 'concat';
       return Promise.reject(err);
     }
+    return writeFileBytes(outPath, mergedBytes).then(() => outPath).catch((e) => {
+      const err = normalizeFsError(e, 'write_file_fail');
+      err.stage = 'concat';
+      err.outPathTail = outPath.slice(-48);
+      err.outBytes = mergedBytes ? mergedBytes.length : 0;
+      return Promise.reject(err);
+    });
   }).catch((e) => {
-    if (e && e.stage) return Promise.reject(e);
-    const err = e instanceof Error ? e : new Error(String(e));
-    err.stage = 'concat';
+    const err = normalizeFsError(e, 'concat_fail');
+    if (!err.stage) err.stage = 'concat';
     return Promise.reject(err);
   });
 }

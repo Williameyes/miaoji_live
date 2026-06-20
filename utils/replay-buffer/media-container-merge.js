@@ -9,6 +9,15 @@ const MERGE_MAX_CLIPS = 10;
 const MERGE_MAX_TOTAL_MS = 180000;
 
 /**
+ * 提取错误的可读文案（兼容微信 API 返回的 plain object）。
+ * @param {unknown} err
+ * @returns {string}
+ */
+function errorMessage(err) {
+  return String(err && (err.message || err.errMsg) || err || 'unknown');
+}
+
+/**
  * 记录诊断并继续抛出错误。
  * @param {string} stage
  * @param {unknown} err
@@ -16,7 +25,7 @@ const MERGE_MAX_TOTAL_MS = 180000;
  * @returns {never}
  */
 function rejectWithDiag(stage, err, extra) {
-  const msg = String(err && (err.message || err.errMsg) || err || 'unknown');
+  const msg = errorMessage(err);
   appendMergeExportDiag('merge_fail', {
     stage,
     error: msg.slice(0, 240),
@@ -25,6 +34,57 @@ function rejectWithDiag(stage, err, extra) {
   const wrapped = new Error(msg);
   wrapped.stage = stage;
   throw wrapped;
+}
+
+/**
+ * 判断是否为 MediaContainer 归一化产生的临时文件路径。
+ * @param {string} filePath
+ * @returns {boolean}
+ */
+function isNormalizedTempPath(filePath) {
+  const p = typeof filePath === 'string' ? filePath : '';
+  return p.indexOf('tmp_') >= 0 || p.indexOf('/tmp_') >= 0;
+}
+
+/**
+ * 删除合并流程产生的临时归一化文件，释放沙盒空间。
+ * @param {string[]} paths
+ * @returns {void}
+ */
+function cleanupNormalizedTempPaths(paths) {
+  const list = Array.isArray(paths) ? paths.filter(isNormalizedTempPath) : [];
+  if (!list.length || typeof wx === 'undefined' || typeof wx.getFileSystemManager !== 'function') return;
+  const fs = wx.getFileSystemManager();
+  list.forEach((filePath) => {
+    try {
+      fs.unlink({ filePath, fail: () => {} });
+    } catch (e) {
+      // ignore
+    }
+  });
+}
+
+/**
+ * 估算输入路径列表的文件总字节数。
+ * @param {string[]} paths
+ * @returns {Promise<number>}
+ */
+function sumInputFileBytes(paths) {
+  const list = Array.isArray(paths) ? paths.filter(Boolean) : [];
+  if (!list.length || typeof wx === 'undefined' || typeof wx.getFileSystemManager !== 'function') {
+    return Promise.resolve(0);
+  }
+  const fs = wx.getFileSystemManager();
+  return list.reduce(
+    (chain, filePath) => chain.then((sum) => new Promise((resolve) => {
+      fs.getFileInfo({
+        filePath,
+        success: (res) => resolve(sum + (res && res.size ? res.size : 0)),
+        fail: () => resolve(sum)
+      });
+    })),
+    Promise.resolve(0)
+  );
 }
 
 /**
@@ -259,32 +319,44 @@ function mergeClipsToSingleFile(clips, destPath, options) {
         preparedCount: paths.length
       });
     }
-    appendMergeExportDiag('merge_concat_start', {
-      pathCount: paths.length,
-      pathsTail: paths.map((p) => p.slice(-32))
-    });
-    if (onProgress) onProgress('concat', 0, 1);
-    return sumProbeDurationMs(paths).then((expectedMs) => mp4Concat.concatMp4Files(paths, destPath)
-      .then((rawPath) => mediaContainerTrim.probeVideoDurationMs(rawPath).then((probe) => {
-        const probeMs = probe && probe.durationMs ? probe.durationMs : 0;
-        if (expectedMs > 800 && probeMs >= expectedMs * 0.85) {
-          return remuxMergedForPlayback(rawPath, expectedMs);
-        }
-        appendMergeExportDiag('merge_remux_skip', {
-          reason: 'probe_short',
-          probeMs,
-          expectedMs
+    return sumInputFileBytes(paths).then((inputBytes) => {
+      appendMergeExportDiag('merge_concat_start', {
+        pathCount: paths.length,
+        inputBytes,
+        pathsTail: paths.map((p) => p.slice(-32))
+      });
+      if (onProgress) onProgress('concat', 0, 1);
+      return sumProbeDurationMs(paths).then((expectedMs) => mp4Concat.concatMp4Files(paths, destPath)
+        .then((rawPath) => mediaContainerTrim.probeVideoDurationMs(rawPath).then((probe) => {
+          const probeMs = probe && probe.durationMs ? probe.durationMs : 0;
+          if (expectedMs > 800 && probeMs >= expectedMs * 0.85) {
+            return remuxMergedForPlayback(rawPath, expectedMs);
+          }
+          appendMergeExportDiag('merge_remux_skip', {
+            reason: 'probe_short',
+            probeMs,
+            expectedMs
+          });
+          return rawPath;
+        }))
+        .then((outPath) => validateMergedOutput(outPath, paths))
+        .then((outPath) => {
+          if (onProgress) onProgress('concat', 1, 1);
+          appendMergeExportDiag('merge_success', { outPathTail: outPath.slice(-56) });
+          return outPath;
+        }))
+        .finally(() => {
+          cleanupNormalizedTempPaths(paths);
         });
-        return rawPath;
-      }))
-      .then((outPath) => validateMergedOutput(outPath, paths))
-      .then((outPath) => {
-        if (onProgress) onProgress('concat', 1, 1);
-        appendMergeExportDiag('merge_success', { outPathTail: outPath.slice(-56) });
-        return outPath;
-      }));
+    });
   }).catch((err) => {
-    if (err && err.stage) return Promise.reject(err);
+    if (err && err.stage) {
+      appendMergeExportDiag('merge_fail', {
+        stage: String(err.stage),
+        error: errorMessage(err).slice(0, 240)
+      });
+      return Promise.reject(err);
+    }
     return rejectWithDiag('unknown', err, {});
   });
 }
