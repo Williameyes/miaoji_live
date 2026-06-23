@@ -1936,6 +1936,7 @@ buildVipGateStateFromCheckStatus: function (body) {
       this.ensureRollingDir().then(() => this.probeLiveSandboxStorage('kickoff', true)).then(() => this.clearStaleRollingFiles()).finally(() => {
         try {
           this.pruneHighlightClipsWithInvalidFiles('on_show_kickoff');
+          clipsStorage.pruneUnplayableLegacyList();
         } catch (ePrune) {}
         // 必须在入场清理完全结束后，再赋予录制活跃状态与标记就绪
         this.rollingActive = true;
@@ -2130,8 +2131,14 @@ buildVipGateStateFromCheckStatus: function (body) {
   storageWatermarkLevel: 0,
   /** 高光实体最大保留条数（>=30 条实战需求；超出淘汰最旧项）。 */
   highlightsMaxCount: 100,
-  /** 紧急清理时全局至少保留的高光条数，避免历史高光被连续误删。 */
-  highlightsEmergencyMinKeepCount: 30,
+  /** 紧急清理时全局至少保留的高光条数（720p 大分段下 30 条会占满沙盒，故下调）。 */
+  highlightsEmergencyMinKeepCount: 5,
+  /** persist 失败且需突破 minKeep 时的硬下限（条数 ≤ 该值时不再删高光，仅清 rolling）。 */
+  highlightsEmergencyHardFloor: 3,
+  /** 连续 GC 无释放计数，用于避免「高光删不动」误熔断。 */
+  _persistIoFailGcStreak: 0,
+  /** 最近一次 rolling GC 删除的文件数（诊断用）。 */
+  _lastRollingGcFreedCount: 0,
   /** startRecord 连续失败风暴计数（每次达到 failStreak=5 记 1 次）。 */
   segmentStartFailStormCycles: 0,
   /** startOneSegment 单飞锁，防止并发 startRecord 导致状态错乱。 */
@@ -2205,6 +2212,8 @@ buildVipGateStateFromCheckStatus: function (body) {
 initHealthLogs: function () {
     this._healthLogStorageKey = 'LIVE_HEALTH_LOGS_V1';
     this._healthLogFlushTimer = null;
+    this._persistIoFailGcStreak = 0;
+    this._lastRollingGcFreedCount = 0;
     try {
       LIVE_AUDIT.resetAuditSession();
     } catch (eAuditReset) {/* ignore */}
@@ -2264,6 +2273,10 @@ initHealthLogs: function () {
     this.mirrorHealthToAudit(item.e, item.d);
     this.scheduleHealthLogFlush();
     const ev = item.e;
+
+    if (ev === 'ping_pong_segment_ready') {
+      this._persistIoFailGcStreak = 0;
+    }
 
     if (ev === 'ping_pong_segment_rejected_hollow') {
       if (this.isLiveForegroundRecordingRecoverPending()) {
@@ -8379,9 +8392,135 @@ updatePipelineHealth: function () {
     }));
   },
   /**
-   * 清理 `_rolling` 中已不在 ReplayBuffer 窗口内的孤儿文件。
-   * @returns {void}
+   * 从 rolling 文件名提取排序用时间戳（如 pp_A_17_1782142863236.mp4）。
+   * @param {string} name 文件名
+   * @returns {number}
    */
+  _extractRollingMp4SortKey: function (name) {
+    if (!name) return 0;
+    const m = String(name).match(/_(\d{10,})\.mp4$/i);
+    return m ? Number(m[1]) : 0;
+  },
+  /**
+   * 收集当前应保留的 rolling mp4 路径（ReplayBuffer + 视录分离管线在录/缓冲段）。
+   * @returns {Set<string>}
+   */
+  _collectRollingPathKeepSet: function () {
+    const keep = new Set();
+    const add = (p) => {
+      if (p && typeof p === 'string') keep.add(p);
+    };
+    (this.segmentBuffer || []).forEach(it => {
+      add(it && it.path);
+    });
+    (this.rollingSegments || []).forEach(seg => {
+      add(seg && seg.path);
+    });
+    const pipeline = this._previewRecordPipeline;
+    if (pipeline && typeof pipeline.getSegments === 'function') {
+      pipeline.getSegments().forEach(seg => {
+        add(seg && seg.path);
+      });
+    }
+    return keep;
+  },
+  /**
+   * 删除 `_rolling` 中不在 keepSet 内的 mp4（孤儿文件）。
+   * @param {Set<string>} keepSet 应保留的路径集合
+   * @param {string} [reason] 诊断用
+   * @returns {number} 删除文件数
+   */
+  _unlinkRollingMp4ExceptKeep: function (keepSet, reason) {
+    const fs = wx.getFileSystemManager();
+    const rollingDir = this.getRollingDir();
+    const keep = keepSet instanceof Set ? keepSet : new Set();
+    let removed = 0;
+    try {
+      if (typeof fs.readdirSync !== 'function') return removed;
+      const names = fs.readdirSync(rollingDir) || [];
+      names.forEach(name => {
+        if (!name || String(name).indexOf('.mp4') < 0) return;
+        const full = `${rollingDir}/${name}`;
+        if (keep.has(full)) return;
+        try {
+          fs.unlinkSync(full);
+          removed += 1;
+        } catch (eUn) {/* ignore */}
+      });
+    } catch (eRd) {/* ignore */}
+    if (removed > 0) {
+      this.appendHealthLog('rolling_orphan_file_unlinked', {
+        n: removed,
+        reason: reason || 'orphan'
+      });
+    }
+    return removed;
+  },
+  /**
+   * 将 `_rolling` 内 mp4 数量压至 maxCount 以下（优先删最旧且不在 keepSet 的文件）。
+   * @param {number} maxCount 允许保留的最大文件数
+   * @param {Set<string>} keepSet 当前活跃路径，尽量不删
+   * @param {string} [reason] 诊断用
+   * @returns {number} 删除文件数
+   */
+  _trimRollingMp4ToMaxCount: function (maxCount, keepSet, reason) {
+    const fs = wx.getFileSystemManager();
+    const rollingDir = this.getRollingDir();
+    const keep = keepSet instanceof Set ? keepSet : new Set();
+    const cap = Math.max(2, Math.floor(Number(maxCount) || 6));
+    let removed = 0;
+    try {
+      if (typeof fs.readdirSync !== 'function') return removed;
+      const names = (fs.readdirSync(rollingDir) || []).filter(n => n && String(n).indexOf('.mp4') >= 0);
+      if (names.length <= cap) return removed;
+      const entries = names.map(name => ({
+        name,
+        full: `${rollingDir}/${name}`,
+        ts: this._extractRollingMp4SortKey(name)
+      }));
+      entries.sort((a, b) => a.ts - b.ts || a.name.localeCompare(b.name));
+      let remain = entries.length;
+      for (let i = 0; i < entries.length && remain > cap; i += 1) {
+        const ent = entries[i];
+        if (keep.has(ent.full)) continue;
+        try {
+          fs.unlinkSync(ent.full);
+          removed += 1;
+          remain -= 1;
+        } catch (eUn) {/* ignore */}
+      }
+    } catch (eRd) {/* ignore */}
+    if (removed > 0) {
+      this.appendHealthLog('rolling_dir_trimmed', {
+        reason: reason || 'trim',
+        removed,
+        maxCount: cap
+      });
+    }
+    return removed;
+  },
+  /**
+   * 配额紧张时清理 rolling：删孤儿 + 按数量上限裁最旧文件（保留当前管线活跃段）。
+   * @param {string} [reason] 诊断用
+   * @param {{ maxCount?: number }} [opts]
+   * @returns {number} 合计删除文件数
+   */
+  pruneRollingMp4ForQuota: function (reason, opts) {
+    const options = opts && typeof opts === 'object' ? opts : {};
+    const keepSet = this._collectRollingPathKeepSet();
+    const why = typeof reason === 'string' ? reason : 'quota';
+    const orphanRm = this._unlinkRollingMp4ExceptKeep(keepSet, why + '_orphan');
+    const maxCount = Number.isFinite(options.maxCount)
+      ? options.maxCount
+      : Math.max(6, keepSet.size + 2);
+    const trimRm = this._trimRollingMp4ToMaxCount(maxCount, keepSet, why + '_trim');
+    const total = orphanRm + trimRm;
+    this._lastRollingGcFreedCount = total;
+    if (total > 0) {
+      this._persistIoFailGcStreak = 0;
+    }
+    return total;
+  },
   /**
    * 硬恢复时清空 `_rolling` 下全部 mp4，避免损坏母片在乒乓双轨中继续轮换。
    * @param {string} [reason]
@@ -8412,15 +8551,10 @@ updatePipelineHealth: function () {
     return removed;
   },
   pruneRollingDirOrphans: function () {
-    const fs = wx.getFileSystemManager();
     const rollingDir = this.getRollingDir();
-    const keep = new Set();
-    (this.rollingSegments || []).forEach(seg => {
-      if (seg && seg.path && String(seg.path).indexOf(`${rollingDir}/`) === 0) {
-        keep.add(seg.path);
-      }
-    });
+    const keep = this._collectRollingPathKeepSet();
     try {
+      const fs = wx.getFileSystemManager();
       if (typeof fs.readdirSync !== 'function') return;
       const names = fs.readdirSync(rollingDir) || [];
       names.forEach(name => {
@@ -10116,42 +10250,14 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
       return;
     }
     this._lastRollingAggressiveFreeAt = now;
-    const fs = wx.getFileSystemManager();
-    const rollingDir = this.getRollingDir();
     this.appendHealthLog('rolling_file_quota_emergency_free', {
       reason: r
     });
     this.pruneIosSegmentBufferUserLocals(2);
     this.trimRollingSegmentBufferForQuota(5);
-    try {
-      if (typeof fs.readdirSync === 'function') {
-        let names = [];
-        try {
-          names = fs.readdirSync(rollingDir) || [];
-        } catch (eRd0) {
-          names = [];
-        }
-        const keep = new Set();
-        (this.segmentBuffer || []).forEach(it => {
-          if (it && it.path) keep.add(it.path);
-        });
-        let n = 0;
-        names.forEach(name => {
-          if (!name || String(name).indexOf('.mp4') < 0) return;
-          const full = `${rollingDir}/${name}`;
-          if (keep.has(full)) return;
-          try {
-            fs.unlinkSync(full);
-            n += 1;
-          } catch (eUn) {}
-        });
-        if (n > 0) {
-          this.appendHealthLog('rolling_orphan_file_unlinked', {
-            n
-          });
-        }
-      }
-    } catch (eR) {}
+    let rollingFreed = this.pruneRollingMp4ForQuota(r, {
+      maxCount: isSevereBreach ? 4 : 6
+    });
     let clipPrune = 0;
     if (r === 'persist_io_fail' || r === 'phase7_user_save_exhausted' || r === 'live_storage_severe_periodic') {
       clipPrune = 4;
@@ -10164,6 +10270,7 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
     if (clipPrune > 0) {
       const deadRm = this.pruneHighlightClipsWithInvalidFiles(r + '_orphan_first');
       if (deadRm > 0) {
+        this._persistIoFailGcStreak = 0;
         this.appendHealthLog('rolling_clip_prune_dead_first', {
           removed: deadRm,
           reason: r
@@ -10172,13 +10279,18 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
       const nowPr = Date.now();
       const emergencyPruneGapMs = 15 * 60 * 1000;
       const isUrgent = r === 'live_storage_severe_periodic' || r === 'persist_io_fail' || r === 'phase7_user_save_exhausted';
-      // P0: severe 水位时击穿 15 分钟冷却期，强制清空 rolling 历史
+      // P0: severe 水位时击穿 15 分钟冷却期，再压一轮 rolling（保留活跃段，不 purgeAll 误删在录文件）
       if (isSevereBreach) {
         this.appendHealthLog('severe_gc_cooldown_breach', {
           reason: r,
           sinceLastMs: this._lastEmergencyClipPruneAt ? nowPr - this._lastEmergencyClipPruneAt : -1
         });
-        this.purgeAllRollingMp4('severe_gc_breach');
+        const extraFreed = this.pruneRollingMp4ForQuota(r + '_severe', {
+          maxCount: 3
+        });
+        if (extraFreed > 0) {
+          rollingFreed += extraFreed;
+        }
       }
       if (!isUrgent && !isSevereBreach && this._lastEmergencyClipPruneAt && nowPr - this._lastEmergencyClipPruneAt < emergencyPruneGapMs) {
         this.appendHealthLog('rolling_clip_prune_cooldown_skip', {
@@ -10190,8 +10302,9 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
       const totalClips = this.getTotalHighlightClipCount();
       const minKeep = Math.max(0, Number(this.highlightsEmergencyMinKeepCount || 0));
       let minKeepForPrune = minKeep;
+      let highlightPruneSkipped = false;
       if (totalClips <= minKeep) {
-        const emergencyFloor = Math.max(4, Number(this.highlightsEmergencyHardFloor || 8));
+        const emergencyFloor = Math.max(1, Number(this.highlightsEmergencyHardFloor || 3));
         if (totalClips > emergencyFloor) {
           minKeepForPrune = emergencyFloor;
           this.appendHealthLog('rolling_clip_prune_break_min_keep', {
@@ -10200,25 +10313,49 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
             minKeep,
             emergencyFloor
           });
+        } else if (totalClips > 0 && isSevereBreach) {
+          minKeepForPrune = Math.max(0, totalClips - 1);
+          this.appendHealthLog('rolling_clip_prune_emergency_one', {
+            reason: r,
+            totalClips,
+            minKeepForPrune
+          });
         } else {
+          highlightPruneSkipped = true;
           this.appendHealthLog('rolling_clip_prune_min_keep_skip', {
             reason: r,
             totalClips,
-            minKeep
+            minKeep,
+            rollingFreed
           });
-          this.activateFileQuotaCircuitBreaker('clip_prune_blocked_by_min_keep');
-          return;
         }
+      }
+      if (highlightPruneSkipped) {
+        if (rollingFreed <= 0) {
+          this._persistIoFailGcStreak = (this._persistIoFailGcStreak || 0) + 1;
+        } else {
+          this._persistIoFailGcStreak = 0;
+        }
+        if (this._persistIoFailGcStreak >= 12) {
+          this.activateFileQuotaCircuitBreaker('persist_io_fail_gc_exhausted');
+        }
+        return;
       }
       this._lastEmergencyClipPruneAt = nowPr;
       const pr = this.pruneOldestHighlightClipsFromStorage(clipPrune, r, {
         minKeepOverride: minKeepForPrune
       });
       if (pr > 0) {
+        this._persistIoFailGcStreak = 0;
         this.appendHealthLog('rolling_clip_prune_with_quota_free', {
           pruned: pr,
           reason: r
         });
+      } else if (rollingFreed <= 0) {
+        this._persistIoFailGcStreak = (this._persistIoFailGcStreak || 0) + 1;
+        if (this._persistIoFailGcStreak >= 12) {
+          this.activateFileQuotaCircuitBreaker('persist_io_fail_gc_exhausted');
+        }
       }
     }
   },
@@ -12231,14 +12368,7 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
       const idx = bucket.findIndex(x => x && String(x.id) === String(id));
       if (idx >= 0) {
         const item = bucket[idx];
-        const toUnlink = new Set();
-        (item.segments || []).forEach(p => {
-          if (p && typeof p === 'string') toUnlink.add(p);
-        });
-        if (item.replaySegment && typeof item.replaySegment === 'string') {
-          toUnlink.add(item.replaySegment);
-        }
-        toUnlink.forEach(p => {
+        clipsStorage.collectClipFilePaths(item).forEach(p => {
           try {
             fs.unlinkSync(p);
           } catch (e) {}

@@ -1640,55 +1640,64 @@ Page({
    * 从 Storage 读取高光列表并按比赛场次分组
    */
   loadHighlights() {
-    try {
-      clipsStorage.mergeDefaultClipBucketIfTargetEmpty(
-        String(wx.getStorageSync(CURRENT_ID_KEY) || '').trim()
-      );
-    } catch (eMerge) {}
     const rawClipsMap = clipsStorage.readClipsMapSafe();
     if (rawClipsMap === null) {
       wx.showToast({ title: '高光索引数据异常', icon: 'none', duration: 2500 });
     }
     const rawClips = rawClipsMap || {};
+    if (rawClipsMap) {
+      const deadRm = clipsStorage.pruneUnplayableClipsFromMap(rawClips);
+      if (deadRm > 0) {
+        clipsStorage.writeClipsMapSafe(rawClips);
+      }
+    }
+    clipsStorage.pruneUnplayableLegacyList();
     const rawMatches = wx.getStorageSync(STORAGE_KEY) || [];
     const legacyClips = wx.getStorageSync('highlight_list') || [];
     const groupedList = [];
 
     rawMatches.forEach((match) => {
       const matchId = match.id;
-      let matchClips = Array.isArray(rawClips[matchId]) ? rawClips[matchId] : [];
-      if (matchClips.length === 0 && match.matchName) {
+      const bucketRaw = rawClips[matchId];
+      let matchClips = Array.isArray(bucketRaw) ? bucketRaw : [];
+      /** 仅在该场次从未写入 MIAOXIE_CLIPS 时回退 legacy；空数组表示已删光，勿复活 */
+      if (matchClips.length === 0 && bucketRaw === undefined && match.matchName) {
         matchClips = legacyClips.filter(
           (c) => c.matchId === matchId || (!c.matchId && c.matchName === match.matchName)
         );
       }
-      matchClips = matchClips.filter((c) => c);
+      matchClips = matchClips.filter((c) => c && !clipsStorage.isClipEntryDead(c));
       if (matchClips.length > 0) {
         const dateStr = this.formatDate(match.createdAt);
         const sortedClips = matchClips.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
         const clipTotal = sortedClips.length;
         const dc = this.data.defaultCover;
+        /** @type {Record<string, unknown>[]} */
+        const videos = sortedClips.map((v, idx) => {
+          const cover = v.cover || dc;
+          const videoPath = v.replaySegment || (v.segments && v.segments[0]) || '';
+          const pathOk = videoPath && clipsStorage.isClipPathPlayable(videoPath);
+          return {
+            ...v,
+            timeText:
+              (v.timeText || this.formatTime(v.createdAt)) +
+              (v.exportedToAlbum ? ' · 已导出相册' : ''),
+            cover,
+            videoPoster: videoPosterFromCover(cover, dc),
+            videoPath: pathOk ? videoPath : '',
+            videoIndex: idx + 1,
+            videoTotal: clipTotal
+          };
+        }).filter((v) => v.videoPath);
+        if (videos.length === 0) return;
         groupedList.push({
           matchId: match.id,
           matchTitle: `${match.teamA.name || 'A'} VS ${match.teamB.name || 'B'}`,
           matchName: match.matchName,
           scoreInfo: `${match.teamA.score} : ${match.teamB.score}`,
           dateStr,
-          clipCount: clipTotal,
-          videos: sortedClips.map((v, idx) => {
-            const cover = v.cover || dc;
-            return {
-              ...v,
-              timeText:
-                (v.timeText || this.formatTime(v.createdAt)) +
-                (v.exportedToAlbum ? ' · 已导出相册' : ''),
-              cover,
-              videoPoster: videoPosterFromCover(cover, dc),
-              videoPath: v.replaySegment || (v.segments && v.segments[0]) || '',
-              videoIndex: idx + 1,
-              videoTotal: clipTotal
-            };
-          })
+          clipCount: videos.length,
+          videos
         });
       }
     });
@@ -1700,29 +1709,33 @@ Page({
         const firstClip = bucket[0];
         const dateStr = this.formatDate(firstClip.createdAt);
         const orphanVideos = bucket
-          .filter((c) => c)
+          .filter((c) => c && !clipsStorage.isClipEntryDead(c))
           .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
         if (orphanVideos.length === 0) return;
-        const orphanTotal = orphanVideos.length;
         const dcOr = this.data.defaultCover;
+        /** @type {Record<string, unknown>[]} */
+        const videos = orphanVideos.map((v, idx) => {
+          const cover = v.cover || dcOr;
+          const videoPath = v.replaySegment || (v.segments && v.segments[0]) || '';
+          const pathOk = videoPath && clipsStorage.isClipPathPlayable(videoPath);
+          return {
+            ...v,
+            timeText:
+              (v.timeText || this.formatTime(v.createdAt)) +
+              (v.exportedToAlbum ? ' · 已导出相册' : ''),
+            cover,
+            videoPoster: videoPosterFromCover(cover, dcOr),
+            videoPath: pathOk ? videoPath : '',
+            videoIndex: idx + 1,
+            videoTotal: orphanVideos.length
+          };
+        }).filter((v) => v.videoPath);
+        if (videos.length === 0) return;
         groupedList.push({
           matchId: id,
           matchTitle: `${firstClip.matchName || '已删比赛'} (遗留)`,
-          clipCount: orphanTotal,
-          videos: orphanVideos.map((v, idx) => {
-            const cover = v.cover || dcOr;
-            return {
-              ...v,
-              timeText:
-                (v.timeText || this.formatTime(v.createdAt)) +
-                (v.exportedToAlbum ? ' · 已导出相册' : ''),
-              cover,
-              videoPoster: videoPosterFromCover(cover, dcOr),
-              videoPath: v.replaySegment || (v.segments && v.segments[0]) || '',
-              videoIndex: idx + 1,
-              videoTotal: orphanTotal
-            };
-          })
+          clipCount: videos.length,
+          videos
         });
       }
     });
@@ -2143,6 +2156,13 @@ Page({
       success: (res) => {
         if (!res.confirm) return;
         ids.forEach((id) => this.doDeleteHighlight(id, true));
+        const clipsMapAfter = clipsStorage.readClipsMapSafe();
+        if (clipsMapAfter) {
+          const deadRm = clipsStorage.pruneUnplayableClipsFromMap(clipsMapAfter);
+          if (deadRm > 0) {
+            clipsStorage.writeClipsMapSafe(clipsMapAfter);
+          }
+        }
         wx.showToast({ title: `已删除 ${ids.length} 个片段`, icon: 'success' });
         this.setData({ batchMode: false, selectedIdsMap: {}, selectedCount: 0 });
         this.loadHighlights();
@@ -2395,19 +2415,15 @@ Page({
       const idx = bucket.findIndex((x) => x && String(x.id) === String(id));
       if (idx >= 0) {
         const item = bucket[idx];
-        const toUnlink = new Set();
-        (item.segments || []).forEach((p) => {
-          if (p && typeof p === 'string') toUnlink.add(p);
-        });
-        if (item.replaySegment && typeof item.replaySegment === 'string') {
-          toUnlink.add(item.replaySegment);
-        }
-        toUnlink.forEach((p) => {
+        clipsStorage.collectClipFilePaths(item).forEach((p) => {
           try {
             fs.unlinkSync(p);
           } catch (e) {}
         });
         bucket.splice(idx, 1);
+        if (bucket.length === 0) {
+          delete clipsMap[matchId];
+        }
         foundInClips = true;
         break;
       }
@@ -2418,14 +2434,7 @@ Page({
     const legacyIdx = legacyList.findIndex((x) => x.id === id);
     if (legacyIdx >= 0) {
       const item = legacyList[legacyIdx];
-      const toUnlinkL = new Set();
-      (item.segments || []).forEach((p) => {
-        if (p && typeof p === 'string') toUnlinkL.add(p);
-      });
-      if (item.replaySegment && typeof item.replaySegment === 'string') {
-        toUnlinkL.add(item.replaySegment);
-      }
-      toUnlinkL.forEach((p) => {
+      clipsStorage.collectClipFilePaths(item).forEach((p) => {
         try {
           fs.unlinkSync(p);
         } catch (e) {}
