@@ -227,6 +227,10 @@ const QUICK_ZOOM_PINCH_MID_MIN = 2;
 const QUICK_ZOOM_PINCH_FAR_MIN = 4;
 const QUICK_ZOOM_PINCH_NEAR_MAX = 2;
 const QUICK_ZOOM_PINCH_MID_MAX = 4;
+/** 快捷变焦固定默认倍数：远 / 中 / 近（关闭后重新开启时恢复） */
+const QUICK_ZOOM_DEFAULT_ZOOMS = [4, 2, 1];
+/** 内存保存后保护窗口（ms），避免 reload 覆盖刚写入的档位 */
+const QUICK_ZOOM_SAVE_GUARD_MS = 3000;
 
 /**
  * Android 超广探测：complete 早于 success 时若用 0ms 会误判失败，略延迟再试下一档。
@@ -4450,6 +4454,33 @@ onCameraInit: function (e) {
     return formatCameraZoomLabel(zoomVal);
   },
   /**
+   * 构建固定默认三档快捷变焦（远 4× / 中 2× / 近 1×），供关闭后重新开启时重置。
+   * @returns {Array<{label:string, zoom:number, displayZoom:string, isActive:boolean}>}
+   */
+  _buildFixedQuickZoomStops: function () {
+    var labels = ['远', '中', '近'];
+    var self = this;
+    return QUICK_ZOOM_DEFAULT_ZOOMS.map(function (zoomVal, i) {
+      var zoom = self._clampQuickZoomValue(zoomVal);
+      return {
+        label: labels[i],
+        zoom: zoom,
+        displayZoom: self._formatQuickZoomDisplay(zoom),
+        isActive: false
+      };
+    });
+  },
+  /**
+   * 长按保存进行中或进度已满待松手时，延迟执行 _loadQuickZoomStops，避免 reload 打断保存。
+   * @returns {void}
+   */
+  _flushPendingQuickZoomStopsReload: function () {
+    if (!this._quickZoomStopsReloadPending) return;
+    if (this._quickZoomSaveTimer || this._quickZoomSaveReady) return;
+    this._quickZoomStopsReloadPending = false;
+    this._loadQuickZoomStops();
+  },
+  /**
    * 构建长按保存圆环的内联样式。
    * @param {number} deg 0–360
    * @returns {string}
@@ -4723,14 +4754,18 @@ onCameraInit: function (e) {
   _loadQuickZoomStops: function (opts) {
     var options = opts || {};
     var resetRuntime = options.resetRuntime === true;
+    /** 直播中途相机能力探测会触发 reload；长按保存期间须延后，否则进度满但松手时 ready 已被清零。 */
+    if (this._quickZoomSaveTimer || this._quickZoomSaveReady) {
+      this._quickZoomStopsReloadPending = true;
+      return;
+    }
     var prevStops = this.data.quickZoomStops || [];
     var prevActiveIdx = resetRuntime ? -1 : prevStops.findIndex(function (s) {
       return s.isActive;
     });
     var prevTempZoom = resetRuntime ? null : this.data.quickZoomTempZoom;
-    if (this._quickZoomSaveTimer) {
-      this._cancelQuickZoomSaveProgress();
-    }
+    var recentSaveGuard = this._quickZoomLastSaveMs
+      && (Date.now() - this._quickZoomLastSaveMs < QUICK_ZOOM_SAVE_GUARD_MS);
     try {
       const enabled = wx.getStorageSync(QUICK_ZOOM_ENABLED_KEY);
       const savedStops = wx.getStorageSync(QUICK_ZOOM_STOPS_KEY);
@@ -4762,6 +4797,17 @@ onCameraInit: function (e) {
         stops = stops.map(function (s, i) {
           return Object.assign({}, s, {
             isActive: i === prevActiveIdx
+          });
+        });
+      }
+      /** 刚保存完时优先保留内存中的 zoom，避免 storage 读写竞态把档位打回旧值。 */
+      if (recentSaveGuard && prevStops.length === 3 && stops.length === 3) {
+        stops = stops.map(function (s, i) {
+          var mem = prevStops[i];
+          if (!mem || typeof mem.zoom !== 'number') return s;
+          return Object.assign({}, s, {
+            zoom: mem.zoom,
+            displayZoom: mem.displayZoom || selfLoad._formatQuickZoomDisplay(mem.zoom)
           });
         });
       }
@@ -4820,7 +4866,19 @@ onCameraInit: function (e) {
     try {
       wx.setStorageSync(QUICK_ZOOM_ENABLED_KEY, next);
     } catch (e) {}
-    if (!next) {
+    if (next) {
+      /** 关闭后重新开启：清空已保存倍数，恢复默认 4× / 2× / 1×。 */
+      const resetStops = this._buildFixedQuickZoomStops();
+      try {
+        wx.removeStorageSync(QUICK_ZOOM_STOPS_KEY);
+      } catch (eRm) {}
+      this._quickZoomLastSaveMs = 0;
+      this.setData({
+        quickZoomStops: resetStops,
+        quickZoomTempZoom: null,
+        quickZoomTempDisplay: ''
+      });
+    } else {
       const stops = this.data.quickZoomStops.map(function (s) {
         return Object.assign({}, s, {
           isActive: false
@@ -4900,6 +4958,10 @@ onCameraInit: function (e) {
       if (elapsed >= QUICK_ZOOM_LONG_PRESS_MS) {
         self._quickZoomSaveTimer = null;
         self._quickZoomSaveReady = true;
+        var rawCap = typeof self.data.quickZoomTempZoom === 'number'
+          ? self.data.quickZoomTempZoom
+          : self.data.zoom;
+        self._quickZoomSaveCapturedZoom = self._clampQuickZoomValue(rawCap);
         try {
           self.vibrate('light');
         } catch (eV) {}
@@ -4916,14 +4978,19 @@ onCameraInit: function (e) {
   onQuickZoomStopTouchEnd: function () {
     const idx = this._quickZoomSaveIdx;
     const ready = !!this._quickZoomSaveReady;
+    const capturedZoom = this._quickZoomSaveCapturedZoom;
     this._cancelQuickZoomSaveProgress();
-    if (!ready || idx < 0 || idx > 2) return;
+    if (!ready || idx < 0 || idx > 2) {
+      this._flushPendingQuickZoomStopsReload();
+      return;
+    }
     this._quickZoomSuppressTap = true;
     const self = this;
     setTimeout(function () {
       self._quickZoomSuppressTap = false;
     }, 120);
-    this._commitQuickZoomStopSave(idx);
+    this._commitQuickZoomStopSave(idx, capturedZoom);
+    this._flushPendingQuickZoomStopsReload();
   },
   /**
    * 取消快速变焦长按保存进度动画。
@@ -4937,6 +5004,7 @@ onCameraInit: function (e) {
     this._quickZoomSaveReady = false;
     this._quickZoomSaveIdx = -1;
     this._quickZoomSaveStartMs = 0;
+    this._quickZoomSaveCapturedZoom = null;
     this.setData({
       quickZoomSaveIdx: -1,
       quickZoomSaveConicDeg: 0,
@@ -4946,15 +5014,18 @@ onCameraInit: function (e) {
   /**
    * 将当前实际 zoom 写入指定快速变焦档位并持久化。
    * @param {number} idx 0|1|2
+   * @param {number|null|undefined} capturedZoom 长按进度满时快照的 zoom，避免 reload 后取值失真
    * @returns {void}
    */
-  _commitQuickZoomStopSave: function (idx) {
+  _commitQuickZoomStopSave: function (idx, capturedZoom) {
     const stops = this.data.quickZoomStops;
-    if (!stops[idx] || !stops[idx].isActive) return;
+    if (!stops[idx]) return;
 
-    const rawZoom = typeof this.data.quickZoomTempZoom === 'number'
-      ? this.data.quickZoomTempZoom
-      : this.data.zoom;
+    var rawZoom = typeof capturedZoom === 'number' && isFinite(capturedZoom)
+      ? capturedZoom
+      : (typeof this.data.quickZoomTempZoom === 'number'
+        ? this.data.quickZoomTempZoom
+        : this.data.zoom);
     const currentZoom = this._clampQuickZoomValue(rawZoom);
     const zoomLabel = this._formatQuickZoomDisplay(currentZoom);
 
@@ -4970,14 +5041,25 @@ onCameraInit: function (e) {
       quickZoomTempZoom: null,
       quickZoomTempDisplay: ''
     });
+    var persistOk = false;
     try {
-      wx.setStorageSync(QUICK_ZOOM_STOPS_KEY, newStops.map(function (s) {
+      var toStore = newStops.map(function (s) {
         return {
           zoom: s.zoom
         };
-      }));
+      });
+      wx.setStorageSync(QUICK_ZOOM_STOPS_KEY, toStore);
+      var verify = wx.getStorageSync(QUICK_ZOOM_STOPS_KEY);
+      persistOk = Array.isArray(verify) && verify.length === 3
+        && typeof verify[idx].zoom === 'number'
+        && Math.abs(verify[idx].zoom - currentZoom) < 0.05;
     } catch (e2) {}
-    this._showLightHint('已保存 ' + zoomLabel);
+    if (persistOk) {
+      this._quickZoomLastSaveMs = Date.now();
+      this._showLightHint('已保存 ' + zoomLabel);
+    } else {
+      this._showLightHint('保存失败，请重试');
+    }
   },
   /**
    * 在双指缩放（pinch）结束时，若有激活的快速变焦档位，记录临时 zoom。
@@ -6750,6 +6832,8 @@ onShareAppMessage: function () {
     }
   },
   onHide: function () {
+    this._cancelQuickZoomSaveProgress();
+    this._flushPendingQuickZoomStopsReload();
     // P0: 清除帧脉搏监控与硬件 debounce 定时器
     if (this._framePulseTimer) {
       clearTimeout(this._framePulseTimer);
