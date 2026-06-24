@@ -12,7 +12,7 @@ const BACKUP = path.join(LIVE_DIR, 'live.js.bak');
 /** @type {Record<string, string[]>} */
 const BEHAVIOR_GROUPS = {
   'live-state-behavior': [
-    'lastSetZoomTime', 'suppressScoreTap', 'pingPongChunkDurationMs', 'pingPongStaggerMs',
+    'lastSetZoomTime', 'suppressScoreTap', 'pingPongChunkDurationMs', 'pingPongStaggerMs', 'pingPongVideoBitsPerSecondKbps',
     'pingPongRecordFps', 'pingPongRollingMaxFiles', 'pingPongHighlightFlushMinIntervalMs',
     'segmentDurationMs', 'highlightPlaybackWindowMs', 'highlightLeadMs', 'highlightTailMs',
     'recordCooldownAfterStopMs', 'minRecordMsBeforeHighlightStop', 'segmentStopTimer',
@@ -105,6 +105,7 @@ const BEHAVIOR_GROUPS = {
     'clearRecoveryFabAck', 'emitRecoverySuccessFeedback', 'vibrate', 'vibrateHighlightSaved',
     'getHighlightDir', 'getRollingDir', 'ensureHighlightDir', 'ensureRollingDir', 'clearStaleRollingFiles',
     'persistRollingSegmentFromTemp', 'purgeAllRollingMp4', 'pruneRollingMp4ForQuota',
+    'pruneSandboxOrphanMediaForQuota',
     '_collectRollingPathKeepSet', '_unlinkRollingMp4ExceptKeep', '_trimRollingMp4ToMaxCount',
     'pruneRollingDirOrphans',
     'startRollingRecording', '_ensurePreviewRecordPipeline', '_startRollingRecordingImpl',

@@ -219,6 +219,7 @@ class PingPongRecorder {
    * @param {number} [opts.maxFiles]
    * @param {number} [opts.canvasWidth]
    * @param {number} [opts.canvasHeight]
+   * @param {number} [opts.videoBitsPerSecondKbps] 覆盖 MediaRecorder 视频码率（kbps）
    * @param {number} [opts.highlightFlushMinIntervalMs] 强制 flush 最小间隔，防连按引发 601
    * @param {number} [opts.probeChunkDurationMs] remount 后 A 轨首段探针时长（ms），快速验证编码器
    * @param {function(string): Promise<void>} [opts.onStoragePressure] flush 落盘失败时释放配额
@@ -246,6 +247,10 @@ class PingPongRecorder {
     this.fps = Math.max(5, Math.min(24, options.fps || 15));
     this.canvasWidth = options.canvasWidth || 1280;
     this.canvasHeight = options.canvasHeight || 720;
+    /** 可选覆盖 MediaRecorder 视频码率（kbps）；未设则按平台/分辨率自动解析。 */
+    this.videoBitsPerSecondKbps = Number.isFinite(Number(options.videoBitsPerSecondKbps))
+      ? Math.max(1800, Math.floor(Number(options.videoBitsPerSecondKbps)))
+      : 0;
     /** 高光强制 flush 最小间隔（毫秒），抑制 1 分钟内频繁启停管线。 */
     this.highlightFlushMinIntervalMs = Math.max(
       8000,
@@ -370,7 +375,9 @@ class PingPongRecorder {
     }
     const chunkSec = Math.ceil(this.chunkDurationMs / 1000);
     const durationSec = Math.max(60, chunkSec * 2 + 12);
-    const videoBps = resolveRecorderVideoBitsPerSecond(this.canvasWidth, this.canvasHeight);
+    const videoBps = this.videoBitsPerSecondKbps > 0
+      ? this.videoBitsPerSecondKbps
+      : resolveRecorderVideoBitsPerSecond(this.canvasWidth, this.canvasHeight);
     track.recorder = wx.createMediaRecorder(track.canvas, {
       duration: Math.min(7200, durationSec),
       fps: this.fps,
@@ -855,7 +862,10 @@ class PingPongRecorder {
             this._singleTrackStuckAt = Date.now();
           }
           const stuckMs = Date.now() - this._singleTrackStuckAt;
-          const forceStopAfterMs = this.chunkDurationMs >= 60000 ? 90000 : 10000;
+          const forceStopAfterMs = Math.max(
+            15000,
+            Math.min(120000, Math.floor(this.chunkDurationMs * 1.55))
+          );
           if (stuckMs >= forceStopAfterMs) {
             this._log('ping_pong_single_track_force_stop', { trackId, source, stuckMs });
             this._singleTrackStuckAt = 0;
@@ -1028,7 +1038,7 @@ class PingPongRecorder {
             .then((saved) => {
               if (saved) return saved;
               if (failStage) return '';
-              return this.onStoragePressure('highlight_flush_persist').then(() => attemptPersist(true));
+              return this.onStoragePressure(persistSource || 'chunk_persist').then(() => attemptPersist(true));
             });
         };
         return attemptPersist(false).then((finalPath) => {
@@ -1106,6 +1116,11 @@ class PingPongRecorder {
             destTail: destPath.slice(-48),
             sizeBytes
           });
+          if (!isHighlightFlush && tempPath) {
+            try {
+              fs.unlink({ filePath: tempPath });
+            } catch (eTempUn) { /* ignore */ }
+          }
         });
       });
     });
@@ -1491,6 +1506,25 @@ class PingPongRecorder {
       };
     }).filter(Boolean);
     return this.segments.slice().concat(live);
+  }
+
+  /**
+   * 返回当前应保留在磁盘上的 rolling 路径（热层文件 + pin），供配额 GC keepSet 使用。
+   * 注意：{@link snapshotSegments} 含内存时间索引，不可用于判断磁盘保留集合。
+   * @returns {string[]}
+   */
+  getActiveDiskPaths() {
+    /** @type {Set<string>} */
+    const paths = new Set();
+    (this.rollingFiles || []).forEach((p) => {
+      if (p && typeof p === 'string') paths.add(p);
+    });
+    if (this._pinnedPaths && typeof this._pinnedPaths.forEach === 'function') {
+      this._pinnedPaths.forEach((p) => {
+        if (p && typeof p === 'string') paths.add(p);
+      });
+    }
+    return Array.from(paths);
   }
 
   /**
@@ -1992,9 +2026,9 @@ class PingPongRecorder {
       chunkDurationMs: this.chunkDurationMs
     });
 
-    const peerReadyWaitMs = this.chunkDurationMs >= 60000
+    const peerReadyWaitMs = this.chunkDurationMs >= 45000
       ? 1500
-      : Math.min(800, this.stopToStartGapMs + 200);
+      : Math.min(1500, Math.max(900, Math.floor(this.chunkDurationMs * 0.05)));
 
     const kickPeer = () => {
       if (peerAlreadyRecording) return Promise.resolve();

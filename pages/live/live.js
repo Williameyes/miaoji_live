@@ -180,7 +180,7 @@ const MATCH_SWITCH_HIGHLIGHT_WARMUP_MS = 8000;
 /** 切后台回前台后 preview record 预热帧数（首帧可能是静止缓存）。 */
 const PREVIEW_RECORD_WARMUP_FRAMES_AFTER_PAGE_HIDE = 12;
 /** remount 后首段探针时长（ms）：短段快速验证编码器是否产出健康 mp4。 */
-const POST_RE_MOUNT_PROBE_CHUNK_MS = 15000;
+const POST_RE_MOUNT_PROBE_CHUNK_MS = 10000;
 /** remount 后空壳段触发的管线重启上限，超出则走 hard recover。 */
 const ENCODER_VERIFY_RESTART_MAX = 3;
 /** 硬恢复完成后禁止保存高光的隔离期（ms），覆盖乒乓双轨坏片轮换周期。 */
@@ -1933,9 +1933,22 @@ buildVipGateStateFromCheckStatus: function (body) {
       });
     }
     this.stopRollingRecording(() => {
-      this.ensureRollingDir().then(() => this.probeLiveSandboxStorage('kickoff', true)).then(() => this.clearStaleRollingFiles()).finally(() => {
+      this.ensureRollingDir().then(() => this.clearStaleRollingFiles()).then(() => {
         try {
           this.pruneHighlightClipsWithInvalidFiles('on_show_kickoff');
+          const clipsMapKick = clipsStorage.readClipsMapSafe();
+          if (clipsMapKick) {
+            const deadRm = clipsStorage.pruneUnplayableClipsFromMap(clipsMapKick);
+            if (deadRm > 0) {
+              clipsStorage.writeClipsMapSafe(clipsMapKick);
+            }
+          }
+          clipsStorage.pruneUnplayableLegacyList();
+        } catch (ePrune) {}
+        this.pruneSandboxOrphanMediaForQuota('on_show_kickoff');
+        return this.probeLiveSandboxStorage('kickoff', true);
+      }).finally(() => {
+        try {
           clipsStorage.pruneUnplayableLegacyList();
         } catch (ePrune) {}
         // 必须在入场清理完全结束后，再赋予录制活跃状态与标记就绪
@@ -2024,21 +2037,23 @@ buildVipGateStateFromCheckStatus: function (body) {
    * 滚动录制单段时长（毫秒）。8s 单段体积更小，在约 200MB 本机文件配额下可保留更多段/更多次高光；
    * 高光「体感窗口」仍由 {@link highlightPlaybackWindowMs} 控制（默认 8s）。
    */
-  /** 乒乓录制单段时长（毫秒）：1 分钟母片（~15-20MB），平衡 start/stop 频率与存储压力。 */
-  pingPongChunkDurationMs: 60000,
-  /** 双轨重叠（毫秒）：B 在 A 结束前 8s 启动；并发编码占比约 4.4%。 */
+  /** 乒乓录制单段时长（毫秒）：30s 母片（720p@3600kbps 约 13MB），双轨保留，降低沙盒峰值。 */
+  pingPongChunkDurationMs: 30000,
+  /** 双轨重叠（毫秒）：B 在 A 结束前 8s 启动；30s 段下重叠约 27%，满足 8s 高光窗口。 */
   pingPongStaggerMs: 8000,
+  /** 720p 滚动录制目标码率（kbps）；低于默认 4800 以减轻落盘体积与配额压力。 */
+  pingPongVideoBitsPerSecondKbps: 3600,
   /** 后台 MediaRecorder 目标帧率上限（预热测速后取 min(实测, 24) 写入编码器，保证 1.0x 播放）。 */
   pingPongRecordFps: 24,
   /** 后台录制离屏 canvas 目标宽（720p；实际以 onCameraFrame 尺寸为准，不足时 WebGL 放大）。 */
   pingPongRecordCanvasWidth: 1280,
   /** 后台录制离屏 canvas 目标高（720p）。 */
   pingPongRecordCanvasHeight: 720,
-  /** 滚动目录最多保留母片数量（720p 下单段约 30–45MB，2 段峰值约 60–90MB）。 */
+  /** 滚动目录最多保留母片数量（720p@3600 下单段约 13MB，2 段峰值约 26MB）。 */
   pingPongRollingMaxFiles: 2,
   /** 高光强制 flush 最小间隔（毫秒），抑制连按引发 iOS 601。 */
   pingPongHighlightFlushMinIntervalMs: 10000,
-  segmentDurationMs: 60000,
+  segmentDurationMs: 30000,
   /** 用户点击保存后，回放时希望覆盖的精彩窗口长度（毫秒），可与物理切片时长解耦 */
   highlightPlaybackWindowMs: 8000,
   /** 时间驱动高光窗口：保存点击前过去 8s，不等待未来片段。 */
@@ -2246,7 +2261,7 @@ initHealthLogs: function () {
   mirrorHealthToAudit: function (eventName, detail) {
     const ev = String(eventName || '');
     if (!ev) return;
-    const prefixes = ['highlight_', 'rolling_', 'segment_', 'replay_', 'hard_recover', 'stop_record', 'temp_', 'match_switch', 'page_', 'ws_', 'vk_canvas', 'camera_', 'manual_relaunch'];
+    const prefixes = ['highlight_', 'rolling_', 'segment_', 'replay_', 'hard_recover', 'stop_record', 'temp_', 'match_switch', 'page_', 'ws_', 'vk_canvas', 'camera_', 'manual_relaunch', 'live_sandbox', 'sandbox_orphan', 'ping_pong_persist'];
     const shouldMirror = prefixes.some(p => ev.indexOf(p) === 0);
     if (!shouldMirror) return;
     try {
@@ -8417,8 +8432,12 @@ updatePipelineHealth: function () {
       add(seg && seg.path);
     });
     const pipeline = this._previewRecordPipeline;
-    if (pipeline && typeof pipeline.getSegments === 'function') {
-      pipeline.getSegments().forEach(seg => {
+    if (pipeline && typeof pipeline.getActiveDiskPaths === 'function') {
+      pipeline.getActiveDiskPaths().forEach((p) => {
+        add(p);
+      });
+    } else if (pipeline && typeof pipeline.getSegments === 'function') {
+      pipeline.getSegments().forEach((seg) => {
         add(seg && seg.path);
       });
     }
@@ -8517,6 +8536,27 @@ updatePipelineHealth: function () {
     const total = orphanRm + trimRm;
     this._lastRollingGcFreedCount = total;
     if (total > 0) {
+      this._persistIoFailGcStreak = 0;
+    }
+    return total;
+  },
+  /**
+   * 清理沙盒内索引外 / rolling 外的 mp4 与过期审计导出，释放 invisible 占用。
+   * @param {string} [reason] 诊断用
+   * @returns {number} 合计删除文件数
+   */
+  pruneSandboxOrphanMediaForQuota: function (reason) {
+    const why = typeof reason === 'string' ? reason : 'sandbox_orphan';
+    const keepSet = this._collectRollingPathKeepSet();
+    const result = storageEst.pruneSandboxOrphanMediaSync(keepSet, { reason: why });
+    const total = (result && result.removedMp4 ? result.removedMp4 : 0)
+      + (result && result.removedAudit ? result.removedAudit : 0);
+    if (total > 0) {
+      this.appendHealthLog('sandbox_orphan_media_pruned', {
+        removedMp4: result.removedMp4 || 0,
+        removedAudit: result.removedAudit || 0,
+        reason: why
+      });
       this._persistIoFailGcStreak = 0;
     }
     return total;
@@ -8622,6 +8662,7 @@ updatePipelineHealth: function () {
         fps: self.pingPongRecordFps || 15,
         canvasWidth: self.pingPongRecordCanvasWidth || 1280,
         canvasHeight: self.pingPongRecordCanvasHeight || 720,
+        videoBitsPerSecondKbps: self.pingPongVideoBitsPerSecondKbps || 0,
         maxFiles: self.pingPongRollingMaxFiles || 2,
         requireFirstFrame: true,
         firstFrameTimeoutMs: afterPageHide || afterHardRecoverTimeout ? 5500 : PREVIEW_RECORD_FIRST_FRAME_TIMEOUT_MS,
@@ -10258,6 +10299,7 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
     let rollingFreed = this.pruneRollingMp4ForQuota(r, {
       maxCount: isSevereBreach ? 4 : 6
     });
+    rollingFreed += this.pruneSandboxOrphanMediaForQuota(r + '_sandbox');
     let clipPrune = 0;
     if (r === 'persist_io_fail' || r === 'phase7_user_save_exhausted' || r === 'live_storage_severe_periodic') {
       clipPrune = 4;

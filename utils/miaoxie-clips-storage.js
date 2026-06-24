@@ -184,6 +184,25 @@ function pruneUnplayableLegacyList() {
   return removed;
 }
 
+/**
+ * 收集 MIAOXIE_CLIPS 中全部已索引本地文件路径（去重）。
+ * @returns {Set<string>}
+ */
+function collectAllIndexedClipPaths() {
+  /** @type {Set<string>} */
+  const paths = new Set();
+  const map = readClipsMapSafe();
+  if (!map) return paths;
+  Object.keys(map).forEach((matchId) => {
+    const list = map[matchId];
+    if (!Array.isArray(list)) return;
+    list.forEach((it) => {
+      collectClipFilePaths(it).forEach((p) => paths.add(p));
+    });
+  });
+  return paths;
+}
+
 module.exports = {
   CLIPS_KEY,
   normalizeMatchIdKey,
@@ -191,6 +210,7 @@ module.exports = {
   writeClipsMapSafe,
   mergeDefaultClipBucketIfTargetEmpty,
   collectClipFilePaths,
+  collectAllIndexedClipPaths,
   isClipPathPlayable,
   isClipEntryDead,
   pruneUnplayableClipsFromMap,

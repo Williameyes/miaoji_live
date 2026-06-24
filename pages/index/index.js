@@ -11,7 +11,8 @@ const {
   estimateClipSegmentsBytesFromStorage,
   getClipStorageHealthHint,
   getKvStorageInfoSafe,
-  writeFileStorageEstimateSnapshot
+  writeFileStorageEstimateSnapshot,
+  pruneSandboxOrphanMediaSync
 } = require('../../utils/file-storage-estimate.js');
 const clipsStorage = require('../../utils/miaoxie-clips-storage.js');
 const mediaContainerTrim = require('../../utils/replay-buffer/media-container-trim.js');
@@ -553,7 +554,21 @@ Page({
     this.setData({ fileStorageLoading: true });
     Promise.all([estimateUserDataPathUsageBytes(), estimateClipSegmentsBytesFromStorage()])
       .then(([userDataBytes, clipBytes]) => {
-        const hint = getClipStorageHealthHint(clipBytes, userDataBytes);
+        let hint = getClipStorageHealthHint(clipBytes, userDataBytes);
+        if (hint.level === 'warn' || hint.level === 'severe') {
+          const pr = pruneSandboxOrphanMediaSync(clipsStorage.collectAllIndexedClipPaths(), {
+            reason: 'index_storage_refresh'
+          });
+          if ((pr.removedMp4 || 0) + (pr.removedAudit || 0) > 0) {
+            return estimateUserDataPathUsageBytes().then((userBytesAfter) => {
+              const hintAfter = getClipStorageHealthHint(clipBytes, userBytesAfter);
+              return { userDataBytes: userBytesAfter, clipBytes, hint: hintAfter };
+            });
+          }
+        }
+        return { userDataBytes, clipBytes, hint };
+      })
+      .then(({ userDataBytes, clipBytes, hint }) => {
         const kv = getKvStorageInfoSafe();
         const kvText = `配置缓存 ${kv.currentKb}/${kv.limitKb} KB`;
         try {

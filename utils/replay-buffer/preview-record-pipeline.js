@@ -653,6 +653,7 @@ function createPreviewRecordPipeline(page) {
           maxFiles: options.maxFiles || 2,
           canvasWidth: capturedCanvasW,
           canvasHeight: capturedCanvasH,
+          videoBitsPerSecondKbps: Number(options.videoBitsPerSecondKbps) || 0,
           encoderLiveWarmupFrames: Number(options.encoderLiveWarmupFrames) || 0,
           probeChunkDurationMs: Math.max(0, Number(options.probeChunkDurationMs) || 0)
         });
@@ -903,6 +904,15 @@ function createPreviewRecordPipeline(page) {
   }
 
   /**
+   * 当前应保留在磁盘上的 rolling 路径（热层 + pin），供沙盒 GC keepSet。
+   * @returns {string[]}
+   */
+  function getActiveDiskPaths() {
+    if (!pingPong || typeof pingPong.getActiveDiskPaths !== 'function') return [];
+    return pingPong.getActiveDiskPaths();
+  }
+
+  /**
    * @returns {boolean}
    */
   function isActive() {
@@ -1027,6 +1037,7 @@ function createPreviewRecordPipeline(page) {
     resolveHighlightSeek,
     flushAndResolveHighlightSeek,
     getSegments,
+    getActiveDiskPaths,
     isActive,
     pinPaths,
     unpinPaths,

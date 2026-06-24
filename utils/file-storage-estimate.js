@@ -272,11 +272,156 @@ function readFileStorageEstimateSnapshot() {
   }
 }
 
+/** 审计导出 JSON 在 USER_DATA 根目录最多保留份数 */
+const AUDIT_EXPORT_MAX_KEEP = 2;
+
+/**
+ * 判断路径是否应保留（indexed 高光或当前 rolling 活跃层）。
+ * @param {string} filePath
+ * @param {Set<string>} keepSet
+ * @returns {boolean}
+ */
+function isSandboxMediaPathKept(filePath, keepSet) {
+  if (!filePath || typeof filePath !== 'string') return true;
+  return keepSet.has(filePath);
+}
+
+/**
+ * 递归扫描目录下 mp4，删除不在 keepSet 内的孤儿文件。
+ * @param {WechatMiniprogram.FileSystemManager} fs
+ * @param {string} dirPath
+ * @param {Set<string>} keepSet
+ * @returns {number} 删除文件数
+ */
+function unlinkOrphanMp4UnderDirSync(fs, dirPath, keepSet) {
+  let removed = 0;
+  if (!fs || !dirPath) return removed;
+  let names = [];
+  try {
+    names = fs.readdirSync(dirPath) || [];
+  } catch (eRd) {
+    return removed;
+  }
+  names.forEach((name) => {
+    if (!name) return;
+    const full = `${dirPath}/${name}`;
+    let isDir = false;
+    try {
+      const st = fs.statSync(full);
+      isDir = st && typeof st.isDirectory === 'function' && st.isDirectory();
+    } catch (eStat) {
+      return;
+    }
+    if (isDir) {
+      removed += unlinkOrphanMp4UnderDirSync(fs, full, keepSet);
+      return;
+    }
+    if (String(name).toLowerCase().indexOf('.mp4') < 0) return;
+    if (isSandboxMediaPathKept(full, keepSet)) return;
+    try {
+      fs.unlinkSync(full);
+      removed += 1;
+    } catch (eUn) { /* ignore */ }
+  });
+  return removed;
+}
+
+/**
+ * 清理 USER_DATA 根目录下过期的 live-audit-*.json 导出（保留最新若干份）。
+ * @param {WechatMiniprogram.FileSystemManager} fs
+ * @param {string} root
+ * @param {number} [maxKeep]
+ * @returns {number} 删除文件数
+ */
+function pruneStaleAuditExportFilesSync(fs, root, maxKeep) {
+  const cap = Math.max(1, Math.floor(Number(maxKeep) || AUDIT_EXPORT_MAX_KEEP));
+  if (!fs || !root) return 0;
+  let names = [];
+  try {
+    names = fs.readdirSync(root) || [];
+  } catch (eRd) {
+    return 0;
+  }
+  const auditFiles = names
+    .filter((n) => n && /^live-audit-\d+\.json$/i.test(String(n)))
+    .map((name) => {
+      const m = String(name).match(/^live-audit-(\d+)\.json$/i);
+      const ts = m ? Number(m[1]) : 0;
+      return { name, ts };
+    })
+    .filter((it) => it.ts > 0)
+    .sort((a, b) => b.ts - a.ts);
+  if (auditFiles.length <= cap) return 0;
+  let removed = 0;
+  for (let i = cap; i < auditFiles.length; i += 1) {
+    try {
+      fs.unlinkSync(`${root}/${auditFiles[i].name}`);
+      removed += 1;
+    } catch (eUn) { /* ignore */ }
+  }
+  return removed;
+}
+
+/**
+ * 同步清理沙盒内「索引外 / rolling 外」的 mp4 与过期审计导出。
+ * @param {Set<string>} [activeKeepSet] 当前录制应保留的 rolling 路径
+ * @param {{ reason?: string }} [opts]
+ * @returns {{ removedMp4: number, removedAudit: number }}
+ */
+function pruneSandboxOrphanMediaSync(activeKeepSet, opts) {
+  const options = opts && typeof opts === 'object' ? opts : {};
+  /** @type {Set<string>} */
+  const keepSet = new Set();
+  clipsStorage.collectAllIndexedClipPaths().forEach((p) => keepSet.add(p));
+  if (activeKeepSet instanceof Set) {
+    activeKeepSet.forEach((p) => keepSet.add(p));
+  } else if (Array.isArray(activeKeepSet)) {
+    activeKeepSet.forEach((p) => {
+      if (p && typeof p === 'string') keepSet.add(p);
+    });
+  }
+  let removedMp4 = 0;
+  let removedAudit = 0;
+  try {
+    const fs = wx.getFileSystemManager();
+    const root = wx.env.USER_DATA_PATH;
+    if (!fs || !root) {
+      return { removedMp4: 0, removedAudit: 0 };
+    }
+    removedMp4 += unlinkOrphanMp4UnderDirSync(fs, `${root}/highlights`, keepSet);
+    let rootNames = [];
+    try {
+      rootNames = fs.readdirSync(root) || [];
+    } catch (eRoot) {
+      rootNames = [];
+    }
+    rootNames.forEach((name) => {
+      if (!name || String(name).toLowerCase().indexOf('.mp4') < 0) return;
+      const full = `${root}/${name}`;
+      if (isSandboxMediaPathKept(full, keepSet)) return;
+      try {
+        fs.unlinkSync(full);
+        removedMp4 += 1;
+      } catch (eUn) { /* ignore */ }
+    });
+    removedAudit = pruneStaleAuditExportFilesSync(fs, root, AUDIT_EXPORT_MAX_KEEP);
+  } catch (e) {
+    return { removedMp4, removedAudit };
+  }
+  if ((removedMp4 > 0 || removedAudit > 0) && options.reason) {
+    try {
+      console.info('[sandbox_orphan_prune]', options.reason, removedMp4, removedAudit);
+    } catch (eLog) { /* ignore */ }
+  }
+  return { removedMp4, removedAudit };
+}
+
 module.exports = {
   CLIP_STORAGE_WARN_BYTES,
   CLIP_STORAGE_SEVERE_BYTES,
   USER_DATA_WARN_BYTES,
   USER_DATA_SEVERE_BYTES,
+  AUDIT_EXPORT_MAX_KEEP,
   estimateUserDataPathUsageBytes,
   estimateClipSegmentsBytesFromStorage,
   getKvStorageInfoSafe,
@@ -284,5 +429,7 @@ module.exports = {
   getUserFileStorageHint,
   fileSizeBytesAsync,
   writeFileStorageEstimateSnapshot,
-  readFileStorageEstimateSnapshot
+  readFileStorageEstimateSnapshot,
+  pruneSandboxOrphanMediaSync,
+  pruneStaleAuditExportFilesSync
 };
