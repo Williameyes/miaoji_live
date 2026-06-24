@@ -36,6 +36,26 @@ function estimateMinSegmentBytes(wallDurationMs) {
   return Math.max(HOLLOW_SHORT_ABSOLUTE_MIN_BYTES, durSec * 280000);
 }
 
+/** Android 3600kbps VBR 裁剪产物常见体积下限（字节/秒），8s 约 1.6MB。 */
+const ANDROID_TRIM_OUTPUT_BYTES_PER_SEC = 200000;
+
+/**
+ * 按平台估算高光裁剪产物最小合法体积（materialize 校验用）。
+ * @param {number} wallDurationMs
+ * @param {{ platform?: string }} [opts]
+ * @returns {number}
+ */
+function estimateMinTrimOutputBytes(wallDurationMs, opts) {
+  const durSec = segmentDurationSec(wallDurationMs);
+  const platform = opts && typeof opts.platform === 'string'
+    ? opts.platform.toLowerCase()
+    : '';
+  const bytesPerSec = platform === 'android'
+    ? ANDROID_TRIM_OUTPUT_BYTES_PER_SEC
+    : 280000;
+  return Math.max(HOLLOW_SHORT_ABSOLUTE_MIN_BYTES, durSec * bytesPerSec);
+}
+
 /**
  * 判断 rolling 段是否为空壳（有墙钟跨度但几乎无有效编码数据）。
  * 采用分层阈值，避免 Android 长段低码率误拒（如 264KB/81s）。
@@ -177,6 +197,7 @@ module.exports = {
   HOLLOW_LONG_ABSOLUTE_MIN_BYTES,
   HOLLOW_MAX_BYTES_PER_SEC,
   estimateMinSegmentBytes,
+  estimateMinTrimOutputBytes,
   isHollowSegment,
   isSuspiciousDurationProbe,
   checkFileReady,

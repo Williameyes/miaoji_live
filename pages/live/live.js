@@ -14509,6 +14509,26 @@ pauseRollingForReplay: function (onPaused) {
               const durationSource = probe && probe.source ? probe.source : '';
               const runTailTrimFallback = (primaryErr, primaryStrategy) => {
                 const errText = formatWxErr(primaryErr);
+                /**
+                 * Android click_wall_mapped 失败时禁止 tail_fallback：
+                 * 裁文件末尾 8s 会丢失点击锚点（日志实测偏移 500ms+）。
+                 */
+                if (!isLiveHostIos() && primaryStrategy === 'click_wall_mapped') {
+                  logMaterializeDiag('trim_fail', {
+                    err: errText,
+                    trimStrategy: primaryStrategy,
+                    androidSkipTailFallback: true
+                  });
+                  this.appendHealthLog('highlight_media_container_trim_fail', {
+                    id: String(task.id || ''),
+                    tailTrim: true,
+                    trimStrategy: primaryStrategy,
+                    err: errText,
+                    androidSkipTailFallback: true
+                  });
+                  runFullCopyFallback(errText || 'click_wall_trim_fail');
+                  return undefined;
+                }
                 logMaterializeDiag('trim_fail', {
                   err: errText,
                   trimStrategy: primaryStrategy

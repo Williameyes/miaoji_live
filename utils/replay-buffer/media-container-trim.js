@@ -198,6 +198,27 @@ function delayMs(delayMs) {
 const TRIM_OUTPUT_BITRATE_KBPS_720P = 5200;
 
 /**
+ * @returns {string}
+ */
+function getTrimHostPlatform() {
+  if (typeof wx === 'undefined' || typeof wx.getSystemInfoSync !== 'function') {
+    return '';
+  }
+  try {
+    return String(wx.getSystemInfoSync().platform || '').toLowerCase();
+  } catch (e) {
+    return '';
+  }
+}
+
+/**
+ * @returns {boolean}
+ */
+function isTrimHostAndroid() {
+  return getTrimHostPlatform() === 'android';
+}
+
+/**
  * 按目标时长与码率估算裁剪产物合理体积上限（MediaContainer 重封装可能略大于按比例折算值）。
  * @param {number} durationMs
  * @param {number} [videoBitsPerSecondKbps]
@@ -253,9 +274,10 @@ function validateTrimOutput(outputPath, expectedDurationMs, sourceSizeBytes, sou
     const durationMs = probe && probe.durationMs ? probe.durationMs : 0;
     const maxAllowedDurationMs = expected + 2500;
     const maxAllowedSizeBytes = computeMaxAllowedTrimOutputBytes(srcSize, expected, srcDur);
+    const trimPlatform = getTrimHostPlatform();
     const minAllowedSizeBytes = Math.max(
       4096,
-      fsReady.estimateMinSegmentBytes(Math.min(expected, 12000))
+      fsReady.estimateMinTrimOutputBytes(Math.min(expected, 12000), { platform: trimPlatform })
     );
     if (durationMs > maxAllowedDurationMs) {
       return Promise.reject(new Error(`trim_output_too_long:${durationMs}/${expected}`));
@@ -278,7 +300,17 @@ function validateTrimOutput(outputPath, expectedDurationMs, sourceSizeBytes, sou
       return Promise.reject(new Error(`trim_output_too_large:${sizeBytes}/${srcSize}`));
     }
     if (sizeBytes < minAllowedSizeBytes) {
-      return Promise.reject(new Error(`trim_output_too_small:${sizeBytes}/${expected}`));
+      /** Android：时长已合格且非整段母片拷贝时，以空壳码率为准，避免误拒 2.0–2.2MB 合法裁剪。 */
+      const androidDurationFirstPass = isTrimHostAndroid()
+        && durationInHighlightWindow
+        && sizeBytes >= Math.max(
+          4096,
+          Math.floor((durationMs / 1000) * fsReady.HOLLOW_MAX_BYTES_PER_SEC)
+        )
+        && (srcSize <= 0 || sizeBytes < Math.floor(srcSize * 0.65));
+      if (!androidDurationFirstPass) {
+        return Promise.reject(new Error(`trim_output_too_small:${sizeBytes}/${expected}`));
+      }
     }
     if (durationMs < Math.floor(expected * 0.45)) {
       return Promise.reject(new Error(`trim_output_too_short:${durationMs}/${expected}`));
