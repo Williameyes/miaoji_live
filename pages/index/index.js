@@ -575,8 +575,11 @@ Page({
           app.globalData.fileStorageEstimate = {
             clipBytes,
             userDataBytes,
+            userDataWalkBytes: hint.userDataWalkBytes,
+            effectiveTotalBytes: hint.effectiveTotalBytes,
             clipMb: hint.clipMb,
             totalMb: hint.totalMb,
+            userDataWalkMb: hint.userDataWalkMb,
             healthLevel: hint.level,
             hintText: hint.hintText,
             at: Date.now()

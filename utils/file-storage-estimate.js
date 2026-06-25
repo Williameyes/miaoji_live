@@ -1,6 +1,6 @@
 /**
- * 小程序本地「用户文件」占用估算：平台无剩余配额 API，只能遍历 + getFileInfo 累加。
- * 高光占用单独从 MIAOXIE_CLIPS 中 segment 路径汇总，避免与 stat.size 为 0 的兼容问题。
+ * 小程序本地「用户文件」占用估算：平台无剩余配额 API，只能遍历 + stat/getFileInfo 累加。
+ * iOS 主路径使用 readdirSync/statSync 同步 walk；档位与 totalMb 取 max(walk, clipBytes) 兜底漏计。
  */
 
 /** 用于「严重」告警的参考上限（字节），与微信文档约 200MB 同量级 */
@@ -17,7 +17,38 @@ const USER_DATA_SEVERE_BYTES = 150 * 1024 * 1024;
 const clipsStorage = require('./miaoxie-clips-storage.js');
 
 /**
- * 单文件字节数（优先 getFileInfo，失败则 0）。
+ * 拼接沙盒路径（避免重复或缺失斜杠）。
+ * @param {string} base
+ * @param {string} name
+ * @returns {string}
+ */
+function joinSandboxPath(base, name) {
+  if (!base || typeof base !== 'string') return typeof name === 'string' ? name : '';
+  if (!name || typeof name !== 'string') return base;
+  const b = base.endsWith('/') ? base.slice(0, -1) : base;
+  const n = name.startsWith('/') ? name.slice(1) : name;
+  return `${b}/${n}`;
+}
+
+/**
+ * 单文件字节数（statSync；iOS 上比 getFileInfo 更稳定）。
+ * @param {WechatMiniprogram.FileSystemManager} fs
+ * @param {string} filePath
+ * @returns {number}
+ */
+function fileSizeBytesSync(fs, filePath) {
+  if (!filePath || typeof filePath !== 'string') return 0;
+  try {
+    const st = fs.statSync(filePath);
+    if (st && typeof st.size === 'number' && st.size >= 0) {
+      return st.size;
+    }
+  } catch (e) { /* ignore */ }
+  return 0;
+}
+
+/**
+ * 单文件字节数（优先 getFileInfo，失败或 size=0 时回退 statSync）。
  * @param {WechatMiniprogram.FileSystemManager} fs
  * @param {string} filePath
  * @returns {Promise<number>}
@@ -31,17 +62,63 @@ function fileSizeBytesAsync(fs, filePath) {
     fs.getFileInfo({
       filePath,
       success(res) {
-        resolve(typeof res.size === 'number' ? res.size : 0);
+        const sz = typeof res.size === 'number' ? res.size : 0;
+        resolve(sz > 0 ? sz : fileSizeBytesSync(fs, filePath));
       },
       fail() {
-        resolve(0);
+        resolve(fileSizeBytesSync(fs, filePath));
       }
     });
   });
 }
 
 /**
- * 递归遍历目录，文件节点用 getFileInfo 累计字节。
+ * 读取目录项名称（兼容 readdir / readdirSync 不同返回结构）。
+ * @param {unknown} res
+ * @returns {string[]}
+ */
+function readDirEntryNames(res) {
+  if (Array.isArray(res)) return res;
+  if (res && typeof res === 'object') {
+    const obj = /** @type {{ files?: string[], fileList?: string[] }} */ (res);
+    if (Array.isArray(obj.files)) return obj.files;
+    if (Array.isArray(obj.fileList)) return obj.fileList;
+  }
+  return [];
+}
+
+/**
+ * 同步递归遍历目录累计字节（与 orphan prune 同路径，iOS 上比异步 readdir 更可靠）。
+ * @param {WechatMiniprogram.FileSystemManager} fs
+ * @param {string} dirPath
+ * @returns {number}
+ */
+function walkUserDataBytesSync(fs, dirPath) {
+  if (!fs || !dirPath) return 0;
+  const names = readDirEntryNames(fs.readdirSync(dirPath));
+  if (names.length === 0) return 0;
+  let sum = 0;
+  names.forEach((name) => {
+    if (!name) return;
+    const full = joinSandboxPath(dirPath, name);
+    let isDir = false;
+    try {
+      const st = fs.statSync(full);
+      isDir = !!(st && typeof st.isDirectory === 'function' && st.isDirectory());
+      if (!isDir) {
+        sum += fileSizeBytesSync(fs, full);
+        return;
+      }
+    } catch (eStat) {
+      return;
+    }
+    sum += walkUserDataBytesSync(fs, full);
+  });
+  return sum;
+}
+
+/**
+ * 异步递归遍历目录（保留供低版本探测；主路径请用 walkUserDataBytesSync）。
  * @param {WechatMiniprogram.FileSystemManager} fs
  * @param {string} dirPath
  * @returns {Promise<number>}
@@ -51,7 +128,7 @@ function walkUserDataBytes(fs, dirPath) {
     fs.readdir({
       dirPath,
       success(res) {
-        const names = (res && res.files) || [];
+        const names = readDirEntryNames(res);
         if (names.length === 0) {
           resolve(0);
           return;
@@ -59,7 +136,7 @@ function walkUserDataBytes(fs, dirPath) {
         let remaining = names.length;
         let sum = 0;
         names.forEach((name) => {
-          const full = `${dirPath}/${name}`;
+          const full = joinSandboxPath(dirPath, name);
           fs.stat({
             path: full,
             success(st) {
@@ -71,6 +148,13 @@ function walkUserDataBytes(fs, dirPath) {
                   if (remaining === 0) resolve(sum);
                 });
               } else {
+                const statSize = st && typeof st.size === 'number' && st.size > 0 ? st.size : 0;
+                if (statSize > 0) {
+                  sum += statSize;
+                  remaining -= 1;
+                  if (remaining === 0) resolve(sum);
+                  return;
+                }
                 fileSizeBytesAsync(fs, full).then((sz) => {
                   sum += sz;
                   remaining -= 1;
@@ -93,7 +177,7 @@ function walkUserDataBytes(fs, dirPath) {
 }
 
 /**
- * 估算 wx.env.USER_DATA_PATH 下已用字节。
+ * 估算 wx.env.USER_DATA_PATH 下已用字节（同步 walk，避免 iOS 异步 readdir 漏计）。
  * @returns {Promise<number>}
  */
 function estimateUserDataPathUsageBytes() {
@@ -103,7 +187,7 @@ function estimateUserDataPathUsageBytes() {
     if (!root || typeof root !== 'string') {
       return Promise.resolve(0);
     }
-    return walkUserDataBytes(fs, root);
+    return Promise.resolve(walkUserDataBytesSync(fs, root));
   } catch (e) {
     return Promise.resolve(0);
   }
@@ -123,15 +207,8 @@ function estimateClipSegmentsBytesFromStorage() {
     const list = clipsMap[matchId];
     if (!Array.isArray(list)) return;
     list.forEach((it) => {
-      if (!it || typeof it !== 'object') return;
-      if (it.exportedToAlbum) return;
-      const segs = Array.isArray(it.segments) ? it.segments : [];
-      segs.forEach((p) => {
-        if (p && typeof p === 'string') paths.add(p);
-      });
-      if (it.replaySegment && typeof it.replaySegment === 'string') {
-        paths.add(it.replaySegment);
-      }
+      if (!it || typeof it !== 'object' || it.exportedToAlbum) return;
+      clipsStorage.collectClipFilePaths(it).forEach((p) => paths.add(p));
     });
   });
   const arr = Array.from(paths);
@@ -160,25 +237,41 @@ function getKvStorageInfoSafe() {
 }
 
 /**
+ * 将字节数四舍五入为 MB（保留 1 位小数）。
+ * @param {number} bytes
+ * @returns {number}
+ */
+function bytesToMbRounded(bytes) {
+  const n = typeof bytes === 'number' && bytes >= 0 ? bytes : 0;
+  return Math.round((n / (1024 * 1024)) * 10) / 10;
+}
+
+/**
  * 根据高光片段体积与沙盒总占用给出健康度（两路合并取较高档位），并生成说明文案。
+ * totalMb / 沙盒档位使用 max(walk, clip)，避免 iOS walk 漏计时 totalMb 远低于 clipMb。
  * @param {number} clipBytes 高光关联本地文件总字节
- * @param {number} userDataBytes USER_DATA_PATH 总字节
+ * @param {number} userDataBytes USER_DATA_PATH walk 字节（原始遍历值）
  * @returns {{
  *   clipMb: number,
  *   totalMb: number,
+ *   userDataWalkMb: number,
+ *   userDataWalkBytes: number,
+ *   effectiveTotalBytes: number,
  *   level: 'ok' | 'warn' | 'severe',
  *   hintText: string
  * }}
  */
 function getClipStorageHealthHint(clipBytes, userDataBytes) {
   const c = typeof clipBytes === 'number' && clipBytes >= 0 ? clipBytes : 0;
-  const t = typeof userDataBytes === 'number' && userDataBytes >= 0 ? userDataBytes : 0;
-  const clipMb = Math.round((c / (1024 * 1024)) * 10) / 10;
-  const totalMb = Math.round((t / (1024 * 1024)) * 10) / 10;
+  const walked = typeof userDataBytes === 'number' && userDataBytes >= 0 ? userDataBytes : 0;
+  const effectiveTotalBytes = Math.max(walked, c);
+  const clipMb = bytesToMbRounded(c);
+  const userDataWalkMb = bytesToMbRounded(walked);
+  const totalMb = bytesToMbRounded(effectiveTotalBytes);
   const clipSevere = c >= CLIP_STORAGE_SEVERE_BYTES;
   const clipWarn = c >= CLIP_STORAGE_WARN_BYTES;
-  const totalSevere = t >= USER_DATA_SEVERE_BYTES;
-  const totalWarn = t >= USER_DATA_WARN_BYTES;
+  const totalSevere = effectiveTotalBytes >= USER_DATA_SEVERE_BYTES;
+  const totalWarn = effectiveTotalBytes >= USER_DATA_WARN_BYTES;
   let level = 'ok';
   if (clipSevere || totalSevere) {
     level = 'severe';
@@ -209,7 +302,15 @@ function getClipStorageHealthHint(clipBytes, userDataBytes) {
   } else {
     hintText = `高光片段约 ${clipMb} MB，本机约 ${totalMb} MB`;
   }
-  return { clipMb, totalMb, level, hintText };
+  return {
+    clipMb,
+    totalMb,
+    userDataWalkMb,
+    userDataWalkBytes: walked,
+    effectiveTotalBytes,
+    level,
+    hintText
+  };
 }
 
 /** @deprecated 保留兼容，新代码请用 getClipStorageHealthHint */
@@ -226,8 +327,11 @@ const FILE_STORAGE_LIVE_SNAPSHOT_KEY = 'miaoxie_file_storage_snapshot';
  * @param {{
  *   clipBytes?: number,
  *   userDataBytes?: number,
+ *   userDataWalkBytes?: number,
+ *   effectiveTotalBytes?: number,
  *   clipMb?: number,
  *   totalMb?: number,
+ *   userDataWalkMb?: number,
  *   healthLevel?: string,
  *   hintText?: string,
  *   at?: number
@@ -240,8 +344,11 @@ function writeFileStorageEstimateSnapshot(est) {
     wx.setStorageSync(FILE_STORAGE_LIVE_SNAPSHOT_KEY, {
       clipBytes: est.clipBytes,
       userDataBytes: est.userDataBytes,
+      userDataWalkBytes: est.userDataWalkBytes,
+      effectiveTotalBytes: est.effectiveTotalBytes,
       clipMb: est.clipMb,
       totalMb: est.totalMb,
+      userDataWalkMb: est.userDataWalkMb,
       healthLevel: est.healthLevel,
       hintText: est.hintText,
       at: typeof est.at === 'number' && Number.isFinite(est.at) ? est.at : Date.now()
@@ -428,6 +535,8 @@ module.exports = {
   getClipStorageHealthHint,
   getUserFileStorageHint,
   fileSizeBytesAsync,
+  fileSizeBytesSync,
+  walkUserDataBytesSync,
   writeFileStorageEstimateSnapshot,
   readFileStorageEstimateSnapshot,
   pruneSandboxOrphanMediaSync,

@@ -126,7 +126,7 @@ function probeVideoDurationMs(sourcePath) {
         ? { durationMs: viaInfo, source: 'getVideoInfo' }
         : { durationMs: 0, source: viaInfo > 500 ? 'suspicious_getVideoInfo' : 'unsupported' };
     }
-    return withMediaContainerLock(() => new Promise((resolve) => {
+    return withMediaContainerLock(() => withTrimTimeout(new Promise((resolve) => {
       const container = wx.createMediaContainer();
       let finished = false;
       const done = (ms) => {
@@ -169,8 +169,26 @@ function probeVideoDurationMs(sourcePath) {
       } catch (e) {
         done(0);
       }
-    }));
+    }), 'probe_duration'));
   }));
+}
+
+/**
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+function isTrimTimeoutError(err) {
+  const text = String(err && (err.message || err.errMsg) || err || '');
+  return text.indexOf('trim_timeout:') >= 0;
+}
+
+/**
+ * Android 超时熔断后不再重试 trim（由上层转全量拷贝）。
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+function shouldAbortTrimRetry(err) {
+  return isTrimHostAndroid() && isTrimTimeoutError(err);
 }
 
 /**
@@ -196,6 +214,35 @@ function delayMs(delayMs) {
 
 /** 720p 高光裁剪产物码率上限（kbps），用于估算合法体积。 */
 const TRIM_OUTPUT_BITRATE_KBPS_720P = 5200;
+
+/** Android MediaContainer 与 MediaRecorder 并发时 export 可能永不回调。 */
+const TRIM_EXPORT_TIMEOUT_MS_ANDROID = 14000;
+
+/** iOS 裁剪 export 超时（毫秒）。 */
+const TRIM_EXPORT_TIMEOUT_MS_IOS = 22000;
+
+/**
+ * 当前宿主裁剪 export 超时（毫秒）。
+ * @returns {number}
+ */
+function trimExportTimeoutMs() {
+  return isTrimHostAndroid() ? TRIM_EXPORT_TIMEOUT_MS_ANDROID : TRIM_EXPORT_TIMEOUT_MS_IOS;
+}
+
+/**
+ * 为 MediaContainer 操作增加超时，避免全局串行锁被永久占用。
+ * @template T
+ * @param {Promise<T>} promise
+ * @param {string} label
+ * @returns {Promise<T>}
+ */
+function withTrimTimeout(promise, label) {
+  const ms = trimExportTimeoutMs();
+  return Promise.race([
+    promise,
+    delayMs(ms).then(() => Promise.reject(new Error(`trim_timeout:${label}:${ms}`)))
+  ]);
+}
 
 /**
  * @returns {string}
@@ -337,7 +384,7 @@ function trimVideoSegmentOnce(sourcePath, startMs, endMs) {
   if (!isMediaContainerSupported()) {
     return Promise.reject(new Error('MediaContainer unsupported'));
   }
-  return withMediaContainerLock(() => new Promise((resolve, reject) => {
+  return withMediaContainerLock(() => withTrimTimeout(new Promise((resolve, reject) => {
     const container = wx.createMediaContainer();
     let finished = false;
     /**
@@ -411,7 +458,7 @@ function trimVideoSegmentOnce(sourcePath, startMs, endMs) {
     } catch (e) {
       done(e);
     }
-  }));
+  }), 'trim_segment'));
 }
 
 /**
@@ -457,6 +504,9 @@ function trimVideoSegment(sourcePath, startMs, endMs, options) {
           })));
       })
       .catch((err) => {
+        if (shouldAbortTrimRetry(err)) {
+          return Promise.reject(err);
+        }
         if (attempt + 1 < maxAttempts && isMediaTrack601(err)) {
           return delayMs(520 + 380 * attempt).then(() => runAttempt(attempt + 1));
         }
@@ -615,5 +665,7 @@ module.exports = {
   trimVideoTail,
   trimVideoSegment,
   clipNeedsExportTrim,
-  trimClipForExport
+  trimClipForExport,
+  isTrimTimeoutError,
+  shouldAbortTrimRetry
 };

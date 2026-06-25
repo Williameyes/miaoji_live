@@ -1921,6 +1921,41 @@ class PingPongRecorder {
   }
 
   /**
+   * 点击时刻可用于高光前导的最大毫秒数（segments + live tracks 并集）。
+   * @param {number} [clickTime]
+   * @param {number} [requestedLeadMs]
+   * @returns {number}
+   */
+  getMaxAvailableHighlightLeadMs(clickTime, requestedLeadMs) {
+    const now = typeof clickTime === 'number' && clickTime > 0 ? clickTime : Date.now();
+    const oldest = this._getOldestActiveTrackStartMs(now);
+    if (!oldest) return 0;
+    const maxLead = Math.max(0, now - oldest);
+    if (typeof requestedLeadMs === 'number' && requestedLeadMs > 0) {
+      return Math.min(requestedLeadMs, maxLead);
+    }
+    return maxLead;
+  }
+
+  /**
+   * 动态调整后续新建 MediaRecorder 的 fps / 码率（已创建的轨下次 rotate 时生效）。
+   * @param {{ fps?: number, videoBitsPerSecondKbps?: number }} profile
+   * @returns {void}
+   */
+  setRecordingProfile(profile) {
+    if (!profile || typeof profile !== 'object') return;
+    if (Number.isFinite(Number(profile.fps))) {
+      this.fps = Math.max(5, Math.min(24, Math.floor(Number(profile.fps))));
+    }
+    if (Number.isFinite(Number(profile.videoBitsPerSecondKbps))) {
+      this.videoBitsPerSecondKbps = Math.max(
+        1800,
+        Math.floor(Number(profile.videoBitsPerSecondKbps))
+      );
+    }
+  }
+
+  /**
    * 按点击时间解析单文件高光（须 wall-clock 完整覆盖 8s 窗）。
    * @param {number} clickTime
    * @param {number} leadMs

@@ -281,6 +281,100 @@ function createPreviewRecordPipeline(page) {
   }
 
   /**
+   * 读取当前 CFR 喂帧帧率（MediaRecorder 声明 fps 不变，仅调节喂帧频率）。
+   * @returns {number}
+   */
+  function getCfrPumpFps() {
+    return encoderFps;
+  }
+
+  /**
+   * 动态调整 CFR 喂帧帧率；回放降载时降至 15fps，退出后恢复。
+   * @param {number} fps
+   * @returns {number} 调整前的帧率
+   */
+  function setCfrPumpFps(fps) {
+    const prev = encoderFps;
+    const next = Math.max(5, Math.min(24, Math.floor(Number(fps) || 15)));
+    if (active) {
+      startCfrPump(next);
+    } else {
+      encoderFps = next;
+      frameInterval = frameIntervalMs(encoderFps);
+    }
+    return prev;
+  }
+
+  /** @type {number} 回放暂停 CFR 前保存的帧率。 */
+  let cfrFeedPausedSavedFps = 0;
+
+  /**
+   * 回放期间降低 CFR 喂帧（重复上一帧），不得完全 stop：MediaRecorder 仍 recording 时停喂会在 mp4 时间轴留下空洞。
+   * @param {number} [throttleFps] 目标 fps，默认 10
+   * @returns {number} 降帧前的 CFR 帧率
+   */
+  function pauseCfrFeed(throttleFps) {
+    const prev = encoderFps;
+    cfrFeedPausedSavedFps = prev;
+    const cap = Math.max(5, Math.min(24, Math.floor(Number(throttleFps) || 10)));
+    const next = Math.max(5, Math.min(prev > 0 ? prev : 24, cap));
+    if (active) {
+      startCfrPump(next);
+    } else {
+      encoderFps = next;
+      frameInterval = frameIntervalMs(encoderFps);
+    }
+    return prev;
+  }
+
+  /**
+   * 退出回放后恢复 CFR 喂帧。
+   * @param {number} [fps]
+   * @returns {void}
+   */
+  function resumeCfrFeed(fps) {
+    const next = Math.max(
+      5,
+      Math.min(24, Math.floor(Number(fps) || cfrFeedPausedSavedFps || encoderFps || 15))
+    );
+    cfrFeedPausedSavedFps = 0;
+    if (active) {
+      startCfrPump(next);
+    } else {
+      encoderFps = next;
+      frameInterval = frameIntervalMs(encoderFps);
+    }
+  }
+
+  /**
+   * 动态调整 ping-pong 新建编码器档位与 CFR 喂帧。
+   * @param {{ fps?: number, videoBitsPerSecondKbps?: number, cfrPumpFps?: number }} profile
+   * @returns {void}
+   */
+  function setRecordingProfile(profile) {
+    if (!profile || typeof profile !== 'object') return;
+    if (pingPong && typeof pingPong.setRecordingProfile === 'function') {
+      pingPong.setRecordingProfile(profile);
+    }
+    if (Number.isFinite(Number(profile.cfrPumpFps)) && active) {
+      setCfrPumpFps(Number(profile.cfrPumpFps));
+    } else if (Number.isFinite(Number(profile.fps)) && active) {
+      setCfrPumpFps(Number(profile.fps));
+    }
+  }
+
+  /**
+   * 点击时刻可用于高光前导的最大毫秒数。
+   * @param {number} clickTime
+   * @param {number} [requestedLeadMs]
+   * @returns {number}
+   */
+  function getMaxAvailableHighlightLeadMs(clickTime, requestedLeadMs) {
+    if (!pingPong || typeof pingPong.getMaxAvailableHighlightLeadMs !== 'function') return 0;
+    return pingPong.getMaxAvailableHighlightLeadMs(clickTime, requestedLeadMs);
+  }
+
+  /**
    * 更新 CFR 帧缓存（iOS 使用深拷贝后的 handoff 帧，避免 buffer 被覆写）。
    * @param {{ data: ArrayBuffer, width: number, height: number }} frame
    * @returns {void}
@@ -475,6 +569,14 @@ function createPreviewRecordPipeline(page) {
         page._handleDegradedRollingSegment(segment);
         return;
       }
+    }
+    if (
+      pageVisible
+      && wallMs >= 30000
+      && !isHealthy
+      && typeof page._handleThermalRollingSegment === 'function'
+    ) {
+      page._handleThermalRollingSegment(segment);
     }
     const now = Date.now();
     page.lastSegmentAt = now;
@@ -1052,7 +1154,13 @@ function createPreviewRecordPipeline(page) {
     getLastCameraFrame,
     clearLastCameraFrame,
     setHandoffFrameHook,
-    clearHandoffFrameHook
+    clearHandoffFrameHook,
+    getCfrPumpFps,
+    setCfrPumpFps,
+    pauseCfrFeed,
+    resumeCfrFeed,
+    setRecordingProfile,
+    getMaxAvailableHighlightLeadMs
   };
 }
 

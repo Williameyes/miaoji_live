@@ -28,6 +28,7 @@ const BEHAVIOR_GROUPS = {
     'rollingFsBusy', '_rollingPersistInFlight', '_postUserLocalPersistCooldownMs',
     'replayIntroDurationMs', 'replayOutroDurationMs', 'highlightMissStreak', 'highlightCopyFailStreak',
     'segmentPersistFailStreak', 'highlightMaterializeQueue', '_highlightMaterializeUrgentOnHide',
+    '_highlightMaterializeUrgentForReplay', '_highlightMaterializeCurrentId',
     'highlightMaterializeRunning', 'storageWatermarkLevel', 'highlightsMaxCount',
     'highlightsEmergencyMinKeepCount', 'segmentStartFailStormCycles', '_startOneSegmentInFlight',
     '_segmentStartRetryTimer', '_segmentStartRecoveringFromIsRecording',
@@ -117,7 +118,8 @@ const BEHAVIOR_GROUPS = {
     'retainRollingSegmentsByPaths', 'releaseRollingSegmentsByPaths', '_releaseMaterializedRollingSources'
   ],
   'live-highlight-behavior': [
-    '_logHighlightTrimDiagnostic', 'canMaterializeHighlightNow', '_collectHighlightExportPaths',
+    '_logHighlightTrimDiagnostic', 'canMaterializeHighlightNow', '_buildMaterializeTaskFromClipItem',
+    '_kickUrgentMaterializeForReplay', '_applyDeviceRecordProfile', '_collectHighlightExportPaths',
     '_collectHighlightPlaybackPaths', '_collectManifestReplayPlan', '_collectIndexedReplayPlan',
     '_isReplaySuspectFakeTrim', '_normalizeMaterializedReplaySeek', '_resolveRollingReplaySeek',
     '_resolveHighlightReplaySource', '_isHighlightPathPlayable', '_isHighlightSourceHollow',
