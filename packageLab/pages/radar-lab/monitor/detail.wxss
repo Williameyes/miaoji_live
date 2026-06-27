@@ -153,3 +153,224 @@
 .mon-actions .rl-btn {
   width: 100%;
 }
+
+/* 弹窗中的实验功能折叠 */
+.modal-lab-section {
+  margin-top: 16rpx;
+  margin-bottom: 16rpx;
+}
+
+.modal-lab-toggle {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16rpx 0;
+  border-top: 1rpx solid #e2e8f0;
+  border-bottom: 1rpx solid #e2e8f0;
+  margin-bottom: 16rpx;
+}
+
+.modal-lab-toggle-title {
+  font-size: 26rpx;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.modal-lab-toggle-arrow {
+  font-size: 24rpx;
+  color: #64748b;
+  transition: transform 0.2s ease;
+}
+
+.modal-switch-item {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12rpx 0;
+}
+
+.modal-switch-item text {
+  font-size: 24rpx;
+  color: #475569;
+}
+
+.modal-switch-item switch {
+  transform: scale(0.8);
+}
+
+.modal-sub-options {
+  background: #f8fafc;
+  padding: 12rpx 16rpx;
+  border-radius: 8rpx;
+  margin-bottom: 12rpx;
+  border-left: 4rpx solid #cbd5e1;
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+}
+
+.modal-sub-options picker {
+  width: 100%;
+}
+
+.modal-picker-row {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  height: 48rpx;
+}
+
+.modal-picker-label {
+  font-size: 22rpx;
+  color: #64748b;
+}
+
+.modal-picker-val {
+  font-size: 22rpx;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.modal-input-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modal-input-label {
+  font-size: 22rpx;
+  color: #64748b;
+}
+
+.modal-input-val {
+  text-align: right;
+  font-size: 22rpx;
+  width: 120rpx;
+  background: #e2e8f0;
+  border-radius: 4rpx;
+  padding: 2rpx 8rpx;
+  color: #0f172a;
+}
+
+/* 比分最新面板 */
+.score-latest-panel {
+  background: #f0f9ff;
+  border-radius: 16rpx;
+  padding: 24rpx;
+  margin-bottom: 24rpx;
+  border: 1rpx solid #bae6fd;
+}
+
+.score-latest-main {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 20rpx;
+  margin-bottom: 12rpx;
+}
+
+.score-latest-team-a,
+.score-latest-team-b {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #0369a1;
+  max-width: 180rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.score-latest-value {
+  font-size: 48rpx;
+  font-weight: 800;
+  color: #0284c7;
+}
+
+.score-latest-meta {
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+  gap: 16rpx;
+  font-size: 22rpx;
+  color: #0284c7;
+}
+
+.score-latest-confidence {
+  color: #64748b;
+}
+
+/* 比分时间线列表 */
+.score-timeline-scroll {
+  max-height: 280rpx;
+}
+
+.score-timeline-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.score-timeline-item {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16rpx 0;
+  border-bottom: 1rpx solid #f1f5f9;
+}
+
+.score-timeline-item:last-child {
+  border-bottom: none;
+}
+
+.timeline-item-time {
+  font-size: 24rpx;
+  color: #64748b;
+  flex: 1;
+}
+
+.timeline-item-score {
+  font-size: 26rpx;
+  font-weight: 700;
+  color: #1e293b;
+  flex: 1;
+  text-align: center;
+}
+
+.timeline-item-conf {
+  font-size: 22rpx;
+  color: #94a3b8;
+  flex: 1;
+  text-align: right;
+}
+
+/* 录制媒体数据 */
+.media-meta-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+.media-meta-row {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.media-meta-label {
+  font-size: 24rpx;
+  color: #64748b;
+}
+
+.media-meta-val {
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #1e293b;
+}
+

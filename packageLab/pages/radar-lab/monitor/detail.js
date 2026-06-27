@@ -3,6 +3,7 @@
  */
 
 const { ensureRadarLabAccess, isForbiddenError, handleRadarForbidden } = require('../../../utils/radar-access.js');
+const { checkSyncLabWhitelist } = require('../../../../utils/sync-lab-whitelist.js');
 const {
   addMatchTask,
   triggerMatchProbe,
@@ -13,6 +14,11 @@ const {
   settleMatch,
   fetchPromoPendingApplications
 } = require('../../../services/radar-api.js');
+const {
+  addMatchRadarTask,
+  fetchMatchScoreTimeline,
+  fetchMatchMediaSegments
+} = require('../../../services/match-radar.service.js');
 const {
   normalizeTimeline,
   drawTimelineChart,
@@ -100,7 +106,28 @@ Page({
     pendingCount: 0,
     focusAds: false,
     canvasReady: false,
-    loading: true
+    loading: true,
+    
+    // 实验功能白名单与配置
+    isInWhitelist: false,
+    showModalLab: false,
+    enable_ad_verify: false,
+    enable_score_ocr: false,
+    enable_audio_record: false,
+    enable_video_record: false,
+    sportTypes: ['通用', '篮球', '羽毛球'],
+    sportTypeValues: ['generic', 'basketball', 'badminton'],
+    sportTypeIndex: 0,
+    segment_duration_sec: 300,
+    local_retention_hours: 24,
+    scoreTimeline: null,
+    scoreLatest: null,
+    mediaSegments: null,
+    mediaSummary: null,
+    mediaCounts: null,
+    mediaStatus: null,
+    teamA: '',
+    teamB: ''
   },
 
   /** @type {number | null} */
@@ -128,10 +155,15 @@ Page({
       }, 600);
       return;
     }
+    const inWhitelist = checkSyncLabWhitelist();
     this.setData({
       matchId: matchId,
-      focusAds: query && query.focus_ads === '1'
+      focusAds: query && query.focus_ads === '1',
+      isInWhitelist: inWhitelist
     });
+    if (inWhitelist) {
+      this.restorePreferences();
+    }
     this._loadMatchMeta(matchId);
     this._refreshPendingCount(matchId);
   },
@@ -221,6 +253,8 @@ Page({
       (status === 'monitoring' || status === 'waiting_radar' || status === 'ended');
     this.setData(Object.assign({
       matchTitle: detail.teamA + ' vs ' + detail.teamB,
+      teamA: detail.teamA,
+      teamB: detail.teamB,
       tournamentName: detail.tournamentName,
       matchStatus: status,
       statusLabel: STATUS_LABELS[status] || status || '未知',
@@ -368,17 +402,24 @@ Page({
    */
   onPullDownRefresh: function () {
     const self = this;
-    Promise.all([
-      fetchMatchDetail(this.data.matchId).then(function (detail) {
+    const matchId = this.data.matchId;
+    const promises = [
+      fetchMatchDetail(matchId).then(function (detail) {
         if (detail) {
           self.setData({
             matchTitle: detail.teamA + ' vs ' + detail.teamB,
+            teamA: detail.teamA,
+            teamB: detail.teamB,
             tournamentName: detail.tournamentName
           });
         }
       }),
       this._fetchStreamOnce()
-    ]).finally(function () {
+    ];
+    if (checkSyncLabWhitelist() && matchId) {
+      this._fetchScoreTimelineAndMedia(matchId);
+    }
+    Promise.all(promises).finally(function () {
       wx.stopPullDownRefresh();
     });
   },
@@ -391,6 +432,9 @@ Page({
     const self = this;
     const matchId = this.data.matchId;
     if (!matchId) return Promise.resolve();
+    if (checkSyncLabWhitelist()) {
+      this._fetchScoreTimelineAndMedia(matchId);
+    }
     return fetchMatchStreamData(matchId)
       .then(function (res) {
         const status =
@@ -414,6 +458,61 @@ Page({
       })
       .catch(function (err) {
         console.warn('[RadarDetail] stream_data fail', err);
+      });
+  },
+
+  /**
+   * 拉取比分时间线和录制媒体数据（仅白名单用户）。
+   * @param {string|number} matchId
+   * @returns {void}
+   */
+  _fetchScoreTimelineAndMedia: function (matchId) {
+    const self = this;
+    if (!checkSyncLabWhitelist()) return;
+    const mId = Number(matchId);
+    if (!mId || isNaN(mId)) return;
+
+    fetchMatchScoreTimeline(mId)
+      .then(function (res) {
+        if (res && res.success) {
+          const rawTimeline = Array.isArray(res.timeline) ? res.timeline : [];
+          const timeline = rawTimeline.map(function (item) {
+            const conf = item && typeof item.confidence === 'number' ? item.confidence : 0;
+            return Object.assign({}, item, {
+              confidencePercent: Math.round(conf * 100)
+            });
+          });
+          let scoreLatest = null;
+          if (res.latest && typeof res.latest === 'object') {
+            const conf = typeof res.latest.confidence === 'number' ? res.latest.confidence : 0;
+            scoreLatest = Object.assign({}, res.latest, {
+              confidencePercent: Math.round(conf * 100)
+            });
+          }
+          self.setData({
+            scoreTimeline: timeline,
+            scoreLatest: scoreLatest
+          });
+        }
+      })
+      .catch(function (err) {
+        console.warn('[RadarDetail] fetch score_timeline fail', err);
+      });
+
+    fetchMatchMediaSegments(mId)
+      .then(function (res) {
+        if (res && res.success) {
+          self.setData({
+            mediaSegments: res.segments || [],
+            mediaSummary: res.summary || null,
+            mediaCounts: res.counts || null,
+            mediaStatus: res.recorder_status || null,
+            mediaStorageLocation: res.storage_location || 'radar_local'
+          });
+        }
+      })
+      .catch(function (err) {
+        console.warn('[RadarDetail] fetch media_segments fail', err);
       });
   },
 
@@ -444,15 +543,52 @@ Page({
    */
   onSubmitBind: function () {
     const self = this;
-    const matchId = this.data.matchId;
+    const matchId = Number(this.data.matchId);
     const rawText = (this.data.bindRawText || '').trim();
     if (!rawText) {
       wx.showToast({ title: '请粘贴抖音口令', icon: 'none' });
       return;
     }
     this.setData({ submitting: true });
-    addMatchTask(matchId, rawText)
+
+    let requestPromise;
+    if (this.data.isInWhitelist) {
+      const params = {
+        match_id: matchId,
+        raw_text: rawText,
+        capabilities: {
+          enable_ad_verify: this.data.enable_ad_verify,
+          enable_score_ocr: this.data.enable_score_ocr,
+          enable_audio_record: this.data.enable_audio_record,
+          enable_video_record: this.data.enable_video_record
+        }
+      };
+
+      if (this.data.enable_score_ocr) {
+        params.score_ocr = {
+          sport_type: this.data.sportTypeValues[this.data.sportTypeIndex],
+          team_a: this.data.teamA || '',
+          team_b: this.data.teamB || ''
+        };
+      }
+
+      if (this.data.enable_audio_record || this.data.enable_video_record) {
+        params.recorder = {
+          segment_duration_sec: Number(this.data.segment_duration_sec) || 300,
+          local_retention_hours: Number(this.data.local_retention_hours) || 24
+        };
+      }
+
+      requestPromise = addMatchRadarTask(params);
+    } else {
+      requestPromise = addMatchTask(matchId, rawText);
+    }
+
+    requestPromise
       .then(function (res) {
+        if (self.data.isInWhitelist) {
+          self.savePreferences();
+        }
         const enqueued = res.task_enqueued !== false;
         const dup = typeof res.duplicate_reason === 'string' ? res.duplicate_reason : '';
         if (enqueued) {
@@ -475,6 +611,74 @@ Page({
       .finally(function () {
         self.setData({ submitting: false });
       });
+  },
+
+  restorePreferences: function () {
+    try {
+      const prefs = wx.getStorageSync('radar_lab_capabilities_prefs');
+      if (prefs && typeof prefs === 'object') {
+        this.setData({
+          enable_ad_verify: !!prefs.enable_ad_verify,
+          enable_score_ocr: !!prefs.enable_score_ocr,
+          enable_audio_record: !!prefs.enable_audio_record,
+          enable_video_record: !!prefs.enable_video_record,
+          sportTypeIndex: typeof prefs.sportTypeIndex === 'number' ? prefs.sportTypeIndex : 0,
+          segment_duration_sec: prefs.segment_duration_sec != null ? prefs.segment_duration_sec : 300,
+          local_retention_hours: prefs.local_retention_hours != null ? prefs.local_retention_hours : 24
+        });
+      }
+    } catch (e) {
+      console.warn('[RadarDetail] restorePreferences fail', e);
+    }
+  },
+
+  savePreferences: function () {
+    const prefs = {
+      enable_ad_verify: this.data.enable_ad_verify,
+      enable_score_ocr: this.data.enable_score_ocr,
+      enable_audio_record: this.data.enable_audio_record,
+      enable_video_record: this.data.enable_video_record,
+      sportTypeIndex: this.data.sportTypeIndex,
+      segment_duration_sec: Number(this.data.segment_duration_sec) || 300,
+      local_retention_hours: Number(this.data.local_retention_hours) || 24
+    };
+    try {
+      wx.setStorageSync('radar_lab_capabilities_prefs', prefs);
+    } catch (e) {
+      console.warn('[RadarDetail] savePreferences fail', e);
+    }
+  },
+
+  onToggleModalLab: function () {
+    this.setData({ showModalLab: !this.data.showModalLab });
+  },
+
+  onAdVerifyChange: function (e) {
+    this.setData({ enable_ad_verify: e.detail.value });
+  },
+
+  onScoreOcrChange: function (e) {
+    this.setData({ enable_score_ocr: e.detail.value });
+  },
+
+  onAudioRecordChange: function (e) {
+    this.setData({ enable_audio_record: e.detail.value });
+  },
+
+  onVideoRecordChange: function (e) {
+    this.setData({ enable_video_record: e.detail.value });
+  },
+
+  onSportTypeChange: function (e) {
+    this.setData({ sportTypeIndex: Number(e.detail.value) });
+  },
+
+  onSegmentDurationInput: function (e) {
+    this.setData({ segment_duration_sec: e.detail.value });
+  },
+
+  onRetentionHoursInput: function (e) {
+    this.setData({ local_retention_hours: e.detail.value });
   },
 
   /**

@@ -709,6 +709,22 @@ Page({
     wx.navigateTo({ url: '/packageLab/pages/radar-lab/index/index' });
   },
 
+  /**
+   * 实验功能「雷达多模态挂载」入口：仅白名单用户可进入。
+   * @returns {void}
+   */
+  onRadarLabMountTap: function () {
+    if (!this.data.loggedIn) {
+      wx.showToast({ title: '请先登录', icon: 'none' });
+      return;
+    }
+    if (!checkSyncLabWhitelist()) {
+      wx.showToast({ title: '暂无使用权限', icon: 'none' });
+      return;
+    }
+    wx.navigateTo({ url: '/packageLab/pages/radar-lab/mount/index' });
+  },
+
   onAboutTap: function () {
     wx.showModal({
       title: '关于我们',

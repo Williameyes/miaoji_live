@@ -34,15 +34,9 @@
       <view class="oam-match-item" hover-class="rl-list-item-hover">
         <view
           class="oam-match-main"
-          bindtap="onEditMatch"
+          bindtap="onGoMonitorDetail"
           data-id="{{item.id}}"
-          wx:if="{{!adminViewAll || item.canManage}}"
         >
-          <view class="rl-list-title">{{item.teamA}} vs {{item.teamB}}</view>
-          <view class="rl-list-desc">{{item.startTimeText}} · {{item.tournamentName}}</view>
-          <view class="rl-list-desc oam-commercial-desc">{{item.commercialText}}</view>
-        </view>
-        <view class="oam-match-main" wx:else>
           <view class="rl-list-title">{{item.teamA}} vs {{item.teamB}}</view>
           <view class="rl-list-desc">{{item.startTimeText}} · {{item.tournamentName}}</view>
           <view class="rl-list-desc oam-commercial-desc">{{item.commercialText}}</view>
@@ -62,10 +56,10 @@
           >推广</button>
           <button
             wx:if="{{!adminViewAll || item.canManage}}"
-            class="oam-action-btn oam-action-btn--primary"
-            bindtap="onOpenMonitor"
+            class="oam-action-btn oam-action-btn--ghost"
+            bindtap="onCopyMatchId"
             data-id="{{item.id}}"
-          >监测</button>
+          >复制ID</button>
           <text wx:if="{{adminViewAll && !item.canManage}}" class="rl-list-desc">仅查看</text>
         </view>
       </view>

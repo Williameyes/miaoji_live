@@ -93,6 +93,82 @@
     </view>
   </view>
 
+  <!-- 比分时间线与录制数据卡片 (白名单 + 进行中/已结束) -->
+  <block wx:if="{{isInWhitelist && (matchStatus === 'monitoring' || matchStatus === 'ended' || matchStatus === 'interrupted')}}">
+    <!-- 比分时间线卡片 -->
+    <view class="rl-card">
+      <view class="rl-card-inner">
+        <view class="rl-section-title">🤖 比分 OCR 时间线 (实验)</view>
+        <block wx:if="{{scoreLatest}}">
+          <view class="score-latest-panel">
+            <view class="score-latest-main">
+              <text class="score-latest-team-a">{{teamA || '主队'}}</text>
+              <text class="score-latest-value">{{scoreLatest.score_a}} - {{scoreLatest.score_b}}</text>
+              <text class="score-latest-team-b">{{teamB || '客队'}}</text>
+            </view>
+            <view class="score-latest-meta">
+              <text class="score-latest-period">{{scoreLatest.period}}</text>
+              <text class="score-latest-clock" style="margin-left: 12rpx; margin-right: 12rpx;">{{scoreLatest.clock}}</text>
+              <text class="score-latest-confidence">置信度: {{scoreLatest.confidencePercent}}%</text>
+            </view>
+          </view>
+        </block>
+        <block wx:if="{{scoreTimeline && scoreTimeline.length > 0}}">
+          <scroll-view scroll-y class="score-timeline-scroll">
+            <view class="score-timeline-list">
+              <view class="score-timeline-item" wx:for="{{scoreTimeline}}" wx:key="timestamp">
+                <text class="timeline-item-time">{{item.clock}} ({{item.period}})</text>
+                <text class="timeline-item-score">{{item.score_a}} - {{item.score_b}}</text>
+                <text class="timeline-item-conf">置信度: {{item.confidencePercent}}%</text>
+              </view>
+            </view>
+          </scroll-view>
+        </block>
+        <block wx:else>
+          <view class="rl-empty">暂无比分数据</view>
+        </block>
+      </view>
+    </view>
+
+    <!-- 录制元数据卡片 -->
+    <view class="rl-card">
+      <view class="rl-card-inner">
+        <view class="rl-section-title">📹 录制元数据 (实验)</view>
+        <block wx:if="{{mediaCounts && mediaSummary}}">
+          <view class="media-meta-summary">
+            <view class="media-meta-row">
+              <text class="media-meta-label">音频分片数:</text>
+              <text class="media-meta-val">{{mediaCounts.audio}} 个</text>
+            </view>
+            <view class="media-meta-row">
+              <text class="media-meta-label">视频分片数:</text>
+              <text class="media-meta-val">{{mediaCounts.video}} 个</text>
+            </view>
+            <view class="media-meta-row">
+              <text class="media-meta-label">总录制时长:</text>
+              <text class="media-meta-val">{{mediaSummary.total_duration_sec}} 秒</text>
+            </view>
+            <view class="media-meta-row">
+              <text class="media-meta-label">总文件大小:</text>
+              <text class="media-meta-val">{{mediaSummary.total_file_size_bytes}} 字节</text>
+            </view>
+            <view class="media-meta-row" wx:if="{{mediaStatus}}">
+              <text class="media-meta-label">录制状态:</text>
+              <text class="media-meta-val">{{mediaStatus.event}}</text>
+            </view>
+            <view class="media-meta-row" style="margin-top: 12rpx; padding-top: 12rpx; border-top: 1rpx dashed #e2e8f0;">
+              <text class="media-meta-label" style="color: #64748b; font-size: 22rpx;">存储位置:</text>
+              <text class="media-meta-val" style="color: #64748b; font-size: 22rpx;">文件保存在雷达节点，暂不支持在线播放</text>
+            </view>
+          </view>
+        </block>
+        <block wx:else>
+          <view class="rl-empty">暂无录制分片</view>
+        </block>
+      </view>
+    </view>
+  </block>
+
   <view class="mon-actions">
     <button class="rl-btn rl-btn-primary" disabled="{{submitting}}" bindtap="onOpenBindModal">启动监测</button>
     <button
@@ -136,6 +212,54 @@
           maxlength="-1"
         />
       </view>
+
+      <!-- 实验能力折叠区 -->
+      <view class="modal-lab-section" wx:if="{{isInWhitelist}}">
+        <view class="modal-lab-toggle" bindtap="onToggleModalLab">
+          <text class="modal-lab-toggle-title">⚡ 实验能力设置 (高级)</text>
+          <text class="modal-lab-toggle-arrow">{{showModalLab ? '▼' : '▶'}}</text>
+        </view>
+        <scroll-view scroll-y style="max-height: 320rpx;" wx:if="{{showModalLab}}">
+          <view class="modal-switch-item">
+            <text>广告物料核销</text>
+            <switch checked="{{enable_ad_verify}}" bindchange="onAdVerifyChange" color="#2563eb" />
+          </view>
+          <view class="modal-switch-item">
+            <text>比分 OCR (自动)</text>
+            <switch checked="{{enable_score_ocr}}" bindchange="onScoreOcrChange" color="#2563eb" />
+          </view>
+          
+          <view class="modal-sub-options" wx:if="{{enable_score_ocr}}">
+            <picker mode="selector" range="{{sportTypes}}" value="{{sportTypeIndex}}" bindchange="onSportTypeChange">
+              <view class="modal-picker-row">
+                <text class="modal-picker-label">运动类型</text>
+                <text class="modal-picker-val">{{sportTypes[sportTypeIndex]}} ›</text>
+              </view>
+            </picker>
+          </view>
+
+          <view class="modal-switch-item">
+            <text>音频录制</text>
+            <switch checked="{{enable_audio_record}}" bindchange="onAudioRecordChange" color="#2563eb" />
+          </view>
+          <view class="modal-switch-item">
+            <text>视频录制</text>
+            <switch checked="{{enable_video_record}}" bindchange="onVideoRecordChange" color="#2563eb" />
+          </view>
+
+          <view class="modal-sub-options" wx:if="{{enable_audio_record || enable_video_record}}">
+            <view class="modal-input-row">
+              <text class="modal-input-label">分片时长(秒)</text>
+              <input type="number" placeholder="300" value="{{segment_duration_sec}}" bindinput="onSegmentDurationInput" class="modal-input-val" />
+            </view>
+            <view class="modal-input-row">
+              <text class="modal-input-label">保留时长(小时)</text>
+              <input type="number" placeholder="24" value="{{local_retention_hours}}" bindinput="onRetentionHoursInput" class="modal-input-val" />
+            </view>
+          </view>
+        </scroll-view>
+      </view>
+
       <view class="rl-notice" style="margin-bottom:8rpx;">
         <text class="rl-notice-text">首次挂载需粘贴口令；已审批主播可直接点「再次探测」无需重复粘贴。</text>
       </view>

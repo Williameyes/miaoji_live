@@ -33,23 +33,7 @@ Page({
     wx.navigateTo({ url: '/packageLab/pages/radar-lab/oam/tournament-list/tournament-list' });
   },
 
-  /**
-   * 跳转热度监测列表。
-   * @returns {void}
-   */
-  onGoMonitor: function () {
-    if (!ensureRadarLabAccess()) return;
-    wx.navigateTo({ url: '/packageLab/pages/radar-lab/monitor/index' });
-  },
 
-  /**
-   * 跳转推广监测列表。
-   * @returns {void}
-   */
-  onGoPromo: function () {
-    if (!ensureRadarLabAccess()) return;
-    wx.navigateTo({ url: '/packageLab/pages/radar-lab/monitor/promo' });
-  },
 
   /**
    * 跳转战报宣发页。

@@ -1,0 +1,213 @@
+@import '../common/common.wxss';
+
+/* 预览关联场次队名 */
+.match-detail-preview {
+  margin-top: -12rpx;
+  margin-bottom: 24rpx;
+  background: #f0f9ff;
+  border-left: 6rpx solid #0284c7;
+  padding: 16rpx 20rpx;
+  border-radius: 8rpx;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+}
+
+.match-detail-title {
+  font-size: 24rpx;
+  color: #0369a1;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.match-detail-name {
+  font-size: 26rpx;
+  color: #0c4a6e;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 开关行样式 */
+.switch-item {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24rpx 0;
+  border-bottom: 1rpx solid #f1f5f9;
+}
+
+.switch-item:last-child {
+  border-bottom: none;
+}
+
+.switch-info {
+  flex: 1;
+  margin-right: 24rpx;
+  display: flex;
+  flex-direction: column;
+}
+
+.switch-title {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #1e293b;
+  margin-bottom: 4rpx;
+}
+
+.switch-desc {
+  font-size: 22rpx;
+  color: #94a3b8;
+}
+
+/* 子选项抽屉 */
+.sub-options-box {
+  margin-top: 12rpx;
+  background: #f8fafc;
+  border-radius: 12rpx;
+  padding: 20rpx 24rpx;
+  border-left: 4rpx solid #cbd5e1;
+  margin-bottom: 16rpx;
+}
+
+.picker-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  height: 64rpx;
+}
+
+.picker-label {
+  font-size: 26rpx;
+  color: #475569;
+}
+
+.picker-value {
+  font-size: 26rpx;
+  font-weight: 700;
+  color: #1e293b;
+  display: flex;
+  align-items: center;
+}
+
+.picker-arrow {
+  margin-left: 8rpx;
+  color: #94a3b8;
+  font-size: 28rpx;
+}
+
+.sub-option-tip {
+  font-size: 22rpx;
+  color: #64748b;
+  margin-top: 12rpx;
+  line-height: 1.4;
+}
+
+/* 高级设置折叠栏 */
+.advanced-toggle-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  height: 48rpx;
+}
+
+.advanced-toggle-btn {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+}
+
+.advanced-toggle-text {
+  font-size: 24rpx;
+  color: #64748b;
+  margin-right: 8rpx;
+}
+
+.advanced-toggle-arrow {
+  font-size: 32rpx;
+  color: #94a3b8;
+  transform: rotate(90deg);
+  transition: transform 0.25s ease;
+}
+
+.advanced-toggle-arrow.expanded {
+  transform: rotate(270deg);
+}
+
+.advanced-fields {
+  margin-top: 24rpx;
+  padding-top: 16rpx;
+  border-top: 1rpx solid #f1f5f9;
+}
+
+/* 按钮区域 */
+.actions-area {
+  margin-top: 48rpx;
+}
+
+.submit-btn {
+  width: 100%;
+  display: block;
+  box-shadow: 0 8rpx 20rpx rgba(37, 99, 235, 0.2);
+}
+
+.oam-root {
+  padding-bottom: calc(160rpx + env(safe-area-inset-bottom));
+}
+
+.active-match-item {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 28rpx 32rpx;
+  border-bottom: 1rpx solid #f1f5f9;
+}
+
+.active-match-item:last-child {
+  border-bottom: none;
+}
+
+.active-match-main {
+  flex: 1;
+  min-width: 0;
+  padding-right: 16rpx;
+}
+
+.active-match-id {
+  font-size: 22rpx;
+  color: #94a3b8;
+  margin-top: 4rpx;
+}
+
+.active-match-badge-wrap {
+  flex-shrink: 0;
+}
+
+.oam-fab {
+  position: fixed;
+  left: 40rpx;
+  right: 40rpx;
+  bottom: calc(40rpx + env(safe-area-inset-bottom));
+  height: 96rpx;
+  border-radius: 24rpx;
+  background: #2563eb;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8rpx 28rpx rgba(37, 99, 235, 0.35);
+  z-index: 10;
+}
+
+.oam-fab-hover {
+  opacity: 0.92;
+}
+
+.oam-fab-text {
+  color: #ffffff;
+  font-size: 32rpx;
+  font-weight: 700;
+}

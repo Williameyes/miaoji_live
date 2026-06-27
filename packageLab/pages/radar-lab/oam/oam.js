@@ -243,18 +243,27 @@ Page({
    * @param {WechatMiniprogram.BaseEvent} e
    * @returns {void}
    */
-  onOpenMonitor: function (e) {
+  onGoMonitorDetail: function (e) {
     const id = e.currentTarget.dataset.id;
     if (!id) return;
-    const row = this.data.matchRows.find(function (r) {
-      return String(r.id) === String(id);
-    });
-    if (row && row.canManage === false) {
-      wx.showToast({ title: '无权操作该场次', icon: 'none' });
-      return;
-    }
     wx.navigateTo({
       url: '/packageLab/pages/radar-lab/monitor/detail?match_id=' + encodeURIComponent(id)
+    });
+  },
+
+  /**
+   * 复制比赛 ID 到剪贴板。
+   * @param {WechatMiniprogram.BaseEvent} e
+   * @returns {void}
+   */
+  onCopyMatchId: function (e) {
+    const id = e.currentTarget.dataset.id;
+    if (!id) return;
+    wx.setClipboardData({
+      data: String(id),
+      success: function () {
+        wx.showToast({ title: '已复制比赛ID', icon: 'success' });
+      }
     });
   },
 

@@ -1,0 +1,205 @@
+<view class="rl-root {{!showAddForm ? 'oam-root' : ''}}">
+
+  <!-- ==================== 1. 正在监测的比赛列表 ==================== -->
+  <block wx:if="{{!showAddForm}}">
+    <view class="rl-header">
+      <view class="rl-kicker">雷达实验 · 正在监测</view>
+      <view class="rl-title">正在监测的比赛</view>
+      <view class="rl-sub">点击比赛卡片进入监控详情页；点击下方按钮新增挂载任务。</view>
+    </view>
+
+    <!-- 加载中 -->
+    <view class="rl-empty" wx:if="{{loading}}">
+      <text>加载中…</text>
+    </view>
+
+    <!-- 列表展现 -->
+    <view class="rl-card" wx:elif="{{activeMatches.length}}">
+      <block wx:for="{{activeMatches}}" wx:key="id">
+        <view
+          class="active-match-item"
+          bindtap="onGoMonitorDetail"
+          data-id="{{item.id}}"
+          hover-class="rl-list-item-hover"
+        >
+          <view class="active-match-main">
+            <view class="rl-list-title">{{item.teamA}} vs {{item.teamB}}</view>
+            <view class="rl-list-desc">{{item.startTimeText}} · {{item.tournamentName}}</view>
+            <view class="rl-list-desc active-match-id">比赛 ID: {{item.id}}</view>
+          </view>
+          <view class="active-match-badge-wrap">
+            <text class="rl-badge {{item.statusBadgeClass}}">{{item.statusLabel}}</text>
+          </view>
+        </view>
+      </block>
+    </view>
+
+    <!-- 空态 -->
+    <view class="rl-empty" wx:else>
+      <text>暂无进行中的监测任务</text>
+      <text class="rl-empty-sub">点击下方「新增挂载」按钮启动一个赛事的雷达监控</text>
+    </view>
+
+    <!-- 悬浮新增按钮 -->
+    <view class="oam-fab" bindtap="onShowForm" hover-class="oam-fab-hover">
+      <text class="oam-fab-text">新增挂载</text>
+    </view>
+  </block>
+
+  <!-- ==================== 2. 新增挂载配置表单 ==================== -->
+  <block wx:else>
+    <view class="rl-header">
+      <view class="rl-kicker">雷达实验 · 挂载新路</view>
+      <view class="rl-title">新增挂载</view>
+      <view class="rl-sub">关联具体的场次 ID 并在雷达端启动多路抖音直播监控与多模态识别插件。</view>
+    </view>
+
+    <!-- 基础参数配置卡片 -->
+    <view class="rl-card">
+      <view class="rl-card-inner">
+        <view class="rl-section-title">基础配置</view>
+        
+        <!-- 场次 ID -->
+        <view class="rl-field">
+          <text class="rl-label">场次 ID (Number)</text>
+          <input
+            class="rl-input"
+            type="number"
+            placeholder="请输入关联的场次 ID (如 44)"
+            value="{{matchId}}"
+            bindinput="onMatchIdInput"
+            bindblur="onMatchIdBlur"
+          />
+        </view>
+        
+        <!-- 自动查询的场次队名 -->
+        <view class="match-detail-preview" wx:if="{{matchTitle}}">
+          <text class="match-detail-title">🔍 关联场次：</text>
+          <text class="match-detail-name">{{matchTitle}}</text>
+        </view>
+
+        <!-- 抖音口令 / 链接 -->
+        <view class="rl-field">
+          <text class="rl-label">抖音直播分享链接 / 口令</text>
+          <textarea
+            class="rl-textarea"
+            placeholder="请将抖音直播口令或分享链接完整粘贴到此处"
+            value="{{rawText}}"
+            bindinput="onRawTextInput"
+            maxlength="-1"
+          />
+        </view>
+      </view>
+    </view>
+
+    <!-- 插件能力选项 (Switches) -->
+    <view class="rl-card">
+      <view class="rl-card-inner">
+        <view class="rl-section-title">雷达插件配置</view>
+
+        <view class="switch-item">
+          <view class="switch-info">
+            <text class="switch-title">广告物料核销</text>
+            <text class="switch-desc">场次有广告物料时默认开启</text>
+          </view>
+          <switch checked="{{enable_ad_verify}}" bindchange="onAdVerifyChange" color="#2563eb" />
+        </view>
+
+        <view class="switch-item">
+          <view class="switch-info">
+            <text class="switch-title">比分 OCR</text>
+            <text class="switch-desc">全自动识别与对齐直播记分牌</text>
+          </view>
+          <switch checked="{{enable_score_ocr}}" bindchange="onScoreOcrChange" color="#2563eb" />
+        </view>
+
+        <!-- 比分 OCR 子选项 -->
+        <view class="sub-options-box" wx:if="{{enable_score_ocr}}">
+          <picker mode="selector" range="{{sportTypes}}" value="{{sportTypeIndex}}" bindchange="onSportTypeChange">
+            <view class="picker-row">
+              <text class="picker-label">运动类型</text>
+              <text class="picker-value">{{sportTypes[sportTypeIndex]}} <text class="picker-arrow">›</text></text>
+            </view>
+          </picker>
+          <view class="sub-option-tip">
+            提示：队伍名称自动从场次详情中提取 ({{teamA || '主队'}} vs {{teamB || '客队'}})，无需手画配置坐标。
+          </view>
+        </view>
+
+        <view class="switch-item">
+          <view class="switch-info">
+            <text class="switch-title">音频录制</text>
+            <text class="switch-desc">媒体文件留雷达端，仅同步元数据</text>
+          </view>
+          <switch checked="{{enable_audio_record}}" bindchange="onAudioRecordChange" color="#2563eb" />
+        </view>
+
+        <view class="switch-item">
+          <view class="switch-info">
+            <text class="switch-title">视频录制</text>
+            <text class="switch-desc">媒体文件留雷达端，仅同步元数据</text>
+          </view>
+          <switch checked="{{enable_video_record}}" bindchange="onVideoRecordChange" color="#2563eb" />
+        </view>
+      </view>
+    </view>
+
+    <!-- 录制参数高级设置 (Collapsible) -->
+    <view class="rl-card" wx:if="{{enable_audio_record || enable_video_record}}">
+      <view class="rl-card-inner">
+        <view class="advanced-toggle-bar" bindtap="onToggleAdvanced">
+          <view class="rl-section-title" style="margin-bottom: 0;">录制高级设置</view>
+          <view class="advanced-toggle-btn">
+            <text class="advanced-toggle-text">{{showAdvanced ? '折叠' : '展开'}}</text>
+            <text class="advanced-toggle-arrow {{showAdvanced ? 'expanded' : ''}}">›</text>
+          </view>
+        </view>
+
+        <view class="advanced-fields" wx:if="{{showAdvanced}}">
+          <view class="rl-field">
+            <text class="rl-label">分片时长 (单位：秒)</text>
+            <input
+              class="rl-input"
+              type="number"
+              placeholder="默认 300 秒"
+              value="{{segment_duration_sec}}"
+              bindinput="onSegmentDurationInput"
+            />
+          </view>
+
+          <view class="rl-field">
+            <text class="rl-label">雷达端本地文件保留时长 (单位：小时)</text>
+            <input
+              class="rl-input"
+              type="number"
+              placeholder="默认 24 小时"
+              value="{{local_retention_hours}}"
+              bindinput="onRetentionHoursInput"
+            />
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 操作区域 -->
+    <view class="actions-area">
+      <button
+        class="rl-btn rl-btn-primary submit-btn"
+        loading="{{submitting}}"
+        disabled="{{submitting}}"
+        bindtap="onSubmit"
+      >
+        提交挂载任务
+      </button>
+      
+      <button
+        class="rl-btn rl-btn-ghost cancel-btn"
+        style="margin-top: 16rpx;"
+        bindtap="onHideForm"
+      >
+        返回监测列表
+      </button>
+    </view>
+  </block>
+
+</view>

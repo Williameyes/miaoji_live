@@ -3,8 +3,8 @@
 
   <view class="rl-header">
     <view class="rl-kicker">实验功能 · 内测</view>
-    <view class="rl-title">直播雷达控制台</view>
-    <view class="rl-sub">赛事资产维护、热度监测、推广监测与完赛战报（仅白名单）</view>
+    <view class="rl-title">比赛管理控制台</view>
+    <view class="rl-sub">赛事与场次资产维护、完赛数据清算与战报宣发</view>
   </view>
 
   <view class="rl-card">
@@ -18,21 +18,7 @@
     <view class="rl-list-item" bindtap="onGoOam" hover-class="rl-list-item-hover">
       <view class="rl-list-main">
         <view class="rl-list-title">📋 场次维护</view>
-        <view class="rl-list-desc">以场次为主线：列表管理、挂载监控、批量排程</view>
-      </view>
-      <text class="rl-list-arrow">›</text>
-    </view>
-    <view class="rl-list-item" bindtap="onGoMonitor" hover-class="rl-list-item-hover">
-      <view class="rl-list-main">
-        <view class="rl-list-title">📈 热度监测</view>
-        <view class="rl-list-desc">纯热度采集中场次，不含广告/推广配置</view>
-      </view>
-      <text class="rl-list-arrow">›</text>
-    </view>
-    <view class="rl-list-item" bindtap="onGoPromo" hover-class="rl-list-item-hover">
-      <view class="rl-list-main">
-        <view class="rl-list-title">📣 推广监测</view>
-        <view class="rl-list-desc">广告/推广场次：发布广场、生成小程序码、审批申请</view>
+        <view class="rl-list-desc">以场次为主线：列表管理、信息编辑、批量排程</view>
       </view>
       <text class="rl-list-arrow">›</text>
     </view>
