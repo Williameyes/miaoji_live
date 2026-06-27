@@ -1048,7 +1048,11 @@ Page({
     /** 长按保存圆环内联样式（避免 wxml 内联 CSS 插值触发 IDE 报错） */
     quickZoomSaveProgressStyle: '',
     /** 正在长按保存的档位 index，-1 表示无 */
-    quickZoomSaveIdx: -1
+    quickZoomSaveIdx: -1,
+    /** 快捷变焦折叠菜单是否展开（默认收起，仅显示主按钮） */
+    quickZoomMenuOpen: false,
+    /** 主变焦按钮展示文案（当前激活档或按 zoom 推断） */
+    quickZoomMainDisplay: '1x'
   },
   /**
    * 从全局与 Storage 同步当前场次记分配置（与 index、onShow 逻辑一致）。
@@ -4905,6 +4909,16 @@ onCameraInit: function (e) {
       patch.quickZoomTempDisplay = '';
     }
     if (Object.keys(patch).length > 0) {
+      patch.quickZoomMainDisplay = this._getQuickZoomMainDisplayText({
+        quickZoomStops: patch.quickZoomStops || stops,
+        quickZoomTempZoom: patch.quickZoomTempZoom !== undefined
+          ? patch.quickZoomTempZoom
+          : this.data.quickZoomTempZoom,
+        quickZoomTempDisplay: patch.quickZoomTempDisplay !== undefined
+          ? patch.quickZoomTempDisplay
+          : this.data.quickZoomTempDisplay,
+        zoom: z
+      });
       this.setData(patch);
     }
   },
@@ -5028,6 +5042,15 @@ onCameraInit: function (e) {
           patch.quickZoomTempDisplay = '';
         }
       }
+      patch.quickZoomMainDisplay = this._getQuickZoomMainDisplayText({
+        quickZoomStops: patch.quickZoomStops || stops,
+        quickZoomTempZoom: patch.quickZoomTempZoom !== undefined
+          ? patch.quickZoomTempZoom
+          : this.data.quickZoomTempZoom,
+        quickZoomTempDisplay: patch.quickZoomTempDisplay !== undefined
+          ? patch.quickZoomTempDisplay
+          : this.data.quickZoomTempDisplay
+      });
       this.setData(patch);
       this.appendHealthLog('quick_zoom_stops_loaded', {
         enabled: !!enabled,
@@ -5049,7 +5072,8 @@ onCameraInit: function (e) {
   onQuickZoomToggle: function () {
     const next = !this.data.quickZoomEnabled;
     this.setData({
-      quickZoomEnabled: next
+      quickZoomEnabled: next,
+      quickZoomMenuOpen: false
     });
     try {
       wx.setStorageSync(QUICK_ZOOM_ENABLED_KEY, next);
@@ -5064,7 +5088,12 @@ onCameraInit: function (e) {
       this.setData({
         quickZoomStops: resetStops,
         quickZoomTempZoom: null,
-        quickZoomTempDisplay: ''
+        quickZoomTempDisplay: '',
+        quickZoomMainDisplay: this._getQuickZoomMainDisplayText({
+          quickZoomStops: resetStops,
+          quickZoomTempZoom: null,
+          quickZoomTempDisplay: ''
+        })
       });
     } else {
       const stops = this.data.quickZoomStops.map(function (s) {
@@ -5075,12 +5104,89 @@ onCameraInit: function (e) {
       this.setData({
         quickZoomStops: stops,
         quickZoomTempZoom: null,
-        quickZoomTempDisplay: ''
+        quickZoomTempDisplay: '',
+        quickZoomMainDisplay: this._getQuickZoomMainDisplayText({
+          quickZoomStops: stops,
+          quickZoomTempZoom: null,
+          quickZoomTempDisplay: ''
+        })
       });
     }
   },
   /**
-   * 点击快速变焦档位按钮——跳到该档保存的 zoom 值。
+   * 计算主变焦按钮应展示的倍数文案。
+   * @param {{ quickZoomTempZoom?: number|null, quickZoomTempDisplay?: string, quickZoomStops?: Array<{displayZoom:string,isActive:boolean}>, zoom?: number }} [ctx]
+   * @returns {string}
+   */
+  _getQuickZoomMainDisplayText: function (ctx) {
+    var state = ctx || {};
+    var tempZoom = state.quickZoomTempZoom !== undefined
+      ? state.quickZoomTempZoom
+      : this.data.quickZoomTempZoom;
+    var tempDisplay = state.quickZoomTempDisplay !== undefined
+      ? state.quickZoomTempDisplay
+      : this.data.quickZoomTempDisplay;
+    if (tempZoom !== null && tempDisplay) {
+      return tempDisplay;
+    }
+    var stops = state.quickZoomStops || this.data.quickZoomStops || [];
+    var i;
+    for (i = 0; i < stops.length; i++) {
+      if (stops[i].isActive) {
+        return stops[i].displayZoom;
+      }
+    }
+    var zoomVal = state.zoom !== undefined ? state.zoom : this.data.zoom;
+    var bandIdx = this._findQuickZoomStopIndexByBand(zoomVal);
+    if (bandIdx >= 0 && stops[bandIdx]) {
+      return stops[bandIdx].displayZoom;
+    }
+    return formatCameraZoomLabel(zoomVal);
+  },
+  /**
+   * 返回当前激活的快捷变焦档位 index，无激活档时返回 -1。
+   * @returns {number}
+   */
+  _findQuickZoomActiveIdx: function () {
+    var stops = this.data.quickZoomStops || [];
+    var i;
+    for (i = 0; i < stops.length; i++) {
+      if (stops[i].isActive) return i;
+    }
+    return -1;
+  },
+  /**
+   * 收起快捷变焦折叠菜单。
+   * @returns {void}
+   */
+  _closeQuickZoomMenu: function () {
+    if (!this.data.quickZoomMenuOpen) return;
+    this.setData({
+      quickZoomMenuOpen: false
+    });
+  },
+  /**
+   * 主变焦按钮：展开/收起档位列表。
+   * @returns {void}
+   */
+  onQuickZoomMainTap: function () {
+    if (this._quickZoomSuppressTap) return;
+    this.setData({
+      quickZoomMenuOpen: !this.data.quickZoomMenuOpen
+    });
+  },
+  /**
+   * 主变焦按钮长按：对当前激活档启动保存进度（菜单收起时）。
+   * @returns {void}
+   */
+  onQuickZoomMainTouchStart: function () {
+    if (this.data.quickZoomMenuOpen) return;
+    var activeIdx = this._findQuickZoomActiveIdx();
+    if (activeIdx < 0) return;
+    this._startQuickZoomStopLongPress(activeIdx);
+  },
+  /**
+   * 点击快速变焦档位——非激活档切换倍数；激活档恢复保存值（不清除存储，仅复位临时微调）。
    * @param {WechatMiniprogram.TouchEvent} e dataset.index: 0|1|2
    * @returns {void}
    */
@@ -5093,28 +5199,33 @@ onCameraInit: function (e) {
     if (this.data.enhanceMode === 'vk') return;
     if (!this.data.cameraMounted || !this.data.cameraContext || !this._cameraInitDone) return;
 
-    const stops = this.data.quickZoomStops.map(function (s, i) {
+    const stops = this.data.quickZoomStops;
+    const newStops = stops.map(function (s, i) {
       return Object.assign({}, s, {
         isActive: i === idx
       });
     });
     this.setData({
-      quickZoomStops: stops,
+      quickZoomStops: newStops,
       quickZoomTempZoom: null,
-      quickZoomTempDisplay: ''
+      quickZoomTempDisplay: '',
+      quickZoomMenuOpen: false,
+      quickZoomMainDisplay: this._getQuickZoomMainDisplayText({
+        quickZoomStops: newStops,
+        quickZoomTempZoom: null,
+        quickZoomTempDisplay: '',
+        zoom: newStops[idx].zoom
+      })
     });
-    this.updateZoom(stops[idx].zoom);
-    this._syncCameraViewModeFromZoom(stops[idx].zoom);
+    this.updateZoom(newStops[idx].zoom);
+    this._syncCameraViewModeFromZoom(newStops[idx].zoom);
   },
   /**
-   * 长按快速变焦档位：启动 0.8s 圆环进度，松手后写入当前 zoom。
-   * @param {WechatMiniprogram.TouchEvent} e dataset.index: 0|1|2
+   * 长按快捷变焦档位：启动 0.8s 圆环进度，松手后写入当前 zoom（仅激活档有效）。
+   * @param {number} idx 0|1|2
    * @returns {void}
    */
-  onQuickZoomStopTouchStart: function (e) {
-    const idx = e && e.currentTarget && e.currentTarget.dataset
-      ? Number(e.currentTarget.dataset.index)
-      : -1;
+  _startQuickZoomStopLongPress: function (idx) {
     if (idx < 0 || idx > 2) return;
     if (this.data.enhanceMode === 'vk') return;
     if (!this.data.cameraMounted || !this.data.cameraContext || !this._cameraInitDone) return;
@@ -5158,6 +5269,17 @@ onCameraInit: function (e) {
       self._quickZoomSaveTimer = setTimeout(tickSaveProgress, 64);
     };
     this._quickZoomSaveTimer = setTimeout(tickSaveProgress, 64);
+  },
+  /**
+   * 长按快速变焦档位：启动 0.8s 圆环进度，松手后写入当前 zoom。
+   * @param {WechatMiniprogram.TouchEvent} e dataset.index: 0|1|2
+   * @returns {void}
+   */
+  onQuickZoomStopTouchStart: function (e) {
+    const idx = e && e.currentTarget && e.currentTarget.dataset
+      ? Number(e.currentTarget.dataset.index)
+      : -1;
+    this._startQuickZoomStopLongPress(idx);
   },
   /**
    * 快速变焦档位松手：进度满则保存当前 zoom 到该档。
@@ -5227,7 +5349,12 @@ onCameraInit: function (e) {
     this.setData({
       quickZoomStops: newStops,
       quickZoomTempZoom: null,
-      quickZoomTempDisplay: ''
+      quickZoomTempDisplay: '',
+      quickZoomMainDisplay: this._getQuickZoomMainDisplayText({
+        quickZoomStops: newStops,
+        quickZoomTempZoom: null,
+        quickZoomTempDisplay: ''
+      })
     });
     var persistOk = false;
     try {
@@ -5266,14 +5393,20 @@ onCameraInit: function (e) {
     const isDifferent = Math.abs(currentZoom - savedZoom) > 0.05;
 
     if (isDifferent) {
+      var tempDisplay = this._formatQuickZoomDisplay(rounded);
       this.setData({
         quickZoomTempZoom: rounded,
-        quickZoomTempDisplay: this._formatQuickZoomDisplay(rounded)
+        quickZoomTempDisplay: tempDisplay,
+        quickZoomMainDisplay: tempDisplay
       });
     } else {
       this.setData({
         quickZoomTempZoom: null,
-        quickZoomTempDisplay: ''
+        quickZoomTempDisplay: '',
+        quickZoomMainDisplay: this._getQuickZoomMainDisplayText({
+          quickZoomTempZoom: null,
+          quickZoomTempDisplay: ''
+        })
       });
     }
   },
@@ -11885,7 +12018,8 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
     this.setData({
       drawerMode: 1,
       cameraSettingsOpen: false,
-      footballOpsPanelOpen: false
+      footballOpsPanelOpen: false,
+      quickZoomMenuOpen: false
     });
     // 仅白名单机型内部拉起 FPS 轮询；内部已二次判定，调用幂等
     this.startEnhanceFpsPolling();

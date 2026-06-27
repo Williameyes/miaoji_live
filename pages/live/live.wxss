@@ -3866,7 +3866,36 @@ button.live-ble-btn::after {
   box-shadow: 0 2rpx 5rpx rgba(0, 0, 0, 0.35);
 }
 
-/* ─── 快捷变焦档位（与 recover-fab 同列、同尺寸） ─────────────── */
+/* ─── 快捷变焦折叠菜单（与 recover-fab 同列、同尺寸） ─────────── */
+
+.quick-zoom-cluster {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14rpx;
+  pointer-events: auto;
+}
+
+.quick-zoom-menu {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14rpx;
+  animation: quick-zoom-menu-in 0.18s ease-out;
+}
+
+@keyframes quick-zoom-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(10rpx);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
 
 .quick-zoom-hit {
   position: relative;
@@ -3880,6 +3909,15 @@ button.live-ble-btn::after {
   pointer-events: auto;
   background: transparent;
   box-sizing: content-box;
+}
+
+.quick-zoom-hit--main-open .recover-fab-ring {
+  box-shadow: 0 0 0 1rpx rgba(255, 255, 255, 0.42);
+}
+
+.quick-zoom-hit--main-open .recover-fab-inner {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.22);
 }
 
 .quick-zoom-fab {
