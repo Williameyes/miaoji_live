@@ -127,7 +127,8 @@ Page({
     mediaCounts: null,
     mediaStatus: null,
     teamA: '',
-    teamB: ''
+    teamB: '',
+    boundAnchors: []
   },
 
   /** @type {number | null} */
@@ -270,6 +271,7 @@ Page({
       financialSettledAt: detail.financialSettledAt || '',
       promoEnabled: Boolean(detail.promoEnabled),
       promoTitle: detail.promoTitle || '',
+      boundAnchors: detail.boundAnchors || [],
       canProbe: canProbe,
       loading: false
     }, flags));
@@ -410,7 +412,8 @@ Page({
             matchTitle: detail.teamA + ' vs ' + detail.teamB,
             teamA: detail.teamA,
             teamB: detail.teamB,
-            tournamentName: detail.tournamentName
+            tournamentName: detail.tournamentName,
+            boundAnchors: detail.boundAnchors || []
           });
         }
       }),
@@ -886,6 +889,22 @@ Page({
       url:
         '/packageLab/pages/radar-lab/oam/promo-publish/promo-publish?match_id=' +
         encodeURIComponent(matchId)
+    });
+  },
+
+  /**
+   * 复制已绑定主播直播间链接。
+   * @param {WechatMiniprogram.BaseEvent} e
+   * @returns {void}
+   */
+  onCopyAnchorLink: function (e) {
+    const link = e.currentTarget.dataset.link;
+    if (!link) return;
+    wx.setClipboardData({
+      data: link,
+      success: function () {
+        wx.showToast({ title: '已复制链接', icon: 'success' });
+      }
     });
   },
 

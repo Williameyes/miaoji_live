@@ -101,7 +101,16 @@ function normalizeMatch(raw) {
     ownerOpenid:
       o.owner_openid != null || o.ownerOpenid != null
         ? String(o.owner_openid || o.ownerOpenid || '')
-        : null
+        : null,
+    boundAnchors: Array.isArray(o.bound_anchors || o.boundAnchors)
+      ? (o.bound_anchors || o.boundAnchors).map(function(a) {
+          return {
+            secUserId: String(a.sec_user_id || a.secUserId || ''),
+            anchorName: String(a.anchor_name || a.anchorName || ''),
+            liveUrl: String(a.live_url || a.liveUrl || '')
+          };
+        })
+      : []
   };
 }
 

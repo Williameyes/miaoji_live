@@ -374,3 +374,42 @@
   color: #1e293b;
 }
 
+.bound-anchors-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+  margin-top: 16rpx;
+}
+
+.bound-anchor-item {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16rpx 20rpx;
+  background: #f8fafc;
+  border-radius: 12rpx;
+  border: 1rpx solid #e2e8f0;
+}
+
+.bound-anchor-info {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.bound-anchor-name {
+  font-size: 26rpx;
+  font-weight: 700;
+  color: #334155;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bound-anchor-link-wrap {
+  flex-shrink: 0;
+  margin-left: 16rpx;
+}
+

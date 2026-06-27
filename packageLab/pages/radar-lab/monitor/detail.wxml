@@ -83,6 +83,24 @@
     </view>
   </view>
 
+  <!-- 已绑定直播间列表 -->
+  <view class="rl-card" wx:if="{{boundAnchors && boundAnchors.length > 0}}">
+    <view class="rl-card-inner">
+      <view class="rl-section-title">📹 监测中的直播间 ({{boundAnchors.length}})</view>
+      <view class="bound-anchors-list">
+        <view class="bound-anchor-item" wx:for="{{boundAnchors}}" wx:key="secUserId">
+          <view class="bound-anchor-info">
+            <text class="bound-anchor-name">{{item.anchorName || '未命名主播'}}</text>
+            <text class="bound-anchor-uid" style="color: #94a3b8; font-size: 20rpx; margin-top: 4rpx;">ID: {{item.secUserId}}</text>
+          </view>
+          <view class="bound-anchor-link-wrap">
+            <text class="bound-anchor-link" style="color: #2563eb; font-size: 24rpx; text-decoration: underline;" bindtap="onCopyAnchorLink" data-link="{{item.liveUrl}}">复制直播间链接</text>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+
   <view class="rl-card">
     <view class="rl-card-inner">
       <view class="rl-section-title">全网合流热度</view>
