@@ -35,7 +35,7 @@
         <text class="mon-promo-label">推广专场</text>
         <text class="mon-promo-title">{{promoTitle || '已发布'}}</text>
       </view>
-      <view class="mon-promo-actions" wx:if="{{promoEnabled}}">
+      <view class="mon-promo-actions" wx:if="{{promoEnabled && canManage}}">
         <button class="rl-btn rl-btn-secondary mon-promo-btn" bindtap="onOpenPromoPublish">推广管理</button>
         <button class="rl-btn rl-btn-secondary mon-promo-btn" bindtap="onOpenPromoReview">
           审批申请{{pendingCount > 0 ? '（' + pendingCount + '）' : ''}}
@@ -65,21 +65,23 @@
           <text class="mon-commercial-value">{{financialSettledAt}}</text>
         </view>
       </view>
-      <view class="rl-field">
-        <text class="rl-label">品牌名称</text>
-        <input
-          class="rl-input"
-          placeholder="可选，同品牌重复上传将更新"
-          value="{{logoBrandName}}"
-          bindinput="onLogoBrandInput"
-          disabled="{{settlementStatus === 'settled'}}"
-        />
-      </view>
-      <button
-        class="rl-btn rl-btn-secondary"
-        disabled="{{uploadingLogo || settlementStatus === 'settled'}}"
-        bindtap="onChooseLogo"
-      >上传品牌 Logo</button>
+      <block wx:if="{{canManage}}">
+        <view class="rl-field">
+          <text class="rl-label">品牌名称</text>
+          <input
+            class="rl-input"
+            placeholder="可选，同品牌重复上传将更新"
+            value="{{logoBrandName}}"
+            bindinput="onLogoBrandInput"
+            disabled="{{settlementStatus === 'settled'}}"
+          />
+        </view>
+        <button
+          class="rl-btn rl-btn-secondary"
+          disabled="{{uploadingLogo || settlementStatus === 'settled'}}"
+          bindtap="onChooseLogo"
+        >上传品牌 Logo</button>
+      </block>
     </view>
   </view>
 
@@ -116,7 +118,13 @@
     <!-- 记分牌截图卡片 -->
     <view class="rl-card">
       <view class="rl-card-inner">
-        <view class="rl-section-title">📸 记分牌截图 (实验)</view>
+        <view class="score-snapshot-title-row">
+          <view class="rl-section-title" style="margin-bottom: 0;">📸 记分牌截图 (实验)</view>
+          <view class="score-snapshot-refresh-btn" bindtap="onRefreshScoreSnapshots" hover-class="score-snapshot-refresh-btn--hover">
+            <text class="refresh-icon">↻</text>
+            <text>刷新</text>
+          </view>
+        </view>
         <view class="score-snapshot-tip">雷达截取直播底部记分牌条带，请自行查看图片解读比分与队名。</view>
         <block wx:if="{{scoreSnapshots && scoreSnapshots.length > 0}}">
           <view class="score-snapshot-list">
@@ -185,7 +193,7 @@
     </view>
   </block>
 
-  <view class="mon-actions">
+  <view class="mon-actions" wx:if="{{canManage}}">
     <button class="rl-btn rl-btn-primary" disabled="{{submitting}}" bindtap="onOpenBindModal">启动监测</button>
     <button
       class="rl-btn rl-btn-secondary"
@@ -209,6 +217,15 @@
       disabled="{{submitting}}"
       bindtap="onOpenSettlement"
     >查看结算单</button>
+  </view>
+  <view class="mon-actions" wx:else>
+    <button
+      wx:if="{{canOpenSettlement}}"
+      class="rl-btn rl-btn-primary"
+      disabled="{{submitting}}"
+      bindtap="onOpenSettlement"
+    >查看结算单</button>
+    <view class="rl-list-desc" style="text-align: center; margin-top: 10rpx; color: #94a3b8; font-size: 24rpx;">仅查看权限，不可操作监测与清算</view>
   </view>
 
   <view class="rl-notice">

@@ -178,7 +178,8 @@ Page({
     mediaStatus: null,
     teamA: '',
     teamB: '',
-    boundAnchors: []
+    boundAnchors: [],
+    canManage: true
   },
 
   /** @type {number | null} */
@@ -323,6 +324,7 @@ Page({
       promoTitle: detail.promoTitle || '',
       boundAnchors: detail.boundAnchors || [],
       canProbe: canProbe,
+      canManage: detail.canManage !== false,
       loading: false
     }, flags));
     if (this.data.isInWhitelist && this.data.matchId) {
@@ -540,11 +542,16 @@ Page({
           });
           const snapshots = rawSnapshots.map(function (item) {
             const secUserId = item && item.sec_user_id ? item.sec_user_id : '';
+            const rawUrl = item && item.snapshot_url ? item.snapshot_url : '';
+            // Append cache buster using item.timestamp or current time if missing
+            const ts = item && item.timestamp ? item.timestamp : Date.now();
+            const snapshotUrl = rawUrl ? (rawUrl + (rawUrl.indexOf('?') >= 0 ? '&' : '?') + 't=' + ts) : '';
             return Object.assign({}, item, {
               anchorLabel: anchorNameMap[secUserId] || secUserId || '未知主播',
               capturedAtText: formatSnapshotCapturedAt(item && item.timestamp),
               sportTypeLabel: formatSportTypeLabel(item && item.sport_type),
-              imageSizeText: formatSnapshotSize(item && item.image_bytes)
+              imageSizeText: formatSnapshotSize(item && item.image_bytes),
+              snapshot_url: snapshotUrl
             });
           });
           self.setData({
@@ -719,15 +726,77 @@ Page({
   onPreviewScoreSnapshot: function (e) {
     const url = e.currentTarget.dataset.url;
     if (!url) return;
-    const urls = (this.data.scoreSnapshots || [])
-      .map(function (item) {
-        return item && item.snapshot_url;
-      })
-      .filter(Boolean);
-    wx.previewImage({
-      current: url,
-      urls: urls.length ? urls : [url]
+    wx.showLoading({ title: '加载中…', mask: true });
+    wx.downloadFile({
+      url: url,
+      success: function (res) {
+        wx.hideLoading();
+        if (res.statusCode >= 200 && res.statusCode < 300 && res.tempFilePath) {
+          wx.previewImage({
+            current: res.tempFilePath,
+            urls: [res.tempFilePath]
+          });
+        } else {
+          wx.showToast({ title: '下载图片失败', icon: 'none' });
+        }
+      },
+      fail: function (err) {
+        wx.hideLoading();
+        wx.showToast({ title: '加载图片失败', icon: 'none' });
+        console.error('[Preview] downloadFile fail', err);
+      }
     });
+  },
+
+  /**
+   * 手动刷新记分牌截图。
+   * @returns {void}
+   */
+  onRefreshScoreSnapshots: function () {
+    const self = this;
+    const matchId = this.data.matchId;
+    if (!matchId) return;
+
+    wx.showLoading({ title: '刷新中…', mask: true });
+    const mId = Number(matchId);
+    fetchMatchScoreSnapshots(mId)
+      .then(function (res) {
+        wx.hideLoading();
+        if (res && res.success) {
+          const rawSnapshots = Array.isArray(res.snapshots) ? res.snapshots : [];
+          const anchorNameMap = {};
+          (self.data.boundAnchors || []).forEach(function (anchor) {
+            if (anchor && anchor.sec_user_id) {
+              anchorNameMap[anchor.sec_user_id] = anchor.anchor_name || anchor.sec_user_id;
+            }
+          });
+          const snapshots = rawSnapshots.map(function (item) {
+            const secUserId = item && item.sec_user_id ? item.sec_user_id : '';
+            const rawUrl = item && item.snapshot_url ? item.snapshot_url : '';
+            const ts = item && item.timestamp ? item.timestamp : Date.now();
+            const snapshotUrl = rawUrl ? (rawUrl + (rawUrl.indexOf('?') >= 0 ? '&' : '?') + 't=' + ts) : '';
+            return Object.assign({}, item, {
+              anchorLabel: anchorNameMap[secUserId] || secUserId || '未知主播',
+              capturedAtText: formatSnapshotCapturedAt(item && item.timestamp),
+              sportTypeLabel: formatSportTypeLabel(item && item.sport_type),
+              imageSizeText: formatSnapshotSize(item && item.image_bytes),
+              snapshot_url: snapshotUrl
+            });
+          });
+          self.setData({
+            scoreSnapshots: snapshots,
+            scoreSnapshotsEmpty: snapshots.length === 0
+          });
+          wx.showToast({ title: '已更新至最新', icon: 'success' });
+        } else {
+          wx.showToast({ title: '刷新失败', icon: 'none' });
+        }
+      })
+      .catch(function (err) {
+        wx.hideLoading();
+        wx.showToast({ title: err.message || '刷新失败', icon: 'none' });
+        console.warn('[RadarDetail] manual fetch score_snapshots fail', err);
+      });
   },
 
   onAdVerifyChange: function (e) {
