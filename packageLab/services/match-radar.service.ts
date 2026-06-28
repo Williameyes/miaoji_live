@@ -11,7 +11,7 @@ const { parseAppApiResponse } = require('../../utils/app-api-response.js');
 export interface RadarCapabilities {
   /** 广告物料核销 */
   enable_ad_verify: boolean;
-  /** 比分 OCR */
+  /** 记分牌截图（能力位名保留兼容） */
   enable_score_ocr: boolean;
   /** 音频录制 */
   enable_audio_record: boolean;
@@ -19,7 +19,7 @@ export interface RadarCapabilities {
   enable_video_record: boolean;
 }
 
-/** 比分 OCR 配置 */
+/** 记分牌截图配置（领单字段名 score_ocr 保留兼容） */
 export interface ScoreOcrConfig {
   /** 运动类型 */
   sport_type: 'basketball' | 'badminton' | 'generic';
@@ -63,23 +63,25 @@ export interface AddMatchTaskResponse {
   duplicate_reason?: string;
 }
 
-/** 比分快照最新数据 */
-export interface ScoreSnapshot {
-  score_a: number;
-  score_b: number;
-  period: string;
-  clock: string;
-  confidence: number;
-  timestamp: number;
+/** 记分牌截图条目 */
+export interface MatchScoreSnapshotItem {
+  /** 主播 sec_user_id */
   sec_user_id: string;
+  /** 截图公网 URL */
+  snapshot_url: string;
+  /** 运动类型 */
+  sport_type: string;
+  /** JPEG 字节数 */
+  image_bytes: number;
+  /** 捕获 Unix 秒 */
+  timestamp: number;
 }
 
-/** score_timeline 响应结构 */
-export interface ScoreTimelineResponse {
+/** score_snapshots 响应结构 */
+export interface ScoreSnapshotsResponse {
   success: boolean;
   match_id: number;
-  latest: ScoreSnapshot | null;
-  timeline: any[];
+  snapshots: MatchScoreSnapshotItem[];
 }
 
 /** 录制媒体分片 */
@@ -139,11 +141,11 @@ export function addMatchRadarTask(params: AddMatchTaskRequest): Promise<AddMatch
 }
 
 /**
- * 查询场次 OCR 比分时间线。
+ * 查询场次记分牌截图列表。
  * @param matchId - 场次 ID
  */
-export function fetchMatchScoreTimeline(matchId: number): Promise<ScoreTimelineResponse> {
-  return get('/api/app/match/score_timeline', { match_id: matchId }).then(parseAppApiResponse);
+export function fetchMatchScoreSnapshots(matchId: number): Promise<ScoreSnapshotsResponse> {
+  return get('/api/app/match/score_snapshots', { match_id: matchId }).then(parseAppApiResponse);
 }
 
 /**

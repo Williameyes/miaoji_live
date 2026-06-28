@@ -4,7 +4,7 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.addMatchRadarTask = addMatchRadarTask;
-exports.fetchMatchScoreTimeline = fetchMatchScoreTimeline;
+exports.fetchMatchScoreSnapshots = fetchMatchScoreSnapshots;
 exports.fetchMatchMediaSegments = fetchMatchMediaSegments;
 const { post, get } = require('../../utils/request.js');
 const { parseAppApiResponse } = require('../../utils/app-api-response.js');
@@ -30,11 +30,11 @@ function addMatchRadarTask(params) {
     return post('/api/app/match/add_task', payload).then(parseAppApiResponse);
 }
 /**
- * 查询场次 OCR 比分时间线。
+ * 查询场次记分牌截图列表。
  * @param matchId - 场次 ID
  */
-function fetchMatchScoreTimeline(matchId) {
-    return get('/api/app/match/score_timeline', { match_id: matchId }).then(parseAppApiResponse);
+function fetchMatchScoreSnapshots(matchId) {
+    return get('/api/app/match/score_snapshots', { match_id: matchId }).then(parseAppApiResponse);
 }
 /**
  * 查询场次录制分片元数据（文件在雷达端）。

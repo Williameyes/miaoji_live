@@ -187,7 +187,7 @@ Page({
   },
 
   /**
-   * 比分 OCR 开关改变。
+   * 记分牌截图开关改变。
    */
   onScoreOcrChange: function (e: any) {
     this.setData({

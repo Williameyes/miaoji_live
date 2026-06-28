@@ -16,7 +16,7 @@ const {
 } = require('../../../services/radar-api.js');
 const {
   addMatchRadarTask,
-  fetchMatchScoreTimeline,
+  fetchMatchScoreSnapshots,
   fetchMatchMediaSegments
 } = require('../../../services/match-radar.service.js');
 const {
@@ -70,6 +70,56 @@ function formatMoney(amount) {
   return '¥' + fixed.replace(/\.00$/, '');
 }
 
+/**
+ * 格式化截图捕获时间。
+ * @param {number} unixSec
+ * @returns {string}
+ */
+function formatSnapshotCapturedAt(unixSec) {
+  if (!unixSec || !Number.isFinite(Number(unixSec))) return '—';
+  const d = new Date(Number(unixSec) * 1000);
+  const pad = function (n) {
+    return String(n).padStart(2, '0');
+  };
+  return (
+    pad(d.getMonth() + 1) +
+    '-' +
+    pad(d.getDate()) +
+    ' ' +
+    pad(d.getHours()) +
+    ':' +
+    pad(d.getMinutes()) +
+    ':' +
+    pad(d.getSeconds())
+  );
+}
+
+/**
+ * 运动类型展示文案。
+ * @param {string} sportType
+ * @returns {string}
+ */
+function formatSportTypeLabel(sportType) {
+  const map = {
+    basketball: '篮球',
+    badminton: '羽毛球',
+    generic: '通用'
+  };
+  return map[sportType] || sportType || '通用';
+}
+
+/**
+ * 格式化截图文件大小。
+ * @param {number} bytes
+ * @returns {string}
+ */
+function formatSnapshotSize(bytes) {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  if (n < 1024) return n + ' B';
+  return (n / 1024).toFixed(1) + ' KB';
+}
+
 Page({
   data: {
     matchId: '',
@@ -120,8 +170,8 @@ Page({
     sportTypeIndex: 0,
     segment_duration_sec: 300,
     local_retention_hours: 24,
-    scoreTimeline: null,
-    scoreLatest: null,
+    scoreSnapshots: [],
+    scoreSnapshotsEmpty: true,
     mediaSegments: null,
     mediaSummary: null,
     mediaCounts: null,
@@ -275,6 +325,9 @@ Page({
       canProbe: canProbe,
       loading: false
     }, flags));
+    if (this.data.isInWhitelist && this.data.matchId) {
+      this._fetchScoreTimelineAndMedia(this.data.matchId);
+    }
   },
 
   /**
@@ -465,7 +518,7 @@ Page({
   },
 
   /**
-   * 拉取比分时间线和录制媒体数据（仅白名单用户）。
+   * 拉取记分牌截图与录制媒体数据（仅白名单用户）。
    * @param {string|number} matchId
    * @returns {void}
    */
@@ -475,31 +528,33 @@ Page({
     const mId = Number(matchId);
     if (!mId || isNaN(mId)) return;
 
-    fetchMatchScoreTimeline(mId)
+    fetchMatchScoreSnapshots(mId)
       .then(function (res) {
         if (res && res.success) {
-          const rawTimeline = Array.isArray(res.timeline) ? res.timeline : [];
-          const timeline = rawTimeline.map(function (item) {
-            const conf = item && typeof item.confidence === 'number' ? item.confidence : 0;
+          const rawSnapshots = Array.isArray(res.snapshots) ? res.snapshots : [];
+          const anchorNameMap = {};
+          (self.data.boundAnchors || []).forEach(function (anchor) {
+            if (anchor && anchor.sec_user_id) {
+              anchorNameMap[anchor.sec_user_id] = anchor.anchor_name || anchor.sec_user_id;
+            }
+          });
+          const snapshots = rawSnapshots.map(function (item) {
+            const secUserId = item && item.sec_user_id ? item.sec_user_id : '';
             return Object.assign({}, item, {
-              confidencePercent: Math.round(conf * 100)
+              anchorLabel: anchorNameMap[secUserId] || secUserId || '未知主播',
+              capturedAtText: formatSnapshotCapturedAt(item && item.timestamp),
+              sportTypeLabel: formatSportTypeLabel(item && item.sport_type),
+              imageSizeText: formatSnapshotSize(item && item.image_bytes)
             });
           });
-          let scoreLatest = null;
-          if (res.latest && typeof res.latest === 'object') {
-            const conf = typeof res.latest.confidence === 'number' ? res.latest.confidence : 0;
-            scoreLatest = Object.assign({}, res.latest, {
-              confidencePercent: Math.round(conf * 100)
-            });
-          }
           self.setData({
-            scoreTimeline: timeline,
-            scoreLatest: scoreLatest
+            scoreSnapshots: snapshots,
+            scoreSnapshotsEmpty: snapshots.length === 0
           });
         }
       })
       .catch(function (err) {
-        console.warn('[RadarDetail] fetch score_timeline fail', err);
+        console.warn('[RadarDetail] fetch score_snapshots fail', err);
       });
 
     fetchMatchMediaSegments(mId)
@@ -654,6 +709,25 @@ Page({
 
   onToggleModalLab: function () {
     this.setData({ showModalLab: !this.data.showModalLab });
+  },
+
+  /**
+   * 预览记分牌截图大图。
+   * @param {WechatMiniprogram.BaseEvent} e
+   * @returns {void}
+   */
+  onPreviewScoreSnapshot: function (e) {
+    const url = e.currentTarget.dataset.url;
+    if (!url) return;
+    const urls = (this.data.scoreSnapshots || [])
+      .map(function (item) {
+        return item && item.snapshot_url;
+      })
+      .filter(Boolean);
+    wx.previewImage({
+      current: url,
+      urls: urls.length ? urls : [url]
+    });
   },
 
   onAdVerifyChange: function (e) {

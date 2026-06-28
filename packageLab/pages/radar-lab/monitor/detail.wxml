@@ -111,39 +111,37 @@
     </view>
   </view>
 
-  <!-- 比分时间线与录制数据卡片 (白名单 + 进行中/已结束) -->
+  <!-- 记分牌截图与录制数据卡片 (白名单 + 进行中/已结束) -->
   <block wx:if="{{isInWhitelist && (matchStatus === 'monitoring' || matchStatus === 'ended' || matchStatus === 'interrupted')}}">
-    <!-- 比分时间线卡片 -->
+    <!-- 记分牌截图卡片 -->
     <view class="rl-card">
       <view class="rl-card-inner">
-        <view class="rl-section-title">🤖 比分 OCR 时间线 (实验)</view>
-        <block wx:if="{{scoreLatest}}">
-          <view class="score-latest-panel">
-            <view class="score-latest-main">
-              <text class="score-latest-team-a">{{teamA || '主队'}}</text>
-              <text class="score-latest-value">{{scoreLatest.score_a}} - {{scoreLatest.score_b}}</text>
-              <text class="score-latest-team-b">{{teamB || '客队'}}</text>
-            </view>
-            <view class="score-latest-meta">
-              <text class="score-latest-period">{{scoreLatest.period}}</text>
-              <text class="score-latest-clock" style="margin-left: 12rpx; margin-right: 12rpx;">{{scoreLatest.clock}}</text>
-              <text class="score-latest-confidence">置信度: {{scoreLatest.confidencePercent}}%</text>
+        <view class="rl-section-title">📸 记分牌截图 (实验)</view>
+        <view class="score-snapshot-tip">雷达截取直播底部记分牌条带，请自行查看图片解读比分与队名。</view>
+        <block wx:if="{{scoreSnapshots && scoreSnapshots.length > 0}}">
+          <view class="score-snapshot-list">
+            <view
+              class="score-snapshot-item"
+              wx:for="{{scoreSnapshots}}"
+              wx:key="sec_user_id"
+            >
+              <view class="score-snapshot-header">
+                <text class="score-snapshot-anchor">{{item.anchorLabel}}</text>
+                <text class="score-snapshot-meta">{{item.capturedAtText}} · {{item.sportTypeLabel}} · {{item.imageSizeText}}</text>
+              </view>
+              <image
+                class="score-snapshot-image"
+                src="{{item.snapshot_url}}"
+                mode="widthFix"
+                show-menu-by-longpress="{{true}}"
+                bindtap="onPreviewScoreSnapshot"
+                data-url="{{item.snapshot_url}}"
+              />
             </view>
           </view>
         </block>
-        <block wx:if="{{scoreTimeline && scoreTimeline.length > 0}}">
-          <scroll-view scroll-y class="score-timeline-scroll">
-            <view class="score-timeline-list">
-              <view class="score-timeline-item" wx:for="{{scoreTimeline}}" wx:key="timestamp">
-                <text class="timeline-item-time">{{item.clock}} ({{item.period}})</text>
-                <text class="timeline-item-score">{{item.score_a}} - {{item.score_b}}</text>
-                <text class="timeline-item-conf">置信度: {{item.confidencePercent}}%</text>
-              </view>
-            </view>
-          </scroll-view>
-        </block>
         <block wx:else>
-          <view class="rl-empty">暂无比分数据</view>
+          <view class="rl-empty">{{scoreSnapshotsEmpty ? '等待雷达上报记分牌截图…' : '暂无截图'}}</view>
         </block>
       </view>
     </view>
@@ -243,7 +241,7 @@
             <switch checked="{{enable_ad_verify}}" bindchange="onAdVerifyChange" color="#2563eb" />
           </view>
           <view class="modal-switch-item">
-            <text>比分 OCR (自动)</text>
+            <text>记分牌截图</text>
             <switch checked="{{enable_score_ocr}}" bindchange="onScoreOcrChange" color="#2563eb" />
           </view>
           

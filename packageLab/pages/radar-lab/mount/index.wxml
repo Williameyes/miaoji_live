@@ -107,13 +107,13 @@
 
         <view class="switch-item">
           <view class="switch-info">
-            <text class="switch-title">比分 OCR</text>
-            <text class="switch-desc">全自动识别与对齐直播记分牌</text>
+            <text class="switch-title">记分牌截图</text>
+            <text class="switch-desc">截取直播底部记分牌条带并上报，由用户自行解读</text>
           </view>
           <switch checked="{{enable_score_ocr}}" bindchange="onScoreOcrChange" color="#2563eb" />
         </view>
 
-        <!-- 比分 OCR 子选项 -->
+        <!-- 记分牌截图子选项 -->
         <view class="sub-options-box" wx:if="{{enable_score_ocr}}">
           <picker mode="selector" range="{{sportTypes}}" value="{{sportTypeIndex}}" bindchange="onSportTypeChange">
             <view class="picker-row">
@@ -122,7 +122,7 @@
             </view>
           </picker>
           <view class="sub-option-tip">
-            提示：队伍名称自动从场次详情中提取 ({{teamA || '主队'}} vs {{teamB || '客队'}})，无需手画配置坐标。
+            提示：运动类型用于调整底部裁剪区域高度，默认按篮球布局截取。
           </view>
         </view>
 
