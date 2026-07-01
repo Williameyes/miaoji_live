@@ -12,7 +12,8 @@ const {
   fetchMatchDetail,
   setMatchAds,
   settleMatch,
-  fetchPromoPendingApplications
+  fetchPromoPendingApplications,
+  fetchMatchMonitorStatus
 } = require('../../../services/radar-api.js');
 const {
   addMatchRadarTask,
@@ -120,12 +121,69 @@ function formatSnapshotSize(bytes) {
   return (n / 1024).toFixed(1) + ' KB';
 }
 
+/**
+ * 依据会话状态和旧状态共同解析要展示的文案与徽章类名。
+ * @param {string} sessionStatus
+ * @param {string} matchStatus
+ * @returns {{label: string, badgeClass: string}}
+ */
+function resolveStatusDisplay(sessionStatus, matchStatus) {
+  if (sessionStatus === 'stopping') {
+    return {
+      label: '正在停止…',
+      badgeClass: 'rl-badge-warn'
+    };
+  }
+  if (sessionStatus === 'ended') {
+    return {
+      label: '已结束',
+      badgeClass: 'rl-badge-muted'
+    };
+  }
+  if (sessionStatus === 'active') {
+    return {
+      label: '监控中',
+      badgeClass: 'rl-badge-ok'
+    };
+  }
+  if (sessionStatus === 'idle') {
+    if (matchStatus === 'waiting_radar') {
+      return {
+        label: '等待雷达',
+        badgeClass: 'rl-badge-warn'
+      };
+    }
+    return {
+      label: '准备就绪',
+      badgeClass: 'rl-badge-muted'
+    };
+  }
+  const mapLabel = {
+    waiting_radar: '等待雷达',
+    monitoring: '监控中',
+    ended: '已结束',
+    interrupted: '已中断'
+  };
+  const mapBadge = {
+    waiting_radar: 'rl-badge-warn',
+    monitoring: 'rl-badge-ok',
+    ended: 'rl-badge-muted',
+    interrupted: 'rl-badge-warn'
+  };
+  return {
+    label: mapLabel[matchStatus] || matchStatus || '未知',
+    badgeClass: mapBadge[matchStatus] || 'rl-badge-muted'
+  };
+}
+
 Page({
   data: {
     matchId: '',
     matchTitle: '',
     tournamentName: '',
     matchStatus: '',
+    monitorSessionStatus: 'idle',
+    endReason: '',
     statusLabel: '',
     statusBadgeClass: 'rl-badge-muted',
     currentOnline: '—',
@@ -184,6 +242,8 @@ Page({
 
   /** @type {number | null} */
   _pollTimer: null,
+  /** @type {number | null} */
+  _monitorStatusTimer: null,
   /** @type {CanvasRenderingContext2D | null} */
   _chartCtx: null,
   /** @type {number} */
@@ -228,7 +288,9 @@ Page({
       this._loadMatchMeta(this.data.matchId, true);
       this._refreshPendingCount(this.data.matchId);
       this._fetchStreamOnce();
+      this._fetchMonitorStatusOnce();
       this._startPolling();
+      this._startMonitorStatusPolling();
     }
   },
 
@@ -237,6 +299,7 @@ Page({
    */
   onHide: function () {
     this._stopPolling();
+    this._stopMonitorStatusPolling();
   },
 
   /**
@@ -244,6 +307,7 @@ Page({
    */
   onUnload: function () {
     this._stopPolling();
+    this._stopMonitorStatusPolling();
   },
 
   /**
@@ -300,17 +364,21 @@ Page({
       settlementStatus: settlementStatus,
       totalPoolNumber: detail.totalPool || 0
     });
+    const sessionStatus = detail.monitorSessionStatus || this.data.monitorSessionStatus || 'idle';
+    const display = resolveStatusDisplay(sessionStatus, status);
     const canProbe =
       settlementStatus !== 'settled' &&
-      (status === 'monitoring' || status === 'waiting_radar' || status === 'ended');
+      (sessionStatus === 'active' || sessionStatus === 'idle') &&
+      detail.canManage !== false;
     this.setData(Object.assign({
       matchTitle: detail.teamA + ' vs ' + detail.teamB,
       teamA: detail.teamA,
       teamB: detail.teamB,
       tournamentName: detail.tournamentName,
       matchStatus: status,
-      statusLabel: STATUS_LABELS[status] || status || '未知',
-      statusBadgeClass: STATUS_BADGE[status] || 'rl-badge-muted',
+      monitorSessionStatus: sessionStatus,
+      statusLabel: display.label,
+      statusBadgeClass: display.badgeClass,
       totalPoolNumber: detail.totalPool || 0,
       totalPoolText: formatMoney(detail.totalPool || 0),
       minViewersText: detail.minViewers > 0 ? String(detail.minViewers) + ' 人' : '未配置',
@@ -454,6 +522,86 @@ Page({
   },
 
   /**
+   * @returns {void}
+   */
+  _startMonitorStatusPolling: function () {
+    const self = this;
+    this._stopMonitorStatusPolling();
+    if (!this.data.matchId) return;
+    this._monitorStatusTimer = setInterval(function () {
+      self._fetchMonitorStatusOnce();
+    }, 8000);
+  },
+
+  /**
+   * @returns {void}
+   */
+  _stopMonitorStatusPolling: function () {
+    if (this._monitorStatusTimer) {
+      clearInterval(this._monitorStatusTimer);
+      this._monitorStatusTimer = null;
+    }
+  },
+
+  /**
+   * 拉取并更新监控状态。
+   * @returns {Promise<void>}
+   */
+  _fetchMonitorStatusOnce: function () {
+    const self = this;
+    const matchId = this.data.matchId;
+    if (!matchId) return Promise.resolve();
+
+    return fetchMatchMonitorStatus(matchId)
+      .then(function (res) {
+        if (res) {
+          const sessionStatus = res.monitor_session_status || 'idle';
+          const matchStatus = res.match_status || self.data.matchStatus;
+          const display = resolveStatusDisplay(sessionStatus, matchStatus);
+
+          const nextData = {
+            monitorSessionStatus: sessionStatus,
+            matchStatus: matchStatus,
+            statusLabel: display.label,
+            statusBadgeClass: display.badgeClass
+          };
+
+          if (res.end_reason) {
+            nextData.endReason = res.end_reason;
+            if (sessionStatus === 'ended') {
+              const reasonMap = {
+                force_stopped_by_user: '手动中止',
+                stream_closed: '直播已关闭',
+                duration_limit: '超时结束',
+                worker_error: '服务异常',
+                watchdog_timeout: '超时自动结束'
+              };
+              const reasonText = reasonMap[res.end_reason] || res.end_reason;
+              nextData.statusLabel = '已结束 (' + reasonText + ')';
+            }
+          }
+
+          const canStop = sessionStatus === 'active';
+          const canProbe = (sessionStatus === 'active' || sessionStatus === 'idle') && self.data.canManage;
+
+          nextData.canStop = canStop;
+          nextData.canProbe = canProbe;
+
+          if (sessionStatus === 'ended') {
+            self._stopMonitorStatusPolling();
+            self._loadMatchMeta(matchId, true);
+            self._fetchStreamOnce();
+          }
+
+          self.setData(nextData);
+        }
+      })
+      .catch(function (err) {
+        console.warn('[RadarDetail] fetch monitor_status fail', err);
+      });
+  },
+
+  /**
    * 下拉刷新曲线与状态。
    * @returns {void}
    */
@@ -472,7 +620,8 @@ Page({
           });
         }
       }),
-      this._fetchStreamOnce()
+      this._fetchStreamOnce(),
+      this._fetchMonitorStatusOnce()
     ];
     if (checkSyncLabWhitelist() && matchId) {
       this._fetchScoreTimelineAndMedia(matchId);
@@ -497,20 +646,25 @@ Page({
       .then(function (res) {
         const status =
           typeof res.match_status === 'string' ? res.match_status : '';
+        const sessionStatus = self.data.monitorSessionStatus || 'idle';
+        const display = resolveStatusDisplay(sessionStatus, status);
         const timeline = normalizeTimeline(
           /** @type {unknown[]} */ (res.timeline_data || [])
         );
         self._timelinePoints = timeline;
-        const canStop = status === 'monitoring' || status === 'waiting_radar';
+        const canStop = sessionStatus === 'active';
+        const canProbe = (sessionStatus === 'active' || sessionStatus === 'idle') && self.data.canManage;
         const flags = self._buildSettleFlags({ matchStatus: status });
         self.setData(Object.assign({
           matchStatus: status,
-          statusLabel: STATUS_LABELS[status] || status || '未知',
-          statusBadgeClass: STATUS_BADGE[status] || 'rl-badge-muted',
+          monitorSessionStatus: sessionStatus,
+          statusLabel: display.label,
+          statusBadgeClass: display.badgeClass,
           currentOnline: formatCompactCount(parseUserCount(res.current_online_count)),
           peakOnline: formatCompactCount(parseUserCount(res.peak_user_count)),
           timelineEmpty: !timeline.length,
-          canStop: canStop
+          canStop: canStop,
+          canProbe: canProbe
         }, flags));
         self._redrawChart();
       })
@@ -1091,14 +1245,38 @@ Page({
     const self = this;
     this.setData({ submitting: true });
     stopMatchMonitoring(matchId)
-      .then(function () {
-        wx.showToast({ title: '监控已关闭', icon: 'success' });
+      .then(function (res) {
+        const isStopping = res && res.monitor_session_status === 'stopping';
+        const alreadyEnded = res && res.already_ended;
+        if (isStopping) {
+          wx.showToast({ title: '正在停止…', icon: 'loading' });
+          self.setData({
+            monitorSessionStatus: 'stopping',
+            statusLabel: '正在停止…',
+            statusBadgeClass: 'rl-badge-warn',
+            canStop: false,
+            canProbe: false
+          });
+        } else if (alreadyEnded) {
+          wx.showToast({ title: '监控已结束', icon: 'success' });
+          self.setData({
+            monitorSessionStatus: 'ended',
+            statusLabel: '已结束',
+            statusBadgeClass: 'rl-badge-muted',
+            canStop: false,
+            canProbe: false
+          });
+        } else {
+          wx.showToast({ title: '已发送停止指令', icon: 'success' });
+        }
+        self._fetchMonitorStatusOnce();
         self._loadMatchMeta(matchId, true);
         self._fetchStreamOnce();
       })
       .catch(function (err) {
         if (err.errorCode === 'MATCH_ALREADY_ENDED') {
-          wx.showToast({ title: '场次已结束', icon: 'none' });
+          wx.showToast({ title: '监控已结束', icon: 'none' });
+          self._fetchMonitorStatusOnce();
           self._fetchStreamOnce();
           return;
         }

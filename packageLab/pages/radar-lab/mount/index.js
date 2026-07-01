@@ -296,7 +296,9 @@ Page({
         };
         fetchMatchList({ status: 'monitoring,waiting_radar' })
             .then((matches) => {
-            const activeMatches = matches.map((m) => {
+            const activeMatches = matches
+                .filter((m) => m.boundAnchorCount > 0)
+                .map((m) => {
                 return {
                     id: m.id,
                     teamA: m.teamA,

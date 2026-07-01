@@ -24,6 +24,7 @@
  * @property {string} [promoTitle]
  * @property {boolean} [canManage] - scope=mine 时恒为 true；scope=all 时区分是否可操作
  * @property {string | null} [ownerOpenid] - 场次负责人 openid（详情接口）
+ * @property {number} [boundAnchorCount] - 绑定的主播数量
  */
 
 /**
@@ -110,7 +111,8 @@ function normalizeMatch(raw) {
             liveUrl: String(a.live_url || a.liveUrl || '')
           };
         })
-      : []
+      : [],
+    boundAnchorCount: Number(o.bound_anchor_count ?? o.boundAnchorCount ?? (Array.isArray(o.bound_anchors || o.boundAnchors) ? (o.bound_anchors || o.boundAnchors).length : 0)) || 0
   };
 }
 

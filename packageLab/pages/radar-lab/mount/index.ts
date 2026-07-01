@@ -365,17 +365,19 @@ Page({
 
     fetchMatchList({ status: 'monitoring,waiting_radar' })
       .then((matches: any[]) => {
-        const activeMatches = matches.map((m: any) => {
-          return {
-            id: m.id,
-            teamA: m.teamA,
-            teamB: m.teamB,
-            startTimeText: formatStartTimeDisplay(m.startTime),
-            tournamentName: m.tournamentName || '—',
-            statusLabel: STATUS_LABELS[m.matchStatus] || m.matchStatus || '未知',
-            statusBadgeClass: STATUS_BADGE[m.matchStatus] || 'rl-badge-muted'
-          };
-        });
+        const activeMatches = matches
+          .filter((m: any) => m.boundAnchorCount > 0)
+          .map((m: any) => {
+            return {
+              id: m.id,
+              teamA: m.teamA,
+              teamB: m.teamB,
+              startTimeText: formatStartTimeDisplay(m.startTime),
+              tournamentName: m.tournamentName || '—',
+              statusLabel: STATUS_LABELS[m.matchStatus] || m.matchStatus || '未知',
+              statusBadgeClass: STATUS_BADGE[m.matchStatus] || 'rl-badge-muted'
+            };
+          });
         self.setData({
           activeMatches: activeMatches,
           loading: false

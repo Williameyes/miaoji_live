@@ -336,6 +336,19 @@ function fetchPromoPendingApplications(targetMatchId) {
     });
 }
 
+/**
+ * 获取场次监控会话最新状态。
+ * @param {number|string} matchId
+ * @returns {Promise<Record<string, unknown>>}
+ */
+function fetchMatchMonitorStatus(matchId) {
+  return get('/api/app/match/monitor_status', { match_id: matchId })
+    .then(parseRadarAppResponse)
+    .catch(function (err) {
+      throw normalizeRadarAppError(err);
+    });
+}
+
 module.exports = {
   parseRadarAppResponse,
   normalizeRadarAppError,
@@ -355,5 +368,6 @@ module.exports = {
   publishPromo,
   unpublishPromo,
   fetchPromoWxacode,
-  fetchPromoPendingApplications
+  fetchPromoPendingApplications,
+  fetchMatchMonitorStatus
 };

@@ -86,10 +86,21 @@
   </view>
 
   <!-- 已绑定直播间列表 -->
-  <view class="rl-card" wx:if="{{boundAnchors && boundAnchors.length > 0}}">
+  <view class="rl-card" wx:if="{{(boundAnchors && boundAnchors.length > 0) || canManage}}">
     <view class="rl-card-inner">
-      <view class="rl-section-title">📹 监测中的直播间 ({{boundAnchors.length}})</view>
-      <view class="bound-anchors-list">
+      <view class="bound-anchors-title-row">
+        <view class="rl-section-title" style="margin-bottom: 0;">📹 监测中的直播间 ({{boundAnchors.length || 0}})</view>
+        <view
+          wx:if="{{canManage && monitorSessionStatus !== 'ended' && monitorSessionStatus !== 'stopping'}}"
+          class="add-anchor-icon-btn"
+          bindtap="onOpenBindModal"
+          hover-class="add-anchor-icon-btn--hover"
+        >
+          ＋
+        </view>
+      </view>
+      
+      <view class="bound-anchors-list" wx:if="{{boundAnchors && boundAnchors.length > 0}}">
         <view class="bound-anchor-item" wx:for="{{boundAnchors}}" wx:key="secUserId">
           <view class="bound-anchor-info">
             <text class="bound-anchor-name">{{item.anchorName || '未命名主播'}}</text>
@@ -99,6 +110,9 @@
             <text class="bound-anchor-link" style="color: #2563eb; font-size: 24rpx; text-decoration: underline;" bindtap="onCopyAnchorLink" data-link="{{item.liveUrl}}">复制直播间链接</text>
           </view>
         </view>
+      </view>
+      <view class="rl-list-desc" style="text-align: center; padding: 30rpx 0; color: #94a3b8; font-size: 24rpx;" wx:else>
+        暂无监测中的直播间，请点击右上角「＋」关联直播间
       </view>
     </view>
   </view>
@@ -194,7 +208,6 @@
   </block>
 
   <view class="mon-actions" wx:if="{{canManage}}">
-    <button class="rl-btn rl-btn-primary" disabled="{{submitting}}" bindtap="onOpenBindModal">启动监测</button>
     <button
       class="rl-btn rl-btn-secondary"
       disabled="{{submitting || !canProbe}}"
@@ -202,9 +215,9 @@
     >再次探测</button>
     <button
       class="rl-btn rl-btn-danger"
-      disabled="{{submitting || !canStop}}"
+      disabled="{{submitting || !canStop || monitorSessionStatus === 'stopping'}}"
       bindtap="onStopMonitoring"
-    >关闭监测</button>
+    >{{monitorSessionStatus === 'stopping' ? '正在停止…' : '关闭监测'}}</button>
     <button
       wx:if="{{!canOpenSettlement}}"
       class="rl-btn rl-btn-secondary"
