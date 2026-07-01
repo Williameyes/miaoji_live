@@ -3866,7 +3866,7 @@ button.live-ble-btn::after {
   box-shadow: 0 2rpx 5rpx rgba(0, 0, 0, 0.35);
 }
 
-/* ─── 快捷变焦折叠菜单（与 recover-fab 同列、同尺寸） ─────────── */
+/* ─── 快捷变焦常驻按钮自定义样式 ─── */
 
 .quick-zoom-cluster {
   position: relative;
@@ -3875,26 +3875,6 @@ button.live-ble-btn::after {
   align-items: center;
   gap: 14rpx;
   pointer-events: auto;
-}
-
-.quick-zoom-menu {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 14rpx;
-  animation: quick-zoom-menu-in 0.18s ease-out;
-}
-
-@keyframes quick-zoom-menu-in {
-  from {
-    opacity: 0;
-    transform: translateY(10rpx);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 .quick-zoom-hit {
@@ -3911,30 +3891,74 @@ button.live-ble-btn::after {
   box-sizing: content-box;
 }
 
-.quick-zoom-hit--main-open .recover-fab-ring {
-  box-shadow: 0 0 0 1rpx rgba(255, 255, 255, 0.42);
+.quick-zoom-btn {
+  position: relative;
+  width: 36rpx;
+  height: 36rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
 }
 
-.quick-zoom-hit--main-open .recover-fab-inner {
-  background: rgba(255, 255, 255, 0.16);
-  border-color: rgba(255, 255, 255, 0.22);
+.quick-zoom-btn-ring {
+  position: relative;
+  width: 36rpx;
+  height: 36rpx;
+  border-radius: 50%;
+  overflow: hidden;
+  box-shadow: 0 0 0 1rpx rgba(255, 255, 255, 0.12);
+  background: transparent;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.quick-zoom-fab {
-  flex-shrink: 0;
+.quick-zoom-btn-progress {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
 }
 
-.quick-zoom-fab--active {
-  opacity: 0.88;
+.quick-zoom-btn-inner {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 28rpx;
+  height: 28rpx;
+  margin-left: -14rpx;
+  margin-top: -14rpx;
+  border-radius: 50%;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.quick-zoom-fab--active .recover-fab-ring {
-  box-shadow: 0 0 0 1rpx rgba(255, 255, 255, 0.42);
+.quick-zoom-btn-inner--saving {
+  background: rgba(10, 12, 16, 0.55);
 }
 
-.quick-zoom-fab--active .recover-fab-inner {
-  background: rgba(255, 255, 255, 0.16);
-  border-color: rgba(255, 255, 255, 0.22);
+.quick-zoom-btn-text {
+  font-size: 11rpx;
+  font-weight: 500;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.72);
+  text-align: center;
+  transition: all 0.2s ease;
+}
+
+/* 激活选中状态：只改变描边和文字颜色，不改变底色 */
+.quick-zoom-btn--active .quick-zoom-btn-ring {
+  box-shadow: 0 0 0 1rpx rgba(74, 222, 128, 0.55);
+}
+
+.quick-zoom-btn--active .quick-zoom-btn-text {
+  color: #86efac;
+  font-weight: bold;
 }
 
 .quick-zoom-tweak-badge {

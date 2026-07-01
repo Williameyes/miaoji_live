@@ -4679,8 +4679,8 @@ onCameraInit: function (e) {
    */
   _buildQuickZoomSaveProgressStyle: function (deg) {
     var d = Math.max(0, Math.min(360, Number(deg) || 0));
-    return 'background: conic-gradient(from -90deg, rgba(29, 158, 117, 0.85) 0deg, rgba(29, 158, 117, 0.85) '
-      + d + 'deg, rgba(48, 52, 58, 0.38) 0deg);';
+    return 'background: conic-gradient(from -90deg, rgba(74, 222, 128, 0.85) 0deg, rgba(74, 222, 128, 0.85) '
+      + d + 'deg, rgba(255, 255, 255, 0.05) 0deg);';
   },
   /**
    * 根据已探测的原生机位档位（cameraViewModeStops）构建快捷变焦三档默认值。

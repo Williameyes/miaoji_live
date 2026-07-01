@@ -421,73 +421,37 @@
       <block wx:if="{{quickZoomEnabled && liveStreamAllowed && !isReplaying && drawerMode === 0 && enhanceMode !== 'vk'}}">
         <view class="quick-zoom-cluster">
           <view
-            class="quick-zoom-menu"
-            wx:if="{{quickZoomMenuOpen}}"
-          >
-            <view
-              wx:for="{{quickZoomStops}}"
-              wx:key="label"
-              wx:for-index="stopIdx"
-              wx:for-item="stop"
-              class="quick-zoom-hit quick-zoom-hit--menu-item"
-              data-index="{{stopIdx}}"
-              catchtap="onQuickZoomStopTap"
-              bindtouchstart="onQuickZoomStopTouchStart"
-              bindtouchend="onQuickZoomStopTouchEnd"
-              bindtouchcancel="onQuickZoomStopTouchEnd"
-            >
-              <view class="recover-fab quick-zoom-fab {{stop.isActive ? 'quick-zoom-fab--active' : ''}}">
-                <view class="recover-fab-ring">
-                  <view
-                    wx:if="{{quickZoomSaveIdx === stopIdx && quickZoomSaveConicDeg > 0}}"
-                    class="recover-fab-progress"
-                    style="{{quickZoomSaveProgressStyle}}"
-                  ></view>
-                  <view
-                    wx:else
-                    class="recover-fab-progress"
-                    style="background: conic-gradient(from -90deg, rgba(48, 52, 58, 0.38) 0deg, rgba(48, 52, 58, 0.38) 360deg);"
-                  ></view>
-                  <view class="recover-fab-inner">
-                    <text class="recover-fab-text">{{stop.isActive && quickZoomTempZoom !== null ? quickZoomTempDisplay : stop.displayZoom}}</text>
-                  </view>
-                </view>
-              </view>
-              <view
-                class="quick-zoom-tweak-badge"
-                wx:if="{{stop.isActive && quickZoomTempZoom !== null}}"
-              >
-                <text class="quick-zoom-tweak-text">微调</text>
-              </view>
-            </view>
-          </view>
-          <view
-            class="quick-zoom-hit quick-zoom-hit--main {{quickZoomMenuOpen ? 'quick-zoom-hit--main-open' : ''}}"
-            catchtap="onQuickZoomMainTap"
-            bindtouchstart="onQuickZoomMainTouchStart"
+            wx:for="{{quickZoomStops}}"
+            wx:key="label"
+            wx:for-index="stopIdx"
+            wx:for-item="stop"
+            class="quick-zoom-hit quick-zoom-hit--menu-item"
+            data-index="{{stopIdx}}"
+            catchtap="onQuickZoomStopTap"
+            bindtouchstart="onQuickZoomStopTouchStart"
             bindtouchend="onQuickZoomStopTouchEnd"
             bindtouchcancel="onQuickZoomStopTouchEnd"
           >
-            <view class="recover-fab quick-zoom-fab quick-zoom-fab--active">
-              <view class="recover-fab-ring">
+            <view class="quick-zoom-btn {{stop.isActive ? 'quick-zoom-btn--active' : ''}}">
+              <view class="quick-zoom-btn-ring">
                 <view
-                  wx:if="{{!quickZoomMenuOpen && quickZoomSaveIdx >= 0 && quickZoomSaveConicDeg > 0}}"
-                  class="recover-fab-progress"
+                  wx:if="{{quickZoomSaveIdx === stopIdx && quickZoomSaveConicDeg > 0}}"
+                  class="quick-zoom-btn-progress"
                   style="{{quickZoomSaveProgressStyle}}"
                 ></view>
                 <view
                   wx:else
-                  class="recover-fab-progress"
-                  style="background: conic-gradient(from -90deg, rgba(48, 52, 58, 0.38) 0deg, rgba(48, 52, 58, 0.38) 360deg);"
+                  class="quick-zoom-btn-progress"
+                  style="background: transparent;"
                 ></view>
-                <view class="recover-fab-inner">
-                  <text class="recover-fab-text">{{quickZoomMainDisplay}}</text>
+                <view class="quick-zoom-btn-inner {{quickZoomSaveIdx === stopIdx ? 'quick-zoom-btn-inner--saving' : ''}}">
+                  <text class="quick-zoom-btn-text">{{stop.isActive && quickZoomTempZoom !== null ? quickZoomTempDisplay : stop.displayZoom}}</text>
                 </view>
               </view>
             </view>
             <view
               class="quick-zoom-tweak-badge"
-              wx:if="{{quickZoomTempZoom !== null}}"
+              wx:if="{{stop.isActive && quickZoomTempZoom !== null}}"
             >
               <text class="quick-zoom-tweak-text">微调</text>
             </view>
