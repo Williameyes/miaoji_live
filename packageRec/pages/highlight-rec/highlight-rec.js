@@ -21,6 +21,7 @@ Page({
     diskWarning: false,
     savedLogs: [],
     highlightCount: 0,
+    savingCount: 0,
     zoomStops: [
       { label: '特写', zoom: 4.0 },
       { label: '标准', zoom: 2.0 },
@@ -402,6 +403,12 @@ Page({
       },
       onTrigger: function (payload) {
         console.log('[HighlightRec] Received sync REC trigger from server, triggerId:', payload.triggerId);
+        var now = Date.now();
+        if (self._lastWsRecTime && now - self._lastWsRecTime < 4000) {
+          console.log('[HighlightRec] Remote sync trigger ignored: too frequent');
+          return;
+        }
+        self._lastWsRecTime = now;
         self.doExportHighlight(false);
       }
     });
@@ -423,7 +430,19 @@ Page({
    * 高光导出与落盘
    * ========================================================================= */
 
+  _lastManualRecTime: 0,
+  _lastWsRecTime: 0,
+
   triggerManualRec: function () {
+    var now = Date.now();
+    if (this._lastManualRecTime && now - this._lastManualRecTime < 4000) {
+      wx.showToast({
+        title: '点击太频繁，请稍后再试',
+        icon: 'none'
+      });
+      return;
+    }
+    this._lastManualRecTime = now;
     this.doExportHighlight(true);
   },
 
@@ -437,9 +456,9 @@ Page({
     }
 
     var self = this;
-    wx.showLoading({
-      title: '正在截取 8s 高光...',
-      mask: true
+    // 增加后台保存任务计数 (取代阻塞屏幕的 wx.showLoading)
+    this.setData({
+      savingCount: this.data.savingCount + 1
     });
 
     this._recorder.triggerExport()
@@ -447,7 +466,9 @@ Page({
         self.saveVideoToPhotos(trimmedPath, isLocal);
       })
       .catch(function (err) {
-        wx.hideLoading();
+        self.setData({
+          savingCount: Math.max(0, self.data.savingCount - 1)
+        });
         if (self._unloaded) return;
         if (err && err.message === 'recorder_stopped') {
           return; // 页面切出或销毁时，正常释放挂起的 promise，无需报错弹窗
@@ -468,7 +489,9 @@ Page({
     wx.saveVideoToPhotosAlbum({
       filePath: filePath,
       success: function () {
-        wx.hideLoading();
+        self.setData({
+          savingCount: Math.max(0, self.data.savingCount - 1)
+        });
         wx.showToast({
           title: '高光已存入相册',
           icon: 'success'
@@ -500,7 +523,9 @@ Page({
         } catch (e) {}
       },
       fail: function (err) {
-        wx.hideLoading();
+        self.setData({
+          savingCount: Math.max(0, self.data.savingCount - 1)
+        });
         console.error('[HighlightRec] Save to album failed:', err);
         
         // 如果是权限被拒，引导授权

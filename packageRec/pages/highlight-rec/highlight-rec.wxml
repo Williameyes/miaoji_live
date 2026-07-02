@@ -32,6 +32,12 @@
     </view>
   </view>
 
+  <!-- 后台高光裁剪进度提示 (小巧悬浮，非阻断) -->
+  <view class="saving-toast" wx:if="{{savingCount > 0}}" style="top: {{statusBarHeight + 96}}px;">
+    <view class="saving-spinner"></view>
+    <text class="saving-text">正在后台保存高光 ({{savingCount}})...</text>
+  </view>
+
   <!-- HUD 展开时的设置/日志浮层 -->
   <view class="hud-overlay" wx:if="{{!controlsCollapsed}}">
     <!-- 连接状态顶带 -->

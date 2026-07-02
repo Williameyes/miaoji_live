@@ -494,3 +494,49 @@
   color: rgba(74, 222, 128, 0.7);
 }
 
+/* 后台保存非阻塞提示 */
+.saving-toast {
+  position: absolute;
+  left: 30rpx;
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  background: rgba(15, 23, 42, 0.75);
+  border: 1rpx solid rgba(74, 222, 128, 0.3);
+  padding: 10rpx 24rpx;
+  border-radius: 30rpx;
+  z-index: 20;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 4rpx 12rpx rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+  animation: toastSlideIn 0.2s ease-out;
+}
+
+.saving-text {
+  font-size: 20rpx;
+  font-weight: bold;
+  color: #4ade80;
+  letter-spacing: 0.5px;
+}
+
+.saving-spinner {
+  width: 22rpx;
+  height: 22rpx;
+  border: 2rpx solid rgba(74, 222, 128, 0.2);
+  border-top-color: #4ade80;
+  border-radius: 50%;
+  animation: spinnerSpin 0.8s linear infinite;
+}
+
+@keyframes spinnerSpin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes toastSlideIn {
+  0% { transform: translateY(-10rpx); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+
+

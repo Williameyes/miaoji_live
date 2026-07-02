@@ -13,6 +13,7 @@ function createDualTrackRecorder(cameraCtx, options) {
   var recording = false;
   var rotateTimer = null;
   var currentSegment = null;
+  var transitioning = false; // 状态转换锁，防止并发 rotate 导致硬件指令冲突
 
   function clearRotateTimer() {
     if (rotateTimer) {
@@ -22,7 +23,10 @@ function createDualTrackRecorder(cameraCtx, options) {
   }
 
   function startTrack(trackId) {
-    if (!recording) return;
+    if (!recording) {
+      transitioning = false;
+      return;
+    }
     activeTrack = trackId;
     var startTime = Date.now();
 
@@ -44,9 +48,11 @@ function createDualTrackRecorder(cameraCtx, options) {
       },
       success: function () {
         console.log('[DualTrack] Track started:', trackId);
+        transitioning = false; // 启动成功，释放转换锁
       },
       fail: function (err) {
         console.error('[DualTrack] Failed to start record for track:', trackId, err);
+        transitioning = false; // 失败也必须释放锁，防止卡死
         if (typeof onError === 'function') {
           onError(err);
         }
@@ -61,7 +67,10 @@ function createDualTrackRecorder(cameraCtx, options) {
   }
 
   function stopTrack(trackId, nextTrackId) {
-    if (!currentSegment || currentSegment.trackId !== trackId) return;
+    if (!currentSegment || currentSegment.trackId !== trackId) {
+      transitioning = false;
+      return;
+    }
 
     var segToComplete = currentSegment;
     segToComplete.stop = Date.now();
@@ -79,6 +88,8 @@ function createDualTrackRecorder(cameraCtx, options) {
         // 停止成功后，若仍处于录制态，且有下一轨道，则启动它
         if (recording && nextTrackId) {
           startTrack(nextTrackId);
+        } else {
+          transitioning = false;
         }
       },
       fail: function (err) {
@@ -90,6 +101,8 @@ function createDualTrackRecorder(cameraCtx, options) {
         // 即使停止失败，也尝试启动下一个轨道，防死锁
         if (recording && nextTrackId) {
           startTrack(nextTrackId);
+        } else {
+          transitioning = false;
         }
       }
     });
@@ -97,18 +110,24 @@ function createDualTrackRecorder(cameraCtx, options) {
 
   function rotate(isTimeout) {
     if (!recording) return;
+    if (transitioning) {
+      console.log('[DualTrack] Rotate skipped: transition in progress');
+      return;
+    }
     clearRotateTimer();
 
     var prevTrack = activeTrack;
     var nextTrack = prevTrack === 'A' ? 'B' : 'A';
 
     console.log('[DualTrack] Rotating tracks:', prevTrack, '->', nextTrack, 'Timeout:', !!isTimeout);
+    transitioning = true; // 加锁
     stopTrack(prevTrack, nextTrack);
   }
 
   function start() {
     if (recording) return;
     recording = true;
+    transitioning = false;
     startTrack('A');
   }
 

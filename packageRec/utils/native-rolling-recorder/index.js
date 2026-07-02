@@ -13,6 +13,15 @@ function createNativeRollingRecorder(cameraCtx, options) {
   // 环状缓存，最大保存 2 个分段
   var ring = createSegmentRing(2);
   var pendingExports = [];
+  var lastRotateTime = 0;
+  var throttleRotateTimer = null;
+
+  function clearThrottleTimer() {
+    if (throttleRotateTimer) {
+      clearTimeout(throttleRotateTimer);
+      throttleRotateTimer = null;
+    }
+  }
 
   var recorder = createDualTrackRecorder(cameraCtx, {
     segmentMs: segmentMs,
@@ -54,10 +63,13 @@ function createNativeRollingRecorder(cameraCtx, options) {
   function start() {
     ring.clear();
     pendingExports = [];
+    lastRotateTime = 0;
+    clearThrottleTimer();
     recorder.start();
   }
 
   function stop() {
+    clearThrottleTimer();
     recorder.stop();
     // 释放所有等待中的导出 Promise
     for (var i = 0; i < pendingExports.length; i++) {
@@ -68,7 +80,7 @@ function createNativeRollingRecorder(cameraCtx, options) {
   }
 
   /**
-   * 触发高光截取（异步流程，强制轮转并在落盘后返回 8s 裁剪件）
+   * 触发高光截取（异步流程，带硬件保护防振荡）
    * @returns {Promise<string>}
    */
   function triggerExport() {
@@ -84,8 +96,29 @@ function createNativeRollingRecorder(cameraCtx, options) {
         reject: reject
       });
 
-      // 立即触发强制轮轨，使当前包含高光画面的分段停止录制并生成物理临时文件
-      recorder.rotate();
+      var now = Date.now();
+      var timeSinceLast = now - lastRotateTime;
+
+      // 最低限流间隔为 3000ms，防止高频连续点击冲击微信底层 Camera API 导致 stop error
+      if (timeSinceLast >= 3000) {
+        lastRotateTime = now;
+        console.log('[NativeRollingRecorder] Rotating track on export trigger');
+        recorder.rotate();
+      } else {
+        var delay = 3000 - timeSinceLast;
+        console.log('[NativeRollingRecorder] Trigger throttled. Scheduling deferred rotate in', delay, 'ms');
+        
+        if (!throttleRotateTimer) {
+          throttleRotateTimer = setTimeout(function () {
+            throttleRotateTimer = null;
+            if (recorder.isActive() && pendingExports.length > 0) {
+              lastRotateTime = Date.now();
+              console.log('[NativeRollingRecorder] Executing deferred rotate from queue');
+              recorder.rotate();
+            }
+          }, delay);
+        }
+      }
     });
   }
 
