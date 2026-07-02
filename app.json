@@ -42,6 +42,13 @@
         "pages/radar-lab/settlement/detail",
         "pages/radar-lab/poster/poster"
       ]
+    },
+    {
+      "root": "packageRec",
+      "name": "packageRec",
+      "pages": [
+        "pages/highlight-rec/highlight-rec"
+      ]
     }
   ],
   "preloadRule": {

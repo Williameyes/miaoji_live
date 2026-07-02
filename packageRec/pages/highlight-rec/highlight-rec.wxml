@@ -1,0 +1,111 @@
+<view class="container portrait">
+  <!-- 相机实时取景预览 -->
+  <camera
+    wx:if="{{cameraReady}}"
+    device-position="back"
+    flash="off"
+    resolution="high"
+    frame-size="large"
+    zoom="{{zoom}}"
+    class="preview-camera"
+    bindinitdone="onCameraInit"
+    binderror="onCameraError"
+  />
+
+  <!-- 顶部导航栏和返回 -->
+  <view class="custom-nav" style="padding-top: {{statusBarHeight}}px;">
+    <view class="btn-back" bindtap="onBackTap">‹ 返回</view>
+    <text class="nav-title">素材捕获</text>
+  </view>
+
+  <!-- 透明手势缩放层 -->
+  <view class="gesture-layer" bindtouchstart="onTouchStart" bindtouchmove="onTouchMove"></view>
+
+  <!-- HUD 顶部快捷控制条 (始终显示，小而透) -->
+  <view class="hud-top-bar" style="top: {{statusBarHeight + 48}}px;">
+    <view class="mini-rec-status">
+      <view class="mini-dot {{isRecording ? 'mini-dot--active' : ''}}"></view>
+      <text class="mini-text">{{isRecording ? '监看中' : '相机关闭'}}</text>
+    </view>
+    <view class="btn-toggle-hud" bindtap="toggleHudCollapse">
+      {{controlsCollapsed ? '展开菜单' : '隐藏菜单'}}
+    </view>
+  </view>
+
+  <!-- HUD 展开时的设置/日志浮层 -->
+  <view class="hud-overlay" wx:if="{{!controlsCollapsed}}">
+    <!-- 连接状态顶带 -->
+    <view class="hud-panel room-panel">
+      <view class="room-conn-status {{wsConnected ? 'room-conn-status--connected' : ''}}">
+        {{wsConnected ? '已连接' : '未连接'}}
+      </view>
+      <input
+        class="room-input"
+        type="number"
+        maxlength="6"
+        placeholder="6位同步房号"
+        value="{{roomId}}"
+        bindinput="onRoomIdInput"
+      />
+      <button class="conn-btn {{wsConnected ? 'conn-btn--disconnect' : ''}}" bindtap="toggleConnection">
+        {{wsConnected ? '断开' : '连接'}}
+      </button>
+    </view>
+
+    <!-- 录制状态与变焦区 -->
+    <view class="hud-panel recorder-panel">
+      <!-- 变焦微调滑块 -->
+      <view class="zoom-row">
+        <text class="zoom-label">变焦: {{zoomDisplay}}x</text>
+        <slider class="zoom-slider" min="1" max="5" step="0.1" value="{{zoom}}" bindchange="onZoomSliderChange" activeColor="#4ade80" backgroundColor="rgba(255,255,255,0.15)" block-size="14" />
+      </view>
+
+      <!-- 存储预警 -->
+      <view wx:if="{{diskWarning}}" class="disk-warning-panel">
+        <text class="warning-text">⚠️ 磁盘空间过高，请进入小程序详情清理缓存</text>
+      </view>
+    </view>
+
+    <!-- 今日已保存高光历史列表 -->
+    <view class="hud-panel logs-panel">
+      <view class="panel-header">
+        <text class="panel-title">今日保存片段 (共 {{highlightCount}} 条)</text>
+      </view>
+      <scroll-view class="log-list" scroll-y>
+        <view wx:if="{{savedLogs.length === 0}}" class="empty-log-tip">
+          等待接收常规端信令或点击下方 REC 按钮触发...
+        </view>
+        <view wx:for="{{savedLogs}}" wx:key="index" class="log-item">
+          <text class="log-time">{{item.time}}</text>
+          <text class="log-type-tag {{item.isLocal ? 'log-type-tag--local' : ''}}">
+            {{item.isLocal ? '本地' : '同步'}}
+          </text>
+          <text class="log-status">已存入系统相册</text>
+        </view>
+      </scroll-view>
+    </view>
+  </view>
+
+  <!-- 右侧快捷变焦悬浮条 (3 档自定义保存) -->
+  <view class="quick-zoom-sidebar">
+    <view
+      wx:for="{{zoomStops}}"
+      wx:key="label"
+      class="quick-zoom-stop {{zoom === item.zoom ? 'quick-zoom-stop--active' : ''}}"
+      bindtap="onQuickZoomStopTap"
+      bindlongpress="onQuickZoomStopLongPress"
+      data-index="{{index}}"
+    >
+      <text class="quick-zoom-label">{{item.zoom}}x</text>
+      <text class="quick-zoom-sub-label">{{item.label}}</text>
+    </view>
+  </view>
+
+  <!-- 本地手动 REC 按钮 (常驻，极简半透明，避免遮挡画面) -->
+  <view class="manual-rec-area">
+    <view class="manual-rec-btn" bindtap="triggerManualRec" hover-class="manual-rec-btn--hover">
+      <view class="btn-inner-dot"></view>
+      <text class="btn-text">手动REC</text>
+    </view>
+  </view>
+</view>

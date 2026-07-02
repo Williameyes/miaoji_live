@@ -767,6 +767,10 @@ Page({
     /** RecorderCore 熔断后的降级态：仅保留基础录制与基础高光。 */
     recorderDegradedMode: false,
     isRecording: false,
+    recSyncEnabled: false,
+    recSyncRoomId: '',
+    recSyncConnected: false,
+    recSyncPanelOpen: false,
     longPressTimer: null,
     periodFlash: false,
     /** 缓存空间灯：与 file-storage-estimate 的 getClipStorageHealthHint.level 一致 */
@@ -6309,6 +6313,11 @@ onCameraInit: function (e) {
       this._liveWsHealthCheckOnShow();
     } catch (eHealth) {}
     try {
+      if (this.data.recSyncEnabled && this.data.recSyncRoomId.length === 6) {
+        this._recSyncWsConnect();
+      }
+    } catch (eRecSyncShow) {}
+    try {
       const cid = wx.getStorageSync('currentMatchId') || app.globalData && app.globalData.currentMatchId || '';
       clipsStorage.mergeDefaultClipBucketIfTargetEmpty(String(cid || '').trim());
     } catch (eMerge) {}
@@ -7012,6 +7021,9 @@ onShareAppMessage: function () {
       }
     } catch (eWsDestroy) {/* ignore */}
     this._liveWsClient = null;
+    try {
+      this._recSyncWsDisconnect();
+    } catch (eRecDestroy) {}
     wx.setKeepScreenOn({
       keepScreenOn: false
     });
@@ -7316,7 +7328,9 @@ onShareAppMessage: function () {
     }
     this._pendingEnhanceModeAfterRecover = null;
     this._pendingEnhanceModeAfterCameraRebuild = null;
-    this._lastSegmentOperateFailAt = 0;
+    try {
+      this._recSyncWsDisconnect();
+    } catch (eRecHide) {}
     this.stopEnhanceFpsPolling();
   },
   /**
@@ -11507,6 +11521,14 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
     }
     const now = Date.now();
     const anchorClickTime = now;
+    if (this.data.recSyncEnabled && this._recSyncWs && this._recSyncWs.isConnected()) {
+      try {
+        const triggerId = this._recSyncWs.sendTrigger();
+        this.appendHealthLog('rec_trigger_sent', { triggerId: triggerId, recRoomId: this.data.recSyncRoomId });
+      } catch (err) {
+        console.error('发送同步高光信令失败:', err);
+      }
+    }
     const matchName = this.data.matchConfig.matchName || '未命名比赛';
     const id = String(now);
     const initialLeadMs = this.highlightLeadMs || 8000;
@@ -15596,6 +15618,14 @@ onLoad: function (options) {
       const savedAspectMode = wx.getStorageSync('live_video_aspect_mode') || 'full';
       this.setData({ liveVideoAspectMode: savedAspectMode });
     } catch (e) {}
+    try {
+      const recSyncEnabled = wx.getStorageSync('rec_sync_enabled') || false;
+      const recSyncRoomId = wx.getStorageSync('rec_sync_room_id') || '';
+      this.setData({
+        recSyncEnabled: recSyncEnabled,
+        recSyncRoomId: recSyncRoomId
+      });
+    } catch (e) {}
     this._initLocalAds();
   },
   _initLiveCoreState: function (options) {
@@ -15748,5 +15778,69 @@ onLoad: function (options) {
         } catch (eBootWs) {}
       }, 0);
     } catch (eBootT) {}
+  },
+  _recSyncWsConnect: function () {
+    if (this._recSyncWs) {
+      this._recSyncWs.destroy();
+    }
+    const recSyncRoomId = this.data.recSyncRoomId;
+    const self = this;
+    const client = require('../../services/rec-sync-ws-client.js');
+    this._recSyncWs = client.createRecSyncWsClient({
+      onOpen: function () {
+        self.setData({ recSyncConnected: true });
+        self.appendHealthLog('rec_sync_ws_open', { roomId: recSyncRoomId });
+      },
+      onClose: function () {
+        self.setData({ recSyncConnected: false });
+        self.appendHealthLog('rec_sync_ws_close', { roomId: recSyncRoomId });
+      },
+      onError: function (err) {
+        self.setData({ recSyncConnected: false });
+        self.appendHealthLog('rec_sync_ws_error', { err: err.message || err });
+      }
+    });
+    this._recSyncWs.connect(recSyncRoomId, 'controller');
+  },
+  _recSyncWsDisconnect: function () {
+    if (this._recSyncWs) {
+      this._recSyncWs.destroy();
+      this._recSyncWs = null;
+    }
+    this.setData({ recSyncConnected: false });
+  },
+  onRecSyncPanelToggle: function () {
+    this.setData({
+      recSyncPanelOpen: !this.data.recSyncPanelOpen
+    });
+  },
+  onRecSyncPanelClose: function () {
+    this.setData({
+      recSyncPanelOpen: false
+    });
+  },
+  onRecSyncEnabledChange: function (e) {
+    const val = e.detail.value;
+    this.setData({ recSyncEnabled: val });
+    wx.setStorageSync('rec_sync_enabled', val);
+    if (val) {
+      if (this.data.recSyncRoomId.length === 6) {
+        this._recSyncWsConnect();
+      }
+    } else {
+      this._recSyncWsDisconnect();
+    }
+  },
+  onRecSyncRoomIdInput: function (e) {
+    const val = String(e.detail.value || '').replace(/\D/g, '').slice(0, 6);
+    this.setData({ recSyncRoomId: val });
+    wx.setStorageSync('rec_sync_room_id', val);
+  },
+  onRecSyncConnectTap: function () {
+    if (this.data.recSyncRoomId.length !== 6) {
+      wx.showToast({ title: '请输入6位房间号', icon: 'none' });
+      return;
+    }
+    this._recSyncWsConnect();
   }
 });

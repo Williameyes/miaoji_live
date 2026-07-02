@@ -551,6 +551,43 @@
       </view>
     </view>
 
+    <!-- 素材机同步连接面板 -->
+    <view wx:if="{{recSyncPanelOpen}}" class="live-ble-panel-backdrop" catchtap="onRecSyncPanelClose">
+      <view class="live-ble-panel live-ble-panel--compact" catchtap="noopCatchTap">
+        <view class="live-ble-busy-row">
+          <text class="live-ble-busy-text">素材机同步（实验）</text>
+        </view>
+        <view class="live-ble-form-row" style="margin-top: 8rpx; display: flex; align-items: center; justify-content: space-between;">
+          <text style="color: rgba(255, 255, 255, 0.85); font-size: 13rpx;">启用同步：</text>
+          <switch checked="{{recSyncEnabled}}" bindchange="onRecSyncEnabledChange" color="#4ADE80" style="transform: scale(0.65);" />
+        </view>
+        <block wx:if="{{recSyncEnabled}}">
+          <view class="live-ble-form-row" style="margin-top: 6rpx; display: flex; align-items: center; justify-content: space-between;">
+            <text style="color: rgba(255, 255, 255, 0.85); font-size: 13rpx;">状态：</text>
+            <text style="color: {{recSyncConnected ? '#86efac' : '#f87171'}}; font-size: 13rpx; font-weight: bold;">
+              {{recSyncConnected ? '已连接' : '未连接'}}
+            </text>
+          </view>
+          <input
+            class="live-ble-input--compact"
+            type="number"
+            maxlength="6"
+            placeholder="6位同步房间号"
+            value="{{recSyncRoomId}}"
+            bindinput="onRecSyncRoomIdInput"
+            style="margin-top: 10rpx;"
+          />
+          <view class="live-ble-actions--compact" style="margin-top: 10rpx;">
+            <view class="live-ble-btn live-ble-btn--ghost live-ble-btn--sm" catchtap="onRecSyncPanelClose">关闭</view>
+            <view class="live-ble-btn live-ble-btn--primary live-ble-btn--sm" catchtap="onRecSyncConnectTap">连接</view>
+          </view>
+        </block>
+        <view wx:else class="live-ble-actions--compact" style="margin-top: 10rpx;">
+          <view class="live-ble-btn live-ble-btn--ghost live-ble-btn--sm" catchtap="onRecSyncPanelClose">关闭</view>
+        </view>
+      </view>
+    </view>
+
     <!-- 相机设置呼出：16:9 取景区内左侧（见 cameraSettingsPanelStyle），须放在 overlay 内以免被记分/角标压住 -->
     <view
       wx:if="{{cameraSettingsOpen && cameraMounted && liveStreamAllowed && !isReplaying && drawerMode === 0}}"
@@ -983,6 +1020,10 @@
         class="drawer-camera-pill drawer-camera-pill--ads {{promoAdsVisible ? 'drawer-camera-pill--active' : ''}}"
         catchtap="onPromoLoadTap"
       >Ads</view>
+      <view
+        class="drawer-camera-pill {{recSyncConnected ? 'drawer-camera-pill--active' : ''}}"
+        catchtap="onRecSyncPanelToggle"
+      >素材同步</view>
     </view>
 
     <!-- 遮罩：点击关闭（z-index 低于面板，不拦截面板内点击） -->

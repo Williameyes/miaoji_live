@@ -1,0 +1,496 @@
+.container {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  background-color: #020617;
+  overflow: hidden;
+  color: #f8fafc;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.preview-camera {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 1;
+}
+
+.gesture-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 2;
+}
+
+/* 导航栏 */
+.custom-nav {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 88rpx;
+  display: flex;
+  align-items: center;
+  z-index: 10;
+  background: linear-gradient(to bottom, rgba(0,0,0,0.8), rgba(0,0,0,0));
+  padding-left: 30rpx;
+  padding-right: 30rpx;
+  box-sizing: border-box;
+}
+
+.btn-back {
+  font-size: 26rpx;
+  color: #38bdf8;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 8rpx 18rpx;
+  border-radius: 30rpx;
+  font-weight: 500;
+  backdrop-filter: blur(5px);
+}
+
+.nav-title {
+  margin-left: 20rpx;
+  font-size: 28rpx;
+  font-weight: bold;
+  letter-spacing: 1rpx;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+}
+
+/* HUD 顶部常驻状态与折叠条 */
+.hud-top-bar {
+  position: absolute;
+  left: 30rpx;
+  right: 30rpx;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 15;
+}
+
+.mini-rec-status {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  background: rgba(15, 23, 42, 0.65);
+  padding: 8rpx 20rpx;
+  border-radius: 30rpx;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1rpx solid rgba(255, 255, 255, 0.08);
+}
+
+.mini-dot {
+  width: 12rpx;
+  height: 12rpx;
+  border-radius: 50%;
+  background-color: #64748b;
+}
+
+.mini-dot--active {
+  background-color: #10b981;
+  animation: blink 1.5s infinite ease-in-out;
+}
+
+.mini-text {
+  font-size: 20rpx;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+}
+
+.mini-buffer-info {
+  font-size: 18rpx;
+  color: #94a3b8;
+}
+
+.btn-toggle-hud {
+  font-size: 20rpx;
+  font-weight: bold;
+  color: #fff;
+  background: rgba(56, 189, 248, 0.15);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  padding: 10rpx 24rpx;
+  border-radius: 30rpx;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+/* HUD 覆盖控制层 */
+.hud-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 5;
+  box-sizing: border-box;
+  padding: 210rpx 30rpx 180rpx 30rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 20rpx;
+  pointer-events: none;
+}
+
+.hud-overlay .hud-panel {
+  pointer-events: auto;
+}
+
+/* 浮动面板基类 - Glassmorphism Style */
+.hud-panel {
+  background: rgba(15, 23, 42, 0.58);
+  backdrop-filter: blur(15px);
+  -webkit-backdrop-filter: blur(15px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 16rpx;
+  padding: 20rpx;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);
+  box-sizing: border-box;
+}
+
+/* 连接控制面板 */
+.room-panel {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.room-conn-status {
+  font-size: 20rpx;
+  font-weight: bold;
+  padding: 8rpx 16rpx;
+  border-radius: 8rpx;
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  white-space: nowrap;
+}
+
+.room-conn-status--connected {
+  background: rgba(74, 222, 128, 0.15);
+  color: #4ade80;
+  border: 1px solid rgba(74, 222, 128, 0.25);
+}
+
+.room-input {
+  flex: 1;
+  background: rgba(30, 41, 59, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8rpx;
+  color: #fff;
+  padding: 10rpx 16rpx;
+  font-size: 24rpx;
+  height: 50rpx;
+  box-sizing: border-box;
+}
+
+.conn-btn {
+  background: linear-gradient(180deg, #86efac 0%, #4ade80 100%);
+  color: #0f172a;
+  font-size: 22rpx;
+  padding: 0 24rpx;
+  height: 56rpx;
+  line-height: 56rpx;
+  border-radius: 8rpx;
+  margin: 0 !important;
+  font-weight: bold;
+  border: 1px solid rgba(74, 222, 128, 0.45);
+}
+
+.conn-btn--disconnect {
+  background: rgba(248, 113, 113, 0.2);
+  color: #fff;
+  border: 1px solid rgba(248, 113, 113, 0.4);
+}
+
+/* 录像状态与参数调节 */
+.recorder-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+/* 双轨状态 */
+.tracks-status {
+  display: flex;
+  gap: 30rpx;
+}
+
+.track-item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.track-label {
+  font-size: 20rpx;
+  color: #94a3b8;
+}
+
+.track-bar {
+  flex: 1;
+  height: 8rpx;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4rpx;
+  overflow: hidden;
+}
+
+.track-bar--active {
+  background-color: #4ade80;
+  box-shadow: 0 0 8rpx rgba(74, 222, 128, 0.4);
+}
+
+/* 录像档位配置 */
+.config-row {
+  display: flex;
+  align-items: center;
+}
+
+.config-label {
+  font-size: 22rpx;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.config-options {
+  display: flex;
+  gap: 12rpx;
+  flex: 1;
+}
+
+.config-opt {
+  flex: 1;
+  text-align: center;
+  font-size: 20rpx;
+  padding: 8rpx 0;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8rpx;
+  color: #94a3b8;
+}
+
+.config-opt--active {
+  background: rgba(74, 222, 128, 0.12);
+  border-color: #4ade80;
+  color: #4ade80;
+  font-weight: bold;
+}
+
+/* 缩放控制 */
+.zoom-row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.zoom-label {
+  font-size: 22rpx;
+  color: #94a3b8;
+  white-space: nowrap;
+  width: 100rpx;
+}
+
+.zoom-slider {
+  flex: 1;
+  margin: 0;
+}
+
+/* 磁盘预警 */
+.disk-warning-panel {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: 8rpx;
+  padding: 10rpx;
+}
+
+.warning-text {
+  font-size: 18rpx;
+  color: #f59e0b;
+}
+
+/* 历史高光记录列表 */
+.logs-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 180rpx;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.panel-header {
+  margin-bottom: 12rpx;
+}
+
+.panel-title {
+  font-size: 22rpx;
+  font-weight: bold;
+  color: #94a3b8;
+}
+
+.log-list {
+  flex: 1;
+  overflow-y: scroll;
+}
+
+.empty-log-tip {
+  font-size: 20rpx;
+  color: #64748b;
+  text-align: center;
+  padding: 30rpx 10rpx;
+  line-height: 1.5;
+}
+
+.log-item {
+  display: flex;
+  align-items: center;
+  padding: 12rpx 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.log-item:last-child {
+  border-bottom: none;
+}
+
+.log-time {
+  font-size: 22rpx;
+  color: #e2e8f0;
+  width: 120rpx;
+}
+
+.log-type-tag {
+  font-size: 18rpx;
+  padding: 2rpx 8rpx;
+  border-radius: 6rpx;
+  background: rgba(56, 189, 248, 0.12);
+  color: #38bdf8;
+  margin-right: 20rpx;
+}
+
+.log-type-tag--local {
+  background: rgba(244, 63, 94, 0.12);
+  color: #f43f5e;
+}
+
+.log-status {
+  font-size: 20rpx;
+  color: #4ade80;
+  margin-left: auto;
+}
+
+/* 底部 REC 手动保存大按钮 (小巧、透亮且不挡画) */
+.manual-rec-area {
+  position: absolute;
+  bottom: 40rpx;
+  left: 0;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.manual-rec-btn {
+  pointer-events: auto;
+  width: 110rpx;
+  height: 110rpx;
+  border-radius: 50%;
+  background: rgba(244, 63, 94, 0.12);
+  border: 3px solid rgba(244, 63, 94, 0.5);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+  transition: transform 0.1s ease;
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+
+.manual-rec-btn--hover {
+  transform: scale(0.95);
+  background: rgba(244, 63, 94, 0.25);
+}
+
+.btn-inner-dot {
+  width: 32rpx;
+  height: 32rpx;
+  border-radius: 50%;
+  background-color: #f43f5e;
+  margin-bottom: 4rpx;
+}
+
+.btn-text {
+  font-size: 14rpx;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+  color: #fff;
+}
+
+/* 动画定义 */
+@keyframes blink {
+  0% { opacity: 0.2; }
+  50% { opacity: 1; }
+  100% { opacity: 0.2; }
+}
+
+/* 右侧快捷变焦悬浮条 */
+.quick-zoom-sidebar {
+  position: absolute;
+  right: 30rpx;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 20rpx;
+  z-index: 10;
+  pointer-events: auto;
+}
+
+.quick-zoom-stop {
+  width: 88rpx;
+  height: 88rpx;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.65);
+  border: 1rpx solid rgba(255, 255, 255, 0.12);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 4rpx 12rpx rgba(0, 0, 0, 0.35);
+  transition: all 0.15s ease;
+}
+
+.quick-zoom-label {
+  font-size: 20rpx;
+  font-weight: bold;
+  color: rgba(255, 255, 255, 0.9);
+  line-height: 1.1;
+}
+
+.quick-zoom-sub-label {
+  font-size: 14rpx;
+  color: rgba(255, 255, 255, 0.45);
+  margin-top: 4rpx;
+  line-height: 1.1;
+}
+
+.quick-zoom-stop--active {
+  border-color: #4ade80;
+  background: rgba(74, 222, 128, 0.18);
+  box-shadow: 0 0 10rpx rgba(74, 222, 128, 0.4);
+}
+
+.quick-zoom-stop--active .quick-zoom-label {
+  color: #4ade80;
+}
+
+.quick-zoom-stop--active .quick-zoom-sub-label {
+  color: rgba(74, 222, 128, 0.7);
+}
+

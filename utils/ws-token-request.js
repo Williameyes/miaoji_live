@@ -17,14 +17,18 @@ const WS_TOKEN_TIMEOUT_MS = 10000;
 /**
  * HTTP POST 换取 WebSocket 一次性 Token。
  * @param {string} roomId 6 位房间号
+ * @param {string} [channel] score|rec|training，默认 score
  * @returns {Promise<string>}
  */
-function fetchWsToken(roomId) {
+function fetchWsToken(roomId, channel) {
   var safeRoomId = String(roomId || '').replace(/\D/g, '').slice(0, 6);
   if (safeRoomId.length !== 6) {
     return Promise.reject(new Error('invalid roomId'));
   }
   var url = API_BASE_URL + WS_TOKEN_PATH + '?roomId=' + safeRoomId;
+  if (channel && channel !== 'score') {
+    url += '&channel=' + encodeURIComponent(channel);
+  }
 
   return new Promise(function (resolve, reject) {
     wx.request({
