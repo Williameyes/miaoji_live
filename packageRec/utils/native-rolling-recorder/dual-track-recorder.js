@@ -42,6 +42,7 @@ function createDualTrackRecorder(cameraCtx, options) {
     }
 
     cameraCtx.startRecord({
+      quality: 'high',
       timeoutCallback: function () {
         console.log('[DualTrack] Segment timeout callback, rotate');
         rotate(true);

@@ -371,7 +371,7 @@ function validateTrimOutput(outputPath, expectedDurationMs, sourceSizeBytes, sou
  * @param {number} endMs
  * @returns {Promise<string>}
  */
-function trimVideoSegmentOnce(sourcePath, startMs, endMs) {
+function trimVideoSegmentOnce(sourcePath, startMs, endMs, skipAudio) {
   const src = typeof sourcePath === 'string' ? sourcePath : '';
   const start = Math.max(0, Math.floor(Number(startMs) || 0));
   const end = Math.max(start + 500, Math.floor(Number(endMs) || 0));
@@ -430,6 +430,11 @@ function trimVideoSegmentOnce(sourcePath, startMs, endMs) {
           try {
             container.addTrack(picked.video);
             picked.video.slice(safeStart, safeEnd);
+            if (!skipAudio && picked.audio) {
+              console.log('[MediaContainerTrim] Adding audio track to trim');
+              container.addTrack(picked.audio);
+              picked.audio.slice(safeStart, safeEnd);
+            }
           } catch (eTrack) {
             done(eTrack);
             return;
@@ -477,11 +482,12 @@ function trimVideoSegment(sourcePath, startMs, endMs, options) {
 
   /**
    * @param {number} attempt
+   * @param {boolean} skipAudio
    * @returns {Promise<{ path: string, trimStartMs: number, trimEndMs: number, outputDurationMs: number, outputSizeBytes: number, videoOnly: boolean }>}
    */
-  const runAttempt = (attempt) => {
+  const runAttempt = (attempt, skipAudio) => {
     const prep = attempt > 0 ? delayMs(280 * attempt) : Promise.resolve();
-    return prep.then(() => trimVideoSegmentOnce(sourcePath, start, end))
+    return prep.then(() => trimVideoSegmentOnce(sourcePath, start, end, skipAudio))
       .then((outPath) => {
         const sizePromise = sourceSizeBytes > 0
           ? Promise.resolve(sourceSizeBytes)
@@ -497,21 +503,22 @@ function trimVideoSegment(sourcePath, startMs, endMs, options) {
             trimEndMs: end,
             outputDurationMs: validated.durationMs,
             outputSizeBytes: validated.sizeBytes,
-            videoOnly: true
+            videoOnly: !!skipAudio
           })));
       })
       .catch((err) => {
         if (shouldAbortTrimRetry(err)) {
           return Promise.reject(err);
         }
-        if (attempt + 1 < maxAttempts && isMediaTrack601(err)) {
-          return delayMs(520 + 380 * attempt).then(() => runAttempt(attempt + 1));
+        if (attempt + 1 < maxAttempts) {
+          console.warn(`[MediaContainerTrim] Trim attempt ${attempt} failed:`, err.message || err, '. Retrying with skipAudio=true');
+          return delayMs(520 + 380 * attempt).then(() => runAttempt(attempt + 1, true));
         }
         return Promise.reject(err);
       });
   };
 
-  return runAttempt(0);
+  return runAttempt(0, false); // 第一次尝试默认包含音频
 }
 
 /**
