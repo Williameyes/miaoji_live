@@ -1,5 +1,5 @@
 /**
- * @fileoverview 双轨交替录制器，通过顺序切换 A/B 轨道，以保证单设备相机录像段的无缝流转。
+ * @fileoverview 双轨交替录制器，通过顺序切换 A/B 轨道，以保证单设备相机录像段 of 无缝流转。
  */
 
 function createDualTrackRecorder(cameraCtx, options) {
@@ -114,6 +114,22 @@ function createDualTrackRecorder(cameraCtx, options) {
       console.log('[DualTrack] Rotate skipped: transition in progress');
       return;
     }
+
+    // 硬件保护：微信底层开始录像后需要一定的初始化准备时间。
+    // 如果当前分段启动录制不足 2000ms，直接调用 stopRecord 会引发 operateCamera:fail:stop error。
+    var elapsed = Date.now() - (currentSegment ? currentSegment.start : 0);
+    if (elapsed < 2000) {
+      var delay = 2000 - elapsed;
+      console.log('[DualTrack] Segment recording too short (' + elapsed + 'ms). Deferring rotate by ' + delay + 'ms');
+      
+      setTimeout(function () {
+        if (recording && !transitioning) {
+          rotate(isTimeout);
+        }
+      }, delay);
+      return;
+    }
+
     clearRotateTimer();
 
     var prevTrack = activeTrack;
