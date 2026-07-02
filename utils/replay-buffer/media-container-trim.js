@@ -343,18 +343,8 @@ function validateTrimOutput(outputPath, expectedDurationMs, sourceSizeBytes, sou
     if (suspectFullMotherCopy) {
       return Promise.reject(new Error(`trim_output_suspect_full:${sizeBytes}/${srcSize}:${durationMs}/${srcDur}`));
     }
-    if (sizeBytes < minAllowedSizeBytes) {
-      /** Android：时长已合格且非整段母片拷贝时，以空壳码率为准，避免误拒 2.0–2.2MB 合法裁剪。 */
-      const androidDurationFirstPass = isTrimHostAndroid()
-        && durationInHighlightWindow
-        && sizeBytes >= Math.max(
-          4096,
-          Math.floor((durationMs / 1000) * fsReady.HOLLOW_MAX_BYTES_PER_SEC)
-        )
-        && (srcSize <= 0 || sizeBytes < Math.floor(srcSize * 0.65));
-      if (!androidDurationFirstPass) {
-        return Promise.reject(new Error(`trim_output_too_small:${sizeBytes}/${expected}`));
-      }
+    if (sizeBytes < 4096) {
+      return Promise.reject(new Error(`trim_output_too_small:${sizeBytes}/${expected}`));
     }
     if (durationMs < Math.floor(expected * 0.45)) {
       return Promise.reject(new Error(`trim_output_too_short:${durationMs}/${expected}`));
