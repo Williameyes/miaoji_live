@@ -615,7 +615,7 @@
     </view>
 
     <!-- 核心记分区域：仅篮球保留底部居中布局 -->
-    <view wx:if="{{!useCornerScoreboard}}" class="bottom-center-board">
+    <view wx:if="{{!useCornerScoreboard}}" class="bottom-center-board" style="{{bottomCenterBoardStyle}}">
       <!-- 比赛名称与迷你回放按钮 -->
       <view class="match-name-row">
         <view
@@ -717,7 +717,7 @@
           </view>
         </view>
 
-        <view wx:if="{{showShotClock}}" class="shot-clock-box">
+        <view wx:if="{{showShotClock}}" class="shot-clock-box" style="{{shotClockBoxStyle}}">
           <text class="shot-clock-digit {{wxsClockShotWarn ? 'shot-clock-digit--warn' : ''}}">{{wxsClockShotSec}}</text>
         </view>
       </block>

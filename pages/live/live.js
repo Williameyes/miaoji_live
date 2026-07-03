@@ -668,6 +668,76 @@ function buildCornerFabStylesInLetterboxPx(winW, winH, rect, safePx) {
     replayRail: 'right:' + rightR + 'rpx;top:50%;transform:translateY(-50%);'
   };
 }
+
+/**
+ * 计算篮球底部赛名+记分条锚点（rpx）：优先落在 16:9 下方黑边，横屏贴底时略向下贴边以减少遮挡球场。
+ *
+ * @param {number} winW 窗口宽 px
+ * @param {number} winH 窗口高 px
+ * @param {{ w: number, h: number, left: number, top: number }} rect 16:9 取景区
+ * @param {{ sL: number, sR: number, sB: number }} safePx 安全区 px
+ * @returns {{ bottomR: number, nudgeDownR: number }}
+ */
+function computeBottomScoreUiAnchorRpx(winW, winH, rect, safePx) {
+  var w = Math.max(1, winW);
+  var h = Math.max(1, winH);
+  var r = rect;
+  var factor = 750 / w;
+  var sBr = Math.max(0, safePx.sB) * factor;
+  var letterboxBelowPx = Math.max(0, h - (r.top + r.h));
+  var bottomR;
+  var nudgeDownR;
+
+  if (letterboxBelowPx < 1) {
+    bottomR = Math.max(6, sBr);
+    nudgeDownR = 10;
+  } else {
+    var letterboxBelowRpx = letterboxBelowPx * factor;
+    bottomR = letterboxBelowRpx * 0.25 + sBr;
+    nudgeDownR = 0;
+  }
+  return {
+    bottomR: bottomR,
+    nudgeDownR: nudgeDownR
+  };
+}
+
+/**
+ * 篮球底部居中赛名+记分条内联样式。
+ *
+ * @param {number} winW
+ * @param {number} winH
+ * @param {{ w: number, h: number, left: number, top: number }} rect
+ * @param {{ sL: number, sR: number, sB: number }} safePx
+ * @returns {string}
+ */
+function buildBottomCenterBoardStyleInLetterboxPx(winW, winH, rect, safePx) {
+  var anchor = computeBottomScoreUiAnchorRpx(winW, winH, rect, safePx);
+  return (
+    'left:50%;bottom:' + anchor.bottomR.toFixed(2) + 'rpx;' +
+    'transform:translateX(-50%) translateY(' + anchor.nudgeDownR + 'rpx);'
+  );
+}
+
+/**
+ * 篮球 24 秒小钟内联样式：与底部记分条同底边锚点，水平贴 16:9 右内缘。
+ *
+ * @param {number} winW
+ * @param {number} winH
+ * @param {{ w: number, h: number, left: number, top: number }} rect
+ * @param {{ sL: number, sR: number, sB: number }} safePx
+ * @returns {string}
+ */
+function buildShotClockBoxStyleInLetterboxPx(winW, winH, rect, safePx) {
+  var w = Math.max(1, winW);
+  var factor = 750 / w;
+  var anchor = computeBottomScoreUiAnchorRpx(winW, winH, rect, safePx);
+  var gutterR = Math.max(10, (w - (rect.left + rect.w)) * factor + 12);
+  return (
+    'right:' + gutterR.toFixed(2) + 'rpx;bottom:' + anchor.bottomR.toFixed(2) + 'rpx;' +
+    'transform:translateY(' + anchor.nudgeDownR + 'rpx);'
+  );
+}
 /** @region LIVE_DATA — Page data 初始状态 */
 Page({
   behaviors: [footballClockBehavior, liveWsBehavior],
@@ -983,6 +1053,10 @@ Page({
     enhanceCanvasVisible: false,
     /** 16:9 取景框内联样式（等比内接于窗口，黑边在容器外，见 live.wxss .live-stage） */
     liveStageInlineStyle: '',
+    /** 篮球底部赛名+记分条位置（锚定 16:9 底边/下方黑边） */
+    bottomCenterBoardStyle: '',
+    /** 篮球 24 秒小钟位置（与记分条底边对齐） */
+    shotClockBoxStyle: '',
     /**
      * 增强渲染当前档位：'off' | 'lite' | 'standard' | 'strong' | 'vk'；由 render-pipeline 写回。
      * 注意：'vk' 属于独立家族，此时 <camera> 已 unmount、rolling 已停；切出时须通过
@@ -1221,7 +1295,7 @@ _estimateProScoreboardWidthPx: function (areaW) {
     var bw = Math.max(1, Number(barW) || 96);
     var bh = Math.max(1, Number(barH) || 18);
     var insetX = Math.max(8, Math.round(sw * 0.012));
-    var bottomGap = Math.max(10, Math.round(sh * 0.08));
+    var bottomGap = Math.max(8, Math.round(sh * 0.055));
     var x = Math.round((sw - bw) * 0.5);
     var y = Math.round(sh - bh - bottomGap);
     x = Math.max(insetX, Math.min(sw - bw - insetX, x));
@@ -3478,12 +3552,24 @@ onCameraInit: function (e) {
       sR: sR,
       sB: sB
     });
+    var safePx = {
+      sL: sL,
+      sR: sR,
+      sB: sB
+    };
     this.setData({
       liveStageInlineStyle: style,
       cameraSettingsPanelStyle: cameraSettingsPanelStyle,
       leftCameraFabStyle: corner.leftCameraFab,
       recoverFabStackStyle: corner.recoverStack,
-      replayRailStyle: corner.replayRail
+      replayRailStyle: corner.replayRail,
+      bottomCenterBoardStyle: buildBottomCenterBoardStyleInLetterboxPx(
+        sysW,
+        sysH,
+        letterboxRect,
+        safePx
+      ),
+      shotClockBoxStyle: buildShotClockBoxStyleInLetterboxPx(sysW, sysH, letterboxRect, safePx)
     });
     if (this.data.useCornerScoreboard && this._proScoreboardMovableInited) {
       var selfScoreLayout = this;

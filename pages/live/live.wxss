@@ -553,12 +553,9 @@ button.live-ble-btn::after {
   pointer-events: none;
 }
 
-/* 底部居中记分板 */
+/* 底部居中记分板（bottom/left/transform 由 bottomCenterBoardStyle 按 16:9 黑边计算） */
 .bottom-center-board {
   position: absolute;
-  bottom: calc(4rpx + env(safe-area-inset-bottom));
-  left: 50%;
-  transform: translateX(-50%);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -643,7 +640,7 @@ button.live-ble-btn::after {
   right: 0;
   top: 50%;
   z-index: 0;
-  height: 30rpx;
+  height: 24rpx;
   transform: translateY(-50%);
   pointer-events: none;
   opacity: 0.75;
@@ -740,7 +737,7 @@ button.live-ble-btn::after {
   right: 0;
   top: 50%;
   z-index: 0;
-  height: 30rpx;
+  height: 24rpx;
   transform: translateY(-50%);
   background: rgba(34, 211, 238, 0.8);
   pointer-events: none;
@@ -794,11 +791,9 @@ button.live-ble-btn::after {
   letter-spacing: 0;
 }
 
-/* 24 秒：右下角与记分栏同高正方格 */
+/* 24 秒：右下角与记分栏同高正方格（bottom/right/transform 由 shotClockBoxStyle 计算） */
 .shot-clock-box {
   position: absolute;
-  right: 2vw;
-  bottom: calc(4rpx + env(safe-area-inset-bottom));
   width: 60rpx;
   height: 60rpx;
   box-sizing: border-box;
