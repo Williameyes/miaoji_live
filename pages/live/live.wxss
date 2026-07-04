@@ -513,30 +513,31 @@ button.live-ble-btn::after {
   background: rgba(255, 88, 88, 0.32);
 }
 
-/* 自绘轻提示：半透明条，短 transition，无 wx.showToast */
+/* 自绘轻提示：无底色小字，短 transition，不抢直播画面 */
 .light-hint {
   position: fixed;
   left: 50%;
-  bottom: 22%;
+  bottom: 18%;
   z-index: 90;
-  max-width: 72vw;
-  padding: 7rpx 18rpx;
-  border-radius: 999rpx;
-  background: rgba(0, 0, 0, 0.75);
-  box-shadow: 0 2rpx 12rpx rgba(0, 0, 0, 0.32);
+  max-width: 70vw;
+  padding: 0;
+  background: transparent;
   transform: translateX(-50%);
   pointer-events: none;
   box-sizing: border-box;
   transition: opacity 0.18s ease-out;
 }
 
-/* 较系统 Toast 略小一号，与记分条/角标体量协调 */
+/* 与记分板队名（.team-name-inner）同字号，轻描边保证可读 */
 .light-hint__text {
-  font-size: 22rpx;
-  line-height: 1.38;
-  color: rgba(255, 255, 255, 0.95);
+  font-size: 11rpx;
+  line-height: 1.3;
+  color: rgba(255, 255, 255, 0.72);
   font-weight: 400;
   text-align: center;
+  text-shadow:
+    0 0 3rpx rgba(0, 0, 0, 0.55),
+    0 1rpx 1rpx rgba(0, 0, 0, 0.4);
 }
 
 /* 透明手势层 */
@@ -2662,8 +2663,9 @@ button.live-ble-btn::after {
     padding: 0 28rpx;
   }
 
+  /* 与队名同字号，勿放大（live 页恒为横屏，此前 20rpx 会盖掉基础样式） */
   .light-hint__text {
-    font-size: 20rpx;
+    font-size: 11rpx;
   }
 }
 

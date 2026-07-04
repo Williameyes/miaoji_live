@@ -904,7 +904,7 @@ Page({
     /** 回放模式右侧倍速/关闭/还原列（与 {@link buildCornerFabStylesInLetterboxPx} 同步） */
     replayRailStyle: 'right:10rpx;top:50%;transform:translateY(-50%);',
     /**
-     * 轻提示（自绘半透明，替代 wx.showToast，避免与直播抢焦点）；opacity 0~0.7，短时长。
+     * 轻提示（自绘小字无底色，替代 wx.showToast，避免与直播抢焦点）；opacity 0~0.5，短时长。
      * @type {string}
      */
     lightHintText: '',
@@ -6676,7 +6676,7 @@ maybeToastFileStoragePressureFromGlobal: function () {
     this.updatePipelineHealth();
   },
   /**
-   * 自绘轻提示：半透明、短时长、2 次 setData 以内，不调用 wx.showToast。
+   * 自绘轻提示：小字无底色、短时长、2 次 setData 以内，不调用 wx.showToast。
    * @param {string} message
    * @returns {void}
    */
@@ -6689,10 +6689,10 @@ maybeToastFileStoragePressureFromGlobal: function () {
       } catch (e) {}
       this._lightHintFadeTimer = null;
     }
-    /** 与 wx.showToast 常见停留时长（约 2s）一致，避免旧版 260ms 一闪即消 */
+    /** 略短于系统 Toast，低存在感；约 1.6s 后淡出 */
     this.setData({
       lightHintText: t,
-      lightHintOpacity: 0.72
+      lightHintOpacity: 0.5
     });
     const self = this;
     this._lightHintFadeTimer = setTimeout(function () {
@@ -6705,7 +6705,7 @@ maybeToastFileStoragePressureFromGlobal: function () {
         });
         self._lightHintFadeTimer = null;
       }, 220);
-    }, 2000);
+    }, 1600);
   },
   /**
    * 选最旧 1 条、带本地路径且未标相册导出的片段。
@@ -11676,15 +11676,9 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
           }
           self._recoverAfterHighlightFlushMiss(anchorClickTime);
         }
-        try {
-          const chunkMs = self.pingPongChunkDurationMs || 180000;
-          const waitHint = chunkMs >= 45000 ? '正在生成高光…' : '录制缓冲同步中…';
-          wx.showToast({
-            title: waitHint,
-            icon: 'none',
-            duration: 2200
-          });
-        } catch (eToast) {}
+        const chunkMs = self.pingPongChunkDurationMs || 180000;
+        const waitHint = chunkMs >= 45000 ? '正在生成高光…' : '录制缓冲同步中…';
+        self._showLightHint(waitHint);
         self.onHighlightClick({
           id,
           matchName,
@@ -11787,13 +11781,7 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
       return;
     }
     const flushPromise = typeof pipeline.flushAndResolveHighlightSeek === 'function' ? pipeline.flushAndResolveHighlightSeek(anchorClickTime, leadMs) : Promise.resolve(null);
-    try {
-      wx.showToast({
-        title: '正在生成高光…',
-        icon: 'none',
-        duration: 1800
-      });
-    } catch (eFlushToast) {}
+    self._showLightHint('正在生成高光…');
     self.startHighlightSaveProgressAnim(anchorClickTime, anchorClickTime + 12000);
     flushPromise.then(flushed => finalizeSeekPlan(flushed, 'live_flush')).catch(err => {
       if (err && err.code === 'HIGHLIGHT_FLUSH_RATE_LIMITED') {
@@ -11801,11 +11789,7 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
         self.appendHealthLog('highlight_flush_rate_limited', {
           anchorClickTime
         });
-        wx.showToast({
-          title: '操作太频繁，请稍候再试',
-          icon: 'none',
-          duration: 2200
-        });
+        self._showLightHint('操作太频繁，请稍候再试');
         self.endHighlightSaving();
         return;
       }
