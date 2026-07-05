@@ -391,6 +391,15 @@ function auditOcrQueue(detail) {
 }
 
 /**
+ * 记录时间 ROI 单次 OCR 样本（含原始文本与解析结果，供 7 段数码管调优）。
+ * @param {Record<string, unknown>} detail
+ * @returns {void}
+ */
+function auditOcrTimeSample(detail) {
+  appendAuditLog('ocr_time_sample', detail);
+}
+
+/**
  * 设置下一次 _commitLocalState 时间写入的 clock_source 上下文。
  * @param {{ source: string, reason: string, functionName: string }} ctx
  * @returns {void}
@@ -717,6 +726,7 @@ module.exports = {
   auditOcrJump: auditOcrJump,
   auditWorkerStats: auditWorkerStats,
   auditOcrQueue: auditOcrQueue,
+  auditOcrTimeSample: auditOcrTimeSample,
   auditClockSource: auditClockSource,
   auditModeChange: auditModeChange,
   auditRunningChange: auditRunningChange,

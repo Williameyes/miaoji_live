@@ -107,6 +107,23 @@
         <text class="col-monitor-text">主: {{ homeScore }} | 客: {{ awayScore }} | 倒计时: {{ minutes }}:{{ seconds < 10 ? '0' + seconds : seconds }}</text>
       </view>
 
+      <view class="col-ocr-toggles">
+        <view
+          class="col-ocr-toggle{{ocrEnableTime ? ' col-ocr-toggle--on' : ''}}"
+          catchtap="onToggleOcrEnableTime"
+        >
+          <text class="col-ocr-toggle-label">剩余时间</text>
+          <text class="col-ocr-toggle-state">{{ocrEnableTime ? '开' : '关'}}</text>
+        </view>
+        <view
+          class="col-ocr-toggle{{ocrEnableScore ? ' col-ocr-toggle--on' : ''}}"
+          catchtap="onToggleOcrEnableScore"
+        >
+          <text class="col-ocr-toggle-label">比分</text>
+          <text class="col-ocr-toggle-state">{{ocrEnableScore ? '开' : '关'}}</text>
+        </view>
+      </view>
+
       <view class="col-action-grid">
         <view
           class="col-console-btn col-console-btn--ocr{{ocrEnabled ? ' col-console-btn--danger' : ' col-console-btn--success'}}"

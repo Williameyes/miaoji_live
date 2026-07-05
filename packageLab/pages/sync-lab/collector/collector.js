@@ -133,6 +133,8 @@ var OCR_CLOCK_TENS_GLITCH_MAX_DELTA_SEC = 420;
 var OCR_CLOCK_TENS_GLITCH_MINUTE_DIFF = 4;
 /** 分钟十位误读：分钟差上限（如 3:38→8:38 差 5） */
 var OCR_CLOCK_TENS_GLITCH_MAX_MINUTE_DIFF = 6;
+/** 7 段分钟位整 60 秒倒退误读：允许修复的最大分钟步数（如 4:42→3:42 为 1 步） */
+var OCR_CLOCK_SIXTY_BACKWARD_MAX_MINUTES = 3;
 /** 0:xx 误锚恢复：参考至少为该秒数（排除 ref=0 误放行 9:50 等） */
 var OCR_CLOCK_SUBMINUTE_RECOVERY_MIN_REF_SEC = 10;
 /** 遮挡恢复：连续多少次检测到三项均可读才退出遮挡 */
@@ -253,7 +255,7 @@ var OCR_TIME_RUN_TIMEOUT_MS = 1500;
  * 给 SDK 内部清队列的时间窗口，避免立刻补刀让队列雪崩。
  */
 var OCR_TIMEOUT_SETTLE_MS = 350;
-var OCR_MAX_VARIANTS_PER_RUN = 3;
+var OCR_MAX_VARIANTS_PER_RUN = 4;
 var OCR_SCORE_TICK_INTERVAL = 8;
 // Phase 2: Removed OCR_TIME_PREDICT_MAX_STALE_MS
 /** V5 视觉门禁：全局 OCR cooldown（毫秒） */
@@ -374,6 +376,36 @@ var _globalSeq = 0;
 var _wsHeartbeatSeq = 0;
 /** 页面实例引用，供心跳/看门狗失败时主动触发 setData 与 _scheduleWsReconnect */
 var _wsPageRef = null;
+
+/**
+ * 采集端是否开启剩余时间 OCR 同步。
+ * @returns {boolean}
+ */
+function isOcrTimeSyncEnabled() {
+  var page = _wsPageRef;
+  if (!page || !page.data) return true;
+  return page.data.ocrEnableTime !== false;
+}
+
+/**
+ * 采集端是否开启比分 OCR 同步。
+ * @returns {boolean}
+ */
+function isOcrScoreSyncEnabled() {
+  var page = _wsPageRef;
+  if (!page || !page.data) return true;
+  return page.data.ocrEnableScore !== false;
+}
+
+/**
+ * 业务包是否携带 sync_score=1（显式 SCORE 包始终同步比分）。
+ * @param {string} act 动作语义
+ * @returns {0|1}
+ */
+function getWsPacketSyncScoreFlag(act) {
+  if (act === 'SCORE') return 1;
+  return isOcrScoreSyncEnabled() ? 1 : 0;
+}
 /** 心跳定时器句柄（setTimeout，每次心跳后重新 schedule，自带随机抖动） */
 var _wsHeartbeatTimer = 0;
 /** 看门狗定时器句柄 */
@@ -1492,6 +1524,27 @@ function repairMinutesTensDigitGlitch(clock, refSec) {
 }
 
 /**
+ * 修复 7 段数码管分钟位误读导致的整 60 秒倒退（如 4:42 → 3:42，分钟 4 误读为 3）。
+ * 倒计时场景下单次 OCR 样本不应比参考锚点整分钟级倒退（采样间隔 <2s）。
+ * @param {{ minutes: number, seconds: number }} clock OCR 解析结果
+ * @param {number} refSec 参考秒数
+ * @returns {{ minutes: number, seconds: number } | null}
+ */
+function repairMinutesSixtySecBackwardGlitch(clock, refSec) {
+  if (!clock || refSec < 60) return null;
+  var ocrSec = clockToTotalSec(clock);
+  if (ocrSec >= refSec) return null;
+  var delta = refSec - ocrSec;
+  if (delta < 60 || delta % 60 !== 0) return null;
+  var minuteSteps = delta / 60;
+  if (minuteSteps < 1 || minuteSteps > OCR_CLOCK_SIXTY_BACKWARD_MAX_MINUTES) return null;
+  var ref = clockFromTotalSec(refSec);
+  if (Number(clock.seconds) !== Number(ref.seconds)) return null;
+  if (Number(ref.minutes) - Number(clock.minutes) !== minuteSteps) return null;
+  return { minutes: ref.minutes, seconds: ref.seconds };
+}
+
+/**
  * 校验 OCR 时间样本是否可用于比赛时钟（过滤进攻时间误读与正向跳变）。
  * @param {{ minutes: number, seconds: number } | null} clock
  * @param {number} refSec
@@ -1516,6 +1569,21 @@ function sanitizeGameClockParse(clock, refSec) {
         toSec: clockToTotalSec(tensFixed)
       });
       clock = tensFixed;
+    }
+    var sixtyBackFixed = repairMinutesSixtySecBackwardGlitch(clock, refSec);
+    if (sixtyBackFixed) {
+      logOcrV5Diag('clock_sixty_backward_repair', {
+        refSec: refSec,
+        fromSec: clockToTotalSec(clock),
+        toSec: clockToTotalSec(sixtyBackFixed)
+      });
+      COLLECTOR_AUDIT.auditOcrTimeSample({
+        action: 'sixty_backward_repair',
+        refSec: refSec,
+        fromSec: clockToTotalSec(clock),
+        toSec: clockToTotalSec(sixtyBackFixed)
+      });
+      clock = sixtyBackFixed;
     }
   }
   var ocrSec = clockToTotalSec(clock);
@@ -2015,6 +2083,7 @@ function canClearOcrOcclusion(nowMs) {
  * @returns {boolean}
  */
 function shouldPostScorePatchesToWorker(nowMs) {
+  if (!isOcrScoreSyncEnabled()) return false;
   if (_ocrOcclusionActive) return false;
   if (_ocrFilterFallback) return false;
   if (isTimeOcrStarved(nowMs)) return false;
@@ -2267,7 +2336,8 @@ function _buildHeartbeatPacket() {
       sys_t: now,
       match_id: 'M_' + (_wsRoomId || (page && page.data ? page.data.matchCode : '') || ''),
       hb_seq: _wsHeartbeatSeq,
-      heartbeat: 1
+      heartbeat: 1,
+      sync_score: getWsPacketSyncScoreFlag(snap.running ? 'START' : 'STOP')
     };
     _procState.published = {
       t: packet.t,
@@ -2584,6 +2654,10 @@ Page({
     shotClock: 24,
     // OCR
     ocrEnabled: false,
+    /** 是否 OCR 识别剩余时间 */
+    ocrEnableTime: true,
+    /** 是否 OCR 识别比分 */
+    ocrEnableScore: true,
     debugMode: false,
     /** @type {Array<{x,y,w,h,label,rawText,pctStyle}>} */
     rois: DEFAULT_ROIS.map(function (r) { return Object.assign({}, r); }),
@@ -3081,6 +3155,32 @@ Page({
   },
 
   /**
+   * 切换是否 OCR 识别剩余时间。
+   * @returns {void}
+   */
+  onToggleOcrEnableTime: function () {
+    var next = !this.data.ocrEnableTime;
+    if (!next && !this.data.ocrEnableScore) {
+      wx.showToast({ title: '至少保留一项识别', icon: 'none', duration: 1200 });
+      return;
+    }
+    this.setData({ ocrEnableTime: next });
+  },
+
+  /**
+   * 切换是否 OCR 识别比分。
+   * @returns {void}
+   */
+  onToggleOcrEnableScore: function () {
+    var next = !this.data.ocrEnableScore;
+    if (!next && !this.data.ocrEnableTime) {
+      wx.showToast({ title: '至少保留一项识别', icon: 'none', duration: 1200 });
+      return;
+    }
+    this.setData({ ocrEnableScore: next });
+  },
+
+  /**
    * 长按比分区切换调试模式（底部不再展示调试按钮）。
    * @returns {void}
    */
@@ -3286,6 +3386,10 @@ Page({
   },
 
   _startOcr: function () {
+    if (!this.data.ocrEnableTime && !this.data.ocrEnableScore) {
+      wx.showToast({ title: '请先开启时间或比分识别', icon: 'none', duration: 1200 });
+      return;
+    }
     var token = ++_ocrSessionToken;
     this._clearOcrBootTimers();
     this._stopOcrSession();
@@ -3689,6 +3793,20 @@ Page({
       var parsedTime = resolveGameClockParse(text, refSec);
       if (_ocrOcclusionActive && !parsedTime) {
         parsedTime = resolveGameClockParse(text, -1);
+      }
+      var parsedSec = parsedTime ? clockToTotalSec(parsedTime) : -1;
+      var shouldAuditTimeSample = !parsedTime ||
+        (parsedSec >= 0 && refSec >= 0 && Math.abs(parsedSec - refSec) > 3);
+      if (shouldAuditTimeSample) {
+        COLLECTOR_AUDIT.auditOcrTimeSample({
+          action: parsedTime ? 'accepted' : 'rejected',
+          raw: String(text || '').slice(0, 32),
+          refSec: refSec,
+          parsed: parsedTime
+            ? { m: parsedTime.minutes, s: parsedTime.seconds, totalSec: parsedSec }
+            : null,
+          occluded: _ocrOcclusionActive ? 1 : 0
+        });
       }
       if (parsedTime) {
         var parsedClockSec = clockToTotalSec(parsedTime);
@@ -4622,6 +4740,7 @@ Page({
       return;
     }
     if (msg.type === 'OCR_TRIGGER' && msg.changedRois && msg.changedRois.length) {
+      if (!isOcrScoreSyncEnabled()) return;
       if (_ocrV5Diag) _ocrV5Diag.workerTriggers += 1;
       mergeOcrV5Trigger(msg.changedRois);
       logOcrV5Diag('worker_trigger', { changedRois: msg.changedRois, seq: msg.seq });
@@ -4680,6 +4799,7 @@ Page({
    */
   _maybeRunTimeOcrPoll: function (session, token, frame, captureTs) {
     maybeEmitOcrV5DiagSummary();
+    if (!isOcrTimeSyncEnabled()) return false;
     if (token !== _ocrSessionToken || !frame || !frame.data) return false;
     var now = captureTs || Date.now();
     if (!_ocrOcclusionActive && now < _ocrTimeoutSettleUntil) {
@@ -4713,6 +4833,7 @@ Page({
    * @returns {boolean}
    */
   _maybeRunScoreOcrV5: function (session, token, frame, captureTs) {
+    if (!isOcrScoreSyncEnabled()) return false;
     if (token !== _ocrSessionToken || !frame || !frame.data) return false;
     if (_ocrOcclusionActive) return false;
     var now = captureTs || Date.now();
@@ -4833,6 +4954,7 @@ Page({
    */
   // Phase 5: runTimeOcr & runScoreOcr
   runTimeOcr: function (session, token, rgbaBuffer, frameW, frameH, captureTs) {
+    if (!isOcrTimeSyncEnabled()) return;
     if (token !== _ocrSessionToken) return;
     if (!rgbaBuffer || !rgbaBuffer.byteLength) return;
     if (_ocrVkBusy) {
@@ -4865,6 +4987,7 @@ Page({
   },
 
   runScoreOcr: function (session, token, rgbaBuffer, frameW, frameH, captureTs, roiIdx) {
+    if (!isOcrScoreSyncEnabled()) return;
     if (token !== _ocrSessionToken) return;
     if (!rgbaBuffer || !rgbaBuffer.byteLength) return;
     var nowGuard = Date.now();
@@ -5114,14 +5237,14 @@ Page({
         else timePumpGap = TIME_OCR_RECOVERY_INTERVAL_MS;
 
         if (_ocrVkBusy) {
-          if (captureTs - _lastTimePumpTs >= timePumpGap) {
+          if (isOcrTimeSyncEnabled() && captureTs - _lastTimePumpTs >= timePumpGap) {
             stashPendingTimeFrame(frame.data, frameW, frameH, captureTs);
           }
           return;
         }
 
         if (_ocrOcclusionActive) {
-          if (captureTs - _lastTimePumpTs >= timePumpGap) {
+          if (isOcrTimeSyncEnabled() && captureTs - _lastTimePumpTs >= timePumpGap) {
             _lastTimePumpTs = captureTs;
             _ocrPumpLastTickTs = captureTs;
             self.runTimeOcr(session, token, frame.data, frameW, frameH, captureTs);
@@ -5130,11 +5253,11 @@ Page({
         }
 
         var nextScoreIdx = (_scorePumpCursor % 2 === 0) ? 0 : 1;
-        var scorePumpAllowed = isScorePumpAllowed(captureTs);
+        var scorePumpAllowed = isOcrScoreSyncEnabled() && isScorePumpAllowed(captureTs);
         var scoreRoiBackoff = captureTs < (_ocrRoiBackoffUntil[nextScoreIdx] || 0);
 
         if (!scorePumpAllowed) {
-          if (captureTs - _lastTimePumpTs >= timePumpGap) {
+          if (isOcrTimeSyncEnabled() && captureTs - _lastTimePumpTs >= timePumpGap) {
             _lastTimePumpTs = captureTs;
             _ocrPumpLastTickTs = captureTs;
             self.runTimeOcr(session, token, frame.data, frameW, frameH, captureTs);
@@ -5153,7 +5276,7 @@ Page({
           _scorePumpCursor += 1;
         }
 
-        if (captureTs - _lastTimePumpTs >= timePumpGap) {
+        if (isOcrTimeSyncEnabled() && captureTs - _lastTimePumpTs >= timePumpGap) {
           _lastTimePumpTs = captureTs;
           _ocrPumpLastTickTs = captureTs;
           self.runTimeOcr(session, token, frame.data, frameW, frameH, captureTs);
@@ -6805,6 +6928,7 @@ Page({
       p: Math.max(1, Math.floor(Number(payload.p) || 1)),
       seq: _globalSeq,
       sys_t: packetWallMs,
+      sync_score: getWsPacketSyncScoreFlag(act),
       match_id: 'M_' + (_wsRoomId || this.data.matchCode || '')
     };
     var self = this;
@@ -7037,13 +7161,28 @@ Page({
    * @returns {void}
    */
   processOcrFrame: function (input) {
-    if (!input || input.homeScore === null || input.awayScore === null) return;
+    if (!input) return;
+    var scoreSync = isOcrScoreSyncEnabled();
+    var timeSync = isOcrTimeSyncEnabled();
+    if (!scoreSync && !timeSync) return;
+
     var now = input.wallMs || Date.now();
-    var h = Number(input.homeScore) || 0;
-    var a = Number(input.awayScore) || 0;
+    var h;
+    var a;
+    if (scoreSync) {
+      if (input.homeScore === null || input.homeScore === undefined ||
+          input.awayScore === null || input.awayScore === undefined) {
+        return;
+      }
+      h = Number(input.homeScore) || 0;
+      a = Number(input.awayScore) || 0;
+    } else {
+      h = Number(this.data.homeScore) || 0;
+      a = Number(this.data.awayScore) || 0;
+    }
     var period = this.data.period;
     var shotClock = this.data.shotClock;
-    var timeInfo = input.timeValid
+    var timeInfo = (timeSync && input.timeValid)
       ? { minutes: Number(input.minutes) || 0, seconds: Number(input.seconds) || 0 }
       : null;
     var t = timeInfo
@@ -7058,7 +7197,9 @@ Page({
     var payloadBase = { t: t, a: h, b: a, p: period };
 
     // 比分阀门优先：与时间 SYNC/START/STOP 解耦，避免观察室 return 或 frameKey 去重导致 SCORE 永不发出
-    this._applyScoreValve(payloadBase, h, a, !!input.bypassScoreHold);
+    if (scoreSync) {
+      this._applyScoreValve(payloadBase, h, a, !!input.bypassScoreHold);
+    }
 
     // 阀门 2：遮挡 / 闪电调表 → SYNC 观察室（遇 null 保持静默）
     if (timeInfo && refT >= 0) {
@@ -7745,6 +7886,8 @@ function cropRgbaCandidatesByRoi(rgba, frameWidth, frameHeight, roi) {
     return buildCropVariants(rgba, frameWidth, frameHeight, [
       rect,
       expandRect(rect, frameWidth, frameHeight, { dx: -0.06, dy: -0.12, dw: 0.12, dh: 0.24 }),
+      // 7 段数码管：加宽水平、略增垂直，覆盖段距较宽的冒号两侧数字
+      expandRect(rect, frameWidth, frameHeight, { dx: -0.10, dy: -0.08, dw: 0.20, dh: 0.16 }),
       expandRect(rect, frameWidth, frameHeight, { dx: 0.04, dy: -0.06, dw: -0.08, dh: 0.12 })
     ]);
   }
@@ -7904,7 +8047,7 @@ function normalizeAnchorPoint(x, y, source) {
 
 function buildOcrQueue(now, rois) {
   var isStrictRecovery = _ocrRecoveryModeUntil && (now < _ocrRecoveryModeUntil);
-  if (isStrictRecovery) {
+  if (isStrictRecovery && isOcrTimeSyncEnabled()) {
     var recoveryElapsed = _ocrRecoveryModeUntil - now;
     if (recoveryElapsed > 2500) { // 4000ms 降到 2500ms 之间，即前 1.5 秒
       console.log("[OCR Recovery] 爆裂模式：强驱时间 ROI 快速建锚");
@@ -7917,11 +8060,13 @@ function buildOcrQueue(now, rois) {
   var intervals = [OCR_SCORE_REFRESH_MS, OCR_SCORE_REFRESH_MS, OCR_TIME_REFRESH_MS];
   var i;
   for (i = 0; i < n; i++) {
+    if (i <= 1 && !isOcrScoreSyncEnabled()) continue;
+    if (i === 2 && !isOcrTimeSyncEnabled()) continue;
     if ((_ocrRoiBackoffUntil[i] || 0) > now) continue;
     if (shouldRunRoi(now, i, intervals[i])) due.push(i);
   }
 
-  var timeStarved =
+  var timeStarved = isOcrTimeSyncEnabled() &&
     (now - (_ocrLastTimeSuccessTs || 0)) >= OCR_TIME_PRIORITY_MS &&
     ((_ocrRoiBackoffUntil[2] || 0) <= now);
   if (timeStarved && due.indexOf(2) === -1) {
@@ -7931,6 +8076,8 @@ function buildOcrQueue(now, rois) {
   if (!due.length) {
     for (var fi = 0; fi < n; fi++) {
       var fallbackIdx = (fi + _ocrQueueCursor) % n;
+      if (fallbackIdx <= 1 && !isOcrScoreSyncEnabled()) continue;
+      if (fallbackIdx === 2 && !isOcrTimeSyncEnabled()) continue;
       if ((_ocrRoiBackoffUntil[fallbackIdx] || 0) <= now) {
         due.push(fallbackIdx);
         break;
@@ -7939,9 +8086,9 @@ function buildOcrQueue(now, rois) {
   }
 
   var missing = [];
-  if ((!rois[0] || !rois[0].rawText) && ((_ocrRoiBackoffUntil[0] || 0) <= now)) missing.push(0);
-  if ((!rois[1] || !rois[1].rawText) && ((_ocrRoiBackoffUntil[1] || 0) <= now)) missing.push(1);
-  if ((!rois[2] || !rois[2].rawText) && ((_ocrRoiBackoffUntil[2] || 0) <= now)) missing.push(2);
+  if (isOcrScoreSyncEnabled() && (!rois[0] || !rois[0].rawText) && ((_ocrRoiBackoffUntil[0] || 0) <= now)) missing.push(0);
+  if (isOcrScoreSyncEnabled() && (!rois[1] || !rois[1].rawText) && ((_ocrRoiBackoffUntil[1] || 0) <= now)) missing.push(1);
+  if (isOcrTimeSyncEnabled() && (!rois[2] || !rois[2].rawText) && ((_ocrRoiBackoffUntil[2] || 0) <= now)) missing.push(2);
   for (var mi = 0; mi < missing.length; mi++) {
     if (due.indexOf(missing[mi]) === -1) due.push(missing[mi]);
   }

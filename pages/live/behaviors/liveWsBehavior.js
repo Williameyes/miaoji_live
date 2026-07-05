@@ -30,7 +30,9 @@ wxsClockMainText: '00:00',
     /** WXS 回写的 24 秒整秒 */
 wxsClockShotSec: 24,
     /** 24 秒 ≤5 时高亮警示 */
-wxsClockShotWarn: false
+wxsClockShotWarn: false,
+    /** 采集端是否同步比分（sync_score=1）；false 时自动模式下仍可手动改分 */
+liveWsScoreSyncEnabled: false
   },
   methods: {
     // 已合并至文件后部 onUnload：此处不再重复定义，避免后项覆盖导致事件未解绑。
@@ -387,6 +389,7 @@ _liveWsApplyDisconnectedUiPatch: function () {
     liveWsPanelOpen: false,
     liveWsQuickBusy: false,
     liveWsStatusText: '',
+    liveWsScoreSyncEnabled: false,
     wxsClockBundle: null,
     wxsClockMainText: '00:00',
     wxsClockShotSec: 24,
@@ -685,40 +688,49 @@ _liveWsFlushScorePersist: function () {
       });
     }
     if (this.data.isAutoMode && this.data.autoSyncWhitelisted) {
-      var mc = this.data.matchConfig || {};
-      var changed = false;
-      var scoreA = Math.max(0, Math.floor(Number(payload.a) || 0));
-      var scoreB = Math.max(0, Math.floor(Number(payload.b) || 0));
-      var nextTeamA = mc.teamA || {
-        name: '队 A',
-        bgColor: '#E64340',
-        textColor: '#FFFFFF',
-        score: 0
-      };
-      var nextTeamB = mc.teamB || {
-        name: '队 B',
-        bgColor: '#10AEFF',
-        textColor: '#FFFFFF',
-        score: 0
-      };
-      if (Number(nextTeamA.score) !== scoreA) {
-        nextTeamA = Object.assign({}, nextTeamA, {
-          score: scoreA
-        });
-        changed = true;
+      var syncScoreRaw = payload.sync_score;
+      var scoreSyncEnabled = syncScoreRaw === undefined || syncScoreRaw === null
+        ? true
+        : (Number(syncScoreRaw) === 1);
+      if (this.data.liveWsScoreSyncEnabled !== scoreSyncEnabled) {
+        patch.liveWsScoreSyncEnabled = scoreSyncEnabled;
       }
-      if (Number(nextTeamB.score) !== scoreB) {
-        nextTeamB = Object.assign({}, nextTeamB, {
-          score: scoreB
-        });
-        changed = true;
-      }
-      if (changed) {
-        patch.matchConfig = Object.assign({}, mc, {
-          teamA: nextTeamA,
-          teamB: nextTeamB
-        });
-        this._liveWsScheduleScorePersist();
+      if (scoreSyncEnabled) {
+        var mc = this.data.matchConfig || {};
+        var changed = false;
+        var scoreA = Math.max(0, Math.floor(Number(payload.a) || 0));
+        var scoreB = Math.max(0, Math.floor(Number(payload.b) || 0));
+        var nextTeamA = mc.teamA || {
+          name: '队 A',
+          bgColor: '#E64340',
+          textColor: '#FFFFFF',
+          score: 0
+        };
+        var nextTeamB = mc.teamB || {
+          name: '队 B',
+          bgColor: '#10AEFF',
+          textColor: '#FFFFFF',
+          score: 0
+        };
+        if (Number(nextTeamA.score) !== scoreA) {
+          nextTeamA = Object.assign({}, nextTeamA, {
+            score: scoreA
+          });
+          changed = true;
+        }
+        if (Number(nextTeamB.score) !== scoreB) {
+          nextTeamB = Object.assign({}, nextTeamB, {
+            score: scoreB
+          });
+          changed = true;
+        }
+        if (changed) {
+          patch.matchConfig = Object.assign({}, mc, {
+            teamA: nextTeamA,
+            teamB: nextTeamB
+          });
+          this._liveWsScheduleScorePersist();
+        }
       }
     }
     if (Object.keys(patch).length) {

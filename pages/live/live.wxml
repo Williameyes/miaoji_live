@@ -110,9 +110,9 @@
                 >
                   <view
                     class="pro-panel-left pro-score-hit"
-                    catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
-                    bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
-                    bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
+                    catchtap="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTap'}}"
+                    bindlongpress="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreLongPress'}}"
+                    bindtouchend="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTouchEnd'}}"
                     data-team="teamA"
                     data-type="plus"
                   >
@@ -123,9 +123,9 @@
                   </view>
                   <view
                     class="pro-panel-score pro-score-number pro-score-hit"
-                    catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
-                    bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
-                    bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
+                    catchtap="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTap'}}"
+                    bindlongpress="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreLongPress'}}"
+                    bindtouchend="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTouchEnd'}}"
                     data-team="teamA"
                     data-type="minus"
                     style="color: {{matchConfig.teamA.textColor}};"
@@ -137,9 +137,9 @@
                 >
                   <view
                     class="pro-panel-left pro-score-hit"
-                    catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
-                    bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
-                    bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
+                    catchtap="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTap'}}"
+                    bindlongpress="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreLongPress'}}"
+                    bindtouchend="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTouchEnd'}}"
                     data-team="teamB"
                     data-type="plus"
                   >
@@ -150,9 +150,9 @@
                   </view>
                   <view
                     class="pro-panel-score pro-score-number pro-score-hit"
-                    catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
-                    bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
-                    bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
+                    catchtap="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTap'}}"
+                    bindlongpress="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreLongPress'}}"
+                    bindtouchend="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTouchEnd'}}"
                     data-team="teamB"
                     data-type="minus"
                     style="color: {{matchConfig.teamB.textColor}};"
@@ -181,9 +181,9 @@
                 >
                   <view
                     class="pro-panel-left pro-score-hit"
-                    catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
-                    bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
-                    bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
+                    catchtap="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTap'}}"
+                    bindlongpress="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreLongPress'}}"
+                    bindtouchend="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTouchEnd'}}"
                     data-team="teamA"
                     data-type="plus"
                   >
@@ -195,9 +195,9 @@
                   <view
                     wx:if="{{matchConfig.sportConfig.isScoreEnabled !== false}}"
                     class="pro-set-score pro-score-number pro-score-hit"
-                    catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
-                    bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
-                    bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
+                    catchtap="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTap'}}"
+                    bindlongpress="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreLongPress'}}"
+                    bindtouchend="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTouchEnd'}}"
                     data-team="teamA"
                     data-type="minus"
                     style="color: {{matchConfig.teamA.textColor}};"
@@ -213,9 +213,9 @@
                 >
                   <view
                     class="pro-panel-left pro-score-hit"
-                    catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
-                    bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
-                    bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
+                    catchtap="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTap'}}"
+                    bindlongpress="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreLongPress'}}"
+                    bindtouchend="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTouchEnd'}}"
                     data-team="teamB"
                     data-type="plus"
                   >
@@ -227,9 +227,9 @@
                   <view
                     wx:if="{{matchConfig.sportConfig.isScoreEnabled !== false}}"
                     class="pro-set-score pro-score-number pro-score-hit"
-                    catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
-                    bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
-                    bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
+                    catchtap="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTap'}}"
+                    bindlongpress="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreLongPress'}}"
+                    bindtouchend="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTouchEnd'}}"
                     data-team="teamB"
                     data-type="minus"
                     style="color: {{matchConfig.teamB.textColor}};"
@@ -647,9 +647,9 @@
             <view class="team-group-row">
               <view
                 class="team-name team-name--a"
-                catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
-                bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
-                bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
+                catchtap="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTap'}}"
+                bindlongpress="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreLongPress'}}"
+                bindtouchend="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTouchEnd'}}"
                 data-team="teamA"
                 data-type="plus"
                 style="color: {{matchConfig.teamA.textColor}};"
@@ -658,9 +658,9 @@
               </view>
               <view
                 class="score-value"
-                catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
-                bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
-                bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
+                catchtap="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTap'}}"
+                bindlongpress="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreLongPress'}}"
+                bindtouchend="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTouchEnd'}}"
                 data-team="teamA"
                 data-type="minus"
                 style="color: {{matchConfig.teamA.textColor}};"
@@ -693,9 +693,9 @@
             <view class="team-group-row">
               <view
                 class="score-value"
-                catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
-                bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
-                bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
+                catchtap="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTap'}}"
+                bindlongpress="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreLongPress'}}"
+                bindtouchend="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTouchEnd'}}"
                 data-team="teamB"
                 data-type="minus"
                 style="color: {{matchConfig.teamB.textColor}};"
@@ -704,9 +704,9 @@
               </view>
               <view
                 class="team-name team-name--b"
-                catchtap="{{isAutoMode ? '' : 'onScoreTap'}}"
-                bindlongpress="{{isAutoMode ? '' : 'onScoreLongPress'}}"
-                bindtouchend="{{isAutoMode ? '' : 'onScoreTouchEnd'}}"
+                catchtap="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTap'}}"
+                bindlongpress="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreLongPress'}}"
+                bindtouchend="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTouchEnd'}}"
                 data-team="teamB"
                 data-type="plus"
                 style="color: {{matchConfig.teamB.textColor}};"

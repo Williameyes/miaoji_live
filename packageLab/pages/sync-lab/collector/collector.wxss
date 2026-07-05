@@ -323,6 +323,47 @@ page {
   white-space: nowrap;
 }
 
+.col-ocr-toggles {
+  display: flex;
+  gap: 8px;
+  padding: 0 18rpx 6rpx;
+  box-sizing: border-box;
+}
+
+.col-ocr-toggle {
+  flex: 1;
+  min-height: 34px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: #1f1f1f;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  box-sizing: border-box;
+}
+
+.col-ocr-toggle--on {
+  border-color: rgba(250, 204, 21, 0.55);
+  background: rgba(250, 204, 21, 0.12);
+}
+
+.col-ocr-toggle-label {
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #e5e7eb;
+}
+
+.col-ocr-toggle-state {
+  font-size: 22rpx;
+  font-weight: 900;
+  color: #94a3b8;
+}
+
+.col-ocr-toggle--on .col-ocr-toggle-state {
+  color: #facc15;
+}
+
 .col-action-grid {
   flex: 1;
   min-height: 92px;

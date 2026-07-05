@@ -1084,6 +1084,8 @@ Page({
     enhanceFpsText: '— fps',
     // --- 自动模式相关（V2 WebSocket 云端同步） ---
     isAutoMode: false,
+    /** 采集端 sync_score=1 时自动跟分；false 时自动模式下仍可手动改分 */
+    liveWsScoreSyncEnabled: false,
     /** 云端 WSS 已连接（角标） */
     liveWsConnected: false,
     /** 是否展开 Live 内云端连房面板 */
