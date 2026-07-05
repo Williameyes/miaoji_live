@@ -5,7 +5,9 @@
     <view class="rl-sub">选择赛事、队名与开赛时间，无需填写 ID</view>
   </view>
 
-  <view class="rl-card">
+  <view class="rl-empty" wx:if="{{loading}}">加载中…</view>
+
+  <view class="rl-card" wx:else>
     <view class="rl-card-inner">
       <view class="rl-field" wx:if="{{tournaments.length}}">
         <text class="rl-label">所属赛事</text>
@@ -28,10 +30,10 @@
         <text class="rl-label">比赛时间</text>
         <view class="rl-datetime-row">
           <picker mode="date" value="{{startDate}}" start="2020-01-01" end="2035-12-31" bindchange="onStartDateChange">
-            <view class="rl-input rl-picker-display">{{startDate}}</view>
+            <view class="rl-input rl-picker-display">{{startDate || '选择日期'}}</view>
           </picker>
           <picker mode="time" value="{{startTime}}" bindchange="onStartTimeChange">
-            <view class="rl-input rl-picker-display">{{startTime}}</view>
+            <view class="rl-input rl-picker-display">{{startTime || '选择时间'}}</view>
           </picker>
         </view>
       </view>

@@ -3,20 +3,75 @@
  */
 
 const recSync = require('../../../services/rec-sync-ws-client.js');
-const { createNativeRollingRecorder } = require('../../utils/native-rolling-recorder/index.js');
+const { createHighlightRecPipeline } = require('../../utils/highlight-rec-pipeline.js');
+const highlightRecProfile = require('../../utils/highlight-rec-profile.js');
+
+/** 本地存储：是否启用 1080p 录制 */
+var STORAGE_KEY_USE_1080P = 'highlight_rec_use_1080p_v1';
+/** 本地存储：篮球追拍模式 */
+var STORAGE_KEY_ACTION_MODE = 'highlight_rec_action_mode_v1';
+
+/**
+ * 竖屏窗口内最大内接 9:16 预览区（宽:高 = 9:16），与竖屏短视频画幅一致。
+ *
+ * @param {number} winW 窗口宽度（px）
+ * @param {number} winH 窗口高度（px）
+ * @returns {{ w: number, h: number }}
+ */
+function computePreviewStage9x16SizePx(winW, winH) {
+  var ww = Math.max(1, winW);
+  var wh = Math.max(1, winH);
+  var ar = 9 / 16;
+  if (ww / wh > ar) {
+    var h1 = wh;
+    return { w: h1 * ar, h: h1 };
+  }
+  var w0 = ww;
+  return { w: w0, h: w0 / ar };
+}
+
+/**
+ * 9:16 预览区在窗口中的位置（px，左上为原点）。
+ *
+ * @param {number} winW 窗口宽度（px）
+ * @param {number} winH 窗口高度（px）
+ * @returns {{ w: number, h: number, left: number, top: number }}
+ */
+function computePreviewStage9x16RectPx(winW, winH) {
+  var box = computePreviewStage9x16SizePx(winW, winH);
+  return {
+    w: box.w,
+    h: box.h,
+    left: (winW - box.w) / 2,
+    top: (winH - box.h) / 2
+  };
+}
 
 Page({
   data: {
     statusBarHeight: 0,
+    /** 9:16 预览取景区 inline style */
+    previewStageStyle: '',
+    /** 中心对准框 inline style（相对取景区 9:16） */
+    alignFrameStyle: '',
+    /** 相机预览/编码档位（由 highlight-rec-profile 注入，长时监看控温） */
+    cameraResolution: 'medium',
+    cameraFrameSize: 'medium',
+    perfTierLabel: '',
+    /** 录制清晰度：720p / 1080p */
+    use1080p: false,
+    canUse1080p: true,
+    qualityLabel: '720p',
+    /** 篮球追拍：连续 AF + 短快门优先 */
+    actionMode: false,
     zoom: 1.0,
     zoomDisplay: '1.0',
     cameraReady: false,
     wsConnected: false,
     isRecording: false,
     roomId: '',
-    bufferCoverageText: '0s / 45s',
-    trackAActive: false,
-    trackBActive: false,
+    bufferCoverageText: '0s / 90s',
+    pipelineReady: false,
     segmentMs: 45000, // 默认配置
     diskWarning: false,
     savedLogs: [],
@@ -30,19 +85,50 @@ Page({
     controlsCollapsed: false // 是否折叠控制面板
   },
 
-  _recorder: null,
+  _highlightPipeline: null,
+  _bufferStatusTimer: null,
   _wsClient: null,
+  _cameraCtx: null,
+  _zoomApplyTimer: 0,
+  _pendingZoom: null,
   _touchDistance: 0,
   _startZoom: 1.0,
+  _focusLockedAtCenter: false,
   _unloaded: false,
+  /** 用户是否希望保持监看（切后台恢复、切换设置后重启） */
+  _monitoringRequested: false,
 
   onLoad: function (options) {
     this._unloaded = false;
     var sys = wx.getSystemInfoSync();
+    var use1080pStored = !!wx.getStorageSync(STORAGE_KEY_USE_1080P);
+    var actionModeStored = !!wx.getStorageSync(STORAGE_KEY_ACTION_MODE);
+    highlightRecProfile.resetHighlightRecProfileCache();
+    var perf = highlightRecProfile.getHighlightRecProfile({
+      use1080p: use1080pStored,
+      actionMode: actionModeStored
+    });
+    var canUse1080p = perf.tier !== '480p';
+    var use1080p = canUse1080p && use1080pStored;
+    var actionMode = perf.actionMode;
+    if (!canUse1080p && use1080pStored) {
+      wx.removeStorageSync(STORAGE_KEY_USE_1080P);
+    }
+    this._recPerfProfile = perf;
+    this._highlightPipeline = createHighlightRecPipeline(this, perf);
     this.setData({
       statusBarHeight: sys.statusBarHeight || 20,
-      roomId: wx.getStorageSync('rec_sync_room_id') || ''
+      roomId: wx.getStorageSync('rec_sync_room_id') || '',
+      cameraResolution: perf.cameraResolution,
+      cameraFrameSize: perf.cameraFrameSize,
+      use1080p: use1080p,
+      canUse1080p: canUse1080p,
+      actionMode: actionMode,
+      qualityLabel: perf.qualityLabel || '720p',
+      perfTierLabel: this._buildPerfTierLabel(perf)
     });
+    this._updatePreviewStageLayout(sys.windowWidth, sys.windowHeight);
+    this._bindWindowResize();
 
     // 读取或初始化自定义快捷变焦档位
     var savedStops = wx.getStorageSync('rec_zoom_stops');
@@ -58,11 +144,9 @@ Page({
       wx.setStorageSync('rec_zoom_stops', defaults);
     }
 
-    // 默认以 60s 档位启动 (单段录像 28秒)
-    this._staggerMs = 10000;
-    this._actualSegmentMs = 28000;
+    // 滚动缓冲目标 90s（50s × 2 段 + 重叠）
     this.setData({
-      segmentMs: 60000
+      segmentMs: 90000
     });
   },
 
@@ -117,6 +201,13 @@ Page({
     wx.setKeepScreenOn({
       keepScreenOn: true
     });
+    this._updatePreviewStageLayout();
+    this._livePageVisible = true;
+
+    if (this._monitoringRequested && this.data.cameraReady && this._highlightPipeline
+      && !this._highlightPipeline.isActive()) {
+      this.startRecorder();
+    }
 
     // 自动回连 WebSocket
     if (this.data.roomId.length === 6) {
@@ -125,14 +216,81 @@ Page({
   },
 
   onHide: function () {
+    this._livePageVisible = false;
+    this._clearBufferStatusTimer();
     this.disconnectWs();
     this.stopRecorder();
   },
 
   onUnload: function () {
     this._unloaded = true;
+    this._clearBufferStatusTimer();
+    this._clearZoomApplyTimer();
+    this._cameraCtx = null;
+    if (this._highlightPipeline) {
+      this._highlightPipeline.destroy();
+      this._highlightPipeline = null;
+    }
+    this._unbindWindowResize();
     this.disconnectWs();
     this.stopRecorder();
+  },
+
+  /**
+   * 监听窗口尺寸变化，同步 9:16 预览布局。
+   * @returns {void}
+   */
+  _bindWindowResize: function () {
+    var self = this;
+    if (typeof wx.onWindowResize !== 'function') return;
+    this._onWindowResizeHandler = function (res) {
+      var size = res && res.size ? res.size : {};
+      self._updatePreviewStageLayout(size.windowWidth, size.windowHeight);
+    };
+    wx.onWindowResize(this._onWindowResizeHandler);
+  },
+
+  /**
+   * 取消窗口尺寸监听。
+   * @returns {void}
+   */
+  _unbindWindowResize: function () {
+    if (this._onWindowResizeHandler && typeof wx.offWindowResize === 'function') {
+      wx.offWindowResize(this._onWindowResizeHandler);
+    }
+    this._onWindowResizeHandler = null;
+  },
+
+  /**
+   * 将相机预览限制为 9:16 内接矩形；录制仍走原生 cameraContext，不受预览黑边影响。
+   *
+   * @param {number} [winW] 窗口宽度（px）
+   * @param {number} [winH] 窗口高度（px）
+   * @returns {void}
+   */
+  _updatePreviewStageLayout: function (winW, winH) {
+    var sysW = winW;
+    var sysH = winH;
+    if (!sysW || !sysH) {
+      try {
+        var si = wx.getSystemInfoSync();
+        sysW = si.windowWidth || 375;
+        sysH = si.windowHeight || 667;
+      } catch (e) {
+        sysW = 375;
+        sysH = 667;
+      }
+    }
+    var box = computePreviewStage9x16SizePx(sysW, sysH);
+    var stageStyle = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);' +
+      'width:' + box.w + 'px;height:' + box.h + 'px;';
+    var frameW = Math.round(box.w * 0.52);
+    var frameH = Math.round(frameW * 16 / 9);
+    var alignFrameStyle = 'width:' + frameW + 'px;height:' + frameH + 'px;';
+    this.setData({
+      previewStageStyle: stageStyle,
+      alignFrameStyle: alignFrameStyle
+    });
   },
 
   /* =========================================================================
@@ -141,7 +299,172 @@ Page({
 
   onCameraInit: function () {
     console.log('[HighlightRec] Camera mounted successfully');
-    this.startRecorder();
+    if (!this._cameraCtx) {
+      this._cameraCtx = wx.createCameraContext();
+    }
+    this.data.cameraContext = this._cameraCtx;
+    this._applyCameraCaptureTuning(this._recPerfProfile);
+  },
+
+  /**
+   * 构建 HUD 档位文案。
+   *
+   * @param {Object} perf
+   * @returns {string}
+   */
+  _buildPerfTierLabel: function (perf) {
+    if (!perf) return '720p · 视录分离';
+    var parts = [perf.qualityLabel || '720p'];
+    if (perf.actionMode) parts.push('追拍');
+    parts.push('视录分离');
+    return parts.join(' · ');
+  },
+
+  /**
+   * 按档位应用相机采集策略（对焦 / 曝光）。
+   *
+   * @param {Object} [perf]
+   * @returns {void}
+   */
+  _applyCameraCaptureTuning: function (perf) {
+    var profile = perf || this._recPerfProfile || {};
+    if (profile.lockCenterFocus) {
+      this._lockCameraFocusAtCenter();
+    } else {
+      this._focusLockedAtCenter = false;
+    }
+    this._applyExposureCompensation(profile.exposureCompensationEv || 0);
+  },
+
+  /**
+   * 设置硬件曝光补偿（缩短快门、减轻运动拖影）。
+   *
+   * @param {number} ev
+   * @returns {void}
+   */
+  _applyExposureCompensation: function (ev) {
+    var value = Number(ev);
+    if (!Number.isFinite(value)) {
+      value = 0;
+    }
+    var ctx = this._getCameraContext();
+    if (!ctx) return;
+    if (typeof ctx.setExposureCompensation === 'function') {
+      try {
+        ctx.setExposureCompensation({ value: value });
+      } catch (e) {}
+      return;
+    }
+    if (typeof ctx.setEV === 'function') {
+      try {
+        ctx.setEV({ ev: value });
+      } catch (e) {}
+      return;
+    }
+    if (typeof ctx.setExposureOffset === 'function') {
+      try {
+        ctx.setExposureOffset({ offset: value });
+      } catch (e) {}
+    }
+  },
+
+  /**
+   * 切换档位后重建录制管线。
+   *
+   * @param {Object} perf
+   * @param {{ autoStart?: boolean }} [options]
+   * @returns {void}
+   */
+  _rebuildHighlightPipeline: function (perf, options) {
+    var opts = options || {};
+    if (this._highlightPipeline) {
+      this._highlightPipeline.destroy();
+    }
+    this._recPerfProfile = perf;
+    this._highlightPipeline = createHighlightRecPipeline(this, perf);
+    this.setData({
+      cameraResolution: perf.cameraResolution,
+      perfTierLabel: this._buildPerfTierLabel(perf)
+    });
+    this._applyCameraCaptureTuning(perf);
+    if (opts.autoStart && this.data.cameraReady && this.data.cameraContext) {
+      this.startRecorder();
+    }
+  },
+
+  /**
+   * 监看中切换参数：先停再重建，按需自动恢复监看。
+   *
+   * @param {function(): Object} buildPerf
+   * @param {function(Object): void} onApplied
+   * @returns {void}
+   */
+  _switchProfileWithRestart: function (buildPerf, onApplied) {
+    var self = this;
+    var wasRecording = this.data.isRecording;
+
+    var apply = function () {
+      var perf = buildPerf();
+      return self.stopRecorder().then(function () {
+        self._rebuildHighlightPipeline(perf, {
+          autoStart: wasRecording && self._monitoringRequested
+        });
+        if (typeof onApplied === 'function') {
+          onApplied(perf);
+        }
+      });
+    };
+
+    if (wasRecording) {
+      wx.showModal({
+        title: '切换设置',
+        content: '将重启监看，缓冲会重新累积约 90 秒，是否继续？',
+        confirmText: '继续',
+        cancelText: '取消',
+        success: function (res) {
+          if (res.confirm) {
+            apply();
+          }
+        }
+      });
+      return;
+    }
+
+    apply();
+  },
+
+  /**
+   * 锁定对焦点在画面中心，禁用自动对焦反复评估（机位固定场景）。
+   * 变焦时不重新对焦，避免 ISP 持续 AF  hunt 带来发热与画面抖动。
+   *
+   * @returns {void}
+   */
+  _lockCameraFocusAtCenter: function () {
+    var ctx = this._cameraCtx;
+    if (!ctx || typeof ctx.setTargetFocus !== 'function') {
+      this._focusLockedAtCenter = false;
+      return;
+    }
+    try {
+      ctx.setTargetFocus({ x: 0.5, y: 0.5 });
+      this._focusLockedAtCenter = true;
+      console.log('[HighlightRec] Focus locked at center (auto-focus disabled)');
+    } catch (e) {
+      this._focusLockedAtCenter = false;
+      console.warn('[HighlightRec] setTargetFocus unavailable:', e);
+    }
+  },
+
+  /**
+   * 获取复用的相机上下文。
+   *
+   * @returns {WechatMiniprogram.CameraContext}
+   */
+  _getCameraContext: function () {
+    if (!this._cameraCtx) {
+      this._cameraCtx = wx.createCameraContext();
+    }
+    return this._cameraCtx;
   },
 
   onCameraError: function (e) {
@@ -152,78 +475,123 @@ Page({
     });
   },
 
-  startRecorder: function () {
-    if (this._recorder && this._recorder.isActive()) return;
-
-    var cameraCtx = wx.createCameraContext();
-    var self = this;
-
-    this._recorder = createNativeRollingRecorder(cameraCtx, {
-      segmentMs: this._actualSegmentMs,
-      onTrackActive: function (trackId) {
-        self.setData({
-          trackAActive: trackId === 'A',
-          trackBActive: trackId === 'B'
-        });
-      },
-      onSegmentComplete: function (seg) {
-        self.updateBufferStatus();
-        self.checkDiskSpace();
-      },
-      onError: function (err) {
-        wx.showToast({
-          title: '相机录制出错: ' + (err.errMsg || '未知错误'),
-          icon: 'none'
-        });
-      }
-    });
-
-    try {
-      this._recorder.start();
-      this.setData({
-        isRecording: true
-      });
-      this.updateBufferStatus();
-    } catch (e) {
-      console.error('[HighlightRec] Failed to start recorder:', e);
+  /**
+   * 清除缓冲状态轮询。
+   * @returns {void}
+   */
+  _clearBufferStatusTimer: function () {
+    if (this._bufferStatusTimer) {
+      clearInterval(this._bufferStatusTimer);
+      this._bufferStatusTimer = null;
     }
+  },
+
+  startRecorder: function () {
+    var pipeline = this._highlightPipeline;
+    if (!pipeline) return Promise.resolve();
+    if (pipeline.isActive()) return Promise.resolve();
+
+    if (!pipeline.isSupported()) {
+      wx.showModal({
+        title: '设备不支持',
+        content: '当前微信基础库不支持视录分离（MediaRecorder/离屏 Canvas）。请升级微信后重试。',
+        showCancel: false
+      });
+      return Promise.reject(new Error('preview_record_unsupported'));
+    }
+
+    var self = this;
+    this._monitoringRequested = true;
+    return pipeline.start().then(function () {
+      self.setData({
+        isRecording: true,
+        pipelineReady: true
+      });
+      self.updateBufferStatus();
+      self._clearBufferStatusTimer();
+      self._bufferStatusTimer = setInterval(function () {
+        if (!self._unloaded) {
+          self.updateBufferStatus();
+        }
+      }, 5000);
+    }).catch(function (err) {
+      self._monitoringRequested = false;
+      console.error('[HighlightRec] Pipeline start failed:', err);
+      wx.showToast({
+        title: '监看启动失败',
+        icon: 'none'
+      });
+      throw err;
+    });
   },
 
   stopRecorder: function () {
-    if (this._recorder) {
-      try {
-        this._recorder.stop();
-      } catch (e) {}
-      this._recorder = null;
+    var pipeline = this._highlightPipeline;
+    if (!pipeline) return Promise.resolve();
+    if (!pipeline.isActive()) {
+      this._clearBufferStatusTimer();
+      this.setData({
+        isRecording: false,
+        pipelineReady: false,
+        bufferCoverageText: '0s / 90s'
+      });
+      return Promise.resolve();
     }
-    this.setData({
-      isRecording: false,
-      trackAActive: false,
-      trackBActive: false,
-      bufferCoverageText: '0s / 45s'
+    this._clearBufferStatusTimer();
+    var self = this;
+    return pipeline.stop().then(function () {
+      self.setData({
+        isRecording: false,
+        pipelineReady: false,
+        bufferCoverageText: '0s / 90s'
+      });
+    }).catch(function () {
+      self.setData({
+        isRecording: false,
+        pipelineReady: false,
+        bufferCoverageText: '0s / 90s'
+      });
     });
   },
 
+  /**
+   * 开始 / 停止滚动缓冲监看。
+   *
+   * @returns {void}
+   */
+  onMonitorToggle: function () {
+    if (this.data.isRecording) {
+      this._monitoringRequested = false;
+      this.stopRecorder();
+      wx.showToast({
+        title: '已停止监看，可调整设置',
+        icon: 'none'
+      });
+      return;
+    }
+    if (!this.data.cameraReady) {
+      wx.showToast({
+        title: '相机未就绪',
+        icon: 'none'
+      });
+      return;
+    }
+    var self = this;
+    this.startRecorder().then(function () {
+      wx.showToast({
+        title: '监看已开启',
+        icon: 'none'
+      });
+    }).catch(function () {});
+  },
+
   updateBufferStatus: function () {
-    if (!this._recorder) return;
-    var segs = this._recorder.getSegments();
-    var totalSec = 0;
-    
-    // 估算当前环内段的总覆盖时长
-    for (var i = 0; i < segs.length; i++) {
-      var s = segs[i];
-      if (s.stop > s.start) {
-        totalSec += Math.round((s.stop - s.start) / 1000);
-      }
-    }
-
-    // 累加当前活动段的时间
-    var curr = this._recorder.getCurrentSegment();
-    if (curr && curr.start > 0) {
-      totalSec += Math.round((Date.now() - curr.start) / 1000);
-    }
-
-    var targetMax = this.data.segmentMs === 45000 ? 45 : (this.data.segmentMs === 60000 ? 60 : 90);
+    var pipeline = this._highlightPipeline;
+    if (!pipeline || !pipeline.isActive()) return;
+    var totalSec = pipeline.estimateBufferCoverageSec();
+    var targetMax = Math.round((this._recPerfProfile && this._recPerfProfile.bufferTargetMs
+      ? this._recPerfProfile.bufferTargetMs
+      : this.data.segmentMs) / 1000);
     this.setData({
       bufferCoverageText: Math.min(targetMax, totalSec) + 's / ' + targetMax + 's'
     });
@@ -252,17 +620,12 @@ Page({
     }
 
     var dataset = e.currentTarget.dataset;
-    var segment = Number(dataset.segment); // 45, 60, 90
-    var stagger = Number(dataset.stagger); // 8, 10, 12
-
-    this._staggerMs = stagger * 1000;
-    // 微信 startRecord 硬件最长为 30 秒限制，单分段不得大于 28 秒以留足缓冲余地
-    this._actualSegmentMs = segment === 45 ? 24000 : 28000;
+    var segment = Number(dataset.segment);
 
     this.setData({
       segmentMs: segment * 1000
     });
-    
+
     wx.showToast({
       title: '参数已更新',
       icon: 'none'
@@ -275,20 +638,86 @@ Page({
     });
   },
 
+  /**
+   * 切换录制清晰度（720p / 1080p）。
+   *
+   * @param {Object} e
+   * @returns {void}
+   */
+  onQualityToggle: function (e) {
+    var want1080 = !!(e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.hd);
+    if (want1080 === this.data.use1080p) return;
+    if (want1080 && this.data.actionMode) {
+      wx.showToast({
+        title: '追拍模式建议 720p',
+        icon: 'none'
+      });
+    }
+
+    var self = this;
+    this._switchProfileWithRestart(function () {
+      wx.setStorageSync(STORAGE_KEY_USE_1080P, want1080);
+      highlightRecProfile.resetHighlightRecProfileCache();
+      return highlightRecProfile.getHighlightRecProfile({
+        use1080p: want1080,
+        actionMode: self.data.actionMode
+      });
+    }, function (perf) {
+      self.setData({
+        use1080p: want1080,
+        qualityLabel: perf.qualityLabel || (want1080 ? '1080p' : '720p')
+      });
+      wx.showToast({
+        title: want1080 ? '已切换 1080p 高清' : '已切换 720p 均衡',
+        icon: 'none'
+      });
+    });
+  },
+
+  /**
+   * 切换篮球追拍模式。
+   *
+   * @param {Object} e
+   * @returns {void}
+   */
+  onActionModeToggle: function (e) {
+    var wantAction = !!(e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.action);
+    if (wantAction === this.data.actionMode) return;
+
+    var self = this;
+    this._switchProfileWithRestart(function () {
+      wx.setStorageSync(STORAGE_KEY_ACTION_MODE, wantAction);
+      highlightRecProfile.resetHighlightRecProfileCache();
+      return highlightRecProfile.getHighlightRecProfile({
+        use1080p: self.data.use1080p,
+        actionMode: wantAction
+      });
+    }, function (perf) {
+      self.setData({
+        actionMode: wantAction,
+        qualityLabel: perf.qualityLabel || self.data.qualityLabel
+      });
+      wx.showToast({
+        title: wantAction ? '已开启追拍模式' : '已切换标准模式',
+        icon: 'none'
+      });
+    });
+  },
+
   /* =========================================================================
-   * 变焦缩放与触摸手势
+   * 变焦缩放与触摸手势（保留变焦；不触发自动对焦）
    * ========================================================================= */
 
   onZoomSliderChange: function (e) {
     var val = Number(e.detail.value);
-    this.updateZoom(val);
+    this.updateZoom(val, { immediate: true });
   },
 
   onQuickZoomStopTap: function (e) {
     var idx = Number(e.currentTarget.dataset.index);
     var stops = this.data.zoomStops;
     if (stops && stops[idx]) {
-      this.updateZoom(stops[idx].zoom);
+      this.updateZoom(stops[idx].zoom, { immediate: true });
     }
   },
 
@@ -300,8 +729,7 @@ Page({
       stops[idx].zoom = currentZoom;
       this.setData({ zoomStops: stops });
       wx.setStorageSync('rec_zoom_stops', stops);
-      
-      // 触发触觉反馈
+
       if (typeof wx.vibrateShort === 'function') {
         wx.vibrateShort({ type: 'medium' });
       }
@@ -313,27 +741,60 @@ Page({
     }
   },
 
-  updateZoom: function (zoomVal) {
+  /**
+   * 清除变焦节流定时器。
+   * @returns {void}
+   */
+  _clearZoomApplyTimer: function () {
+    if (this._zoomApplyTimer) {
+      clearTimeout(this._zoomApplyTimer);
+      this._zoomApplyTimer = 0;
+    }
+  },
+
+  /**
+   * 节流应用变焦；刻意不调用 setTargetFocus，避免变焦后自动重新对焦。
+   *
+   * @param {number} zoomVal
+   * @param {{ immediate?: boolean }} [options]
+   * @returns {void}
+   */
+  updateZoom: function (zoomVal, options) {
+    var self = this;
+    var opts = options || {};
     var rounded = Math.round(zoomVal * 10) / 10;
     var finalZoom = Math.min(5.0, Math.max(1.0, rounded));
+    this._pendingZoom = finalZoom;
 
-    this.setData({
-      zoom: finalZoom,
-      zoomDisplay: finalZoom.toFixed(1)
-    });
-
-    var cameraCtx = wx.createCameraContext();
-    if (cameraCtx && typeof cameraCtx.setZoom === 'function') {
-      cameraCtx.setZoom({
-        zoom: finalZoom,
-        success: function () {
-          console.log('[HighlightRec] Camera zoom set to:', finalZoom);
-        },
-        fail: function (err) {
-          console.warn('[HighlightRec] Camera setZoom failed:', err);
-        }
+    var apply = function () {
+      var target = self._pendingZoom;
+      if (target == null) return;
+      self._pendingZoom = null;
+      self.setData({
+        zoom: target,
+        zoomDisplay: target.toFixed(1)
       });
+      var cameraCtx = self._getCameraContext();
+      if (cameraCtx && typeof cameraCtx.setZoom === 'function') {
+        cameraCtx.setZoom({
+          zoom: target,
+          fail: function (err) {
+            console.warn('[HighlightRec] Camera setZoom failed:', err);
+          }
+        });
+      }
+    };
+
+    if (opts.immediate) {
+      this._clearZoomApplyTimer();
+      apply();
+      return;
     }
+    if (this._zoomApplyTimer) return;
+    this._zoomApplyTimer = setTimeout(function () {
+      self._zoomApplyTimer = 0;
+      apply();
+    }, 80);
   },
 
   onTouchStart: function (e) {
@@ -447,23 +908,25 @@ Page({
   },
 
   doExportHighlight: function (isLocal) {
-    if (!this._recorder || !this._recorder.isActive()) {
+    var pipeline = this._highlightPipeline;
+    if (!pipeline || !pipeline.isActive()) {
       wx.showToast({
-        title: '录制未就绪',
+        title: '请先开启监看',
         icon: 'none'
       });
       return;
     }
 
     var self = this;
-    // 增加后台保存任务计数 (取代阻塞屏幕的 wx.showLoading)
     this.setData({
       savingCount: this.data.savingCount + 1
     });
 
-    this._recorder.triggerExport()
+    pipeline.triggerExport(Date.now())
       .then(function (trimmedPath) {
         self.saveVideoToPhotos(trimmedPath, isLocal);
+        self.updateBufferStatus();
+        self.checkDiskSpace();
       })
       .catch(function (err) {
         self.setData({
@@ -474,9 +937,13 @@ Page({
           return; // 页面切出或销毁时，正常释放挂起的 promise，无需报错弹窗
         }
         console.error('[HighlightRec] Export highlight failed:', err);
+        var errMsg = (err && err.message) ? err.message : '裁切高光时发生错误，请重试';
+        if (errMsg.indexOf('audio_mux_failed') >= 0) {
+          errMsg = '视频已就绪但合成声音失败，请确认已授权麦克风并重试';
+        }
         wx.showModal({
           title: '导出失败',
-          content: err.message || '裁切高光时发生错误，请重试',
+          content: errMsg,
           showCancel: false
         });
       });

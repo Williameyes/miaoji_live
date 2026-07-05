@@ -2686,6 +2686,99 @@ button.live-ble-btn::after {
   background: rgba(0, 0, 0, 0.08);
 }
 
+/* 抽屉打开时：画面中心对准辅助（与素材机中心点对齐，pointer-events 透传） */
+.drawer-align-guide-layer {
+  position: fixed;
+  z-index: 196;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.drawer-align-guide {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.drawer-align-crosshair {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.drawer-align-crosshair--h {
+  top: 50%;
+  left: 8%;
+  right: 8%;
+  height: 1px;
+  margin-top: -0.5px;
+}
+
+.drawer-align-crosshair--v {
+  left: 50%;
+  top: 8%;
+  bottom: 8%;
+  width: 1px;
+  margin-left: -0.5px;
+}
+
+.drawer-align-frame {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 96rpx;
+  height: 96rpx;
+  transform: translate(-50%, -50%);
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+}
+
+.drawer-align-corner {
+  position: absolute;
+  width: 20rpx;
+  height: 20rpx;
+  border-color: rgba(74, 222, 128, 0.88);
+  border-style: solid;
+}
+
+.drawer-align-corner--tl {
+  top: -1px;
+  left: -1px;
+  border-width: 3rpx 0 0 3rpx;
+}
+
+.drawer-align-corner--tr {
+  top: -1px;
+  right: -1px;
+  border-width: 3rpx 3rpx 0 0;
+}
+
+.drawer-align-corner--bl {
+  bottom: -1px;
+  left: -1px;
+  border-width: 0 0 3rpx 3rpx;
+}
+
+.drawer-align-corner--br {
+  bottom: -1px;
+  right: -1px;
+  border-width: 0 3rpx 3rpx 0;
+}
+
+.drawer-align-center-dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 8rpx;
+  height: 8rpx;
+  margin: -4rpx 0 0 -4rpx;
+  border-radius: 50%;
+  background: rgba(74, 222, 128, 0.95);
+  box-shadow: 0 0 6rpx rgba(74, 222, 128, 0.55);
+}
+
 /* ── 左侧比赛列表抽屉 ── */
 .left-drawer {
   position: fixed;

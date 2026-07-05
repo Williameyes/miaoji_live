@@ -1,16 +1,34 @@
 <view class="container portrait">
-  <!-- 相机实时取景预览 -->
-  <camera
-    wx:if="{{cameraReady}}"
-    device-position="back"
-    flash="off"
-    resolution="high"
-    frame-size="large"
-    zoom="{{zoom}}"
-    class="preview-camera"
-    bindinitdone="onCameraInit"
-    binderror="onCameraError"
-  />
+  <!-- 9:16 预览取景区（上下或左右黑边由容器背景填充；录制走原生 cameraContext，不含黑边） -->
+  <view class="preview-stage" style="{{previewStageStyle}}">
+    <camera
+      wx:if="{{cameraReady}}"
+      device-position="back"
+      flash="off"
+      resolution="{{cameraResolution}}"
+      frame-size="{{cameraFrameSize}}"
+      zoom="{{zoom}}"
+      class="preview-camera"
+      bindinitdone="onCameraInit"
+      binderror="onCameraError"
+    />
+
+    <!-- 中心对准框：十字线 + 9:16 参考框，便于调整手机俯仰角 -->
+    <view class="preview-align-guide">
+      <view class="align-crosshair align-crosshair--h"></view>
+      <view class="align-crosshair align-crosshair--v"></view>
+      <view class="align-frame" style="{{alignFrameStyle}}">
+        <view class="align-corner align-corner--tl"></view>
+        <view class="align-corner align-corner--tr"></view>
+        <view class="align-corner align-corner--bl"></view>
+        <view class="align-corner align-corner--br"></view>
+        <view class="align-center-dot"></view>
+      </view>
+    </view>
+
+    <!-- 透明手势缩放层（限定在 9:16 取景区内） -->
+    <view class="gesture-layer" bindtouchstart="onTouchStart" bindtouchmove="onTouchMove"></view>
+  </view>
 
   <!-- 顶部导航栏和返回 -->
   <view class="custom-nav" style="padding-top: {{statusBarHeight}}px;">
@@ -18,14 +36,13 @@
     <text class="nav-title">素材捕获</text>
   </view>
 
-  <!-- 透明手势缩放层 -->
-  <view class="gesture-layer" bindtouchstart="onTouchStart" bindtouchmove="onTouchMove"></view>
-
   <!-- HUD 顶部快捷控制条 (始终显示，小而透) -->
   <view class="hud-top-bar" style="top: {{statusBarHeight + 48}}px;">
     <view class="mini-rec-status">
       <view class="mini-dot {{isRecording ? 'mini-dot--active' : ''}}"></view>
-      <text class="mini-text">{{isRecording ? '监看中' : '相机关闭'}}</text>
+      <text class="mini-text">{{isRecording ? '监看中' : (cameraReady ? '预览中' : '相机未就绪')}}</text>
+      <text class="mini-buffer-info" wx:if="{{isRecording}}">{{bufferCoverageText}}</text>
+      <text class="mini-perf-tag" wx:if="{{perfTierLabel}}">{{perfTierLabel}}</text>
     </view>
     <view class="btn-toggle-hud" bindtap="toggleHudCollapse">
       {{controlsCollapsed ? '展开菜单' : '隐藏菜单'}}
@@ -60,7 +77,53 @@
 
     <!-- 录制状态与变焦区 -->
     <view class="hud-panel recorder-panel">
-      <!-- 变焦微调滑块 -->
+      <view class="focus-lock-hint">
+        <text class="focus-lock-text">{{isRecording ? (actionMode ? '追拍监看中 · 缓冲 ' + bufferCoverageText : '监看中 · 缓冲 ' + bufferCoverageText) : '先调整清晰度/模式，再点「开始监看」'}}</text>
+      </view>
+
+      <view class="monitor-row">
+        <text class="quality-label">监看</text>
+        <view
+          class="monitor-btn {{isRecording ? 'monitor-btn--stop' : 'monitor-btn--start'}}"
+          bindtap="onMonitorToggle"
+        >{{isRecording ? '停止监看' : '开始监看'}}</view>
+        <text class="quality-hint">{{isRecording ? bufferCoverageText : '未缓冲'}}</text>
+      </view>
+
+      <view class="quality-row" wx:if="{{canUse1080p}}">
+        <text class="quality-label">清晰度</text>
+        <view class="quality-switch">
+          <view
+            class="quality-pill {{!use1080p ? 'quality-pill--active' : ''}}"
+            data-hd="{{false}}"
+            bindtap="onQualityToggle"
+          >720p</view>
+          <view
+            class="quality-pill {{use1080p ? 'quality-pill--active' : ''}}"
+            data-hd="{{true}}"
+            bindtap="onQualityToggle"
+          >1080p</view>
+        </view>
+        <text class="quality-hint">{{qualityLabel}}</text>
+      </view>
+
+      <view class="quality-row">
+        <text class="quality-label">模式</text>
+        <view class="quality-switch">
+          <view
+            class="quality-pill {{!actionMode ? 'quality-pill--active' : ''}}"
+            data-action="{{false}}"
+            bindtap="onActionModeToggle"
+          >标准</view>
+          <view
+            class="quality-pill {{actionMode ? 'quality-pill--active' : ''}}"
+            data-action="{{true}}"
+            bindtap="onActionModeToggle"
+          >追拍</view>
+        </view>
+        <text class="quality-hint">{{actionMode ? '运动' : '固定'}}</text>
+      </view>
+
       <view class="zoom-row">
         <text class="zoom-label">变焦: {{zoomDisplay}}x</text>
         <slider class="zoom-slider" min="1" max="5" step="0.1" value="{{zoom}}" bindchange="onZoomSliderChange" activeColor="#4ade80" backgroundColor="rgba(255,255,255,0.15)" block-size="14" />
@@ -79,7 +142,7 @@
       </view>
       <scroll-view class="log-list" scroll-y>
         <view wx:if="{{savedLogs.length === 0}}" class="empty-log-tip">
-          等待接收常规端信令或点击下方 REC 按钮触发...
+          开启监看后，可手动 REC 或等待直播端同步触发...
         </view>
         <view wx:for="{{savedLogs}}" wx:key="index" class="log-item">
           <text class="log-time">{{item.time}}</text>

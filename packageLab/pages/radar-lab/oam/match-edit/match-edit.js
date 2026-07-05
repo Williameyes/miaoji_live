@@ -33,11 +33,24 @@ Page({
   },
 
   /**
+   * 用户是否已手动改过开赛时间（防止异步加载回写覆盖拨盘选择）。
+   * @type {boolean}
+   */
+  _startTimeTouched: false,
+
+  /**
    * @param {Record<string, string>} query
    * @returns {void}
    */
   onLoad: function (query) {
     if (!ensureRadarLabAccess({ redirectBack: true })) return;
+    this._startTimeTouched = false;
+    const now = Date.now();
+    // 同步写入默认开赛时间，避免表单空值；异步回写时若用户已拨盘则不再覆盖
+    this.setData({
+      startDate: timestampToDateStr(now),
+      startTime: timestampToTimeStr(now)
+    });
     const editId = query && query.id ? String(query.id) : '';
     const presetTournamentId = query && query.tournament_id ? String(query.tournament_id) : '';
     this._initPage(editId, presetTournamentId);
@@ -50,14 +63,13 @@ Page({
    */
   _initPage: function (editId, presetTournamentId) {
     const self = this;
-    const now = Date.now();
     fetchTournamentList()
       .then(function (tournaments) {
         let tournamentId = presetTournamentId;
         let teamA = '';
         let teamB = '';
-        let startDate = timestampToDateStr(now);
-        let startTime = timestampToTimeStr(now);
+        let startDate = self.data.startDate;
+        let startTime = self.data.startTime;
         let totalPool = '';
         let minViewers = '';
         const loadDetail = editId
@@ -66,9 +78,12 @@ Page({
                 tournamentId = detail.tournamentId || tournamentId;
                 teamA = detail.teamA;
                 teamB = detail.teamB;
-                const parts = parseStartTimeToParts(detail.startTime);
-                startDate = parts.dateStr;
-                startTime = parts.timeStr;
+                // 编辑态以服务端为准；若用户已先拨盘则保留本地选择
+                if (!self._startTimeTouched) {
+                  const parts = parseStartTimeToParts(detail.startTime);
+                  startDate = parts.dateStr;
+                  startTime = parts.timeStr;
+                }
                 totalPool = detail.totalPool > 0 ? String(detail.totalPool) : '';
                 minViewers = detail.minViewers > 0 ? String(detail.minViewers) : '';
               }
@@ -82,7 +97,8 @@ Page({
           if (!tournamentId && tournaments[0]) {
             tournamentId = tournaments[0].id;
           }
-          self.setData({
+          /** @type {Record<string, unknown>} */
+          const patch = {
             isEdit: !!editId,
             matchId: editId,
             tournaments: tournaments,
@@ -90,12 +106,16 @@ Page({
             tournamentId: tournamentId,
             teamA: teamA,
             teamB: teamB,
-            startDate: startDate,
-            startTime: startTime,
             totalPool: totalPool,
             minViewers: minViewers,
             loading: false
-          });
+          };
+          // 新建：仅在用户未拨盘时保持 onLoad 默认值；编辑：写入详情时间
+          if (!self._startTimeTouched) {
+            patch.startDate = startDate;
+            patch.startTime = startTime;
+          }
+          self.setData(patch);
         });
       })
       .catch(function (err) {
@@ -143,7 +163,10 @@ Page({
    * @returns {void}
    */
   onStartDateChange: function (e) {
-    this.setData({ startDate: e.detail.value });
+    const value = e && e.detail ? String(e.detail.value || '') : '';
+    if (!value) return;
+    this._startTimeTouched = true;
+    this.setData({ startDate: value });
   },
 
   /**
@@ -151,7 +174,10 @@ Page({
    * @returns {void}
    */
   onStartTimeChange: function (e) {
-    this.setData({ startTime: e.detail.value });
+    const value = e && e.detail ? String(e.detail.value || '') : '';
+    if (!value) return;
+    this._startTimeTouched = true;
+    this.setData({ startTime: value });
   },
 
   /**
@@ -206,6 +232,34 @@ Page({
   },
 
   /**
+   * 组装场次 upsert 的 data 字段。
+   * @returns {Record<string, unknown> | null}
+   */
+  _buildMatchData: function () {
+    const d = this.data;
+    if (!d.tournamentId || !d.teamA.trim() || !d.teamB.trim()) {
+      wx.showToast({ title: '请填写完整信息', icon: 'none' });
+      return null;
+    }
+    if (!d.startDate || !d.startTime) {
+      wx.showToast({ title: '请选择比赛时间', icon: 'none' });
+      return null;
+    }
+    const startTimeStr = combineDateTimeToStartTime(d.startDate, d.startTime);
+    const matchData = this._appendCommercialConfig({
+      tournament_id: d.tournamentId,
+      team_a: d.teamA.trim(),
+      team_b: d.teamB.trim(),
+      start_time: startTimeStr
+    });
+    if (!matchData) return null;
+    if (d.matchId) {
+      matchData.match_id = d.matchId;
+    }
+    return matchData;
+  },
+
+  /**
    * 提交场次 upsert。后端 insert/update 均已支持商业字段，不额外补 update。
    * @param {Record<string, unknown>} payload
    * @returns {Promise<Record<string, unknown>>}
@@ -220,28 +274,13 @@ Page({
   onSave: function () {
     const self = this;
     if (!ensureRadarLabAccess()) return;
-    const d = this.data;
-    if (!d.tournamentId || !d.teamA.trim() || !d.teamB.trim()) {
-      wx.showToast({ title: '请填写完整信息', icon: 'none' });
-      return;
-    }
-    const startTimeStr = combineDateTimeToStartTime(d.startDate, d.startTime);
-    const matchData = this._appendCommercialConfig({
-      tournament_id: d.tournamentId,
-      team_a: d.teamA.trim(),
-      team_b: d.teamB.trim(),
-      start_time: startTimeStr
-    });
+    const matchData = this._buildMatchData();
     if (!matchData) return;
     this.setData({ submitting: true });
-    const payload = {
+    this._submitMatchUpsert({
       action: 'upsert_match',
       data: matchData
-    };
-    if (d.matchId) {
-      payload.data.match_id = d.matchId;
-    }
-    this._submitMatchUpsert(payload)
+    })
       .then(function () {
         wx.showToast({ title: '已保存', icon: 'success' });
         setTimeout(function () {
@@ -262,30 +301,15 @@ Page({
   onSaveAndMonitor: function () {
     const self = this;
     if (!ensureRadarLabAccess()) return;
-    const d = this.data;
-    if (!d.tournamentId || !d.teamA.trim() || !d.teamB.trim()) {
-      wx.showToast({ title: '请填写完整信息', icon: 'none' });
-      return;
-    }
-    const startTimeStr = combineDateTimeToStartTime(d.startDate, d.startTime);
-    const matchData = this._appendCommercialConfig({
-      tournament_id: d.tournamentId,
-      team_a: d.teamA.trim(),
-      team_b: d.teamB.trim(),
-      start_time: startTimeStr
-    });
+    const matchData = this._buildMatchData();
     if (!matchData) return;
     this.setData({ submitting: true });
-    const payload = {
+    this._submitMatchUpsert({
       action: 'upsert_match',
       data: matchData
-    };
-    if (d.matchId) {
-      payload.data.match_id = d.matchId;
-    }
-    this._submitMatchUpsert(payload)
+    })
       .then(function (res) {
-        const id = String(res.affected_id || d.matchId || '');
+        const id = String(res.affected_id || self.data.matchId || '');
         wx.redirectTo({
           url: '/packageLab/pages/radar-lab/monitor/detail?match_id=' + encodeURIComponent(id)
         });

@@ -8,9 +8,11 @@ const { trimVideoSegment } = require('../../../utils/replay-buffer/media-contain
  * 裁切导出过去 8 秒高光
  * @param {Array<{ path: string, start: number, stop: number }>} segments
  * @param {number} triggerTime 触发时间戳
+ * @param {{ skipTrim?: boolean }} [options]
  * @returns {Promise<string>} 裁切后的 mp4 临时路径
  */
-function exportLast8s(segments, triggerTime) {
+function exportLast8s(segments, triggerTime, options) {
+  var opts = options || {};
   var targetStart = triggerTime - 8000;
   var targetEnd = triggerTime;
 
@@ -59,6 +61,10 @@ function exportLast8s(segments, triggerTime) {
   }
 
   console.log('[ClipExporter] Export segment:', matchSeg.path, 'trimStart:', trimStart, 'trimEnd:', trimEnd, 'duration:', fileDurationMs);
+
+  if (opts.skipTrim) {
+    return Promise.resolve(matchSeg.path);
+  }
 
   return trimVideoSegment(matchSeg.path, trimStart, trimEnd, {
     sourceDurationMs: fileDurationMs

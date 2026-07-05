@@ -9,6 +9,7 @@ const { exportLast8s } = require('./clip-exporter.js');
 function createNativeRollingRecorder(cameraCtx, options) {
   var opts = options || {};
   var segmentMs = opts.segmentMs || 25000;
+  var skipMediaContainerTrim = !!opts.skipMediaContainerTrim;
   
   // 环状缓存，最大保存 2 个分段
   var ring = createSegmentRing(2);
@@ -23,8 +24,17 @@ function createNativeRollingRecorder(cameraCtx, options) {
     }
   }
 
+  function resolveExportPath(segments, triggerTime) {
+    if (skipMediaContainerTrim) {
+      return exportLast8s(segments, triggerTime, { skipTrim: true });
+    }
+    return exportLast8s(segments, triggerTime);
+  }
+
   var recorder = createDualTrackRecorder(cameraCtx, {
     segmentMs: segmentMs,
+    recordQuality: opts.recordQuality || 'medium',
+    stopToStartDelayMs: opts.stopToStartDelayMs,
     onTrackActive: opts.onTrackActive,
     onError: opts.onError,
     onSegmentComplete: function (seg) {
@@ -39,7 +49,7 @@ function createNativeRollingRecorder(cameraCtx, options) {
           // 如果触发时间戳早于当前刚落盘分段的结束时间，即可在该分段或历史分段中完成裁剪
           if (item.triggerTime <= seg.stop + 1000) {
             (function (pendingItem) {
-              exportLast8s(ring.getSegments(), pendingItem.triggerTime)
+              resolveExportPath(ring.getSegments(), pendingItem.triggerTime)
                 .then(function (path) {
                   pendingItem.resolve(path);
                 })

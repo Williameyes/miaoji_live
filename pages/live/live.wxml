@@ -1029,6 +1029,25 @@
     <!-- 遮罩：点击关闭（z-index 低于面板，不拦截面板内点击） -->
     <view class="drawer-mode-backdrop" catchtap="closeAllDrawers"></view>
 
+    <!-- 抽屉打开时：画面中心对准辅助（与素材机对齐，纯展示、不参与交互） -->
+    <view
+      wx:if="{{cameraMounted && liveStreamAllowed && !isReplaying}}"
+      class="drawer-align-guide-layer"
+      style="{{liveStageInlineStyle}}"
+    >
+      <view class="drawer-align-guide">
+        <view class="drawer-align-crosshair drawer-align-crosshair--h"></view>
+        <view class="drawer-align-crosshair drawer-align-crosshair--v"></view>
+        <view class="drawer-align-frame">
+          <view class="drawer-align-corner drawer-align-corner--tl"></view>
+          <view class="drawer-align-corner drawer-align-corner--tr"></view>
+          <view class="drawer-align-corner drawer-align-corner--bl"></view>
+          <view class="drawer-align-corner drawer-align-corner--br"></view>
+          <view class="drawer-align-center-dot"></view>
+        </view>
+      </view>
+    </view>
+
     <!-- 左侧：比赛卡片列表（与右侧高光缩略图完全一致的矩形） -->
     <view class="left-drawer" catchtap="stopLeftDrawerBubbling">
       <!-- 场次计数标题 -->

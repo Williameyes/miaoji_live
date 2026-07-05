@@ -5,6 +5,8 @@
 function createDualTrackRecorder(cameraCtx, options) {
   var opts = options || {};
   var segmentMs = opts.segmentMs || 25000;
+  var recordQuality = opts.recordQuality || 'medium';
+  var stopToStartDelayMs = typeof opts.stopToStartDelayMs === 'number' ? opts.stopToStartDelayMs : 580;
   var onSegmentComplete = opts.onSegmentComplete;
   var onTrackActive = opts.onTrackActive;
   var onError = opts.onError;
@@ -12,6 +14,7 @@ function createDualTrackRecorder(cameraCtx, options) {
   var activeTrack = null; // 'A' | 'B' | null
   var recording = false;
   var rotateTimer = null;
+  var startDelayTimer = null;
   var currentSegment = null;
   var transitioning = false; // 状态转换锁，防止并发 rotate 导致硬件指令冲突
 
@@ -20,6 +23,29 @@ function createDualTrackRecorder(cameraCtx, options) {
       clearTimeout(rotateTimer);
       rotateTimer = null;
     }
+  }
+
+  function clearStartDelayTimer() {
+    if (startDelayTimer) {
+      clearTimeout(startDelayTimer);
+      startDelayTimer = null;
+    }
+  }
+
+  function scheduleStartTrack(trackId) {
+    clearStartDelayTimer();
+    if (!recording) {
+      transitioning = false;
+      return;
+    }
+    startDelayTimer = setTimeout(function () {
+      startDelayTimer = null;
+      if (recording) {
+        startTrack(trackId);
+      } else {
+        transitioning = false;
+      }
+    }, Math.max(0, stopToStartDelayMs));
   }
 
   function startTrack(trackId) {
@@ -42,7 +68,7 @@ function createDualTrackRecorder(cameraCtx, options) {
     }
 
     cameraCtx.startRecord({
-      quality: 'high',
+      quality: recordQuality,
       timeoutCallback: function () {
         console.log('[DualTrack] Segment timeout callback, rotate');
         rotate(true);
@@ -86,9 +112,9 @@ function createDualTrackRecorder(cameraCtx, options) {
           onSegmentComplete(segToComplete);
         }
 
-        // 停止成功后，若仍处于录制态，且有下一轨道，则启动它
+        // stop→start 冷却，减轻 Android（尤其小米）Native 句柄未释放时的重试风暴与发热
         if (recording && nextTrackId) {
-          startTrack(nextTrackId);
+          scheduleStartTrack(nextTrackId);
         } else {
           transitioning = false;
         }
@@ -99,9 +125,8 @@ function createDualTrackRecorder(cameraCtx, options) {
           onError(err);
         }
 
-        // 即使停止失败，也尝试启动下一个轨道，防死锁
         if (recording && nextTrackId) {
-          startTrack(nextTrackId);
+          scheduleStartTrack(nextTrackId);
         } else {
           transitioning = false;
         }
@@ -152,6 +177,7 @@ function createDualTrackRecorder(cameraCtx, options) {
     if (!recording) return;
     recording = false;
     clearRotateTimer();
+    clearStartDelayTimer();
     if (activeTrack) {
       stopTrack(activeTrack, null);
     }
