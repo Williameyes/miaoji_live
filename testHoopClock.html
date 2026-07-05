@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>高光测试 - 篮架计时器与24秒表模拟器</title>
+    <title>篮架计时器与24秒表自动测试仿真器</title>
     <style>
         @import url('https://fonts.cdnfonts.com/css/ds-digital');
 
@@ -14,9 +14,8 @@
             --yellow: #ffb800;
             --green: #2aff3d;
             --cyan: #00e5ff;
-            --bg-dark: #050505;
-            --chassis: #151518;
-            --led-dim: #220000;
+            --bg-dark: #030305;
+            --chassis: #121215;
         }
 
         * {
@@ -34,31 +33,25 @@
             justify-content: center;
             align-items: center;
             min-height: 100vh;
-            overflow-x: hidden;
+            overflow: hidden;
             padding: 20px;
-        }
-
-        .container {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 24px;
-            width: min(95vw, 1100px);
-            align-items: center;
         }
 
         /* 3D 虚拟篮架与计时器整合区 */
         .court-stage {
-            background: radial-gradient(circle at center, #1b1b22 0%, #08080c 100%);
-            border: 4px solid #222;
-            border-radius: 16px;
+            background: radial-gradient(circle at center, #161620 0%, #050508 100%);
+            border: 4px solid #1a1a22;
+            border-radius: 20px;
             padding: 40px;
             position: relative;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            min-height: 620px;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7);
+            width: min(96vw, 920px);
+            min-height: 550px;
+            box-shadow: 0 15px 50px rgba(0, 0, 0, 0.8);
+            overflow: hidden;
         }
 
         /* 网格扫网像素纹理 */
@@ -67,29 +60,28 @@
             position: absolute;
             inset: 0;
             pointer-events: none;
-            background: linear-gradient(rgba(0, 0, 0, 0.4) 1px, transparent 1px),
-                        linear-gradient(90deg, rgba(0, 0, 0, 0.4) 1px, transparent 1px);
+            background: linear-gradient(rgba(0, 0, 0, 0.45) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(0, 0, 0, 0.45) 1px, transparent 1px);
             background-size: 3px 3px;
             z-index: 4;
-            opacity: 0.7;
-            border-radius: 12px;
+            opacity: 0.75;
         }
 
         /* 篮架计时器机箱 */
         .shot-clock-chassis {
             background: var(--chassis);
-            border: 5px solid #2a2a30;
+            border: 4px solid #202025;
             border-radius: 12px;
-            padding: 20px 30px;
-            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.9), inset 0 0 15px rgba(255,255,255,0.05);
+            padding: 16px 24px;
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.9), inset 0 0 10px rgba(255,255,255,0.03);
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 15px;
+            gap: 12px;
             z-index: 5;
             position: relative;
-            margin-bottom: 20px;
-            min-width: 320px;
+            margin-bottom: 15px;
+            min-width: 290px;
         }
 
         /* 数码管字体 */
@@ -103,71 +95,61 @@
 
         /* 游戏大表时间显示 */
         .game-timer-display {
-            background: #020202;
-            border: 2px solid #111;
+            background: #000;
+            border: 1px solid #1c1c22;
             border-radius: 6px;
-            padding: 8px 18px;
-            font-size: 3.8rem;
-            min-width: 240px;
+            padding: 6px 15px;
+            font-size: 3.4rem;
+            min-width: 210px;
             text-align: center;
-            box-shadow: inset 0 0 10px rgba(0,0,0,0.9);
+            box-shadow: inset 0 0 8px rgba(0,0,0,0.95);
         }
 
         .game-timer-display.led-green {
             color: var(--green);
-            text-shadow: 0 0 15px rgba(42, 255, 61, 0.6);
+            text-shadow: 0 0 12px rgba(42, 255, 61, 0.55);
         }
 
         .game-timer-display.led-orange {
             color: var(--orange);
-            text-shadow: 0 0 15px rgba(255, 115, 0, 0.6);
+            text-shadow: 0 0 12px rgba(255, 115, 0, 0.55);
         }
 
         /* 24秒表大屏显示 */
         .shot-clock-display {
-            background: #020202;
-            border: 2px solid #111;
+            background: #000;
+            border: 1px solid #1c1c22;
             border-radius: 8px;
-            padding: 10px 25px;
-            font-size: 8rem;
-            min-width: 240px;
+            padding: 8px 20px;
+            font-size: 7.2rem;
+            min-width: 210px;
             text-align: center;
-            box-shadow: inset 0 0 12px rgba(0,0,0,0.9);
+            box-shadow: inset 0 0 10px rgba(0,0,0,0.95);
         }
 
         .shot-clock-display.led-red {
             color: var(--red);
-            text-shadow: 0 0 25px rgba(255, 43, 43, 0.7);
-        }
-
-        .shot-clock-display.led-green {
-            color: var(--green);
-            text-shadow: 0 0 25px rgba(42, 255, 61, 0.7);
-        }
-
-        .shot-clock-display.led-yellow {
-            color: var(--yellow);
-            text-shadow: 0 0 25px rgba(255, 184, 0, 0.7);
+            text-shadow: 0 0 20px rgba(255, 43, 43, 0.65);
         }
 
         /* 机箱底座支架 */
         .chassis-mount {
-            width: 16px;
-            height: 30px;
-            background: linear-gradient(90deg, #111, #333, #111);
+            width: 14px;
+            height: 25px;
+            background: linear-gradient(90deg, #111, #2a2a30, #111);
             z-index: 3;
         }
 
         /* 模拟篮板 */
         .backboard {
-            width: 580px;
-            height: 380px;
-            border: 6px solid #e0e0e0;
-            background: rgba(255, 255, 255, 0.08);
-            backdrop-filter: blur(2px);
+            width: 520px;
+            height: 340px;
+            border: 5px solid #dcdcdc;
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(1.5px);
             border-radius: 8px;
             position: relative;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), inset 0 0 30px rgba(255, 255, 255, 0.05);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.6), inset 0 0 20px rgba(255, 255, 255, 0.03);
             display: flex;
             justify-content: center;
             align-items: center;
@@ -176,19 +158,19 @@
 
         /* 篮板内侧白色小矩形 (射门目标区) */
         .shooting-square {
-            width: 180px;
-            height: 130px;
+            width: 160px;
+            height: 115px;
             border: 4px solid #fff;
             position: absolute;
-            bottom: 40px;
+            bottom: 35px;
             border-radius: 2px;
-            opacity: 0.85;
+            opacity: 0.8;
         }
 
         /* 篮圈与篮网容器 */
         .hoop-assembly {
             position: absolute;
-            bottom: 25px;
+            bottom: 22px;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -197,42 +179,39 @@
 
         /* 篮圈连接件 */
         .hoop-bracket {
-            width: 32px;
-            height: 15px;
+            width: 28px;
+            height: 12px;
             background: var(--orange);
             border-radius: 2px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.5);
         }
 
         /* 篮圈 (3D透视椭圆) */
         .rim {
-            width: 100px;
-            height: 35px;
-            border: 6px solid var(--orange);
+            width: 90px;
+            height: 32px;
+            border: 5px solid var(--orange);
             border-radius: 50%;
             margin-top: -5px;
-            box-shadow: 0 8px 12px rgba(0,0,0,0.6), 0 0 10px rgba(255, 115, 0, 0.3);
+            box-shadow: 0 6px 10px rgba(0,0,0,0.5);
             transform: rotateX(60deg);
             transform-origin: top center;
-            position: relative;
         }
 
-        /* 篮网 (SVG实现逼真网格) */
+        /* 篮网 SVG */
         .net {
-            width: 84px;
-            height: 100px;
-            margin-top: -12px;
-            opacity: 0.9;
+            width: 76px;
+            height: 90px;
+            margin-top: -10px;
+            opacity: 0.85;
         }
 
         /* 篮板红光 LED 灯带 */
         .backboard-led-strip {
             position: absolute;
-            inset: 6px;
+            inset: 4px;
             border: 6px solid transparent;
             border-radius: 4px;
             pointer-events: none;
-            transition: all 0.1s ease;
             z-index: 6;
         }
 
@@ -240,28 +219,27 @@
         .backboard-led-strip.active {
             border-color: var(--red);
             box-shadow: 0 0 35px var(--red), inset 0 0 35px var(--red);
-            animation: pulse-led 0.4s infinite alternate;
+            animation: pulse-led 0.3s infinite alternate;
         }
 
         @keyframes pulse-led {
             0% {
-                opacity: 0.4;
-                box-shadow: 0 0 15px var(--red), inset 0 0 15px var(--red);
+                opacity: 0.3;
+                box-shadow: 0 0 10px var(--red), inset 0 0 10px var(--red);
             }
             100% {
                 opacity: 1;
-                box-shadow: 0 0 40px var(--red), inset 0 0 40px var(--red);
+                box-shadow: 0 0 35px var(--red), inset 0 0 35px var(--red);
             }
         }
 
-        /* 遮挡罩 (用于模拟OCR测试中镜头被人员、异物遮挡的情况) */
+        /* 遮挡罩 */
         .occluder {
             display: none;
             position: absolute;
             z-index: 20;
             background: #000;
-            border: 2px solid #222;
-            box-shadow: 0 0 30px rgba(0,0,0,0.9);
+            border: 2px solid #151515;
         }
 
         .occluding .occluder {
@@ -269,155 +247,82 @@
         }
 
         .occ-timer {
-            width: 280px;
-            height: 90px;
-            top: 25px;
+            width: 250px;
+            height: 75px;
+            top: 15px;
             left: 50%;
             transform: translateX(-50%);
         }
 
         .occ-shotclock {
-            width: 280px;
-            height: 160px;
-            top: 120px;
+            width: 250px;
+            height: 140px;
+            top: 100px;
             left: 50%;
             transform: translateX(-50%);
         }
 
         /* 硬件故障闪烁 */
         .fault .digit {
-            animation: flicker-clock 0.1s steps(2, end) infinite;
+            animation: flicker-clock 0.08s steps(2, end) infinite;
         }
 
         @keyframes flicker-clock {
             0% { opacity: 0.95; }
-            50% { opacity: 0.15; }
+            50% { opacity: 0.1; }
             100% { opacity: 0.9; }
         }
 
-        /* 控制面板 */
-        .control-panel {
-            background: #111116;
-            border: 2px solid #22222b;
-            border-radius: 16px;
-            padding: 24px;
-            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
-        }
-
-        .panel-section {
-            margin-bottom: 20px;
-            padding-bottom: 16px;
-            border-bottom: 1px solid #222;
-        }
-
-        .panel-section:last-child {
-            margin-bottom: 0;
-            padding-bottom: 0;
-            border-bottom: none;
-        }
-
-        .section-title {
-            font-size: 1rem;
-            color: #888;
-            margin-bottom: 12px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
+        /* 顶部悬浮测试阶段标签 */
+        .test-scenario-badge {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 229, 255, 0.12);
+            border: 1px solid var(--cyan);
+            color: var(--cyan);
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 0.9rem;
             font-weight: bold;
+            z-index: 10;
+            backdrop-filter: blur(4px);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
             display: flex;
             align-items: center;
             gap: 8px;
         }
 
-        .section-title::before {
-            content: "";
-            display: inline-block;
-            width: 4px;
-            height: 14px;
-            background: var(--orange);
-            border-radius: 2px;
+        .badge-pulse {
+            width: 8px;
+            height: 8px;
+            background-color: var(--cyan);
+            border-radius: 50%;
+            animation: blinker 1s linear infinite;
         }
 
-        .btn-group {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-        }
-
-        button {
-            padding: 10px 16px;
-            font-size: 0.9rem;
-            font-weight: 500;
-            cursor: pointer;
-            background: #1e1e24;
-            color: #fff;
-            border: 1px solid #3e3e4a;
-            border-radius: 6px;
-            transition: all 0.2s ease;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        button:hover {
-            background: #2a2a35;
-            border-color: #5a5a6e;
-        }
-
-        button:active {
-            transform: scale(0.97);
-        }
-
-        .btn-primary {
-            background: #115c2d;
-            border-color: var(--green);
-            color: #e0ffe8;
-        }
-
-        .btn-primary:hover {
-            background: var(--green);
-            color: #000;
-            box-shadow: 0 0 15px rgba(42, 255, 61, 0.4);
-        }
-
-        .btn-danger {
-            background: #731b1b;
-            border-color: var(--red);
-            color: #ffeaea;
-        }
-
-        .btn-danger:hover {
-            background: var(--red);
-            color: #fff;
-            box-shadow: 0 0 15px rgba(255, 43, 43, 0.4);
-        }
-
-        .btn-warning {
-            background: #6e4e00;
-            border-color: var(--yellow);
-            color: #fffaea;
-        }
-
-        .btn-warning:hover {
-            background: var(--yellow);
-            color: #000;
-            box-shadow: 0 0 15px rgba(255, 184, 0, 0.4);
+        @keyframes blinker {
+            50% { opacity: 0; }
         }
 
         /* 状态条 */
         .status-display {
-            background: #09090d;
-            padding: 12px 18px;
+            background: rgba(0, 0, 0, 0.4);
+            padding: 10px 18px;
             border-radius: 8px;
-            border-left: 4px solid var(--orange);
-            margin-top: 15px;
+            border-left: 4px solid var(--cyan);
+            margin-top: 20px;
             display: flex;
             justify-content: space-between;
             align-items: center;
             font-size: 0.95rem;
+            width: 100%;
+            z-index: 5;
+            backdrop-filter: blur(2px);
         }
 
         .status-msg {
-            color: #bbb;
+            color: #ccc;
         }
 
         .status-meta {
@@ -425,215 +330,106 @@
             color: #888;
         }
 
-        /* 提示卡片 */
-        .shortcut-tip {
+        .bottom-hint {
             margin-top: 15px;
             font-size: 0.85rem;
-            color: #666;
+            color: #555;
             text-align: center;
-        }
-
-        .shortcut-key {
-            background: #222;
-            padding: 2px 6px;
-            border-radius: 4px;
-            color: #aaa;
-            border: 1px solid #444;
-            font-family: monospace;
         }
     </style>
 </head>
 
 <body>
-    <div class="container">
-        <!-- 3D模拟展示区域 -->
-        <div id="courtStage" class="court-stage">
+
+    <div class="court-stage" id="courtStage">
+        <!-- 自动播放阶段标签 -->
+        <div class="test-scenario-badge">
+            <span class="badge-pulse"></span>
+            <span id="currentScenarioText">主时钟正常走表中...</span>
+        </div>
+
+        <!-- 篮架计时器部分 -->
+        <div id="clockUnit" class="shot-clock-chassis">
+            <div id="occTimer" class="occluder occ-timer"></div>
+            <div id="occShotClock" class="occluder occ-shotclock"></div>
+
+            <!-- 比赛大表计时器 -->
+            <div id="gameTimer" class="game-timer-display digit led-green">10:00</div>
             
-            <!-- 篮架计时器部分 -->
-            <div id="clockUnit" class="shot-clock-chassis">
-                <div id="occTimer" class="occluder occ-timer"></div>
-                <div id="occShotClock" class="occluder occ-shotclock"></div>
+            <!-- 24/14秒表 -->
+            <div id="shotClock" class="shot-clock-display digit led-red">24</div>
+        </div>
 
-                <!-- 比赛计时大表 -->
-                <div id="gameTimer" class="game-timer-display digit led-green">10:00</div>
-                
-                <!-- 24/14秒进攻时间表 -->
-                <div id="shotClock" class="shot-clock-display digit led-red">24</div>
-            </div>
+        <div class="chassis-mount"></div>
 
-            <div class="chassis-mount"></div>
-
-            <!-- 篮板与篮圈 -->
-            <div id="backboard" class="backboard">
-                <div id="backboardLed" class="backboard-led-strip"></div>
-                <div class="shooting-square"></div>
-                
-                <!-- 篮圈与篮网组件 -->
-                <div class="hoop-assembly">
-                    <div class="hoop-bracket"></div>
-                    <div class="rim"></div>
-                    <!-- 篮网的SVG线框图 -->
-                    <svg class="net" viewBox="0 0 100 120" xmlns="http://www.w3.org/2000/svg">
-                        <!-- 吊网挂勾线 -->
-                        <path d="M 10,0 L 20,20 M 20,0 L 28,20 M 35,0 L 36,20 M 50,0 L 44,20 M 65,0 L 56,20 M 80,0 L 72,20 M 90,0 L 80,20" stroke="#ddd" stroke-width="2" />
-                        <!-- 网眼交叉线 -->
-                        <path d="M 10,10 C 30,25 40,35 50,50 C 60,65 70,85 80,110" fill="none" stroke="#eee" stroke-width="2" stroke-dasharray="3,3" />
-                        <path d="M 90,10 C 70,25 60,35 50,50 C 40,65 30,85 20,110" fill="none" stroke="#eee" stroke-width="2" stroke-dasharray="3,3" />
-                        <path d="M 30,10 C 45,30 55,50 65,75 C 70,90 75,100 78,110" fill="none" stroke="#ddd" stroke-width="1.5" />
-                        <path d="M 70,10 C 55,30 45,50 35,75 C 30,90 25,100 22,110" fill="none" stroke="#ddd" stroke-width="1.5" />
-                        <!-- 横向网结环 -->
-                        <ellipse cx="50" cy="30" rx="36" ry="6" fill="none" stroke="#ccc" stroke-width="1.5" />
-                        <ellipse cx="50" cy="55" rx="28" ry="5" fill="none" stroke="#ccc" stroke-width="1.5" />
-                        <ellipse cx="50" cy="80" rx="20" ry="4" fill="none" stroke="#bbb" stroke-width="1.5" />
-                        <ellipse cx="50" cy="105" rx="14" ry="3" fill="none" stroke="#999" stroke-width="2" />
-                    </svg>
-                </div>
-            </div>
-
-            <!-- 仿真状态日志条 -->
-            <div class="status-display" style="width: 100%; margin-top: 30px;">
-                <div id="statusMsg" class="status-msg">待机：点击“开始测试”或触发下方场景</div>
-                <div id="statusMeta" class="status-meta">时限: 10:00 | 24s</div>
+        <!-- 篮板与篮圈 -->
+        <div id="backboard" class="backboard">
+            <div id="backboardLed" class="backboard-led-strip"></div>
+            <div class="shooting-square"></div>
+            
+            <!-- 篮圈与篮网组件 -->
+            <div class="hoop-assembly">
+                <div class="hoop-bracket"></div>
+                <div class="rim"></div>
+                <svg class="net" viewBox="0 0 100 120" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M 10,0 L 20,20 M 20,0 L 28,20 M 35,0 L 36,20 M 50,0 L 44,20 M 65,0 L 56,20 M 80,0 L 72,20 M 90,0 L 80,20" stroke="#ddd" stroke-width="2" />
+                    <path d="M 10,10 C 30,25 40,35 50,50 C 60,65 70,85 80,110" fill="none" stroke="#eee" stroke-width="2" stroke-dasharray="3,3" />
+                    <path d="M 90,10 C 70,25 60,35 50,50 C 40,65 30,85 20,110" fill="none" stroke="#eee" stroke-width="2" stroke-dasharray="3,3" />
+                    <path d="M 30,10 C 45,30 55,50 65,75 C 70,90 75,100 78,110" fill="none" stroke="#ddd" stroke-width="1.5" />
+                    <path d="M 70,10 C 55,30 45,50 35,75 C 30,90 25,100 22,110" fill="none" stroke="#ddd" stroke-width="1.5" />
+                    <ellipse cx="50" cy="30" rx="36" ry="6" fill="none" stroke="#ccc" stroke-width="1.5" />
+                    <ellipse cx="50" cy="55" rx="28" ry="5" fill="none" stroke="#ccc" stroke-width="1.5" />
+                    <ellipse cx="50" cy="80" rx="20" ry="4" fill="none" stroke="#bbb" stroke-width="1.5" />
+                    <ellipse cx="50" cy="105" rx="14" ry="3" fill="none" stroke="#999" stroke-width="2" />
+                </svg>
             </div>
         </div>
 
-        <!-- 测试控制面板 -->
-        <div class="control-panel">
-            
-            <!-- 大表与秒表基础操纵 -->
-            <div class="panel-section">
-                <div class="section-title">基础运行控制 (主时钟)</div>
-                <div class="btn-group">
-                    <button id="btnStart" class="btn-primary" onclick="toggleClock()">▶ 开始运行</button>
-                    <button class="btn-warning" onclick="pauseClock()">⏸ 暂停运行</button>
-                    <button onclick="resetClock()">🔄 重置系统</button>
-                    <button id="btnBuzzer" onclick="toggleBuzzerSound()">🔊 鸣笛: 开启</button>
-                </div>
-            </div>
-
-            <!-- 24秒/14秒 单独操纵 -->
-            <div class="panel-section">
-                <div class="section-title">24s / 14s 进攻秒表控制</div>
-                <div class="btn-group">
-                    <button onclick="resetShotClock(24)">🔁 复位 24 秒</button>
-                    <button onclick="resetShotClock(14)">🔁 复位 14 秒</button>
-                    <button onclick="adjustShotClock(1)">➕ 进攻时间 +1s</button>
-                    <button onclick="adjustShotClock(-1)">➖ 进攻时间 -1s</button>
-                    <button id="btnToggleSC" onclick="toggleShotClockRun()">🔌 锁死/释放秒表</button>
-                </div>
-            </div>
-
-            <!-- 比赛大表单独调表 -->
-            <div class="panel-section">
-                <div class="section-title">比赛大表时间微调</div>
-                <div class="btn-group">
-                    <button onclick="adjustGameTime(60)">➕ 大表 +1 分钟</button>
-                    <button onclick="adjustGameTime(-60)">➖ 大表 -1 分钟</button>
-                    <button onclick="adjustGameTime(1)">➕ 大表 +1 秒</button>
-                    <button onclick="adjustGameTime(-1)">➖ 大表 -1 秒</button>
-                    <button onclick="adjustGameTime(0.1)">➕ 大表 +0.1 秒</button>
-                    <button onclick="adjustGameTime(-0.1)">➖ 大表 -0.1 秒</button>
-                </div>
-            </div>
-
-            <!-- 自动压测与异常测试场景 -->
-            <div class="panel-section">
-                <div class="section-title">异常与压测场景一键触发 (OCR与算法测试专用)</div>
-                <div class="btn-group">
-                    <button class="btn-danger" onclick="triggerBuzzerBeater()">🏀 压哨绝杀 (Buzzer Beater)</button>
-                    <button class="btn-danger" onclick="triggerShotClockViolation()">⏰ 24秒违例停表</button>
-                    <button class="btn-warning" onclick="triggerRefereeReview()">📐 裁判回放调表 (回滚 2.4秒)</button>
-                    <button onclick="triggerFlickerFault()">⚡ 硬件高频闪烁故障</button>
-                    <button onclick="triggerOcclude('timer')">🙈 大表镜头遮挡 5s</button>
-                    <button onclick="triggerOcclude('shotclock')">🙈 秒表镜头遮挡 5s</button>
-                </div>
-            </div>
-
-            <div class="shortcut-tip">
-                快捷键提示：<span class="shortcut-key">空格键</span> 启动/暂停 | <span class="shortcut-key">R</span> 重置 | <span class="shortcut-key">4</span> 复位24s | <span class="shortcut-key">1</span> 复位14s
-            </div>
+        <!-- 状态流显示 -->
+        <div class="status-display">
+            <div id="statusMsg" class="status-msg">主时钟走时已运行...</div>
+            <div id="statusMeta" class="status-meta">时限: --:-- | 秒表: --s</div>
         </div>
     </div>
 
-    <!-- 蜂鸣器音频上下文 -->
+    <div class="bottom-hint">
+        全自动真实模拟计时 • 无需操作 • 开屏即动 • 静音运行
+    </div>
+
+    <!-- 自动测试控制内核 -->
     <script>
-        let audioCtx = null;
-        let buzzerSoundEnabled = true;
-
-        function playBuzzerSound() {
-            if (!buzzerSoundEnabled) return;
-            try {
-                if (!audioCtx) {
-                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                }
-                const osc = audioCtx.createOscillator();
-                const gain = audioCtx.createGain();
-                
-                // 经典体育馆低沉刺耳的蜂鸣器音调 (锯齿波，180Hz左右)
-                osc.type = 'sawtooth';
-                osc.frequency.setValueAtTime(180, audioCtx.currentTime);
-                // 颤音效果
-                osc.frequency.linearRampToValueAtTime(190, audioCtx.currentTime + 0.1);
-                osc.frequency.linearRampToValueAtTime(175, audioCtx.currentTime + 0.3);
-                osc.frequency.linearRampToValueAtTime(180, audioCtx.currentTime + 1.2);
-
-                gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
-                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 1.5);
-
-                osc.connect(gain);
-                gain.connect(audioCtx.destination);
-                
-                osc.start();
-                osc.stop(audioCtx.currentTime + 1.5);
-            } catch (e) {
-                console.error("无法播放蜂鸣器声音：", e);
-            }
-        }
-
-        function toggleBuzzerSound() {
-            buzzerSoundEnabled = !buzzerSoundEnabled;
-            document.getElementById('btnBuzzer').innerText = buzzerSoundEnabled ? "🔊 鸣笛: 开启" : "🔇 鸣笛: 关闭";
-        }
-    </script>
-
-    <!-- 核心仿真逻辑 -->
-    <script>
-        // 核心状态数据
-        const INITIAL_GAME_SECONDS = 10 * 60; // 10分钟
-        
+        // 计时状态
         let state = {
-            gameTime: INITIAL_GAME_SECONDS, // 单位：秒 (包含毫秒)
-            shotClock: 24.0,                // 进攻秒表 (支持浮点)
-            running: false,
-            shotClockLocked: false,         // 为true时，秒表不随大表减少
-            activeVisuals: [],              // 视觉特效 (如闪烁、遮挡)
-            buzzerFired: false
+            gameTime: 600.0,     // 从 10 分钟连续递减
+            shotClock: 24.0,    // 进攻秒表
+            elapsed: 0.0,       // 整个循环流逝的实际秒数
+            running: true,      // 自动运行
+            shotClockLocked: false,
+            activeVisuals: [],
+            backboardActive: false
         };
 
         let lastTimestamp = null;
         let animationFrameId = null;
 
-        // 获取页面元素
+        // 获取元素
         const gameTimerEl = document.getElementById('gameTimer');
         const shotClockEl = document.getElementById('shotClock');
         const backboardLedEl = document.getElementById('backboardLed');
-        const courtStageEl = document.getElementById('courtStage');
         const clockUnitEl = document.getElementById('clockUnit');
         const statusMsgEl = document.getElementById('statusMsg');
         const statusMetaEl = document.getElementById('statusMeta');
-        const btnStartEl = document.getElementById('btnStart');
+        const scenarioBadgeText = document.getElementById('currentScenarioText');
 
-        // 格式化大表时间 (支持毫秒)
+        // 格式化大表时间 (分:秒)
         function formatGameTime(seconds) {
             if (seconds <= 0) return "00:00.0";
-            
-            // 当时间大于 60 秒时，显示分:秒 (如 09:58)
             if (seconds >= 60) {
                 const m = Math.floor(seconds / 60);
                 const s = Math.floor(seconds % 60);
                 return String(m).padStart(2, '0') + ":" + String(s).padStart(2, '0');
             } else {
-                // 当时间少于 1 分钟时，显示秒.10毫秒 (如 59.9，或者更精确的 12.4)
+                // 当时间少于 1 分钟时，显示秒.10毫秒 (如 12.4秒)
                 const s = Math.floor(seconds);
                 const tenths = Math.floor((seconds - s) * 10);
                 return String(s).padStart(2, '0') + "." + tenths;
@@ -643,20 +439,19 @@
         // 格式化 24秒表时间
         function formatShotClock(seconds) {
             if (seconds <= 0) return "00";
-            
-            // 秒表在小于5秒时，通常只显示整数秒，但在测试中我们需要根据实际硬件标准格式化
-            // 这里我们显示向下取整的整数秒 (如 24, 09, 00)
             const s = Math.ceil(seconds);
             return String(s).padStart(2, '0');
         }
 
+        function showEventLog(msg) {
+            statusMsgEl.innerText = msg;
+            scenarioBadgeText.innerText = msg;
+        }
+
         // 更新大表与秒表的颜色样式
-        function updateColorsAndState() {
-            // 大表颜色：正常绿色，少于 1 分钟变橙色/红色
-            if (state.gameTime <= 0) {
-                gameTimerEl.classList.remove('led-green');
-                gameTimerEl.classList.add('led-orange');
-            } else if (state.gameTime < 60) {
+        function updateColorsAndLED() {
+            // 大表颜色
+            if (state.gameTime <= 0 || state.gameTime < 60) {
                 gameTimerEl.classList.remove('led-green');
                 gameTimerEl.classList.add('led-orange');
             } else {
@@ -664,40 +459,20 @@
                 gameTimerEl.classList.add('led-green');
             }
 
-            // 秒表颜色：<= 5秒变为红色，10秒内黄色，其余绿色/黄色
-            shotClockEl.classList.remove('led-red', 'led-yellow', 'led-green');
-            if (state.shotClock <= 5) {
-                shotClockEl.classList.add('led-red');
-            } else if (state.shotClock <= 10) {
-                shotClockEl.classList.add('led-yellow');
+            // 检查篮板红灯 LED 激活情况
+            if (state.backboardActive) {
+                backboardLedEl.classList.add('active');
             } else {
-                shotClockEl.classList.add('led-red'); // 大部分球场24秒表为纯红色，这里我们保持红色的醒目性
+                backboardLedEl.classList.remove('active');
             }
         }
 
         // 刷新渲染页面显示
         function updateDisplay() {
-            // 写入文本
             gameTimerEl.innerText = formatGameTime(state.gameTime);
             shotClockEl.innerText = formatShotClock(state.shotClock);
 
-            // 更新颜色
-            updateColorsAndState();
-
-            // 检查篮板红灯 LED 激活情况
-            // 比赛时间到 0.0 或 24秒违例时，篮板红灯亮起
-            const shouldBuzzer = (state.gameTime <= 0) || (state.shotClock <= 0 && !state.shotClockLocked);
-            if (shouldBuzzer) {
-                backboardLedEl.classList.add('active');
-                if (!state.buzzerFired && state.running) {
-                    playBuzzerSound();
-                    state.buzzerFired = true;
-                    statusMsgEl.innerText = state.gameTime <= 0 ? "🔔 比赛结束！终场蜂鸣器响" : "⏰ 进攻24秒违例！";
-                }
-            } else {
-                backboardLedEl.classList.remove('active');
-                state.buzzerFired = false;
-            }
+            updateColorsAndLED();
 
             // 特效渲染 (遮挡、闪烁故障)
             clockUnitEl.classList.toggle('fault', hasVisual('fault'));
@@ -706,13 +481,11 @@
             document.getElementById('occTimer').style.display = hasVisual('occlude-timer') ? 'block' : 'none';
             document.getElementById('occShotClock').style.display = hasVisual('occlude-shotclock') ? 'block' : 'none';
 
-            // 状态栏元数据
-            btnStartEl.innerText = state.running ? "⏸ 暂停运行" : "▶ 开始运行";
-            btnStartEl.className = state.running ? "btn-warning" : "btn-primary";
-            statusMetaEl.innerText = `时限: ${formatGameTime(state.gameTime)} | 秒表: ${state.shotClock.toFixed(1)}s | 状态: ${state.running ? '运行中' : '暂停中'}`;
+            // 元数据状态栏
+            statusMetaEl.innerText = `大表: ${formatGameTime(state.gameTime)} | 秒表: ${state.shotClock.toFixed(1)}s | 实际流逝: ${state.elapsed.toFixed(1)}s`;
         }
 
-        // 动画帧主循环
+        // 核心走时Loop
         function mainLoop(timestamp) {
             if (!state.running) {
                 lastTimestamp = null;
@@ -725,34 +498,45 @@
                 return;
             }
 
-            // 计算时间步长 (秒)
             const delta = (timestamp - lastTimestamp) / 1000;
             lastTimestamp = timestamp;
 
-            // 1. 递减比赛大表时间
+            // 1. 递增本轮实际流逝时间
+            state.elapsed += delta;
+
+            // 2. 递减比赛大表时间
             if (state.gameTime > 0) {
                 state.gameTime = Math.max(0, state.gameTime - delta);
-            }
-
-            // 2. 递减 24 秒表时间
-            if (!state.shotClockLocked && state.shotClock > 0 && state.gameTime > 0) {
-                // 秒表与大表同步减少
-                state.shotClock = Math.max(0, state.shotClock - delta);
-
-                // 秒表不能超过大表的总剩余时间 (比如大表仅剩 12 秒，24秒表也应同步受限或熄灭，实际中通常直接跟随递减)
-                if (state.shotClock > state.gameTime) {
-                    // 部分场馆秒表会选择在大表时间小于进攻秒表时直接熄灭，这里我们保持同步
-                }
-            }
-
-            // 3. 终点判定
-            if (state.gameTime <= 0 || (state.shotClock <= 0 && !state.shotClockLocked)) {
-                // 停止运行
+            } else {
                 state.running = false;
+                triggerPeriodEnd();
+                return;
+            }
+
+            // 3. 递减 24 秒表时间 (如果是强制违例阶段，则不进行随机碰铁重置)
+            const isViolationImminent = (state.elapsed >= 65 && state.elapsed <= 70); 
+
+            if (state.shotClock > 0 && !state.shotClockLocked) {
+                state.shotClock = Math.max(0, state.shotClock - delta);
+            }
+
+            // 秒表到期触发
+            if (state.shotClock <= 0) {
+                triggerShotClockViolation();
+            } else if (!isViolationImminent) {
+                // 常规情况下，每当进攻时间小于 8 秒时，有概率投篮出手重置为 24 或 14 秒 (模拟正常球局)
+                if (state.shotClock < 8.0 && Math.random() > 0.985) {
+                    const resetVal = Math.random() > 0.4 ? 24.0 : 14.0;
+                    state.shotClock = resetVal;
+                    showEventLog(`🏀 投篮命中篮圈，秒表复位至 ${resetVal} 秒`);
+                }
             }
 
             // 4. 清理到期特效
             expireVisuals(delta);
+
+            // 5. 触发预设扰动事件 (基于连续流逝时间，不跳变主时间)
+            handleScheduledEvents();
 
             updateDisplay();
 
@@ -775,173 +559,129 @@
             state.activeVisuals = state.activeVisuals.filter(v => v.remaining > 0);
         }
 
-        // =================== 控制方法 ===================
+        // ==========================================
+        // 全自动测试步骤循环调度引擎 (基于连续跑表时间轴)
+        // ==========================================
 
-        // 切换运行状态
-        function toggleClock() {
-            if (state.running) {
-                pauseClock();
-            } else {
-                startClock();
+        let eventFlags = {
+            occludeTimerDone: false,
+            occludeShotClockDone: false,
+            flickerDone: false,
+            rollbackDone: false,
+            violationForced: false
+        };
+
+        function handleScheduledEvents() {
+            const elapsed = state.elapsed;
+
+            // 1. 跑表到 12 秒：大表被遮挡 3.5 秒
+            if (elapsed >= 12 && !eventFlags.occludeTimerDone) {
+                eventFlags.occludeTimerDone = true;
+                addVisual('occlude-timer', 3.5);
+                showEventLog("⚠️ 测试事件：大表发生临时被遮挡 3.5 秒 (测试OCR断点恢复)");
+            }
+
+            // 2. 跑表到 24 秒：24秒表被人影遮挡 3 秒
+            if (elapsed >= 24 && !eventFlags.occludeShotClockDone) {
+                eventFlags.occludeShotClockDone = true;
+                addVisual('occlude-shotclock', 3.0);
+                showEventLog("⚠️ 测试事件：24秒表被人员遮挡 3 秒");
+            }
+
+            // 3. 跑表到 36 秒：LED显示屏高频频闪 4 秒
+            if (elapsed >= 36 && !eventFlags.flickerDone) {
+                eventFlags.flickerDone = true;
+                addVisual('fault', 4.0);
+                showEventLog("⚡ 测试事件：数码管发生高频频闪故障 (测试OCR去抖动过滤)");
+            }
+
+            // 4. 跑表到 48 秒：模拟裁判吹哨判定并回表 2.6 秒
+            if (elapsed >= 48 && !eventFlags.rollbackDone) {
+                eventFlags.rollbackDone = true;
+                triggerRefereeRollback();
+            }
+
+            // 5. 跑表到 65 秒：强制让进攻秒表从 5 秒起步且不被重新设定，直到 0 秒违例
+            if (elapsed >= 65 && !eventFlags.violationForced) {
+                eventFlags.violationForced = true;
+                state.shotClock = 5.0; 
+                showEventLog("⏰ 测试事件：模拟防守成功，迫使进攻方24秒违例倒数");
             }
         }
 
-        function startClock() {
-            if (state.gameTime <= 0) {
-                statusMsgEl.innerText = "时限已耗尽，请先重置或调表！";
-                return;
-            }
-            if (state.shotClock <= 0 && !state.shotClockLocked) {
-                statusMsgEl.innerText = "24秒时间已耗尽，请先复位秒表！";
-                return;
-            }
-            state.running = true;
-            statusMsgEl.innerText = "时钟正在运行...";
-            lastTimestamp = null;
-            if (animationFrameId) cancelAnimationFrame(animationFrameId);
-            animationFrameId = requestAnimationFrame(mainLoop);
-            updateDisplay();
-        }
-
-        function pauseClock() {
+        // 模拟裁判调表 (正常回滚)
+        function triggerRefereeRollback() {
             state.running = false;
-            statusMsgEl.innerText = "时钟已暂停。";
-            updateDisplay();
-        }
-
-        function resetClock() {
-            pauseClock();
-            state.gameTime = INITIAL_GAME_SECONDS;
-            state.shotClock = 24.0;
-            state.shotClockLocked = false;
-            state.activeVisuals = [];
-            state.buzzerFired = false;
-            statusMsgEl.innerText = "系统重置完成。";
-            updateDisplay();
-        }
-
-        // 24秒表复位
-        function resetShotClock(seconds) {
-            state.shotClock = parseFloat(seconds);
-            statusMsgEl.innerText = `进攻秒表复位至 ${seconds} 秒。`;
-            updateDisplay();
-        }
-
-        // 调表大表
-        function adjustGameTime(offset) {
-            state.gameTime = Math.max(0, state.gameTime + offset);
-            statusMsgEl.innerText = `手动微调大表: ${offset > 0 ? '+' : ''}${offset}秒，当前 ${formatGameTime(state.gameTime)}`;
-            updateDisplay();
-        }
-
-        // 调表24秒
-        function adjustShotClock(offset) {
-            state.shotClock = Math.max(0, Math.min(99, state.shotClock + offset));
-            statusMsgEl.innerText = `手动微调秒表: ${offset > 0 ? '+' : ''}${offset}秒，当前 ${state.shotClock.toFixed(1)}s`;
-            updateDisplay();
-        }
-
-        // 锁定24秒表 (模拟暂停进攻时间流逝，例如罚球或者换人时大表流动但秒表不工作)
-        function toggleShotClockRun() {
-            state.shotClockLocked = !state.shotClockLocked;
-            statusMsgEl.innerText = state.shotClockLocked ? "已锁死秒表：大表走时，秒表保持不动" : "已释放秒表：秒表将跟随大表同步流逝";
-            updateDisplay();
-        }
-
-        // =================== 场景控制 ===================
-
-        // 1. 压哨绝杀 (Buzzer Beater)
-        function triggerBuzzerBeater() {
-            pauseClock();
-            state.gameTime = 4.8;  // 大表剩 4.8 秒
-            state.shotClock = 4.8; // 进攻时间同步
-            state.shotClockLocked = false;
-            state.buzzerFired = false;
-            state.activeVisuals = [];
-            statusMsgEl.innerText = "【绝杀场景】设定完成：大表 4.8秒，秒表 4.8秒。即将自动运行！";
-            updateDisplay();
-            
-            // 延迟1.5秒后自动开表，让测试人员准备好
-            setTimeout(() => {
-                startClock();
-                statusMsgEl.innerText = "【绝杀场景】自动倒计时开表！";
-            }, 1500);
-        }
-
-        // 2. 24秒违例场景
-        function triggerShotClockViolation() {
-            pauseClock();
-            state.gameTime = 35.0; // 大表足够长
-            state.shotClock = 3.0; // 秒表仅剩 3 秒
-            state.shotClockLocked = false;
-            state.buzzerFired = false;
-            state.activeVisuals = [];
-            statusMsgEl.innerText = "【24秒违例场景】设定完成：秒表仅剩 3.0秒。即将自动运行！";
+            showEventLog("📐 测试事件：裁判鸣哨停表，准备回放审查...");
             updateDisplay();
 
             setTimeout(() => {
-                startClock();
-                statusMsgEl.innerText = "【24秒违例场景】自动倒计时运行...";
-            }, 1500);
-        }
-
-        // 3. 裁判回滚时间 (回表)
-        function triggerRefereeReview() {
-            pauseClock();
-            const originalTime = state.gameTime;
-            const rolledBackTime = state.gameTime + 2.4;
-            
-            statusMsgEl.innerText = `【回表场景】裁判回放审查，将大表从 ${formatGameTime(originalTime)} 回滚 2.4秒...`;
-            
-            setTimeout(() => {
-                state.gameTime = rolledBackTime;
-                statusMsgEl.innerText = `【回表场景】回表成功！大表已更新回 ${formatGameTime(rolledBackTime)}。`;
+                // 仅安全回表 2.6 秒
+                state.gameTime += 2.6;
+                state.elapsed = Math.max(0, state.elapsed - 2.6); // 同步回滚流逝时间线，防事件重叠
+                showEventLog("📐 测试事件：判定回滚！大表调表回退 2.6 秒。");
                 updateDisplay();
-            }, 1200);
+
+                setTimeout(() => {
+                    state.running = true;
+                    lastTimestamp = null;
+                    animationFrameId = requestAnimationFrame(mainLoop);
+                    showEventLog("📐 时钟恢复运行。");
+                    updateDisplay();
+                }, 1500);
+            }, 1500);
         }
 
-        // 4. 屏幕硬件故障闪烁
-        function triggerFlickerFault() {
-            addVisual('fault', 4.0); // 持续闪烁 4 秒
-            statusMsgEl.innerText = "【故障场景】模拟显示器硬件高频闪烁故障（抗OCR断点测试）";
+        // 模拟24秒违例
+        function triggerShotClockViolation() {
+            state.running = false;
+            state.backboardActive = true;
+            showEventLog("⏰ 测试事件：24秒进攻时间违例！篮板红灯亮起。");
             updateDisplay();
+
+            setTimeout(() => {
+                state.backboardActive = false;
+                state.shotClock = 24.0;
+                state.running = true;
+                lastTimestamp = null;
+                animationFrameId = requestAnimationFrame(mainLoop);
+                showEventLog("时钟恢复运行。");
+                updateDisplay();
+            }, 2000);
         }
 
-        // 5. 镜头遮挡
-        function triggerOcclude(target) {
-            if (target === 'timer') {
-                addVisual('occlude-timer', 5.0);
-                statusMsgEl.innerText = "【遮挡场景】大表计时器显示被异物或移动摄像机遮挡 5 秒";
-            } else {
-                addVisual('occlude-shotclock', 5.0);
-                statusMsgEl.innerText = "【遮挡场景】24秒攻击显示被球员头部遮挡 5 秒";
-            }
+        // 模拟一节比赛耗尽
+        function triggerPeriodEnd() {
+            state.backboardActive = true;
+            showEventLog("🔔 比赛结束！本节大表走完，终场红灯亮起。");
             updateDisplay();
+
+            setTimeout(() => {
+                // 循环重置
+                state.backboardActive = false;
+                state.gameTime = 600.0;
+                state.shotClock = 24.0;
+                state.elapsed = 0.0;
+                
+                eventFlags.occludeTimerDone = false;
+                eventFlags.occludeShotClockDone = false;
+                eventFlags.flickerDone = false;
+                eventFlags.rollbackDone = false;
+                eventFlags.violationForced = false;
+
+                state.running = true;
+                lastTimestamp = null;
+                animationFrameId = requestAnimationFrame(mainLoop);
+                showEventLog("循环重置成功，重新开始 10 分钟倒计时计时...");
+                updateDisplay();
+            }, 3000);
         }
 
-        // =================== 键盘快捷键监听 ===================
-        window.addEventListener('keydown', function (e) {
-            // 空格键：暂停/开始
-            if (e.code === 'Space') {
-                e.preventDefault();
-                toggleClock();
-            }
-            // R键：重置
-            if (e.code === 'KeyR') {
-                resetClock();
-            }
-            // 4键：复位24
-            if (e.code === 'Digit4' || e.code === 'Numpad4') {
-                resetShotClock(24);
-            }
-            // 1键：复位14
-            if (e.code === 'Digit1' || e.code === 'Numpad1') {
-                resetShotClock(14);
-            }
+        // 页面加载后即刻开始走表
+        window.addEventListener('DOMContentLoaded', () => {
+            lastTimestamp = null;
+            animationFrameId = requestAnimationFrame(mainLoop);
         });
-
-        // 初始化
-        updateDisplay();
     </script>
 </body>
 

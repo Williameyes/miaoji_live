@@ -133,8 +133,6 @@ var OCR_CLOCK_TENS_GLITCH_MAX_DELTA_SEC = 420;
 var OCR_CLOCK_TENS_GLITCH_MINUTE_DIFF = 4;
 /** 分钟十位误读：分钟差上限（如 3:38→8:38 差 5） */
 var OCR_CLOCK_TENS_GLITCH_MAX_MINUTE_DIFF = 6;
-/** 7 段分钟位整 60 秒倒退误读：允许修复的最大分钟步数（如 4:42→3:42 为 1 步） */
-var OCR_CLOCK_SIXTY_BACKWARD_MAX_MINUTES = 3;
 /** 0:xx 误锚恢复：参考至少为该秒数（排除 ref=0 误放行 9:50 等） */
 var OCR_CLOCK_SUBMINUTE_RECOVERY_MIN_REF_SEC = 10;
 /** 遮挡恢复：连续多少次检测到三项均可读才退出遮挡 */
@@ -255,7 +253,7 @@ var OCR_TIME_RUN_TIMEOUT_MS = 1500;
  * 给 SDK 内部清队列的时间窗口，避免立刻补刀让队列雪崩。
  */
 var OCR_TIMEOUT_SETTLE_MS = 350;
-var OCR_MAX_VARIANTS_PER_RUN = 4;
+var OCR_MAX_VARIANTS_PER_RUN = 3;
 var OCR_SCORE_TICK_INTERVAL = 8;
 // Phase 2: Removed OCR_TIME_PREDICT_MAX_STALE_MS
 /** V5 视觉门禁：全局 OCR cooldown（毫秒） */
@@ -1524,27 +1522,6 @@ function repairMinutesTensDigitGlitch(clock, refSec) {
 }
 
 /**
- * 修复 7 段数码管分钟位误读导致的整 60 秒倒退（如 4:42 → 3:42，分钟 4 误读为 3）。
- * 倒计时场景下单次 OCR 样本不应比参考锚点整分钟级倒退（采样间隔 <2s）。
- * @param {{ minutes: number, seconds: number }} clock OCR 解析结果
- * @param {number} refSec 参考秒数
- * @returns {{ minutes: number, seconds: number } | null}
- */
-function repairMinutesSixtySecBackwardGlitch(clock, refSec) {
-  if (!clock || refSec < 60) return null;
-  var ocrSec = clockToTotalSec(clock);
-  if (ocrSec >= refSec) return null;
-  var delta = refSec - ocrSec;
-  if (delta < 60 || delta % 60 !== 0) return null;
-  var minuteSteps = delta / 60;
-  if (minuteSteps < 1 || minuteSteps > OCR_CLOCK_SIXTY_BACKWARD_MAX_MINUTES) return null;
-  var ref = clockFromTotalSec(refSec);
-  if (Number(clock.seconds) !== Number(ref.seconds)) return null;
-  if (Number(ref.minutes) - Number(clock.minutes) !== minuteSteps) return null;
-  return { minutes: ref.minutes, seconds: ref.seconds };
-}
-
-/**
  * 校验 OCR 时间样本是否可用于比赛时钟（过滤进攻时间误读与正向跳变）。
  * @param {{ minutes: number, seconds: number } | null} clock
  * @param {number} refSec
@@ -1569,21 +1546,6 @@ function sanitizeGameClockParse(clock, refSec) {
         toSec: clockToTotalSec(tensFixed)
       });
       clock = tensFixed;
-    }
-    var sixtyBackFixed = repairMinutesSixtySecBackwardGlitch(clock, refSec);
-    if (sixtyBackFixed) {
-      logOcrV5Diag('clock_sixty_backward_repair', {
-        refSec: refSec,
-        fromSec: clockToTotalSec(clock),
-        toSec: clockToTotalSec(sixtyBackFixed)
-      });
-      COLLECTOR_AUDIT.auditOcrTimeSample({
-        action: 'sixty_backward_repair',
-        refSec: refSec,
-        fromSec: clockToTotalSec(clock),
-        toSec: clockToTotalSec(sixtyBackFixed)
-      });
-      clock = sixtyBackFixed;
     }
   }
   var ocrSec = clockToTotalSec(clock);
@@ -7886,8 +7848,6 @@ function cropRgbaCandidatesByRoi(rgba, frameWidth, frameHeight, roi) {
     return buildCropVariants(rgba, frameWidth, frameHeight, [
       rect,
       expandRect(rect, frameWidth, frameHeight, { dx: -0.06, dy: -0.12, dw: 0.12, dh: 0.24 }),
-      // 7 段数码管：加宽水平、略增垂直，覆盖段距较宽的冒号两侧数字
-      expandRect(rect, frameWidth, frameHeight, { dx: -0.10, dy: -0.08, dw: 0.20, dh: 0.16 }),
       expandRect(rect, frameWidth, frameHeight, { dx: 0.04, dy: -0.06, dw: -0.08, dh: 0.12 })
     ]);
   }
