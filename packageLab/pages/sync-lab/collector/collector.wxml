@@ -104,7 +104,20 @@
         bindlongpress="onToggleDebug"
         show-menu-by-longpress="{{false}}"
       >
-        <text class="col-monitor-text">主: {{ homeScore }} | 客: {{ awayScore }} | 倒计时: {{ minutes }}:{{ seconds < 10 ? '0' + seconds : seconds }}</text>
+        <text class="col-monitor-text">{{ocrDisplayProfileLabel}} | 主: {{ homeScore }} | 客: {{ awayScore }} | 倒计时: {{ minutes }}:{{ seconds < 10 ? '0' + seconds : seconds }}</text>
+      </view>
+
+      <view class="col-profile-row">
+        <view
+          class="col-profile-btn{{ocrDisplayProfile === 'led' ? ' col-profile-btn--active' : ''}}"
+          data-profile="led"
+          catchtap="onSelectDisplayProfile"
+        >LED大屏</view>
+        <view
+          class="col-profile-btn{{ocrDisplayProfile === '7segment' ? ' col-profile-btn--active' : ''}}"
+          data-profile="7segment"
+          catchtap="onSelectDisplayProfile"
+        >7段数码管</view>
       </view>
 
       <view class="col-ocr-toggles">

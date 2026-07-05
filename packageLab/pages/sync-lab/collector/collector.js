@@ -226,6 +226,14 @@ var COLLECTOR_HEALTH_LOG_FLUSH_DELAY_MS = 1800;
 
 var STORAGE_KEY_ROIS = 'sync_lab_rois_v1';
 var STORAGE_KEY_OCR_PRESET = 'sync_lab_ocr_preset_v1';
+/** 7 段数码管专用机位预设（与 LED 预设独立存储） */
+var STORAGE_KEY_OCR_PRESET_7SEG = 'sync_lab_ocr_preset_7seg_v1';
+/** 当前显示类型 profile：led | 7segment */
+var STORAGE_KEY_DISPLAY_PROFILE = 'sync_lab_display_profile_v1';
+/** LED 大屏显示 profile */
+var OCR_DISPLAY_PROFILE_LED = 'led';
+/** 7 段数码管显示 profile */
+var OCR_DISPLAY_PROFILE_7SEG = '7segment';
 /** 本场稳定房间号（除非用户点「新房间」） */
 var STORAGE_KEY_WS_ROOM_ID = 'sync_lab_collector_room_id_v1';
 /** 当前 OCR 队列 ROI 数量：主队分、客队分、时间（已移除 24 秒 ROI）。 */
@@ -403,6 +411,46 @@ function isOcrScoreSyncEnabled() {
 function getWsPacketSyncScoreFlag(act) {
   if (act === 'SCORE') return 1;
   return isOcrScoreSyncEnabled() ? 1 : 0;
+}
+
+/**
+ * 当前 OCR 显示 profile（led / 7segment）。
+ * @returns {string}
+ */
+function getOcrDisplayProfile() {
+  var page = _wsPageRef;
+  if (!page || !page.data) return OCR_DISPLAY_PROFILE_LED;
+  return page.data.ocrDisplayProfile === OCR_DISPLAY_PROFILE_7SEG
+    ? OCR_DISPLAY_PROFILE_7SEG
+    : OCR_DISPLAY_PROFILE_LED;
+}
+
+/**
+ * 是否处于 7 段数码管 profile（仅影响时间 ROI 裁剪，不改全局解析算法）。
+ * @returns {boolean}
+ */
+function isOcrDisplayProfile7Segment() {
+  return getOcrDisplayProfile() === OCR_DISPLAY_PROFILE_7SEG;
+}
+
+/**
+ * 按 profile 返回机位预设 Storage Key。
+ * @param {string} profile
+ * @returns {string}
+ */
+function getPresetStorageKey(profile) {
+  return profile === OCR_DISPLAY_PROFILE_7SEG
+    ? STORAGE_KEY_OCR_PRESET_7SEG
+    : STORAGE_KEY_OCR_PRESET;
+}
+
+/**
+ * profile 中文展示名。
+ * @param {string} profile
+ * @returns {string}
+ */
+function getDisplayProfileLabel(profile) {
+  return profile === OCR_DISPLAY_PROFILE_7SEG ? '7段数码管' : 'LED大屏';
 }
 /** 心跳定时器句柄（setTimeout，每次心跳后重新 schedule，自带随机抖动） */
 var _wsHeartbeatTimer = 0;
@@ -2620,6 +2668,10 @@ Page({
     ocrEnableTime: true,
     /** 是否 OCR 识别比分 */
     ocrEnableScore: true,
+    /** 显示类型：led=LED大屏（默认裁剪）| 7segment=7段数码管（专用裁剪） */
+    ocrDisplayProfile: OCR_DISPLAY_PROFILE_LED,
+    /** 显示类型中文文案（供 UI 展示） */
+    ocrDisplayProfileLabel: 'LED大屏',
     debugMode: false,
     /** @type {Array<{x,y,w,h,label,rawText,pctStyle}>} */
     rois: DEFAULT_ROIS.map(function (r) { return Object.assign({}, r); }),
@@ -2666,6 +2718,7 @@ Page({
     var self = this;
     installCollectorNetworkListener(function () { return self; });
     this._checkAccess();
+    this._loadDisplayProfile();
     this._loadRois();
   },
 
@@ -2878,6 +2931,22 @@ Page({
 
   // ─── ROI 持久化 ──────────────────────────────────────
 
+  /**
+   * 恢复上次使用的显示 profile（LED / 7 段）。
+   * @returns {void}
+   */
+  _loadDisplayProfile: function () {
+    try {
+      var saved = wx.getStorageSync(STORAGE_KEY_DISPLAY_PROFILE);
+      if (saved === OCR_DISPLAY_PROFILE_7SEG || saved === OCR_DISPLAY_PROFILE_LED) {
+        this.setData({
+          ocrDisplayProfile: saved,
+          ocrDisplayProfileLabel: getDisplayProfileLabel(saved)
+        });
+      }
+    } catch (eProfile) { /* ignore */ }
+  },
+
   _loadRois: function () {
     try {
       var saved = wx.getStorageSync(STORAGE_KEY_ROIS);
@@ -2911,20 +2980,29 @@ Page({
   // ─── OCR 机位预设 ───────────────────────────────────
 
   onSavePreset: function () {
+    var profile = this.data.ocrDisplayProfile || OCR_DISPLAY_PROFILE_LED;
     var preset = {
+      profile: profile,
       rois: this.data.rois.map(function (r) {
         return { x: r.x, y: r.y, w: r.w, h: r.h, label: r.label };
       }),
       cameraZoom: this.data.cameraZoom
     };
-    wx.setStorageSync(STORAGE_KEY_OCR_PRESET, preset);
-    wx.showToast({ title: '机位预设已保存', icon: 'success' });
+    wx.setStorageSync(getPresetStorageKey(profile), preset);
+    wx.showToast({
+      title: getDisplayProfileLabel(profile) + '机位已保存',
+      icon: 'success'
+    });
   },
 
   onLoadPreset: function () {
-    var preset = wx.getStorageSync(STORAGE_KEY_OCR_PRESET);
+    var profile = this.data.ocrDisplayProfile || OCR_DISPLAY_PROFILE_LED;
+    var preset = wx.getStorageSync(getPresetStorageKey(profile));
     if (!preset || !Array.isArray(preset.rois) || !preset.rois.length) {
-      wx.showToast({ title: '未找到机位预设', icon: 'none' });
+      wx.showToast({
+        title: '未找到' + getDisplayProfileLabel(profile) + '预设',
+        icon: 'none'
+      });
       return;
     }
 
@@ -2962,7 +3040,44 @@ Page({
       if (shouldResumePump && _vkSession) {
         self._startOcrFramePump(_vkSession, _ocrSessionToken);
       }
-      wx.showToast({ title: '预设已恢复', icon: 'success' });
+      wx.showToast({
+        title: getDisplayProfileLabel(profile) + '预设已恢复',
+        icon: 'success'
+      });
+    });
+  },
+
+  /**
+   * 切换显示 profile（仅切换时间 ROI 裁剪方案，不改 OCR 解析/状态机）。
+   * @param {WechatMiniprogram.TouchEvent} e
+   * @returns {void}
+   */
+  onSelectDisplayProfile: function (e) {
+    var profile = e.currentTarget.dataset.profile;
+    if (profile !== OCR_DISPLAY_PROFILE_LED && profile !== OCR_DISPLAY_PROFILE_7SEG) return;
+    if (profile === this.data.ocrDisplayProfile) return;
+
+    var self = this;
+    var label = getDisplayProfileLabel(profile);
+    wx.showModal({
+      title: '切换为「' + label + '」',
+      content: '将使用时间区专用裁剪方案（不影响解析算法）。是否同时加载该类型已保存的机位预设？',
+      confirmText: '加载预设',
+      cancelText: '仅切换',
+      success: function (res) {
+        self.setData({
+          ocrDisplayProfile: profile,
+          ocrDisplayProfileLabel: label
+        });
+        try {
+          wx.setStorageSync(STORAGE_KEY_DISPLAY_PROFILE, profile);
+        } catch (eStore) { /* ignore */ }
+        if (res.confirm) {
+          self.onLoadPreset();
+          return;
+        }
+        wx.showToast({ title: '已切换：' + label, icon: 'none', duration: 1400 });
+      }
     });
   },
 
@@ -7845,13 +7960,32 @@ function cropRgbaCandidatesByRoi(rgba, frameWidth, frameHeight, roi) {
     ]);
   }
   if (roi.label === '时间') {
-    return buildCropVariants(rgba, frameWidth, frameHeight, [
-      rect,
-      expandRect(rect, frameWidth, frameHeight, { dx: -0.06, dy: -0.12, dw: 0.12, dh: 0.24 }),
-      expandRect(rect, frameWidth, frameHeight, { dx: 0.04, dy: -0.06, dw: -0.08, dh: 0.12 })
-    ]);
+    return buildTimeCropVariantsForProfile(rgba, frameWidth, frameHeight, rect);
   }
   return buildCropVariants(rgba, frameWidth, frameHeight, [rect]);
+}
+
+/**
+ * 时间 ROI 裁剪 variants：按显示 profile 分支，7 段与 LED 互不影响。
+ * @param {Uint8Array} rgba
+ * @param {number} frameWidth
+ * @param {number} frameHeight
+ * @param {{ x: number, y: number, w: number, h: number }} rect
+ * @returns {Array<{ buffer: ArrayBuffer, width: number, height: number }>}
+ */
+function buildTimeCropVariantsForProfile(rgba, frameWidth, frameHeight, rect) {
+  if (isOcrDisplayProfile7Segment()) {
+    return buildCropVariants(rgba, frameWidth, frameHeight, [
+      rect,
+      expandRect(rect, frameWidth, frameHeight, { dx: -0.10, dy: -0.08, dw: 0.20, dh: 0.16 }),
+      expandRect(rect, frameWidth, frameHeight, { dx: -0.06, dy: -0.14, dw: 0.12, dh: 0.28 })
+    ]);
+  }
+  return buildCropVariants(rgba, frameWidth, frameHeight, [
+    rect,
+    expandRect(rect, frameWidth, frameHeight, { dx: -0.06, dy: -0.12, dw: 0.12, dh: 0.24 }),
+    expandRect(rect, frameWidth, frameHeight, { dx: 0.04, dy: -0.06, dw: -0.08, dh: 0.12 })
+  ]);
 }
 
 function buildCropVariants(rgba, frameWidth, frameHeight, rects) {
@@ -7877,12 +8011,21 @@ function buildRoiCropRect(frameWidth, frameHeight, roi) {
     x = Math.max(0, x - Math.floor(w * 0.04));
     w = Math.min(frameWidth - x, Math.floor(w * 1.04));
   } else if (roi.label === '时间') {
-    y = Math.max(0, y - Math.floor(h * 0.08));
-    h = Math.min(frameHeight - y, Math.floor(h * 1.16));
+    if (isOcrDisplayProfile7Segment()) {
+      y = Math.max(0, y - Math.floor(h * 0.04));
+      h = Math.min(frameHeight - y, Math.floor(h * 1.08));
+    } else {
+      y = Math.max(0, y - Math.floor(h * 0.08));
+      h = Math.min(frameHeight - y, Math.floor(h * 1.16));
+    }
   }
 
   var padX = Math.max(2, Math.floor(w * 0.05));
   var padY = Math.max(2, Math.floor(h * (roi.label === '时间' ? 0.06 : 0.10)));
+  if (roi.label === '时间' && isOcrDisplayProfile7Segment()) {
+    padX = Math.max(2, Math.floor(w * 0.08));
+    padY = Math.max(2, Math.floor(h * 0.04));
+  }
   x = Math.max(0, x - padX);
   y = Math.max(0, y - padY);
   w = Math.min(frameWidth - x, w + padX * 2);
