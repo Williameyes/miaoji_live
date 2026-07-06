@@ -226,6 +226,37 @@ const THERMAL_ROLLING_SEGMENT_BYTES_PER_SEC = 50000;
 const ENCODE_STALL_AFTER_PAGE_HIDE_MS = 60000;
 const ENCODE_STALL_RECOVER_COOLDOWN_MS = 45000;
 const RECORDER_SAFE_RESTART_DELAY_MIN_MS = 120;
+/** 本地存储键：Live 页录制模式（local | remote | dual | off） */
+const LIVE_RECORDING_MODE_STORAGE_KEY = 'live_recording_mode_v1';
+/**
+ * Live 页录制模式。
+ * @readonly
+ */
+const RecordingMode = {
+  LOCAL: 'local',
+  REMOTE: 'remote',
+  DUAL: 'dual',
+  OFF: 'off'
+};
+/** 录制模式面板选项（供 wxml 渲染） */
+const RECORDING_MODE_OPTIONS = [{
+  id: RecordingMode.LOCAL,
+  label: '本机录制',
+  hint: '设备要求高·发热高·弱机易卡顿过热'
+}, {
+  id: RecordingMode.REMOTE,
+  label: '副机录制',
+  recommended: true,
+  hint: '直播机发热卡顿时·分流到副机·需副机'
+}, {
+  id: RecordingMode.DUAL,
+  label: '双机录制',
+  hint: '设备要求最高·双录发热最高·弱机勿选'
+}, {
+  id: RecordingMode.OFF,
+  label: '不录制',
+  hint: '画面卡顿时请选·优先保直播画面质量'
+}];
 /**
  * 本地存储键：是否已展示「超频模式无机位切换」提示（仅首次）。
  */
@@ -837,6 +868,11 @@ Page({
     /** RecorderCore 熔断后的降级态：仅保留基础录制与基础高光。 */
     recorderDegradedMode: false,
     isRecording: false,
+    /** 录制模式：local 本机 | remote 副机 | dual 双机 | off 关闭 */
+    recordingMode: RecordingMode.LOCAL,
+    recordingModeOptions: RECORDING_MODE_OPTIONS,
+    recordingModeLabel: '本机录制',
+    /** @deprecated 由 recordingMode 推导，保留兼容旧逻辑读取 */
     recSyncEnabled: false,
     recSyncRoomId: '',
     recSyncConnected: false,
@@ -2070,34 +2106,38 @@ buildVipGateStateFromCheckStatus: function (body) {
         try {
           clipsStorage.pruneUnplayableLegacyList();
         } catch (ePrune) {}
-        // 必须在入场清理完全结束后，再赋予录制活跃状态与标记就绪
-        this.rollingActive = true;
+        // 必须在入场清理完全结束后，再按录制模式决定是否启动本机滚动录制
         this.rollingSessionId += 1;
         const sessionIdForRolling = this.rollingSessionId;
         if (this._recorderCore) {
-          // 显式通知状态机脱离 idle 死锁，进入 ready
           this._recorderCore.markReady('on_show_kickoff');
         }
         if (this._rollingKickoffTimer) {
           clearTimeout(this._rollingKickoffTimer);
           this._rollingKickoffTimer = null;
         }
-        if (this._cameraInitDone) {
-          this.tryStartRollingWhenCameraReady('on_show_kickoff');
+        const kickoffWantRolling = this._shouldLocalRollingRecording();
+        if (kickoffWantRolling) {
+          this.rollingActive = true;
+          if (this._cameraInitDone) {
+            this.tryStartRollingWhenCameraReady('on_show_kickoff');
+          } else {
+            this._rollingKickoffTimer = setTimeout(() => {
+              this._rollingKickoffTimer = null;
+              if (!this.rollingActive || sessionIdForRolling !== this.rollingSessionId) {
+                return;
+              }
+              this.tryStartRollingWhenCameraReady('on_show_kickoff_deferred');
+            }, 1800);
+          }
+          if (this._rollingStartPendingBeforeKickoff && this._cameraInitDone) {
+            this._rollingStartPendingBeforeKickoff = false;
+            this.tryStartRollingWhenCameraReady('kickoff_after_early_camera_init');
+          }
+          this._scheduleRollingKickoffWatchdog(sessionIdForRolling);
         } else {
-          this._rollingKickoffTimer = setTimeout(() => {
-            this._rollingKickoffTimer = null;
-            if (!this.rollingActive || sessionIdForRolling !== this.rollingSessionId) {
-              return;
-            }
-            this.tryStartRollingWhenCameraReady('on_show_kickoff_deferred');
-          }, 1800);
+          this.rollingActive = false;
         }
-        if (this._rollingStartPendingBeforeKickoff && this._cameraInitDone) {
-          this._rollingStartPendingBeforeKickoff = false;
-          this.tryStartRollingWhenCameraReady('kickoff_after_early_camera_init');
-        }
-        this._scheduleRollingKickoffWatchdog(sessionIdForRolling);
       });
     });
     if (this.data.drawerMode === 1) {
@@ -4082,6 +4122,9 @@ onCameraInit: function (e) {
   _tryStartRollingWhenCameraReadyImpl: function (source) {
     if (this.data.showGuide) {
       this.appendHealthLog('rolling_start_deferred_by_guide', {});
+      return;
+    }
+    if (!this._shouldLocalRollingRecording()) {
       return;
     }
     const now = Date.now();
@@ -6401,11 +6444,6 @@ onCameraInit: function (e) {
       this._liveWsHealthCheckOnShow();
     } catch (eHealth) {}
     try {
-      if (this.data.recSyncEnabled && this.data.recSyncRoomId.length === 6) {
-        this._recSyncWsConnect();
-      }
-    } catch (eRecSyncShow) {}
-    try {
       const cid = wx.getStorageSync('currentMatchId') || app.globalData && app.globalData.currentMatchId || '';
       clipsStorage.mergeDefaultClipBucketIfTargetEmpty(String(cid || '').trim());
     } catch (eMerge) {}
@@ -7112,6 +7150,14 @@ onShareAppMessage: function () {
     try {
       this._recSyncWsDisconnect();
     } catch (eRecDestroy) {}
+    if (this._recordingModeApplyTimer) {
+      clearTimeout(this._recordingModeApplyTimer);
+      this._recordingModeApplyTimer = null;
+    }
+    if (this._recordingModeRollingStopTimer) {
+      clearTimeout(this._recordingModeRollingStopTimer);
+      this._recordingModeRollingStopTimer = null;
+    }
     wx.setKeepScreenOn({
       keepScreenOn: false
     });
@@ -7506,6 +7552,12 @@ updatePipelineHealth: function () {
       /** 严重水位停分段：非 ERR，避免与采集中断混淆 */
       health = 'ok';
       text = 'STO';
+    } else if (!this._shouldLocalRollingRecording()) {
+      const recMode = this._normalizeRecordingMode(this.data.recordingMode);
+      if (recMode === RecordingMode.REMOTE) {
+        health = this.data.recSyncConnected ? 'ok' : 'warn';
+        text = this.data.recSyncConnected ? 'sRec' : '未连';
+      }
     }
     if (health !== this.data.pipelineHealth || text !== this.data.opsControlText || actionable !== this.data.opsControlActionable) {
       this.setData({
@@ -8476,6 +8528,19 @@ updatePipelineHealth: function () {
       });
       return;
     }
+    const recModeFab = this._normalizeRecordingMode(this.data.recordingMode);
+    if (recModeFab === RecordingMode.OFF) {
+      wx.showToast({
+        title: '已关闭高光录制',
+        icon: 'none',
+        duration: 2200
+      });
+      return;
+    }
+    if (recModeFab === RecordingMode.REMOTE) {
+      this._requestRemoteHighlightCapture();
+      return;
+    }
     const canCaptureWhileRolling = !!this.rollingActive && !!this._cameraInitDone && !!this.data.cameraContext && !this.data.isRecovering && !this._recoveryLock;
     if (this.data.enhanceMode === 'vk') {
       this.requestHighlightCapture();
@@ -8532,6 +8597,13 @@ updatePipelineHealth: function () {
       this.vibrate('light');
       this.appendHealthLog('recovery_fab_tap_recover', {});
       this.hardRecoverLivePipeline('manual_tap');
+      return;
+    }
+    if (!this._shouldLocalRollingRecording()) {
+      this.appendHealthLog('recovery_fab_tap_ignored', {
+        reason: 'recording_mode_no_local_rolling',
+        recordingMode: this.data.recordingMode || ''
+      });
       return;
     }
     if (!this.rollingActive && this._livePageVisible && this.data.liveStreamAllowed && this._cameraInitDone && !!this.data.cameraContext && !this.data.showGuide) {
@@ -9150,6 +9222,9 @@ updatePipelineHealth: function () {
    * @returns {void}
    */
   _startRollingRecordingImpl: function (source) {
+    if (!this._shouldLocalRollingRecording()) {
+      return;
+    }
     this._ensurePreviewRecordPipeline();
     if (!this.rollingActive || !this._cameraInitDone) return;
     if (!this.data.cameraContext) return;
@@ -11505,6 +11580,19 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
    * MOD: 点击时只记录时间点，不打断 rolling，也不等待/选择 segment index。
    */
   requestHighlightCapture: function () {
+    const recMode = this._normalizeRecordingMode(this.data.recordingMode);
+    if (recMode === RecordingMode.OFF) {
+      wx.showToast({
+        title: '已关闭高光录制',
+        icon: 'none',
+        duration: 2200
+      });
+      return;
+    }
+    if (recMode === RecordingMode.REMOTE) {
+      this._requestRemoteHighlightCapture();
+      return;
+    }
     if (this._highlightRequestLock || this.data.isSavingHighlight || this.pendingHighlight) {
       this.appendHealthLog('highlight_request_ignored', {
         reason: this._highlightRequestLock ? 'request_lock' : this.data.isSavingHighlight ? 'saving_highlight' : 'pending_highlight'
@@ -11609,10 +11697,14 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
     }
     const now = Date.now();
     const anchorClickTime = now;
-    if (this.data.recSyncEnabled && this._recSyncWs && this._recSyncWs.isConnected()) {
+    if (this._shouldRecSyncTrigger() && this._recSyncWs && this._recSyncWs.isConnected()) {
       try {
         const triggerId = this._recSyncWs.sendTrigger();
-        this.appendHealthLog('rec_trigger_sent', { triggerId: triggerId, recRoomId: this.data.recSyncRoomId });
+        this.appendHealthLog('rec_trigger_sent', {
+          triggerId: triggerId,
+          recRoomId: this.data.recSyncRoomId,
+          recordingMode: recMode
+        });
       } catch (err) {
         console.error('发送同步高光信令失败:', err);
       }
@@ -12111,6 +12203,7 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
     this.loadMatchList();
     this.setData({
       drawerMode: 1,
+      recSyncPanelOpen: false,
       cameraSettingsOpen: false,
       footballOpsPanelOpen: false,
       quickZoomMenuOpen: false
@@ -15691,10 +15784,13 @@ onLoad: function (options) {
       this.setData({ liveVideoAspectMode: savedAspectMode });
     } catch (e) {}
     try {
-      const recSyncEnabled = wx.getStorageSync('rec_sync_enabled') || false;
       const recSyncRoomId = wx.getStorageSync('rec_sync_room_id') || '';
+      const recordingMode = this._resolveRecordingModeFromStorage();
+      this._lastAppliedRecordingMode = recordingMode;
       this.setData({
-        recSyncEnabled: recSyncEnabled,
+        recordingMode: recordingMode,
+        recordingModeLabel: this._recordingModeLabel(recordingMode),
+        recSyncEnabled: this._recordingModeUsesRecSync(recordingMode),
         recSyncRoomId: recSyncRoomId
       });
     } catch (e) {}
@@ -15851,24 +15947,241 @@ onLoad: function (options) {
       }, 0);
     } catch (eBootT) {}
   },
+  /**
+   * 规范化录制模式字符串。
+   * @param {string} [mode]
+   * @returns {'local'|'remote'|'dual'|'off'}
+   */
+  _normalizeRecordingMode: function (mode) {
+    const m = String(mode || '').trim();
+    if (m === RecordingMode.REMOTE || m === RecordingMode.DUAL || m === RecordingMode.OFF) {
+      return m;
+    }
+    return RecordingMode.LOCAL;
+  },
+  /**
+   * 从本地存储解析录制模式（兼容旧 rec_sync_enabled）。
+   * @returns {'local'|'remote'|'dual'|'off'}
+   */
+  _resolveRecordingModeFromStorage: function () {
+    try {
+      const stored = wx.getStorageSync(LIVE_RECORDING_MODE_STORAGE_KEY);
+      if (stored === RecordingMode.REMOTE || stored === RecordingMode.DUAL || stored === RecordingMode.OFF) {
+        return stored;
+      }
+      if (stored === RecordingMode.LOCAL) {
+        return RecordingMode.LOCAL;
+      }
+      if (wx.getStorageSync('rec_sync_enabled')) {
+        return RecordingMode.DUAL;
+      }
+    } catch (e) {}
+    return RecordingMode.LOCAL;
+  },
+  /**
+   * 录制模式是否需要 rec 通道 WebSocket。
+   * @param {string} [mode]
+   * @returns {boolean}
+   */
+  _recordingModeUsesRecSync: function (mode) {
+    const m = this._normalizeRecordingMode(mode || this.data.recordingMode);
+    return m === RecordingMode.REMOTE || m === RecordingMode.DUAL;
+  },
+  /**
+   * 录制模式是否启用本机乒乓滚动录制。
+   * @returns {boolean}
+   */
+  _shouldLocalRollingRecording: function () {
+    const m = this._normalizeRecordingMode(this.data.recordingMode);
+    return m === RecordingMode.LOCAL || m === RecordingMode.DUAL;
+  },
+  /**
+   * 录制模式是否应连接 rec 通道 WebSocket。
+   * @returns {boolean}
+   */
+  _shouldRecSyncWs: function () {
+    return this._recordingModeUsesRecSync(this.data.recordingMode);
+  },
+  /**
+   * 保存高光时是否向副机发送 trigger。
+   * @returns {boolean}
+   */
+  _shouldRecSyncTrigger: function () {
+    return this._shouldRecSyncWs();
+  },
+  /**
+   * 录制模式展示文案。
+   * @param {string} mode
+   * @returns {string}
+   */
+  _recordingModeLabel: function (mode) {
+    const m = this._normalizeRecordingMode(mode);
+    const hit = RECORDING_MODE_OPTIONS.find(function (opt) {
+      return opt.id === m;
+    });
+    return hit ? hit.label : '本机录制';
+  },
+  /**
+   * 若当前模式允许，启用本机滚动录制并尝试起录。
+   * @param {string} [source]
+   * @returns {boolean}
+   */
+  _enableLocalRollingIfAllowed: function (source) {
+    if (!this._shouldLocalRollingRecording()) {
+      this.rollingActive = false;
+      return false;
+    }
+    this.rollingActive = true;
+    if (this._cameraInitDone && this.data.cameraContext && this._livePageVisible) {
+      this.tryStartRollingWhenCameraReady(source || 'enable_local_rolling');
+    }
+    return true;
+  },
+  /**
+   * 切换录制模式后的副作用：WS 连接、本机 rolling 启停、状态灯刷新。
+   * 快速连点时 debounce，且仅在模式维度变化时启停 rolling / WS，避免管线与 Socket 泄漏。
+   * @param {string} [source]
+   * @returns {void}
+   */
+  _applyRecordingModeEffects: function (source) {
+    const mode = this._normalizeRecordingMode(this.data.recordingMode);
+    const prevMode = this._lastAppliedRecordingMode != null
+      ? this._normalizeRecordingMode(this._lastAppliedRecordingMode)
+      : null;
+    if (prevMode === mode && source !== 'force') {
+      return;
+    }
+    const prevUsesRecSync = prevMode ? this._recordingModeUsesRecSync(prevMode) : false;
+    const usesRecSync = this._recordingModeUsesRecSync(mode);
+    const prevNeedRolling = prevMode
+      ? (prevMode === RecordingMode.LOCAL || prevMode === RecordingMode.DUAL)
+      : false;
+    const needRolling = this._shouldLocalRollingRecording();
+    this._lastAppliedRecordingMode = mode;
+    this.setData({
+      recordingModeLabel: this._recordingModeLabel(mode),
+      recSyncEnabled: usesRecSync
+    });
+    try {
+      wx.setStorageSync('rec_sync_enabled', usesRecSync);
+    } catch (eStore) {}
+    if (!usesRecSync && prevUsesRecSync) {
+      this._recSyncWsDisconnect();
+    }
+    if (this._recordingModeRollingStopTimer) {
+      clearTimeout(this._recordingModeRollingStopTimer);
+      this._recordingModeRollingStopTimer = null;
+    }
+    if (needRolling && !prevNeedRolling) {
+      this._enableLocalRollingIfAllowed('recording_mode_' + (source || 'apply'));
+    } else if (!needRolling && prevNeedRolling) {
+      const self = this;
+      this._recordingModeRollingStopTimer = setTimeout(function () {
+        self._recordingModeRollingStopTimer = null;
+        if (self._shouldLocalRollingRecording()) {
+          return;
+        }
+        self.rollingActive = false;
+        self.stopRollingRecording(null, 'recording_mode_stop');
+      }, 320);
+    }
+    this.updatePipelineHealth();
+    this.appendHealthLog('recording_mode_applied', {
+      mode: mode,
+      prevMode: prevMode || '',
+      source: source || 'apply',
+      localRolling: needRolling
+    });
+  },
+  /**
+   * debounce 调度录制模式副作用（面板内快速连选时合并为一次管线/WS 变更）。
+   * @param {string} [source]
+   * @returns {void}
+   */
+  _scheduleRecordingModeEffects: function (source) {
+    if (this._recordingModeApplyTimer) {
+      clearTimeout(this._recordingModeApplyTimer);
+    }
+    const self = this;
+    this._recordingModeApplyTimer = setTimeout(function () {
+      self._recordingModeApplyTimer = null;
+      self._applyRecordingModeEffects(source || 'user_select');
+    }, 300);
+  },
+  /**
+   * 副机录制模式：仅向素材机发送 trigger，不在本机保存高光。
+   * @returns {void}
+   */
+  _requestRemoteHighlightCapture: function () {
+    if (this._highlightRequestLock || this.data.isSavingHighlight || this.pendingHighlight) {
+      return;
+    }
+    if (this.data.storageSevereLock) {
+      this._showLightHint('请先清理空间');
+      return;
+    }
+    if (this.data.isRecovering || this._recoveryLock || !this._cameraInitDone) {
+      this._showLightHint('相机未就绪');
+      return;
+    }
+    if (this.data.drawerMode > 0) {
+      this._showLightHint('请先关闭抽屉');
+      return;
+    }
+    if (this.data.isReplaying) {
+      this._showLightHint('回放中无法保存');
+      return;
+    }
+    if (!this._recSyncWs || !this._recSyncWs.isConnected()) {
+      this._showLightHint('请先连接副机');
+      return;
+    }
+    const now = Date.now();
+    if (this._lastRemoteTriggerAt && now - this._lastRemoteTriggerAt < 4000) {
+      this._showLightHint('点击太频繁');
+      return;
+    }
+    try {
+      const triggerId = this._recSyncWs.sendTrigger();
+      this._lastRemoteTriggerAt = now;
+      this.vibrate('heavy');
+      this._showLightHint('已触发副机');
+      this.appendHealthLog('rec_trigger_sent', {
+        triggerId: triggerId,
+        recRoomId: this.data.recSyncRoomId,
+        recordingMode: RecordingMode.REMOTE
+      });
+    } catch (err) {
+      this._showLightHint('同步失败');
+    }
+  },
   _recSyncWsConnect: function () {
+    if (!this._shouldRecSyncWs()) {
+      return;
+    }
+    const recSyncRoomId = this.data.recSyncRoomId;
+    if (this._recSyncWs && this._recSyncWs.isConnected() && this._recSyncWs.getRoomId() === recSyncRoomId) {
+      return;
+    }
     if (this._recSyncWs) {
       this._recSyncWs.destroy();
     }
-    const recSyncRoomId = this.data.recSyncRoomId;
     const self = this;
     const client = require('../../services/rec-sync-ws-client.js');
     this._recSyncWs = client.createRecSyncWsClient({
       onOpen: function () {
         self.setData({ recSyncConnected: true });
+        self.updatePipelineHealth();
         self.appendHealthLog('rec_sync_ws_open', { roomId: recSyncRoomId });
       },
       onClose: function () {
         self.setData({ recSyncConnected: false });
+        self.updatePipelineHealth();
         self.appendHealthLog('rec_sync_ws_close', { roomId: recSyncRoomId });
       },
       onError: function (err) {
         self.setData({ recSyncConnected: false });
+        self.updatePipelineHealth();
         self.appendHealthLog('rec_sync_ws_error', { err: err.message || err });
       }
     });
@@ -15880,10 +16193,23 @@ onLoad: function (options) {
       this._recSyncWs = null;
     }
     this.setData({ recSyncConnected: false });
+    this.updatePipelineHealth();
   },
   onRecSyncPanelToggle: function () {
+    const opening = !this.data.recSyncPanelOpen;
+    if (opening) {
+      this.closeAllDrawers();
+      this.setData({
+        recSyncPanelOpen: true,
+        aspectModePanelOpen: false,
+        cameraSettingsOpen: false,
+        footballOpsPanelOpen: false,
+        quickZoomMenuOpen: false
+      });
+      return;
+    }
     this.setData({
-      recSyncPanelOpen: !this.data.recSyncPanelOpen
+      recSyncPanelOpen: false
     });
   },
   onRecSyncPanelClose: function () {
@@ -15891,26 +16217,44 @@ onLoad: function (options) {
       recSyncPanelOpen: false
     });
   },
-  onRecSyncEnabledChange: function (e) {
-    const val = e.detail.value;
-    this.setData({ recSyncEnabled: val });
-    wx.setStorageSync('rec_sync_enabled', val);
-    if (val) {
-      if (this.data.recSyncRoomId.length === 6) {
-        this._recSyncWsConnect();
-      }
-    } else {
-      this._recSyncWsDisconnect();
+  /**
+   * 选择录制模式。
+   * @param {WechatMiniprogram.BaseEvent} e
+   * @returns {void}
+   */
+  onRecordingModeSelect: function (e) {
+    const mode = e && e.currentTarget && e.currentTarget.dataset ? e.currentTarget.dataset.mode : '';
+    const nextMode = this._normalizeRecordingMode(mode);
+    if (nextMode === this._normalizeRecordingMode(this.data.recordingMode)) {
+      return;
     }
+    this.setData({
+      recordingMode: nextMode,
+      recordingModeLabel: this._recordingModeLabel(nextMode)
+    });
+    try {
+      wx.setStorageSync(LIVE_RECORDING_MODE_STORAGE_KEY, nextMode);
+    } catch (eStore) {}
+    this._scheduleRecordingModeEffects('user_select');
   },
   onRecSyncRoomIdInput: function (e) {
     const val = String(e.detail.value || '').replace(/\D/g, '').slice(0, 6);
+    if (this._recSyncWs && this._recSyncWs.isConnected()) {
+      const connectedRoom = this._recSyncWs.getRoomId();
+      if (val !== connectedRoom) {
+        this._recSyncWsDisconnect();
+      }
+    }
     this.setData({ recSyncRoomId: val });
     wx.setStorageSync('rec_sync_room_id', val);
   },
   onRecSyncConnectTap: function () {
+    if (this.data.recSyncConnected) {
+      this._recSyncWsDisconnect();
+      return;
+    }
     if (this.data.recSyncRoomId.length !== 6) {
-      wx.showToast({ title: '请输入6位房间号', icon: 'none' });
+      this._showLightHint('请输入6位房间号');
       return;
     }
     this._recSyncWsConnect();
