@@ -249,7 +249,8 @@ page {
 
 .live-ble-panel--recording-mode {
   pointer-events: auto;
-  width: 620rpx;
+  width: fit-content;
+  min-width: 480rpx;
   max-width: 92vw;
   padding: 12rpx 14rpx 12rpx;
   border-radius: 14rpx;
@@ -369,6 +370,10 @@ page {
 
 .live-rec-mode-actions {
   margin-top: 10rpx;
+}
+
+.live-rec-mode-actions .live-ble-btn {
+  width: 100%;
 }
 
 .live-ble-panel--compact {

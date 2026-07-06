@@ -556,7 +556,7 @@
     <view wx:if="{{recSyncPanelOpen}}" class="live-ble-panel-backdrop" catchtap="onRecSyncPanelClose">
       <view class="live-ble-panel live-ble-panel--recording-mode" catchtap="noopCatchTap">
         <view class="live-ble-busy-row">
-          <text class="live-ble-busy-text">录制模式</text>
+          <text class="live-ble-busy-text">录制配置</text>
         </view>
         <view class="live-rec-mode-list">
           <block wx:for="{{recordingModeOptions}}" wx:key="id">
@@ -1031,7 +1031,7 @@
       <view
         class="drawer-camera-pill {{recordingMode !== 'local' ? 'drawer-camera-pill--active' : ''}}"
         catchtap="onRecSyncPanelToggle"
-      >录制模式</view>
+      >录制配置</view>
     </view>
 
     <!-- 遮罩：点击关闭（z-index 低于面板，不拦截面板内点击） -->

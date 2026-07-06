@@ -242,7 +242,7 @@ const RecordingMode = {
 const RECORDING_MODE_OPTIONS = [{
   id: RecordingMode.LOCAL,
   label: '本机录制',
-  hint: '设备要求高·发热高·弱机易卡顿过热'
+  hint: '设备要求高·发热高·非旗舰机型易卡顿过热'
 }, {
   id: RecordingMode.REMOTE,
   label: '副机录制',
@@ -251,7 +251,7 @@ const RECORDING_MODE_OPTIONS = [{
 }, {
   id: RecordingMode.DUAL,
   label: '双机录制',
-  hint: '设备要求最高·双录发热最高·弱机勿选'
+  hint: '设备要求最高·双录发热最高·非旗舰机型勿选'
 }, {
   id: RecordingMode.OFF,
   label: '不录制',
