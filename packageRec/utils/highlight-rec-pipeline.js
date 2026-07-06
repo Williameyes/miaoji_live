@@ -198,6 +198,8 @@ function createHighlightRecPipeline(page, profile) {
         fps: perf.recordFps || 24,
         canvasWidth: perf.canvasWidth || 720,
         canvasHeight: perf.canvasHeight || 1280,
+        /** 固定标准画幅输出（16:9 / 9:16），不随相机帧宽漂移 */
+        forceTargetCanvasSize: true,
         videoBitsPerSecondKbps: perf.videoBitsPerSecondKbps || 4800,
         maxFiles: perf.rollingMaxFiles || 2,
         requireFirstFrame: true,

@@ -1,8 +1,14 @@
 /**
- * @fileoverview 高光素材机性能档位：视录分离 + 独立收音（竖屏 9:16）。
+ * @fileoverview 高光素材机性能档位：视录分离 + 独立收音。
+ * 竖持 9:16 / 横置 16:9（横置须物理旋转手机，与直播页一致）。
  */
 
 const deviceRecordProfile = require('../../utils/device-record-profile.js');
+
+/** @type {'portrait'|'landscape'} */
+var ASPECT_PORTRAIT = 'portrait';
+/** @type {'portrait'|'landscape'} */
+var ASPECT_LANDSCAPE = 'landscape';
 
 /** @type {Object|null} */
 var cachedProfile = null;
@@ -27,20 +33,38 @@ function isXiaomiAndroid() {
 }
 
 /**
- * 竖屏 9:16 编码画布（偶数像素）。
+ * 规范化画幅模式。
+ *
+ * @param {string|undefined} mode
+ * @returns {'portrait'|'landscape'}
+ */
+function normalizeAspectMode(mode) {
+  return mode === ASPECT_LANDSCAPE ? ASPECT_LANDSCAPE : ASPECT_PORTRAIT;
+}
+
+/**
+ * 编码画布尺寸（偶数像素）。
  *
  * @param {boolean} lowEnd
  * @param {boolean} use1080p
- * @returns {{ canvasWidth: number, canvasHeight: number, label: string }}
+ * @param {'portrait'|'landscape'} aspectMode
+ * @returns {{ canvasWidth: number, canvasHeight: number, label: string, aspectLabel: string }}
  */
-function resolvePortraitCanvasSize(lowEnd, use1080p) {
+function resolveCanvasSize(lowEnd, use1080p, aspectMode) {
+  var landscape = aspectMode === ASPECT_LANDSCAPE;
   if (lowEnd) {
-    return { canvasWidth: 480, canvasHeight: 854, label: '480p' };
+    return landscape
+      ? { canvasWidth: 854, canvasHeight: 480, label: '480p', aspectLabel: '16:9' }
+      : { canvasWidth: 480, canvasHeight: 854, label: '480p', aspectLabel: '9:16' };
   }
   if (use1080p) {
-    return { canvasWidth: 1080, canvasHeight: 1920, label: '1080p' };
+    return landscape
+      ? { canvasWidth: 1920, canvasHeight: 1080, label: '1080p', aspectLabel: '16:9' }
+      : { canvasWidth: 1080, canvasHeight: 1920, label: '1080p', aspectLabel: '9:16' };
   }
-  return { canvasWidth: 720, canvasHeight: 1280, label: '720p' };
+  return landscape
+    ? { canvasWidth: 1280, canvasHeight: 720, label: '720p', aspectLabel: '16:9' }
+    : { canvasWidth: 720, canvasHeight: 1280, label: '720p', aspectLabel: '9:16' };
 }
 
 /**
@@ -59,7 +83,7 @@ function computeContentLeadInSkipMs(warmupFrames, fps) {
 /**
  * 获取素材机录制/预览档位。
  *
- * @param {{ use1080p?: boolean }} [options]
+ * @param {{ use1080p?: boolean, actionMode?: boolean, aspectMode?: string }} [options]
  * @returns {Object}
  */
 function getHighlightRecProfile(options) {
@@ -69,13 +93,16 @@ function getHighlightRecProfile(options) {
   var xiaomi = isXiaomiAndroid();
   var use1080p = !lowEnd && !!opts.use1080p;
   var actionMode = !lowEnd && !!opts.actionMode;
-  var cacheKey = (lowEnd ? '480' : (use1080p ? '1080' : '720')) + (actionMode ? '_action' : '');
+  var aspectMode = normalizeAspectMode(opts.aspectMode);
+  var cacheKey = (lowEnd ? '480' : (use1080p ? '1080' : '720'))
+    + (actionMode ? '_action' : '')
+    + (aspectMode === ASPECT_LANDSCAPE ? '_land' : '_port');
 
   if (cachedProfile && cachedKey === cacheKey) {
     return cachedProfile;
   }
 
-  var canvas = resolvePortraitCanvasSize(lowEnd, use1080p);
+  var canvas = resolveCanvasSize(lowEnd, use1080p, aspectMode);
   var recordFps = lowEnd ? 20 : 24;
   var encoderLiveWarmupFrames = lowEnd ? 12 : 24;
   var videoBitsPerSecondKbps = lowEnd ? 3200 : (use1080p ? (xiaomi ? 6800 : 6200) : (xiaomi ? 5200 : 4800));
@@ -90,9 +117,9 @@ function getHighlightRecProfile(options) {
     tier: lowEnd ? '480p' : (use1080p ? '1080p' : '720p'),
     use1080p: use1080p,
     actionMode: actionMode,
-    /** 追拍模式不锁中心对焦，交给系统连续 AF */
+    aspectMode: aspectMode,
+    aspectLabel: canvas.aspectLabel,
     lockCenterFocus: !actionMode,
-    /** 略降曝光以缩短快门、减轻运动拖影（EV，仅硬件支持时生效） */
     exposureCompensationEv: actionMode ? -0.7 : 0,
     cameraResolution: (use1080p || actionMode) ? 'high' : 'medium',
     cameraFrameSize: 'large',
@@ -102,6 +129,8 @@ function getHighlightRecProfile(options) {
     bufferTargetMs: 90000,
     canvasWidth: canvas.canvasWidth,
     canvasHeight: canvas.canvasHeight,
+    /** 标准导出分辨率文案，如 1280×720 */
+    exportResolution: canvas.canvasWidth + '×' + canvas.canvasHeight,
     qualityLabel: canvas.label,
     recordFps: recordFps,
     encoderLiveWarmupFrames: encoderLiveWarmupFrames,
@@ -128,7 +157,10 @@ function resetHighlightRecProfileCache() {
 }
 
 module.exports = {
+  ASPECT_PORTRAIT: ASPECT_PORTRAIT,
+  ASPECT_LANDSCAPE: ASPECT_LANDSCAPE,
   getHighlightRecProfile: getHighlightRecProfile,
   isXiaomiAndroid: isXiaomiAndroid,
+  normalizeAspectMode: normalizeAspectMode,
   resetHighlightRecProfileCache: resetHighlightRecProfileCache
 };

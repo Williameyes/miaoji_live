@@ -23,6 +23,7 @@
   width: 100%;
   height: 100%;
   z-index: 0;
+  object-fit: cover;
 }
 
 /* 中心对准辅助层（不参与交互） */
@@ -218,24 +219,131 @@
   -webkit-backdrop-filter: none;
 }
 
-/* HUD 覆盖控制层 */
-.hud-overlay {
+.hud-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  flex-shrink: 0;
+}
+
+.hud-action-btn {
+  font-size: 20rpx;
+  font-weight: bold;
+  color: #e2e8f0;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1rpx solid rgba(255, 255, 255, 0.12);
+  padding: 8rpx 18rpx;
+  border-radius: 999rpx;
+  white-space: nowrap;
+}
+
+.hud-action-btn--settings {
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.35);
+  background: rgba(56, 189, 248, 0.12);
+}
+
+.hud-action-btn--start {
+  color: #052e16;
+  background: rgba(74, 222, 128, 0.88);
+  border-color: rgba(74, 222, 128, 0.6);
+}
+
+.hud-action-btn--stop {
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.55);
+  border-color: rgba(248, 113, 113, 0.45);
+}
+
+/* 设置弹窗 */
+.settings-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24rpx;
+  box-sizing: border-box;
+}
+
+.settings-backdrop {
   position: absolute;
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
-  z-index: 5;
-  box-sizing: border-box;
-  padding: 210rpx 30rpx 180rpx 30rpx;
-  display: flex;
-  flex-direction: column;
-  gap: 20rpx;
-  pointer-events: none;
+  background: rgba(0, 0, 0, 0.55);
 }
 
-.hud-overlay .hud-panel {
-  pointer-events: auto;
+.settings-sheet {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 640rpx;
+  max-height: 78vh;
+  background: rgba(15, 23, 42, 0.96);
+  border: 1rpx solid rgba(255, 255, 255, 0.08);
+  border-radius: 20rpx;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20rpx 24rpx 12rpx;
+  border-bottom: 1rpx solid rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+}
+
+.settings-title {
+  font-size: 26rpx;
+  font-weight: bold;
+  color: #f8fafc;
+}
+
+.settings-close {
+  width: 48rpx;
+  height: 48rpx;
+  line-height: 44rpx;
+  text-align: center;
+  font-size: 36rpx;
+  color: #94a3b8;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.settings-body {
+  flex: 1;
+  min-height: 0;
+  max-height: calc(78vh - 80rpx);
+  padding: 16rpx 20rpx 24rpx;
+  box-sizing: border-box;
+}
+
+.settings-body .hud-panel {
+  margin-bottom: 16rpx;
+}
+
+.settings-body .hud-panel:last-child {
+  margin-bottom: 0;
+}
+
+.settings-body .logs-panel {
+  min-height: auto;
+}
+
+/* HUD 覆盖控制层（已废弃，保留类名供面板复用） */
+.hud-overlay {
+  display: none;
 }
 
 /* 浮动面板基类 - Glassmorphism Style */
@@ -718,6 +826,191 @@
 @keyframes toastSlideIn {
   0% { transform: translateY(-10rpx); opacity: 0; }
   100% { transform: translateY(0); opacity: 1; }
+}
+
+/* 横置模式：rpx 按长边换算会偏大，顶部条与弹窗改用 px 紧凑布局 */
+.container.landscape .custom-nav {
+  height: 36px;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+.container.landscape .btn-back {
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.container.landscape .nav-title {
+  font-size: 13px;
+  margin-left: 8px;
+}
+
+.container.landscape .hud-top-bar {
+  left: 12px;
+  right: 12px;
+}
+
+.container.landscape .mini-rec-status {
+  padding: 4px 10px;
+  gap: 6px;
+  max-width: 55vw;
+  overflow: hidden;
+}
+
+.container.landscape .mini-dot {
+  width: 6px;
+  height: 6px;
+}
+
+.container.landscape .mini-text,
+.container.landscape .mini-buffer-info,
+.container.landscape .mini-perf-tag {
+  font-size: 10px;
+}
+
+.container.landscape .hud-action-btn {
+  font-size: 11px;
+  padding: 4px 10px;
+}
+
+.container.landscape .settings-modal {
+  padding: 8px 16px;
+}
+
+.container.landscape .settings-sheet {
+  max-width: 340px;
+  max-height: 88vh;
+  border-radius: 12px;
+}
+
+.container.landscape .settings-header {
+  padding: 10px 12px 8px;
+}
+
+.container.landscape .settings-title {
+  font-size: 14px;
+}
+
+.container.landscape .settings-close {
+  width: 28px;
+  height: 28px;
+  line-height: 26px;
+  font-size: 20px;
+}
+
+.container.landscape .settings-body {
+  max-height: calc(88vh - 44px);
+  padding: 8px 10px 12px;
+}
+
+.container.landscape .hud-panel {
+  padding: 10px;
+  border-radius: 10px;
+}
+
+.container.landscape .quality-label,
+.container.landscape .zoom-label,
+.container.landscape .config-label {
+  font-size: 11px;
+  width: 36px;
+}
+
+.container.landscape .quality-pill,
+.container.landscape .monitor-btn,
+.container.landscape .conn-btn {
+  font-size: 11px;
+  padding: 6px 0;
+}
+
+.container.landscape .conn-btn {
+  height: 28px;
+  line-height: 28px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.container.landscape .room-input {
+  font-size: 12px;
+  height: 28px;
+  padding: 4px 8px;
+}
+
+.container.landscape .room-conn-status {
+  font-size: 10px;
+  padding: 4px 8px;
+}
+
+.container.landscape .focus-lock-text,
+.container.landscape .quality-hint,
+.container.landscape .warning-text,
+.container.landscape .panel-title,
+.container.landscape .empty-log-tip,
+.container.landscape .log-time,
+.container.landscape .log-status {
+  font-size: 11px;
+}
+
+.container.landscape .log-type-tag {
+  font-size: 9px;
+}
+
+.container.landscape .monitor-row,
+.container.landscape .quality-row {
+  margin-bottom: 8px;
+  gap: 8px;
+}
+
+.container.landscape .quick-zoom-sidebar {
+  right: 8px;
+  gap: 6px;
+}
+
+.container.landscape .quick-zoom-stop {
+  width: 40px;
+  height: 40px;
+}
+
+.container.landscape .quick-zoom-label {
+  font-size: 10px;
+}
+
+.container.landscape .quick-zoom-sub-label {
+  font-size: 8px;
+  margin-top: 1px;
+}
+
+.container.landscape .manual-rec-area {
+  bottom: 12px;
+}
+
+.container.landscape .manual-rec-btn {
+  width: 52px;
+  height: 52px;
+  border-width: 2px;
+}
+
+.container.landscape .btn-inner-dot {
+  width: 14px;
+  height: 14px;
+  margin-bottom: 2px;
+}
+
+.container.landscape .btn-text {
+  font-size: 9px;
+}
+
+.container.landscape .saving-toast {
+  left: 12px;
+  padding: 4px 10px;
+}
+
+.container.landscape .saving-text {
+  font-size: 10px;
+}
+
+.container.landscape .saving-spinner {
+  width: 12px;
+  height: 12px;
 }
 
 

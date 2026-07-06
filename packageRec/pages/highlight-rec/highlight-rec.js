@@ -10,18 +10,21 @@ const highlightRecProfile = require('../../utils/highlight-rec-profile.js');
 var STORAGE_KEY_USE_1080P = 'highlight_rec_use_1080p_v1';
 /** 本地存储：篮球追拍模式 */
 var STORAGE_KEY_ACTION_MODE = 'highlight_rec_action_mode_v1';
+/** 本地存储：画幅模式 portrait | landscape */
+var STORAGE_KEY_ASPECT_MODE = 'highlight_rec_aspect_mode_v1';
 
 /**
- * 竖屏窗口内最大内接 9:16 预览区（宽:高 = 9:16），与竖屏短视频画幅一致。
+ * 窗口内最大内接预览区（按画幅宽高比）。
  *
  * @param {number} winW 窗口宽度（px）
  * @param {number} winH 窗口高度（px）
+ * @param {'portrait'|'landscape'} aspectMode
  * @returns {{ w: number, h: number }}
  */
-function computePreviewStage9x16SizePx(winW, winH) {
+function computePreviewStageSizePx(winW, winH, aspectMode) {
   var ww = Math.max(1, winW);
   var wh = Math.max(1, winH);
-  var ar = 9 / 16;
+  var ar = aspectMode === highlightRecProfile.ASPECT_LANDSCAPE ? (16 / 9) : (9 / 16);
   if (ww / wh > ar) {
     var h1 = wh;
     return { w: h1 * ar, h: h1 };
@@ -30,26 +33,10 @@ function computePreviewStage9x16SizePx(winW, winH) {
   return { w: w0, h: w0 / ar };
 }
 
-/**
- * 9:16 预览区在窗口中的位置（px，左上为原点）。
- *
- * @param {number} winW 窗口宽度（px）
- * @param {number} winH 窗口高度（px）
- * @returns {{ w: number, h: number, left: number, top: number }}
- */
-function computePreviewStage9x16RectPx(winW, winH) {
-  var box = computePreviewStage9x16SizePx(winW, winH);
-  return {
-    w: box.w,
-    h: box.h,
-    left: (winW - box.w) / 2,
-    top: (winH - box.h) / 2
-  };
-}
-
 Page({
   data: {
     statusBarHeight: 0,
+    hudTopPx: 68,
     /** 9:16 预览取景区 inline style */
     previewStageStyle: '',
     /** 中心对准框 inline style（相对取景区 9:16） */
@@ -58,12 +45,18 @@ Page({
     cameraResolution: 'medium',
     cameraFrameSize: 'medium',
     perfTierLabel: '',
+    compactStatusLabel: '9:16·720p',
+    /** 设置弹窗是否打开 */
+    settingsModalOpen: false,
     /** 录制清晰度：720p / 1080p */
     use1080p: false,
     canUse1080p: true,
     qualityLabel: '720p',
     /** 篮球追拍：连续 AF + 短快门优先 */
     actionMode: false,
+    /** 画幅：portrait=9:16 / landscape=16:9 */
+    aspectMode: 'portrait',
+    aspectLabel: '9:16',
     zoom: 1.0,
     zoomDisplay: '1.0',
     cameraReady: false,
@@ -82,7 +75,7 @@ Page({
       { label: '标准', zoom: 2.0 },
       { label: '广角', zoom: 1.0 }
     ],
-    controlsCollapsed: false // 是否折叠控制面板
+    controlsCollapsed: true // 已废弃，保留兼容
   },
 
   _highlightPipeline: null,
@@ -103,10 +96,14 @@ Page({
     var sys = wx.getSystemInfoSync();
     var use1080pStored = !!wx.getStorageSync(STORAGE_KEY_USE_1080P);
     var actionModeStored = !!wx.getStorageSync(STORAGE_KEY_ACTION_MODE);
+    var aspectModeStored = highlightRecProfile.normalizeAspectMode(
+      wx.getStorageSync(STORAGE_KEY_ASPECT_MODE)
+    );
     highlightRecProfile.resetHighlightRecProfileCache();
     var perf = highlightRecProfile.getHighlightRecProfile({
       use1080p: use1080pStored,
-      actionMode: actionModeStored
+      actionMode: actionModeStored,
+      aspectMode: aspectModeStored
     });
     var canUse1080p = perf.tier !== '480p';
     var use1080p = canUse1080p && use1080pStored;
@@ -124,11 +121,15 @@ Page({
       use1080p: use1080p,
       canUse1080p: canUse1080p,
       actionMode: actionMode,
+      aspectMode: perf.aspectMode,
+      aspectLabel: perf.aspectLabel || '9:16',
       qualityLabel: perf.qualityLabel || '720p',
-      perfTierLabel: this._buildPerfTierLabel(perf)
+      perfTierLabel: this._buildPerfTierLabel(perf),
+      compactStatusLabel: this._buildCompactStatusLabel(perf)
     });
     this._updatePreviewStageLayout(sys.windowWidth, sys.windowHeight);
     this._bindWindowResize();
+    this._applyPageOrientation(perf.aspectMode);
 
     // 读取或初始化自定义快捷变焦档位
     var savedStops = wx.getStorageSync('rec_zoom_stops');
@@ -201,6 +202,7 @@ Page({
     wx.setKeepScreenOn({
       keepScreenOn: true
     });
+    this._applyPageOrientation(this.data.aspectMode || highlightRecProfile.ASPECT_PORTRAIT);
     this._updatePreviewStageLayout();
     this._livePageVisible = true;
 
@@ -218,6 +220,10 @@ Page({
   onHide: function () {
     this._livePageVisible = false;
     this._clearBufferStatusTimer();
+    if (this._orientationResizeTimer) {
+      clearTimeout(this._orientationResizeTimer);
+      this._orientationResizeTimer = null;
+    }
     this.disconnectWs();
     this.stopRecorder();
   },
@@ -226,6 +232,11 @@ Page({
     this._unloaded = true;
     this._clearBufferStatusTimer();
     this._clearZoomApplyTimer();
+    if (this._orientationResizeTimer) {
+      clearTimeout(this._orientationResizeTimer);
+      this._orientationResizeTimer = null;
+    }
+    this._applyPageOrientation(highlightRecProfile.ASPECT_PORTRAIT);
     this._cameraCtx = null;
     if (this._highlightPipeline) {
       this._highlightPipeline.destroy();
@@ -246,6 +257,15 @@ Page({
     this._onWindowResizeHandler = function (res) {
       var size = res && res.size ? res.size : {};
       self._updatePreviewStageLayout(size.windowWidth, size.windowHeight);
+      if (self._orientationResizeTimer) {
+        clearTimeout(self._orientationResizeTimer);
+      }
+      self._orientationResizeTimer = setTimeout(function () {
+        self._orientationResizeTimer = null;
+        if (!self._unloaded && self.data.cameraReady) {
+          self._updatePreviewStageLayout();
+        }
+      }, 200);
     };
     wx.onWindowResize(this._onWindowResizeHandler);
   },
@@ -262,7 +282,7 @@ Page({
   },
 
   /**
-   * 将相机预览限制为 9:16 内接矩形；录制仍走原生 cameraContext，不受预览黑边影响。
+   * 将相机预览限制为当前画幅内接矩形；录制走离屏 canvas，不含预览黑边。
    *
    * @param {number} [winW] 窗口宽度（px）
    * @param {number} [winH] 窗口高度（px）
@@ -281,15 +301,26 @@ Page({
         sysH = 667;
       }
     }
-    var box = computePreviewStage9x16SizePx(sysW, sysH);
+    var aspectMode = this.data.aspectMode || highlightRecProfile.ASPECT_PORTRAIT;
+    var box = computePreviewStageSizePx(sysW, sysH, aspectMode);
     var stageStyle = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);' +
       'width:' + box.w + 'px;height:' + box.h + 'px;';
-    var frameW = Math.round(box.w * 0.52);
-    var frameH = Math.round(frameW * 16 / 9);
+    var frameW;
+    var frameH;
+    if (aspectMode === highlightRecProfile.ASPECT_LANDSCAPE) {
+      frameW = Math.round(box.w * 0.38);
+      frameH = Math.round(frameW * 9 / 16);
+    } else {
+      frameW = Math.round(box.w * 0.52);
+      frameH = Math.round(frameW * 16 / 9);
+    }
     var alignFrameStyle = 'width:' + frameW + 'px;height:' + frameH + 'px;';
+    var hudTopPx = (this.data.statusBarHeight || 20)
+      + (aspectMode === highlightRecProfile.ASPECT_LANDSCAPE ? 28 : 48);
     this.setData({
       previewStageStyle: stageStyle,
-      alignFrameStyle: alignFrameStyle
+      alignFrameStyle: alignFrameStyle,
+      hudTopPx: hudTopPx
     });
   },
 
@@ -307,6 +338,40 @@ Page({
   },
 
   /**
+   * 按画幅切换页面方向（横屏模式须物理横置手机）。
+   *
+   * @param {'portrait'|'landscape'} aspectMode
+   * @returns {void}
+   */
+  _applyPageOrientation: function (aspectMode) {
+    if (!wx.setPageOrientation) return;
+    var want = aspectMode === highlightRecProfile.ASPECT_LANDSCAPE ? 'landscape' : 'portrait';
+    try {
+      wx.setPageOrientation({ orientation: want });
+    } catch (e) {
+      console.warn('[HighlightRec] setPageOrientation failed:', e);
+    }
+  },
+
+  /**
+   * 方向变化后重建 camera 组件，避免预览与编码帧方向不一致。
+   *
+   * @returns {void}
+   */
+  _remountCameraAfterOrientation: function () {
+    var self = this;
+    this._cameraCtx = null;
+    this.data.cameraContext = null;
+    this.setData({ cameraReady: false }, function () {
+      setTimeout(function () {
+        if (!self._unloaded) {
+          self.setData({ cameraReady: true });
+        }
+      }, 350);
+    });
+  },
+
+  /**
    * 构建 HUD 档位文案。
    *
    * @param {Object} perf
@@ -314,11 +379,46 @@ Page({
    */
   _buildPerfTierLabel: function (perf) {
     if (!perf) return '720p · 视录分离';
-    var parts = [perf.qualityLabel || '720p'];
+    var parts = [(perf.aspectLabel || '9:16') + ' ' + (perf.qualityLabel || '720p')];
     if (perf.actionMode) parts.push('追拍');
     parts.push('视录分离');
     return parts.join(' · ');
   },
+
+  /**
+   * 顶部状态条精简文案（横屏下避免过长）。
+   *
+   * @param {Object} perf
+   * @returns {string}
+   */
+  _buildCompactStatusLabel: function (perf) {
+    if (!perf) return '9:16·720p';
+    var parts = [perf.aspectLabel || '9:16', perf.qualityLabel || '720p'];
+    if (perf.actionMode) parts.push('追拍');
+    return parts.join('·');
+  },
+
+  /**
+   * 打开设置弹窗。
+   * @returns {void}
+   */
+  openSettingsModal: function () {
+    this.setData({ settingsModalOpen: true });
+  },
+
+  /**
+   * 关闭设置弹窗。
+   * @returns {void}
+   */
+  closeSettingsModal: function () {
+    this.setData({ settingsModalOpen: false });
+  },
+
+  /** 阻止弹窗内点击冒泡到遮罩 */
+  stopModalBubbling: function () {},
+
+  /** 阻止遮罩下层滚动 */
+  preventTouchMove: function () {},
 
   /**
    * 按档位应用相机采集策略（对焦 / 曝光）。
@@ -384,7 +484,8 @@ Page({
     this._highlightPipeline = createHighlightRecPipeline(this, perf);
     this.setData({
       cameraResolution: perf.cameraResolution,
-      perfTierLabel: this._buildPerfTierLabel(perf)
+      perfTierLabel: this._buildPerfTierLabel(perf),
+      compactStatusLabel: this._buildCompactStatusLabel(perf)
     });
     this._applyCameraCaptureTuning(perf);
     if (opts.autoStart && this.data.cameraReady && this.data.cameraContext) {
@@ -633,9 +734,7 @@ Page({
   },
 
   toggleHudCollapse: function () {
-    this.setData({
-      controlsCollapsed: !this.data.controlsCollapsed
-    });
+    this.openSettingsModal();
   },
 
   /**
@@ -660,12 +759,15 @@ Page({
       highlightRecProfile.resetHighlightRecProfileCache();
       return highlightRecProfile.getHighlightRecProfile({
         use1080p: want1080,
-        actionMode: self.data.actionMode
+        actionMode: self.data.actionMode,
+        aspectMode: self.data.aspectMode
       });
     }, function (perf) {
       self.setData({
         use1080p: want1080,
-        qualityLabel: perf.qualityLabel || (want1080 ? '1080p' : '720p')
+        qualityLabel: perf.qualityLabel || (want1080 ? '1080p' : '720p'),
+        perfTierLabel: self._buildPerfTierLabel(perf),
+        compactStatusLabel: self._buildCompactStatusLabel(perf)
       });
       wx.showToast({
         title: want1080 ? '已切换 1080p 高清' : '已切换 720p 均衡',
@@ -690,16 +792,60 @@ Page({
       highlightRecProfile.resetHighlightRecProfileCache();
       return highlightRecProfile.getHighlightRecProfile({
         use1080p: self.data.use1080p,
-        actionMode: wantAction
+        actionMode: wantAction,
+        aspectMode: self.data.aspectMode
       });
     }, function (perf) {
       self.setData({
         actionMode: wantAction,
-        qualityLabel: perf.qualityLabel || self.data.qualityLabel
+        qualityLabel: perf.qualityLabel || self.data.qualityLabel,
+        perfTierLabel: self._buildPerfTierLabel(perf),
+        compactStatusLabel: self._buildCompactStatusLabel(perf)
       });
       wx.showToast({
         title: wantAction ? '已开启追拍模式' : '已切换标准模式',
         icon: 'none'
+      });
+    });
+  },
+
+  /**
+   * 切换画幅（竖屏 9:16 / 横屏 16:9）。
+   *
+   * @param {Object} e
+   * @returns {void}
+   */
+  onAspectModeToggle: function (e) {
+    var wantLandscape = !!(e && e.currentTarget && e.currentTarget.dataset
+      && e.currentTarget.dataset.landscape);
+    var nextMode = wantLandscape
+      ? highlightRecProfile.ASPECT_LANDSCAPE
+      : highlightRecProfile.ASPECT_PORTRAIT;
+    if (nextMode === this.data.aspectMode) return;
+
+    var self = this;
+    this._switchProfileWithRestart(function () {
+      wx.setStorageSync(STORAGE_KEY_ASPECT_MODE, nextMode);
+      highlightRecProfile.resetHighlightRecProfileCache();
+      return highlightRecProfile.getHighlightRecProfile({
+        use1080p: self.data.use1080p,
+        actionMode: self.data.actionMode,
+        aspectMode: nextMode
+      });
+    }, function (perf) {
+      self._applyPageOrientation(perf.aspectMode);
+      self.setData({
+        aspectMode: perf.aspectMode,
+        aspectLabel: perf.aspectLabel || (wantLandscape ? '16:9' : '9:16'),
+        perfTierLabel: self._buildPerfTierLabel(perf),
+        compactStatusLabel: self._buildCompactStatusLabel(perf)
+      });
+      self._updatePreviewStageLayout();
+      self._remountCameraAfterOrientation();
+      wx.showToast({
+        title: wantLandscape ? '请横置手机拍摄 16:9' : '已切换竖持 9:16',
+        icon: 'none',
+        duration: 2500
       });
     });
   },

@@ -79,25 +79,38 @@ function computeAdaptiveRecordFps(targetFpsCap, firstFrameAt, lastFrameAt, frame
 }
 
 /**
- * 将相机帧尺寸对齐为 H.264 偶数像素；若低于 720p 目标则放大 canvas（WebGL 拉伸）。
+ * 将相机帧尺寸对齐为 H.264 偶数像素。
+ * forceTarget 为 true 时始终使用目标宽高（标准 16:9 / 9:16），相机帧经 cover 裁切后缩放。
+ *
  * @param {number} frameW
  * @param {number} frameH
  * @param {number} targetW
  * @param {number} targetH
+ * @param {boolean} [forceTarget]
  * @returns {{ width: number, height: number, upscaled: boolean }}
  */
-function resolveEncoderCanvasSize(frameW, frameH, targetW, targetH) {
-  let w = Math.max(2, Math.floor(Number(frameW) || targetW));
-  let h = Math.max(2, Math.floor(Number(frameH) || targetH));
-  w -= w % 2;
-  h -= h % 2;
+function resolveEncoderCanvasSize(frameW, frameH, targetW, targetH, forceTarget) {
   const tw = Math.max(2, Math.floor(Number(targetW) || PREVIEW_RECORD_TARGET_CANVAS_W));
   const th = Math.max(2, Math.floor(Number(targetH) || PREVIEW_RECORD_TARGET_CANVAS_H));
-  const upscaled = h < th - 4 || w < tw - 4;
+  const evenW = tw - (tw % 2);
+  const evenH = th - (th % 2);
+  if (forceTarget) {
+    let w = Math.max(2, Math.floor(Number(frameW) || evenW));
+    let h = Math.max(2, Math.floor(Number(frameH) || evenH));
+    w -= w % 2;
+    h -= h % 2;
+    const upscaled = h < evenH - 4 || w < evenW - 4;
+    return { width: evenW, height: evenH, upscaled };
+  }
+  let w = Math.max(2, Math.floor(Number(frameW) || evenW));
+  let h = Math.max(2, Math.floor(Number(frameH) || evenH));
+  w -= w % 2;
+  h -= h % 2;
+  const upscaled = h < evenH - 4 || w < evenW - 4;
   if (upscaled) {
     return {
-      width: tw - (tw % 2),
-      height: th - (th % 2),
+      width: evenW,
+      height: evenH,
       upscaled: true
     };
   }
@@ -719,6 +732,7 @@ function createPreviewRecordPipeline(page) {
       const requireFirstFrame = options.requireFirstFrame !== false;
       const firstFrameTimeoutMs = Number(options.firstFrameTimeoutMs) || PREVIEW_RECORD_FIRST_FRAME_TIMEOUT_MS;
       const deferEncoderInit = !!options.deferEncoderInit;
+      const forceTargetCanvasSize = !!options.forceTargetCanvasSize;
       currentWarmupMinFrames = Math.max(
         PREVIEW_RECORD_WARMUP_MIN_FRAMES,
         Number(options.warmupMinFrames) || PREVIEW_RECORD_WARMUP_MIN_FRAMES
@@ -789,7 +803,8 @@ function createPreviewRecordPipeline(page) {
             lastWarmupFrameW,
             lastWarmupFrameH,
             targetCanvasW,
-            targetCanvasH
+            targetCanvasH,
+            forceTargetCanvasSize
           );
           capturedCanvasW = sized.width;
           capturedCanvasH = sized.height;
@@ -799,6 +814,7 @@ function createPreviewRecordPipeline(page) {
             width: capturedCanvasW,
             height: capturedCanvasH,
             upscaled: sized.upscaled,
+            forceTarget: forceTargetCanvasSize,
             targetWidth: targetCanvasW,
             targetHeight: targetCanvasH
           });

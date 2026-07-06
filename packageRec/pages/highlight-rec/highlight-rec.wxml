@@ -1,5 +1,5 @@
-<view class="container portrait">
-  <!-- 9:16 预览取景区（上下或左右黑边由容器背景填充；录制走原生 cameraContext，不含黑边） -->
+<view class="container {{aspectMode === 'landscape' ? 'landscape' : 'portrait'}}">
+  <!-- 预览取景区：竖持 9:16 / 横置 16:9；录制走等比裁切，不拉伸变形 -->
   <view class="preview-stage" style="{{previewStageStyle}}">
     <camera
       wx:if="{{cameraReady}}"
@@ -13,7 +13,6 @@
       binderror="onCameraError"
     />
 
-    <!-- 中心对准框：十字线 + 9:16 参考框，便于调整手机俯仰角 -->
     <view class="preview-align-guide">
       <view class="align-crosshair align-crosshair--h"></view>
       <view class="align-crosshair align-crosshair--v"></view>
@@ -26,136 +25,167 @@
       </view>
     </view>
 
-    <!-- 透明手势缩放层（限定在 9:16 取景区内） -->
     <view class="gesture-layer" bindtouchstart="onTouchStart" bindtouchmove="onTouchMove"></view>
   </view>
 
-  <!-- 顶部导航栏和返回 -->
   <view class="custom-nav" style="padding-top: {{statusBarHeight}}px;">
     <view class="btn-back" bindtap="onBackTap">‹ 返回</view>
     <text class="nav-title">素材捕获</text>
   </view>
 
-  <!-- HUD 顶部快捷控制条 (始终显示，小而透) -->
-  <view class="hud-top-bar" style="top: {{statusBarHeight + 48}}px;">
+  <!-- 顶部精简条：状态 + 快捷操作 -->
+  <view class="hud-top-bar" style="top: {{hudTopPx}}px;">
     <view class="mini-rec-status">
       <view class="mini-dot {{isRecording ? 'mini-dot--active' : ''}}"></view>
-      <text class="mini-text">{{isRecording ? '监看中' : (cameraReady ? '预览中' : '相机未就绪')}}</text>
+      <text class="mini-text">{{isRecording ? '监看' : (cameraReady ? '预览' : '相机')}}</text>
       <text class="mini-buffer-info" wx:if="{{isRecording}}">{{bufferCoverageText}}</text>
-      <text class="mini-perf-tag" wx:if="{{perfTierLabel}}">{{perfTierLabel}}</text>
+      <text class="mini-perf-tag">{{compactStatusLabel}}</text>
     </view>
-    <view class="btn-toggle-hud" bindtap="toggleHudCollapse">
-      {{controlsCollapsed ? '展开菜单' : '隐藏菜单'}}
+    <view class="hud-top-actions">
+      <view
+        class="hud-action-btn {{isRecording ? 'hud-action-btn--stop' : 'hud-action-btn--start'}}"
+        bindtap="onMonitorToggle"
+      >{{isRecording ? '停' : '监看'}}</view>
+      <view class="hud-action-btn hud-action-btn--settings" bindtap="openSettingsModal">设置</view>
     </view>
   </view>
 
-  <!-- 后台高光裁剪进度提示 (小巧悬浮，非阻断) -->
-  <view class="saving-toast" wx:if="{{savingCount > 0}}" style="top: {{statusBarHeight + 96}}px;">
+  <view class="saving-toast" wx:if="{{savingCount > 0}}" style="top: {{hudTopPx + 36}}px;">
     <view class="saving-spinner"></view>
-    <text class="saving-text">正在后台保存高光 ({{savingCount}})...</text>
+    <text class="saving-text">保存中 ({{savingCount}})...</text>
   </view>
 
-  <!-- HUD 展开时的设置/日志浮层 -->
-  <view class="hud-overlay" wx:if="{{!controlsCollapsed}}">
-    <!-- 连接状态顶带 -->
-    <view class="hud-panel room-panel">
-      <view class="room-conn-status {{wsConnected ? 'room-conn-status--connected' : ''}}">
-        {{wsConnected ? '已连接' : '未连接'}}
+  <!-- 设置弹窗：点击「设置」打开，scroll 容纳全部项 -->
+  <view class="settings-modal" wx:if="{{settingsModalOpen}}" catchtouchmove="preventTouchMove">
+    <view class="settings-backdrop" bindtap="closeSettingsModal"></view>
+    <view class="settings-sheet" catchtap="stopModalBubbling">
+      <view class="settings-header">
+        <text class="settings-title">素材机设置</text>
+        <view class="settings-close" bindtap="closeSettingsModal">×</view>
       </view>
-      <input
-        class="room-input"
-        type="number"
-        maxlength="6"
-        placeholder="6位同步房号"
-        value="{{roomId}}"
-        bindinput="onRoomIdInput"
-      />
-      <button class="conn-btn {{wsConnected ? 'conn-btn--disconnect' : ''}}" bindtap="toggleConnection">
-        {{wsConnected ? '断开' : '连接'}}
-      </button>
-    </view>
-
-    <!-- 录制状态与变焦区 -->
-    <view class="hud-panel recorder-panel">
-      <view class="focus-lock-hint">
-        <text class="focus-lock-text">{{isRecording ? (actionMode ? '追拍监看中 · 缓冲 ' + bufferCoverageText : '监看中 · 缓冲 ' + bufferCoverageText) : '先调整清晰度/模式，再点「开始监看」'}}</text>
-      </view>
-
-      <view class="monitor-row">
-        <text class="quality-label">监看</text>
-        <view
-          class="monitor-btn {{isRecording ? 'monitor-btn--stop' : 'monitor-btn--start'}}"
-          bindtap="onMonitorToggle"
-        >{{isRecording ? '停止监看' : '开始监看'}}</view>
-        <text class="quality-hint">{{isRecording ? bufferCoverageText : '未缓冲'}}</text>
-      </view>
-
-      <view class="quality-row" wx:if="{{canUse1080p}}">
-        <text class="quality-label">清晰度</text>
-        <view class="quality-switch">
-          <view
-            class="quality-pill {{!use1080p ? 'quality-pill--active' : ''}}"
-            data-hd="{{false}}"
-            bindtap="onQualityToggle"
-          >720p</view>
-          <view
-            class="quality-pill {{use1080p ? 'quality-pill--active' : ''}}"
-            data-hd="{{true}}"
-            bindtap="onQualityToggle"
-          >1080p</view>
+      <scroll-view scroll-y class="settings-body" show-scrollbar="{{false}}">
+        <view class="hud-panel room-panel">
+          <view class="room-conn-status {{wsConnected ? 'room-conn-status--connected' : ''}}">
+            {{wsConnected ? '已连接' : '未连接'}}
+          </view>
+          <input
+            class="room-input"
+            type="number"
+            maxlength="6"
+            placeholder="6位同步房号"
+            value="{{roomId}}"
+            bindinput="onRoomIdInput"
+          />
+          <button class="conn-btn {{wsConnected ? 'conn-btn--disconnect' : ''}}" bindtap="toggleConnection">
+            {{wsConnected ? '断开' : '连接'}}
+          </button>
         </view>
-        <text class="quality-hint">{{qualityLabel}}</text>
-      </view>
 
-      <view class="quality-row">
-        <text class="quality-label">模式</text>
-        <view class="quality-switch">
-          <view
-            class="quality-pill {{!actionMode ? 'quality-pill--active' : ''}}"
-            data-action="{{false}}"
-            bindtap="onActionModeToggle"
-          >标准</view>
-          <view
-            class="quality-pill {{actionMode ? 'quality-pill--active' : ''}}"
-            data-action="{{true}}"
-            bindtap="onActionModeToggle"
-          >追拍</view>
+        <view class="hud-panel recorder-panel">
+          <view class="focus-lock-hint">
+            <text class="focus-lock-text">{{isRecording
+              ? ('缓冲 ' + bufferCoverageText)
+              : (aspectMode === 'landscape'
+                ? '横置 16:9，与直播页画幅一致'
+                : '竖持 9:16，调好参数后开始监看')}}</text>
+          </view>
+
+          <view class="monitor-row">
+            <text class="quality-label">监看</text>
+            <view
+              class="monitor-btn {{isRecording ? 'monitor-btn--stop' : 'monitor-btn--start'}}"
+              bindtap="onMonitorToggle"
+            >{{isRecording ? '停止监看' : '开始监看'}}</view>
+          </view>
+
+          <view class="quality-row">
+            <text class="quality-label">画幅</text>
+            <view class="quality-switch">
+              <view
+                class="quality-pill {{aspectMode !== 'landscape' ? 'quality-pill--active' : ''}}"
+                data-landscape="{{false}}"
+                bindtap="onAspectModeToggle"
+              >竖持</view>
+              <view
+                class="quality-pill {{aspectMode === 'landscape' ? 'quality-pill--active' : ''}}"
+                data-landscape="{{true}}"
+                bindtap="onAspectModeToggle"
+              >横置</view>
+            </view>
+            <text class="quality-hint">{{aspectLabel}}</text>
+          </view>
+
+          <view class="quality-row" wx:if="{{canUse1080p}}">
+            <text class="quality-label">清晰度</text>
+            <view class="quality-switch">
+              <view
+                class="quality-pill {{!use1080p ? 'quality-pill--active' : ''}}"
+                data-hd="{{false}}"
+                bindtap="onQualityToggle"
+              >720p</view>
+              <view
+                class="quality-pill {{use1080p ? 'quality-pill--active' : ''}}"
+                data-hd="{{true}}"
+                bindtap="onQualityToggle"
+              >1080p</view>
+            </view>
+          </view>
+
+          <view class="quality-row">
+            <text class="quality-label">模式</text>
+            <view class="quality-switch">
+              <view
+                class="quality-pill {{!actionMode ? 'quality-pill--active' : ''}}"
+                data-action="{{false}}"
+                bindtap="onActionModeToggle"
+              >标准</view>
+              <view
+                class="quality-pill {{actionMode ? 'quality-pill--active' : ''}}"
+                data-action="{{true}}"
+                bindtap="onActionModeToggle"
+              >追拍</view>
+            </view>
+          </view>
+
+          <view class="zoom-row">
+            <text class="zoom-label">变焦 {{zoomDisplay}}x</text>
+            <slider
+              class="zoom-slider"
+              min="1"
+              max="5"
+              step="0.1"
+              value="{{zoom}}"
+              bindchange="onZoomSliderChange"
+              activeColor="#4ade80"
+              backgroundColor="rgba(255,255,255,0.15)"
+              block-size="12"
+            />
+          </view>
+
+          <view wx:if="{{diskWarning}}" class="disk-warning-panel">
+            <text class="warning-text">磁盘空间不足，请清理小程序缓存</text>
+          </view>
         </view>
-        <text class="quality-hint">{{actionMode ? '运动' : '固定'}}</text>
-      </view>
 
-      <view class="zoom-row">
-        <text class="zoom-label">变焦: {{zoomDisplay}}x</text>
-        <slider class="zoom-slider" min="1" max="5" step="0.1" value="{{zoom}}" bindchange="onZoomSliderChange" activeColor="#4ade80" backgroundColor="rgba(255,255,255,0.15)" block-size="14" />
-      </view>
-
-      <!-- 存储预警 -->
-      <view wx:if="{{diskWarning}}" class="disk-warning-panel">
-        <text class="warning-text">⚠️ 磁盘空间过高，请进入小程序详情清理缓存</text>
-      </view>
-    </view>
-
-    <!-- 今日已保存高光历史列表 -->
-    <view class="hud-panel logs-panel">
-      <view class="panel-header">
-        <text class="panel-title">今日保存片段 (共 {{highlightCount}} 条)</text>
-      </view>
-      <scroll-view class="log-list" scroll-y>
-        <view wx:if="{{savedLogs.length === 0}}" class="empty-log-tip">
-          开启监看后，可手动 REC 或等待直播端同步触发...
-        </view>
-        <view wx:for="{{savedLogs}}" wx:key="index" class="log-item">
-          <text class="log-time">{{item.time}}</text>
-          <text class="log-type-tag {{item.isLocal ? 'log-type-tag--local' : ''}}">
-            {{item.isLocal ? '本地' : '同步'}}
-          </text>
-          <text class="log-status">已存入系统相册</text>
+        <view class="hud-panel logs-panel">
+          <view class="panel-header">
+            <text class="panel-title">今日保存 ({{highlightCount}})</text>
+          </view>
+          <view wx:if="{{savedLogs.length === 0}}" class="empty-log-tip">
+            开启监看后可手动 REC 或等待直播端同步
+          </view>
+          <view wx:for="{{savedLogs}}" wx:key="index" class="log-item">
+            <text class="log-time">{{item.time}}</text>
+            <text class="log-type-tag {{item.isLocal ? 'log-type-tag--local' : ''}}">
+              {{item.isLocal ? '本地' : '同步'}}
+            </text>
+            <text class="log-status">已存相册</text>
+          </view>
         </view>
       </scroll-view>
     </view>
   </view>
 
-  <!-- 右侧快捷变焦悬浮条 (3 档自定义保存) -->
   <view class="quick-zoom-sidebar">
     <view
       wx:for="{{zoomStops}}"
@@ -170,11 +200,10 @@
     </view>
   </view>
 
-  <!-- 本地手动 REC 按钮 (常驻，极简半透明，避免遮挡画面) -->
   <view class="manual-rec-area">
     <view class="manual-rec-btn" bindtap="triggerManualRec" hover-class="manual-rec-btn--hover">
       <view class="btn-inner-dot"></view>
-      <text class="btn-text">手动REC</text>
+      <text class="btn-text">REC</text>
     </view>
   </view>
 </view>

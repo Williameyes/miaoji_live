@@ -54,6 +54,38 @@ const FRAGMENT_SRC = [
 ].join('\n');
 
 /**
+ * 计算 object-fit:cover 纹理 UV（居中裁切，不变形）。
+ *
+ * @param {number} frameW
+ * @param {number} frameH
+ * @param {number} outW
+ * @param {number} outH
+ * @returns {{ u0: number, v0: number, u1: number, v1: number }}
+ */
+function computeCoverUvRect(frameW, frameH, outW, outH) {
+  const fw = Math.max(1, Number(frameW) || 1);
+  const fh = Math.max(1, Number(frameH) || 1);
+  const ow = Math.max(1, Number(outW) || 1);
+  const oh = Math.max(1, Number(outH) || 1);
+  const frameAspect = fw / fh;
+  const outAspect = ow / oh;
+  let u0 = 0;
+  let v0 = 0;
+  let u1 = 1;
+  let v1 = 1;
+  if (frameAspect > outAspect) {
+    const visibleU = outAspect / frameAspect;
+    u0 = (1 - visibleU) * 0.5;
+    u1 = u0 + visibleU;
+  } else if (frameAspect < outAspect) {
+    const visibleV = frameAspect / outAspect;
+    v0 = (1 - visibleV) * 0.5;
+    v1 = v0 + visibleV;
+  }
+  return { u0, v0, u1, v1 };
+}
+
+/**
  * 创建贴图渲染器。
  * @returns {{
  *   init: function(Object): Promise<void>,
@@ -68,6 +100,7 @@ function createCameraBlitRenderer() {
   let vbo = null;
   let texW = 0;
   let texH = 0;
+  let lastCropKey = '';
   let aPos = -1;
   let aUv = -1;
   let uTex = null;
@@ -104,15 +137,9 @@ function createCameraBlitRenderer() {
       aPos = gl.getAttribLocation(program, 'aPos');
       aUv = gl.getAttribLocation(program, 'aUv');
       uTex = gl.getUniformLocation(program, 'uTex');
-      const data = new Float32Array([
-        -1, -1, 0, 1,
-        1, -1, 1, 1,
-        -1, 1, 0, 0,
-        1, 1, 1, 0
-      ]);
       vbo = gl.createBuffer();
       gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-      gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+      gl.bufferData(gl.ARRAY_BUFFER, 64, gl.DYNAMIC_DRAW);
       texture = gl.createTexture();
       gl.bindTexture(gl.TEXTURE_2D, texture);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -124,6 +151,7 @@ function createCameraBlitRenderer() {
       gl.clearColor(0, 0, 0, 1);
       texW = 0;
       texH = 0;
+      lastCropKey = '';
       return true;
     } catch (e) {
       return false;
@@ -239,7 +267,22 @@ function createCameraBlitRenderer() {
     }
 
     try {
-      gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+      const outW = gl.drawingBufferWidth;
+      const outH = gl.drawingBufferHeight;
+      const crop = computeCoverUvRect(w, h, outW, outH);
+      const cropKey = w + 'x' + h + '@' + outW + 'x' + outH + ':' + crop.u0.toFixed(4);
+      if (cropKey !== lastCropKey) {
+        lastCropKey = cropKey;
+        const verts = new Float32Array([
+          -1, -1, crop.u0, crop.v1,
+          1, -1, crop.u1, crop.v1,
+          -1, 1, crop.u0, crop.v0,
+          1, 1, crop.u1, crop.v0
+        ]);
+        gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, verts);
+      }
+      gl.viewport(0, 0, outW, outH);
       gl.clear(gl.COLOR_BUFFER_BIT);
       gl.useProgram(program);
       gl.activeTexture(gl.TEXTURE0);
@@ -316,5 +359,6 @@ function createCameraBlitRenderer() {
 }
 
 module.exports = {
-  createCameraBlitRenderer
+  createCameraBlitRenderer,
+  computeCoverUvRect
 };
