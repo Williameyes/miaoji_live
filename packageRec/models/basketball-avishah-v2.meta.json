@@ -1,0 +1,11 @@
+{
+  "version": "v2",
+  "source": "avishah3/AI-Basketball-Shot-Detection-Tracker best.pt",
+  "inputSize": 320,
+  "classNames": {
+    "0": "Basketball",
+    "1": "Basketball Hoop"
+  },
+  "ballClassIds": [0],
+  "hoopClassIds": [1]
+}

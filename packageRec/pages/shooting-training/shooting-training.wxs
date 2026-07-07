@@ -1,0 +1,19 @@
+function formatRate(made, total) {
+  if (!total) return '0%';
+  return Math.round((made / total) * 100) + '%';
+}
+
+function getFeedbackClass(feedbackState) {
+  if (feedbackState === 'made') {
+    return 'feedback-made';
+  }
+  if (feedbackState === 'missed') {
+    return 'feedback-missed';
+  }
+  return '';
+}
+
+module.exports = {
+  formatRate: formatRate,
+  getFeedbackClass: getFeedbackClass
+};

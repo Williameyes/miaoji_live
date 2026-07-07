@@ -1,0 +1,242 @@
+<wxs src="./shooting-training.wxs" module="utils" />
+
+<view class="container {{feedbackState}}"
+  bindtouchstart="onTouchStart"
+  bindtouchmove="onTouchMove"
+  bindtouchend="onTouchEnd"
+>
+  <!-- 1. 相机预览层（原生组件，iOS 上会盖住普通 view 的触摸） -->
+  <camera
+    wx:if="{{cameraReady}}"
+    device-position="back"
+    flash="off"
+    resolution="{{cameraResolution}}"
+    frame-size="{{cameraFrameSize}}"
+    class="camera-preview"
+    mode="normal"
+    bindinitdone="onCameraInit"
+    binderror="onCameraError"
+    bindstop="onCameraStop"
+  ></camera>
+
+  <!-- 2. 半透明追踪引导层（仅展示，pointer-events: none） -->
+  <view class="guide-layer" wx:if="{{!cameraReady && (status === 'ready' || status === 'training')}}">
+    <view class="hoop-roi-box" style="left: {{hoopStyle.left}}px; top: {{hoopStyle.top}}px; width: {{hoopStyle.width}}px; height: {{hoopStyle.height}}px;">
+      <view class="roi-label">把篮筐对准此框</view>
+      <view class="corner tl"></view>
+      <view class="corner tr"></view>
+      <view class="corner bl"></view>
+      <view class="corner br"></view>
+    </view>
+    <view
+      wx:for="{{trailPoints}}"
+      wx:key="index"
+      class="trail-dot"
+      style="left: {{item.x}}px; top: {{item.y}}px;"
+    ></view>
+    <view
+      class="ball-pointer"
+      wx:if="{{ballX !== null && ballY !== null}}"
+      style="left: {{ballX}}px; top: {{ballY}}px;"
+    ></view>
+  </view>
+
+  <!-- 篮筐引导（勿用全屏 cover-view 包裹，否则会挡住触摸） -->
+  <cover-view
+    wx:if="{{cameraReady && !mlPaused && (status === 'ready' || status === 'training')}}"
+    class="cover-hoop-roi"
+    style="left: {{hoopStyle.left}}px; top: {{hoopStyle.top}}px; width: {{hoopStyle.width}}px; height: {{hoopStyle.height}}px;"
+  >
+    <cover-view class="cover-roi-label">把篮筐对准此框</cover-view>
+  </cover-view>
+  <cover-view
+    class="cover-ball-pointer {{ballPeek ? 'cover-ball-peek' : ''}}"
+    wx:if="{{cameraReady && !mlPaused && ballX !== null && ballY !== null}}"
+    style="left: {{ballX}}px; top: {{ballY}}px;"
+  ></cover-view>
+
+  <view
+    wx:if="{{!cameraReady}}"
+    class="custom-nav"
+    style="padding-top: {{statusBarHeight}}px; padding-right: {{navRightPadding}}px;"
+  >
+    <view class="nav-left-group">
+      <view class="btn-back" bindtap="onBackTap">‹ 返回</view>
+      <view class="btn-send-log" bindtap="onTapShareDebugLog">发送日志</view>
+      <view class="btn-copy-log" bindtap="onTapCopyDebugLog">复制日志</view>
+    </view>
+    <text class="nav-title">投篮训练 实验版</text>
+  </view>
+
+  <!-- 3. 顶部数据看板 -->
+  <cover-view
+    wx:if="{{cameraReady && (status === 'ready' || status === 'training')}}"
+    class="cover-hud-board"
+    style="top: {{hudTopPx + (mlPaused ? 0 : 88)}}px;"
+  >
+    <cover-view class="cover-board-row">
+      <cover-view class="cover-board-col">
+        <cover-view class="cover-board-num">{{hitRateText}}</cover-view>
+        <cover-view class="cover-board-label">命中率</cover-view>
+      </cover-view>
+      <cover-view class="cover-board-col">
+        <cover-view class="cover-board-num">{{shotsMade}} / {{shotsTotal}}</cover-view>
+        <cover-view class="cover-board-label">进球/总投</cover-view>
+      </cover-view>
+      <cover-view class="cover-board-col">
+        <cover-view class="cover-board-num">{{streak}}</cover-view>
+        <cover-view class="cover-board-label">连中数</cover-view>
+      </cover-view>
+    </cover-view>
+    <cover-view class="cover-ml-debug">{{mlDebugText}}</cover-view>
+  </cover-view>
+  <view class="hud-top-board" wx:elif="{{status === 'ready' || status === 'training'}}" style="top: {{hudTopPx}}px;">
+    <view class="board-row">
+      <view class="board-col">
+        <text class="board-num">{{utils.formatRate(shotsMade, shotsTotal)}}</text>
+        <text class="board-label">命中率</text>
+      </view>
+      <view class="board-col">
+        <text class="board-num">{{shotsMade}} / {{shotsTotal}}</text>
+        <text class="board-label">进球/总投</text>
+      </view>
+      <view class="board-col">
+        <text class="board-num">{{streak}}</text>
+        <text class="board-label">连中数</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 底部控制面板 -->
+  <cover-view
+    wx:if="{{cameraReady && (status === 'ready' || status === 'training')}}"
+    class="cover-debug-strip"
+  >
+    <cover-view
+      class="cover-debug-pause {{mlPaused ? 'cover-debug-pause--on' : ''}}"
+      catchtap="onTapToggleMlPause"
+    >{{mlPaused ? '▶ 开始 AI 检测' : '⏸ 暂停检测'}}</cover-view>
+    <cover-view class="cover-debug-line">{{mlDebugText}}</cover-view>
+    <cover-view class="cover-debug-line cover-debug-tail">{{debugTail}}</cover-view>
+  </cover-view>
+  <cover-view
+    wx:if="{{cameraReady && (status === 'ready' || status === 'training')}}"
+    class="cover-bottom-row"
+  >
+    <cover-view class="cover-bottom-pause {{mlPaused ? 'cover-bottom-pause--start' : ''}}" catchtap="onTapToggleMlPause">
+      {{mlPaused ? '开始检测' : '暂停'}}
+    </cover-view>
+    <cover-view class="cover-bottom-panel" catchtap="onRecalibrateTap">重新校准篮筐</cover-view>
+  </cover-view>
+  <view class="bottom-panel" wx:elif="{{status === 'ready' || status === 'training'}}">
+    <button class="panel-btn panel-btn--ghost" bindtap="onTapToggleMlPause">{{mlPaused ? '恢复检测' : '暂停检测'}}</button>
+    <button class="panel-btn" bindtap="onRecalibrateTap">重新校准篮筐</button>
+  </view>
+
+  <!-- 4. 反馈层 -->
+  <cover-view
+    wx:if="{{cameraReady && (feedbackState === 'made' || feedbackState === 'missed')}}"
+    class="cover-feedback-overlay"
+  >
+    <cover-view class="cover-feedback-text {{feedbackState === 'made' ? 'cover-text-made' : 'cover-text-missed'}}">
+      {{feedbackState === 'made' ? 'MADE' : 'MISS'}}
+    </cover-view>
+  </cover-view>
+  <view class="big-feedback-overlay" wx:elif="{{feedbackState === 'made' || feedbackState === 'missed'}}">
+    <text class="feedback-text {{feedbackState === 'made' ? 'text-made' : 'text-missed'}}">
+      {{feedbackState === 'made' ? 'MADE' : 'MISS'}}
+    </text>
+  </view>
+
+  <!-- 5. 状态层（相机未开时用 view；相机已开时用 cover-view 保证按钮可点） -->
+  <cover-view class="cover-overlay-mask" wx:if="{{cameraReady && status !== 'ready' && status !== 'training'}}">
+    <cover-view class="cover-status-card" wx:if="{{status === 'modelLoading'}}">
+      <cover-view class="cover-status-title">正在加载 AI 模型</cover-view>
+      <cover-view class="cover-status-desc">{{modelProgressText || '首次使用需下载约 12MB，请保持网络畅通'}}</cover-view>
+      <cover-view class="cover-progress-track">
+        <cover-view class="cover-progress-fill" style="width: {{modelProgress}}%;"></cover-view>
+      </cover-view>
+      <cover-view class="cover-status-hint">模型仅下载一次，之后本地缓存秒开</cover-view>
+    </cover-view>
+
+    <cover-view class="cover-status-card" wx:if="{{status === 'loading'}}">
+      <cover-view class="cover-status-title">正在启动相机...</cover-view>
+      <cover-view class="cover-status-desc">请稍候</cover-view>
+    </cover-view>
+
+    <cover-view class="cover-status-card" wx:if="{{status === 'permissionDenied'}}">
+      <cover-view class="cover-status-title">相机权限未开启</cover-view>
+      <cover-view class="cover-status-desc">投篮训练需要使用摄像头，请授权相机权限后使用。</cover-view>
+      <cover-view class="cover-action-btn" bindtap="openSetting">打开系统设置</cover-view>
+    </cover-view>
+
+    <cover-view class="cover-status-card" wx:if="{{status === 'error'}}">
+      <cover-view class="cover-status-title">{{modelLoaded ? '相机启动失败' : 'AI 模型加载失败'}}</cover-view>
+      <cover-view class="cover-status-desc">{{errorMessage || '未知错误，请重试。'}}</cover-view>
+      <cover-view class="cover-action-btn" wx:if="{{!modelLoaded}}" bindtap="onRetryModelTap">重新下载模型</cover-view>
+      <cover-view class="cover-action-btn" wx:if="{{modelLoaded}}" bindtap="onRetryCameraTap">重试相机</cover-view>
+      <cover-view class="cover-action-btn cover-action-btn--ghost" bindtap="onBackTap">返回</cover-view>
+    </cover-view>
+  </cover-view>
+
+  <view class="overlay-mask" wx:elif="{{status !== 'ready' && status !== 'training'}}">
+    <view class="status-card" wx:if="{{status === 'modelLoading'}}">
+      <view class="spinner"></view>
+      <text class="status-title">正在加载 AI 模型</text>
+      <text class="status-desc">{{modelProgressText || '首次使用需下载约 12MB，请保持网络畅通'}}</text>
+      <view class="progress-track">
+        <view class="progress-fill" style="width: {{modelProgress}}%;"></view>
+      </view>
+      <text class="status-hint">模型仅下载一次，之后本地缓存秒开</text>
+    </view>
+
+    <view class="status-card" wx:if="{{status === 'loading'}}">
+      <view class="spinner"></view>
+      <text class="status-title">正在启动相机...</text>
+      <text class="status-desc">请稍候</text>
+    </view>
+
+    <view class="status-card" wx:if="{{status === 'permissionDenied'}}">
+      <text class="status-icon">⚠️</text>
+      <text class="status-title">相机权限未开启</text>
+      <text class="status-desc">投篮训练需要使用摄像头，请授权相机权限后使用。</text>
+      <button class="action-btn" bindtap="openSetting">打开系统设置</button>
+    </view>
+
+    <view class="status-card" wx:if="{{status === 'error'}}">
+      <text class="status-icon">❌</text>
+      <text class="status-title">{{modelLoaded ? '相机启动失败' : 'AI 模型加载失败'}}</text>
+      <text class="status-desc">{{errorMessage || '未知错误，请重试。'}}</text>
+      <button class="action-btn" wx:if="{{!modelLoaded}}" bindtap="onRetryModelTap">重新下载模型</button>
+      <button class="action-btn" wx:if="{{modelLoaded}}" bindtap="onRetryCameraTap">重试相机</button>
+      <button class="action-btn action-btn--ghost" bindtap="onBackTap">返回</button>
+    </view>
+  </view>
+
+  <!-- 暂停提示（非全屏，不挡导航） -->
+  <cover-view
+    wx:if="{{cameraReady && mlPaused && (status === 'ready' || status === 'training')}}"
+    class="cover-paused-banner"
+  >
+    <cover-view class="cover-paused-title">AI 检测未开启</cover-view>
+    <cover-view class="cover-paused-sub">检测已停，可点顶部「复制/发送」导出日志</cover-view>
+  </cover-view>
+
+  <!-- 最顶层：紧急停止 + 导航（放最后，catchtap 立即中断 AI） -->
+  <cover-view
+    wx:if="{{cameraReady && (status === 'ready' || status === 'training')}}"
+    class="cover-emergency-bar"
+    style="padding-top: {{statusBarHeight}}px;"
+  >
+    <cover-view
+      wx:if="{{!mlPaused}}"
+      class="cover-emergency-stop"
+      catchtap="onTapEmergencyStop"
+    >⏸ 立即停止</cover-view>
+    <cover-view class="cover-nav-top-row" style="padding-right: {{navRightPadding}}px;">
+      <cover-view class="cover-btn-back" catchtap="onBackTap">‹ 返回</cover-view>
+      <cover-view class="cover-btn-send-log" catchtap="onTapShareDebugLog">发送</cover-view>
+      <cover-view class="cover-btn-copy-log" catchtap="onTapCopyDebugLog">复制</cover-view>
+    </cover-view>
+  </cover-view>
+</view>

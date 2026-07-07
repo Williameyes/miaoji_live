@@ -1,0 +1,12 @@
+{
+  "version": "v3",
+  "source": "avishah3 best.pt exported imgsz=640 (align Python YOLO default)",
+  "inputSize": 640,
+  "outputAnchors": 8400,
+  "classNames": {
+    "0": "Basketball",
+    "1": "Basketball Hoop"
+  },
+  "ballClassIds": [0],
+  "hoopClassIds": [1]
+}

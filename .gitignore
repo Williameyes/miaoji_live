@@ -11,3 +11,7 @@ project.private.config.json
 
 # 忽略日志文件
 *.log
+
+# 投篮训练 ONNX（约 12MB，部署到 CDN 按需下载，勿提交）
+packageRec/models/*.onnx
+packageRec/models/*.pt

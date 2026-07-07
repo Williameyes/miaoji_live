@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "inputSize": 320,
+  "classNames": {
+    "0": "basketball",
+    "1": "hoop",
+    "2": "player",
+    "3": "referee"
+  },
+  "ballClassIds": [
+    0
+  ],
+  "hoopClassIds": [
+    1
+  ]
+}

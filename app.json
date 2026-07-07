@@ -47,7 +47,8 @@
       "root": "packageRec",
       "name": "packageRec",
       "pages": [
-        "pages/highlight-rec/highlight-rec"
+        "pages/highlight-rec/highlight-rec",
+        "pages/shooting-training/shooting-training"
       ]
     }
   ],
