@@ -8,7 +8,8 @@ const {
   oamUpsert,
   fetchTournamentList,
   fetchMatchList,
-  fetchMatchDetail
+  fetchMatchDetail,
+  deleteMatch
 } = require('../../../services/radar-api.js');
 const { formatStartTimeDisplay } = require('../../../utils/radar-datetime.js');
 const { parseMatchExcelBuffer } = require('../../../utils/radar-excel-parser.js');
@@ -84,7 +85,9 @@ Page({
               startTimeText: formatStartTimeDisplay(m.startTime),
               tournamentName: m.tournamentName || '—',
               commercialText: formatCommercialText(m),
-              canManage: m.canManage !== false
+              canManage: m.canManage !== false,
+              settlementStatus: m.settlementStatus || 'pending',
+              matchStatus: m.matchStatus || ''
             };
           });
           self.setData({
@@ -121,7 +124,9 @@ Page({
             return detail
               ? {
                   id: String(row.id),
-                  commercialText: formatCommercialText(detail)
+                  commercialText: formatCommercialText(detail),
+                  settlementStatus: detail.settlementStatus || 'pending',
+                  matchStatus: detail.matchStatus || ''
                 }
               : null;
           })
@@ -132,11 +137,19 @@ Page({
     ).then(function (details) {
       const detailMap = {};
       details.forEach(function (item) {
-        if (item) detailMap[item.id] = item.commercialText;
+        if (item) {
+          detailMap[item.id] = item;
+        }
       });
       const nextRows = self.data.matchRows.map(function (row) {
-        const text = detailMap[String(row.id)];
-        return text ? Object.assign({}, row, { commercialText: text }) : row;
+        const item = detailMap[String(row.id)];
+        return item
+          ? Object.assign({}, row, {
+              commercialText: item.commercialText,
+              settlementStatus: item.settlementStatus,
+              matchStatus: item.matchStatus
+            })
+          : row;
       });
       self.setData({ matchRows: nextRows });
     });
@@ -385,5 +398,56 @@ Page({
               });
           }
         });
+  },
+
+  /**
+   * @param {WechatMiniprogram.BaseEvent} e
+   * @returns {void}
+   */
+  onDeleteMatch: function (e) {
+    const id = e.currentTarget.dataset.id;
+    if (!id) return;
+    const row = this.data.matchRows.find(function (r) {
+      return String(r.id) === String(id);
+    });
+    if (!row) return;
+    if (row.canManage === false) {
+      wx.showToast({ title: '无权操作该场次', icon: 'none' });
+      return;
+    }
+    if (row.matchStatus === 'monitoring') {
+      wx.showModal({
+        title: '无法删除',
+        content: '该场次监控中，须先结束监控',
+        showCancel: false
+      });
+      return;
+    }
+    const self = this;
+    wx.showModal({
+      title: '确认删除',
+      content: '确定删除场次「' + row.teamA + ' VS ' + row.teamB + '」？删除后无法恢复显示。',
+      confirmText: '删除',
+      confirmColor: '#ef4444',
+      success: function (res) {
+        if (res.confirm) {
+          wx.showLoading({ title: '正在删除…', mask: true });
+          deleteMatch(id)
+            .then(function () {
+              wx.hideLoading();
+              wx.showToast({ title: '删除成功', icon: 'success' });
+              const nextRows = self.data.matchRows.filter(function (r) {
+                return String(r.id) !== String(id);
+              });
+              self.setData({ matchRows: nextRows });
+              self._reloadList(true);
+            })
+            .catch(function (err) {
+              wx.hideLoading();
+              wx.showToast({ title: err.message || '删除失败', icon: 'none' });
+            });
+        }
+      }
+    });
   }
 });

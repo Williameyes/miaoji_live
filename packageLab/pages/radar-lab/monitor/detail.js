@@ -13,7 +13,8 @@ const {
   setMatchAds,
   settleMatch,
   fetchPromoPendingApplications,
-  fetchMatchMonitorStatus
+  fetchMatchMonitorStatus,
+  deleteMatch
 } = require('../../../services/radar-api.js');
 const {
   addMatchRadarTask,
@@ -1285,6 +1286,50 @@ Page({
       .finally(function () {
         self.setData({ submitting: false });
       });
+  },
+
+  /**
+   * @returns {void}
+   */
+  onDeleteMatch: function () {
+    const matchId = this.data.matchId;
+    if (!matchId) return;
+
+    if (this.data.matchStatus === 'monitoring') {
+      wx.showModal({
+        title: '提示',
+        content: '该场次监控中，须先结束监控',
+        showCancel: false
+      });
+      return;
+    }
+
+    const self = this;
+    wx.showModal({
+      title: '确认删除',
+      content: '确定删除场次「' + (this.data.teamA || '') + ' VS ' + (this.data.teamB || '') + '」？删除后无法恢复显示。',
+      confirmText: '删除',
+      confirmColor: '#ef4444',
+      success: function (res) {
+        if (res.confirm) {
+          self.setData({ submitting: true });
+          wx.showLoading({ title: '正在删除…', mask: true });
+          deleteMatch(matchId)
+            .then(function () {
+              wx.hideLoading();
+              wx.showToast({ title: '删除成功', icon: 'success' });
+              setTimeout(function () {
+                wx.navigateBack();
+              }, 1000);
+            })
+            .catch(function (err) {
+              wx.hideLoading();
+              self.setData({ submitting: false });
+              wx.showToast({ title: err.message || '删除失败', icon: 'none' });
+            });
+        }
+      }
+    });
   },
 
   /**

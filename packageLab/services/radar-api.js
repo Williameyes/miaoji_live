@@ -28,7 +28,8 @@ const RADAR_ERROR_MESSAGES = {
   PROMO_NOT_ENABLED: '推广广场未发布',
   FORBIDDEN: '无权限执行此操作',
   NO_BOUND_ANCHORS: '暂无已绑定主播，请先启动监测或审批通过',
-  PROBE_ALREADY_PENDING: '探测任务已在队列中'
+  PROBE_ALREADY_PENDING: '探测任务已在队列中',
+  MATCH_CANNOT_DELETE: '监控中，须先结束监控'
 };
 
 /** @type {typeof parseAppApiResponse} */
@@ -349,6 +350,19 @@ function fetchMatchMonitorStatus(matchId) {
     });
 }
 
+/**
+ * 软删除场次。
+ * @param {number|string} matchId
+ * @returns {Promise<Record<string, unknown>>}
+ */
+function deleteMatch(matchId) {
+  return post('/api/app/match/delete', { match_id: Number(matchId) })
+    .then(parseRadarAppResponse)
+    .catch(function (err) {
+      throw normalizeRadarAppError(err);
+    });
+}
+
 module.exports = {
   parseRadarAppResponse,
   normalizeRadarAppError,
@@ -369,5 +383,6 @@ module.exports = {
   unpublishPromo,
   fetchPromoWxacode,
   fetchPromoPendingApplications,
-  fetchMatchMonitorStatus
+  fetchMatchMonitorStatus,
+  deleteMatch
 };

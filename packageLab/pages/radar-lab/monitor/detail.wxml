@@ -230,6 +230,12 @@
       disabled="{{submitting}}"
       bindtap="onOpenSettlement"
     >查看结算单</button>
+    <button
+      wx:if="{{settlementStatus !== 'settled'}}"
+      class="rl-btn rl-btn-danger"
+      disabled="{{submitting}}"
+      bindtap="onDeleteMatch"
+    >删除场次</button>
   </view>
   <view class="mon-actions" wx:else>
     <button

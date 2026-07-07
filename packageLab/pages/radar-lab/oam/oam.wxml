@@ -60,6 +60,12 @@
             bindtap="onCopyMatchId"
             data-id="{{item.id}}"
           >复制ID</button>
+          <button
+            wx:if="{{(!adminViewAll || item.canManage) && item.settlementStatus !== 'settled'}}"
+            class="oam-action-btn oam-action-btn--danger"
+            bindtap="onDeleteMatch"
+            data-id="{{item.id}}"
+          >删除</button>
           <text wx:if="{{adminViewAll && !item.canManage}}" class="rl-list-desc">仅查看</text>
         </view>
       </view>

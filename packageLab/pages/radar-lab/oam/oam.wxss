@@ -120,6 +120,11 @@
   color: #1d4ed8;
 }
 
+.oam-action-btn--danger {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
 .oam-commercial-desc {
   margin-top: 6rpx;
   color: #64748b;
