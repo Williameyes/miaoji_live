@@ -1,0 +1,316 @@
+@import '../common/common.wxss';
+
+/* 正在监测场次列表样式 */
+.active-match-item {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  padding: 30rpx 0;
+  border-bottom: 1rpx solid #f1f5f9;
+}
+
+.active-match-item:last-child {
+  border-bottom: none;
+}
+
+.active-match-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.active-match-id {
+  color: #94a3b8;
+  font-size: 20rpx;
+  margin-top: 4rpx;
+}
+
+.active-match-badge-wrap {
+  flex-shrink: 0;
+  margin-left: 16rpx;
+}
+
+/* 主播单选列表 */
+.anchor-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+  margin-top: 12rpx;
+}
+
+.anchor-radio-label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  background: #f8fafc;
+  padding: 20rpx 24rpx;
+  border-radius: 16rpx;
+  border: 1rpx solid #e2e8f0;
+  transition: all 0.2s ease;
+}
+
+.anchor-radio-label radio {
+  margin-right: 20rpx;
+  transform: scale(0.9);
+}
+
+.anchor-radio-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.anchor-radio-name {
+  font-size: 26rpx;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.anchor-radio-url {
+  font-size: 20rpx;
+  color: #64748b;
+  margin-top: 4rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 表单辅助文字与样式 */
+.rl-label-row {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.warmup-field-val {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #2563eb;
+}
+
+.warmup-tips {
+  margin-top: 24rpx;
+  background: #f0fdf4;
+  border-left: 6rpx solid #16a34a;
+  padding: 16rpx 20rpx;
+  border-radius: 8rpx;
+}
+
+.warmup-tip-item {
+  font-size: 22rpx;
+  color: #15803d;
+  line-height: 1.5;
+  margin-bottom: 8rpx;
+}
+
+.warmup-tip-item:last-child {
+  margin-bottom: 0;
+}
+
+/* 监测视图中的样式 */
+.warmup-job-header {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 24rpx;
+  border-bottom: 1rpx dashed #e2e8f0;
+  padding-bottom: 16rpx;
+}
+
+.warmup-job-title {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.warmup-job-sub {
+  font-size: 22rpx;
+  color: #64748b;
+  margin-top: 6rpx;
+  word-break: break-all;
+}
+
+.warmup-progress-box {
+  margin-bottom: 32rpx;
+}
+
+.warmup-progress-label {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 24rpx;
+  color: #475569;
+  font-weight: 600;
+  margin-bottom: 12rpx;
+}
+
+.warmup-status-badge {
+  font-size: 20rpx;
+  padding: 4rpx 12rpx;
+  border-radius: 20rpx;
+  font-weight: normal;
+}
+
+.warmup-status-badge.status-pending {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.warmup-status-badge.status-running {
+  background: #dbeafe;
+  color: #2563eb;
+}
+
+.warmup-status-badge.status-completed {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.warmup-status-badge.status-partial_failed {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+.warmup-status-badge.status-failed {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.warmup-progress-bar-bg {
+  height: 12rpx;
+  background: #e2e8f0;
+  border-radius: 6rpx;
+  overflow: hidden;
+}
+
+.warmup-progress-bar-fill {
+  height: 100%;
+  background: #2563eb;
+  border-radius: 6rpx;
+  transition: width 0.3s ease;
+}
+
+.warmup-results-title {
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #64748b;
+  margin-bottom: 16rpx;
+}
+
+.warmup-results-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+.warmup-result-item {
+  background: #f8fafc;
+  padding: 20rpx 24rpx;
+  border-radius: 16rpx;
+  border: 1rpx solid #f1f5f9;
+}
+
+.warmup-result-row {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12rpx;
+}
+
+.warmup-result-name {
+  font-size: 24rpx;
+  font-weight: 600;
+  color: #334155;
+}
+
+.warmup-result-status {
+  font-size: 20rpx;
+  font-weight: 600;
+}
+
+.warmup-result-status.status-success {
+  color: #16a34a;
+}
+
+.warmup-result-status.status-failed {
+  color: #dc2626;
+}
+
+.warmup-result-status.status-running {
+  color: #2563eb;
+}
+
+.warmup-result-status.status-pending {
+  color: #64748b;
+}
+
+.warmup-result-comment {
+  font-size: 22rpx;
+  color: #475569;
+  background: #ffffff;
+  padding: 12rpx 16rpx;
+  border-radius: 8rpx;
+  margin-bottom: 12rpx;
+  word-break: break-all;
+  border: 1rpx solid #e2e8f0;
+}
+
+.warmup-result-meta {
+  display: flex;
+  flex-direction: row;
+  font-size: 20rpx;
+  color: #94a3b8;
+}
+
+.warmup-result-error {
+  font-size: 20rpx;
+  color: #dc2626;
+  margin-top: 8rpx;
+}
+
+.mon-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+  margin-top: 32rpx;
+  margin-bottom: 32rpx;
+}
+
+.mon-actions .rl-btn {
+  width: 100%;
+}
+
+.warmup-tabs {
+  display: flex;
+  flex-direction: row;
+  border-bottom: 2rpx solid #e2e8f0;
+  margin-bottom: 24rpx;
+}
+
+.warmup-tab {
+  flex: 1;
+  text-align: center;
+  padding: 16rpx 0;
+  font-size: 24rpx;
+  color: #64748b;
+  font-weight: 600;
+  position: relative;
+}
+
+.warmup-tab.active {
+  color: #2563eb;
+}
+
+.warmup-tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: -2rpx;
+  left: 20%;
+  right: 20%;
+  height: 4rpx;
+  background-color: #2563eb;
+  border-radius: 2rpx;
+}

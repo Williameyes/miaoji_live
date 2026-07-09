@@ -29,7 +29,9 @@ const RADAR_ERROR_MESSAGES = {
   FORBIDDEN: '无权限执行此操作',
   NO_BOUND_ANCHORS: '暂无已绑定主播，请先启动监测或审批通过',
   PROBE_ALREADY_PENDING: '探测任务已在队列中',
-  MATCH_CANNOT_DELETE: '监控中，须先结束监控'
+  MATCH_CANNOT_DELETE: '监控中，须先结束监控',
+  COMMENT_POOL_TOO_SMALL: '评论数量不足，请至少填写 N 条或补充雷达端评论库',
+  WARMUP_TOO_FREQUENT: '操作过于频繁，请 5 分钟后再试'
 };
 
 /** @type {typeof parseAppApiResponse} */
@@ -363,6 +365,32 @@ function deleteMatch(matchId) {
     });
 }
 
+/**
+ * 下发直播间预热。
+ * @param {Object} payload
+ * @returns {Promise<Record<string, unknown>>}
+ */
+function sendWarmup(payload) {
+  return post('/api/app/match/warmup', payload)
+    .then(parseRadarAppResponse)
+    .catch(function (err) {
+      throw normalizeRadarAppError(err);
+    });
+}
+
+/**
+ * 查询直播间预热进度。
+ * @param {string} jobId
+ * @returns {Promise<Record<string, unknown>>}
+ */
+function fetchWarmupStatus(jobId) {
+  return get('/api/app/match/warmup_status', { job_id: jobId })
+    .then(parseRadarAppResponse)
+    .catch(function (err) {
+      throw normalizeRadarAppError(err);
+    });
+}
+
 module.exports = {
   parseRadarAppResponse,
   normalizeRadarAppError,
@@ -384,5 +412,7 @@ module.exports = {
   fetchPromoWxacode,
   fetchPromoPendingApplications,
   fetchMatchMonitorStatus,
-  deleteMatch
+  deleteMatch,
+  sendWarmup,
+  fetchWarmupStatus
 };

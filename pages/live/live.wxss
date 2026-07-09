@@ -373,7 +373,8 @@ page {
 }
 
 .live-rec-mode-actions .live-ble-btn {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
 }
 
 .live-ble-panel--compact {

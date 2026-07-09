@@ -561,7 +561,7 @@
         <view class="live-rec-mode-list">
           <block wx:for="{{recordingModeOptions}}" wx:key="id">
             <view
-              class="live-rec-mode-option {{recordingMode === item.id ? 'live-rec-mode-option--active' : ''}}"
+              class="live-rec-mode-option {{recordingModeDraft === item.id ? 'live-rec-mode-option--active' : ''}}"
               catchtap="onRecordingModeSelect"
               data-mode="{{item.id}}"
             >
@@ -569,7 +569,7 @@
               <text class="live-rec-mode-option__hint">{{item.hint}}</text>
             </view>
             <view
-              wx:if="{{(item.id === 'remote' || item.id === 'dual') && recordingMode === item.id}}"
+              wx:if="{{(item.id === 'remote' || item.id === 'dual') && recordingModeDraft === item.id}}"
               class="live-rec-mode-option-config"
               catchtap="noopCatchTap"
             >
@@ -579,7 +579,7 @@
                   type="number"
                   maxlength="6"
                   placeholder="6位房间号"
-                  value="{{recSyncRoomId}}"
+                  value="{{recSyncRoomIdDraft}}"
                   bindinput="onRecSyncRoomIdInput"
                 />
                 <view
@@ -592,6 +592,7 @@
         </view>
         <view class="live-ble-actions--compact live-rec-mode-actions">
           <view class="live-ble-btn live-ble-btn--ghost live-ble-btn--sm" catchtap="onRecSyncPanelClose">关闭</view>
+          <view class="live-ble-btn live-ble-btn--primary live-ble-btn--sm" catchtap="onRecSyncPanelSave">保存</view>
         </view>
       </view>
     </view>
@@ -938,19 +939,14 @@
             <text class="guide-section-title">录制与回放</text>
           </view>
           <view class="guide-item">
-            <text class="guide-action">保存片段</text>
+            <text class="guide-action">录制高光</text>
             <text class="guide-sep">：</text>
             <text class="guide-desc">单击 REC</text>
           </view>
           <view class="guide-item">
-            <text class="guide-action">恢复相机</text>
+            <text class="guide-action">回放高光</text>
             <text class="guide-sep">：</text>
-            <text class="guide-desc">长按 REC</text>
-          </view>
-          <view class="guide-item">
-            <text class="guide-action">查看回放</text>
-            <text class="guide-sep">：</text>
-            <text class="guide-desc">长按空白处</text>
+            <text class="guide-desc">长按屏幕，点右侧片段列表</text>
           </view>
         </view>
 
@@ -959,15 +955,15 @@
       <view class="guide-full-divider"></view>
 
       <view class="guide-item guide-item-full">
-        <text class="guide-action">左下 ◎</text>
+        <text class="guide-action">切换场次</text>
         <text class="guide-sep">：</text>
-        <text class="guide-desc">机位（广角/数字倍数）/ 呼出对焦</text>
+        <text class="guide-desc">长按屏幕，点左侧场次列表</text>
       </view>
 
       <view class="guide-item guide-item-full">
-        <text class="guide-action">长按空白处</text>
+        <text class="guide-action">退出直播</text>
         <text class="guide-sep">：</text>
-        <text class="guide-desc"> 查看列表 / 返回主页 </text>
+        <text class="guide-desc">长按屏幕，点左上角'⬅️'退出</text>
       </view>
     </view>
     <view class="guide-outside-btn" catchtap="onGuideToDyFrame">下一步</view>

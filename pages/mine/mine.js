@@ -757,6 +757,18 @@ Page({
     wx.navigateTo({ url: '/packageLab/pages/radar-lab/mount/index' });
   },
 
+  onRadarLabWarmupTap: function () {
+    if (!this.data.loggedIn) {
+      wx.showToast({ title: '请先登录', icon: 'none' });
+      return;
+    }
+    if (!checkSyncLabWhitelist()) {
+      wx.showToast({ title: '暂无使用权限', icon: 'none' });
+      return;
+    }
+    wx.navigateTo({ url: '/packageLab/pages/radar-lab/warmup/index' });
+  },
+
   onAboutTap: function () {
     wx.showModal({
       title: '关于我们',

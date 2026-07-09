@@ -15,8 +15,10 @@ const storageEst = require('../../utils/file-storage-estimate.js');
 const clipsStorage = require('../../utils/miaoxie-clips-storage.js');
 const replayBufferMod = require('../../utils/replay-buffer/index.js');
 const deviceRecordProfile = require('../../utils/device-record-profile.js');
-/** 页面创建前锁定录制档位，避免 onLoad 再改 camera frame-size 导致 Android 黑屏。 */
+/** 页面创建前锁定录制档位与 frame-size，避免 onLoad 再改 camera 属性导致黑屏。 */
 const INITIAL_RECORD_PROFILE = deviceRecordProfile.getDeviceRecordProfile();
+/** Live 页 onCameraFrame 抽帧档位（与 resolution=high 预览独立，初始化后不可变）。 */
+const INITIAL_RECORD_FRAME_SIZE = INITIAL_RECORD_PROFILE.recordFrameSize || 'medium';
 const LIVE_AUDIT = require('./audit.js');
 const footballClockBehavior = require('./behaviors/footballClockBehavior.js');
 const liveWsBehavior = require('./behaviors/liveWsBehavior.js');
@@ -207,21 +209,27 @@ const REPLAY_MATERIALIZE_DEFER_POLL_MS = 800;
 const REPLAY_RECORDING_CFR_THROTTLE_ENABLED = false;
 /** 可保存/回放的高光最短时长（ms），短于此拒绝 finalize。 */
 const MIN_HIGHLIGHT_PLAYABLE_MS = 3000;
-/** 连续低码率 rolling 段达到此次数后进入热节流模式。 */
-const THERMAL_DEGRADED_SEGMENT_STREAK_ENTER = 2;
+/** 连续低码率 rolling 段达到此次数后进入热节流模式（单段 45s，1 段即触发以尽快减负）。 */
+const THERMAL_DEGRADED_SEGMENT_STREAK_ENTER = 1;
 /** 热节流模式下连续健康段达到此次数后恢复正常档位。 */
 const THERMAL_HEALTHY_SEGMENT_STREAK_EXIT = 3;
 /** 热节流：CFR 喂帧与新建 MediaRecorder 目标 fps。 */
 const THERMAL_RECORDING_CFR_FPS = 15;
 const THERMAL_RECORDING_NOMINAL_FPS = 18;
-/** 热节流：新建 MediaRecorder 视频码率（kbps）。 */
-const THERMAL_RECORDING_KBPS = 2800;
+/** 热节流：新建 MediaRecorder 视频码率（kbps），降至编码器允许下限以最大减负。 */
+const THERMAL_RECORDING_KBPS = 1800;
 /** 参与热节流判定的 rolling 段最短墙钟时长（ms），避免短探针段误触。 */
 const THERMAL_SEGMENT_MIN_WALL_MS = 30000;
 /** rolling 段合理最低码率（字节/秒），低于此视为静止/假活画面。 */
-const MIN_ROLLING_SEGMENT_BYTES_PER_SEC = 80000;
-/** 热节流判定阈值（字节/秒），低于正常 720p@3600 但高于严重假活。 */
-const THERMAL_ROLLING_SEGMENT_BYTES_PER_SEC = 50000;
+const MIN_ROLLING_SEGMENT_BYTES_PER_SEC = 65000;
+/** 热节流判定阈值相对目标有效码率的比例（低于此视为编码吃力/发热）。 */
+const THERMAL_ROLLING_SEGMENT_TARGET_RATIO = 0.55;
+/** 录制质量看门狗轮询间隔（ms）：监测相机送帧 fps 以触发热节流。 */
+const RECORDING_QUALITY_WATCHDOG_INTERVAL_MS = 5000;
+/** 实测送帧 fps 低于目标比例时计为低帧率样本。 */
+const RECORDING_FPS_DEGRADED_RATIO = 0.6;
+/** 连续低帧率看门狗样本达到此次数后进入热节流。 */
+const RECORDING_FPS_DEGRADED_STREAK_ENTER = 3;
 /** 切后台回前台后，编码停滞看门狗冷却（避免 180s 长 chunk 未落盘时反复 hard recover）。 */
 const ENCODE_STALL_AFTER_PAGE_HIDE_MS = 60000;
 const ENCODE_STALL_RECOVER_COOLDOWN_MS = 45000;
@@ -242,20 +250,20 @@ const RecordingMode = {
 const RECORDING_MODE_OPTIONS = [{
   id: RecordingMode.LOCAL,
   label: '本机录制',
-  hint: '设备要求高·发热高·非旗舰机型易卡顿过热'
+  hint: '设备要求高·发热高·非旗舰机型易卡顿过热，建议使用副机录制'
 }, {
   id: RecordingMode.REMOTE,
   label: '副机录制',
   recommended: true,
-  hint: '直播机发热卡顿时·分流到副机·需副机'
+  hint: '直播机不录·副机进行录制·本机可控制副机启停（需联系客服开通）'
 }, {
   id: RecordingMode.DUAL,
   label: '双机录制',
-  hint: '设备要求最高·双录发热最高·非旗舰机型勿选'
+  hint: '设备要求高·双录发热最高·非旗舰机型勿选'
 }, {
   id: RecordingMode.OFF,
   label: '不录制',
-  hint: '画面卡顿时请选·优先保直播画面质量'
+  hint: '画面卡顿时请选·优先保直播画面质量·老旧机型建议不录制'
 }];
 /**
  * 本地存储键：是否已展示「超频模式无机位切换」提示（仅首次）。
@@ -846,10 +854,10 @@ Page({
     /** 强制 camera 组件重建的渲染序号（每次重建 +1）。 */
     cameraRenderNonce: 0,
     /**
-     * camera onCameraFrame 抽帧档位（初始化后不可变）：须保持 large，480p 降级只缩后台编码 canvas。
+     * camera onCameraFrame 抽帧档位（初始化后不可变）；预览画质由 resolution=high 控制，与抽帧独立。
      * @type {'small'|'medium'|'large'}
      */
-    recordFrameSize: 'large',
+    recordFrameSize: INITIAL_RECORD_FRAME_SIZE,
     isRecovering: false,
     /** 硬恢复相机卸载间隙：静态遮罩（无 Toast、无循环 video），减轻黑屏与推流观感问题。 */
     showRecoveryVeil: false,
@@ -877,6 +885,10 @@ Page({
     recSyncRoomId: '',
     recSyncConnected: false,
     recSyncPanelOpen: false,
+    /** 录制配置面板草稿：仅点「保存」后写回 recordingMode */
+    recordingModeDraft: RecordingMode.LOCAL,
+    /** 录制配置面板草稿房间号 */
+    recSyncRoomIdDraft: '',
     longPressTimer: null,
     periodFlash: false,
     /** 缓存空间灯：与 file-storage-estimate 的 getClipStorageHealthHint.level 一致 */
@@ -2196,19 +2208,19 @@ buildVipGateStateFromCheckStatus: function (body) {
    * 滚动录制单段时长（毫秒）。8s 单段体积更小，在约 200MB 本机文件配额下可保留更多段/更多次高光；
    * 高光「体感窗口」仍由 {@link highlightPlaybackWindowMs} 控制（默认 8s）。
    */
-  /** 乒乓录制单段时长（毫秒）：45s 母片（720p@3600kbps 约 19MB），双轨 maxFiles=2 峰值约 39MB。 */
+  /** 乒乓录制单段时长（毫秒）：45s 母片（720p@2400kbps 约 13MB），双轨 maxFiles=2 峰值约 27MB。 */
   pingPongChunkDurationMs: 45000,
   /** 双轨重叠（毫秒）：B 在 A 结束前 8s 启动；45s 段下重叠约 18%，满足 8s 高光窗口。 */
   pingPongStaggerMs: 8000,
-  /** 720p 滚动录制目标码率（kbps）；低于默认 4800 以减轻落盘体积与配额压力。 */
-  pingPongVideoBitsPerSecondKbps: 3600,
-  /** 后台 MediaRecorder 目标帧率上限（预热测速后取 min(实测, 24) 写入编码器，保证 1.0x 播放）。 */
-  pingPongRecordFps: 24,
+  /** 720p 滚动录制目标码率（kbps）；适度偏低以减轻编码压力，发热/低帧率时自动再降档。 */
+  pingPongVideoBitsPerSecondKbps: 2400,
+  /** 后台 MediaRecorder 目标帧率上限（预热测速后取 min(实测, 20) 写入编码器，保证 1.0x 播放）。 */
+  pingPongRecordFps: 20,
   /** 后台录制离屏 canvas 目标宽（低端 Android 在 onLoad 前已按档位初始化）。 */
   pingPongRecordCanvasWidth: INITIAL_RECORD_PROFILE.canvasWidth || 1280,
   /** 后台录制离屏 canvas 目标高。 */
   pingPongRecordCanvasHeight: INITIAL_RECORD_PROFILE.canvasHeight || 720,
-  /** 滚动目录最多保留母片数量（720p@3600 下 45s 单段约 19MB，2 段峰值约 39MB）。 */
+  /** 滚动目录最多保留母片数量（720p@2400 下 45s 单段约 13MB，2 段峰值约 27MB）。 */
   pingPongRollingMaxFiles: 2,
   /** 高光强制 flush 最小间隔（毫秒），抑制连按引发 iOS 601。 */
   pingPongHighlightFlushMinIntervalMs: 10000,
@@ -7323,6 +7335,7 @@ onShareAppMessage: function () {
       clearTimeout(this._framePulseTimer);
       this._framePulseTimer = null;
     }
+    this._stopRecordingQualityWatchdog();
     if (this._cameraHardwareDebounceTimer) {
       clearTimeout(this._cameraHardwareDebounceTimer);
       this._cameraHardwareDebounceTimer = null;
@@ -9297,6 +9310,7 @@ updatePipelineHealth: function () {
       });
       self.updatePipelineHealth();
       self._armFramePulseMonitor();
+      self._startRecordingQualityWatchdog();
       if (self.isLiveForegroundRecordingRecoverPending()) {
         self._armPostRemountEncodingProbe();
       }
@@ -9651,6 +9665,7 @@ updatePipelineHealth: function () {
    * @returns {void}
    */
   _stopRollingRecordingImpl: function (onStopped, source) {
+    this._stopRecordingQualityWatchdog();
     this.clearSegmentStartRetryTimer();
     if (this.rollingWatchdogTimer) {
       clearInterval(this.rollingWatchdogTimer);
@@ -10480,6 +10495,23 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
     }
   },
   /**
+   * 按当前目标码率估算 rolling 段合理有效产出（字节/秒）。
+   * @returns {number}
+   */
+  _getRecordingQualityTargetBytesPerSec: function () {
+    const kbps = Math.max(1800, Math.floor(Number(this.pingPongVideoBitsPerSecondKbps) || 2400));
+    /** H.264 运动场景实际产出常低于目标码率，取约 20% 作为健康下限。 */
+    return Math.max(35000, Math.floor((kbps * 1000) / 8 * 0.2));
+  },
+  /**
+   * 热节流判定用的有效码率下限（字节/秒）。
+   * @returns {number}
+   */
+  _getRecordingThermalBytesPerSecThreshold: function () {
+    const target = this._getRecordingQualityTargetBytesPerSec();
+    return Math.max(28000, Math.floor(target * THERMAL_ROLLING_SEGMENT_TARGET_RATIO));
+  },
+  /**
    * 判断 rolling 母片码率是否达标（切后台回前台后静止画面常表现为极低码率）。
    * @param {number} sizeBytes
    * @param {number} wallDurationMs
@@ -10527,15 +10559,21 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
     if (wallMs < THERMAL_SEGMENT_MIN_WALL_MS) return;
     const sizeBytes = segment.sizeBytes || 0;
     const bytesPerSec = wallMs > 0 ? Math.round(sizeBytes / Math.max(1, wallMs / 1000)) : 0;
-    const healthy = bytesPerSec >= THERMAL_ROLLING_SEGMENT_BYTES_PER_SEC && sizeBytes >= 16384;
+    const targetBytesPerSec = this._getRecordingQualityTargetBytesPerSec();
+    const thermalThreshold = this._getRecordingThermalBytesPerSecThreshold();
+    const healthy = bytesPerSec >= targetBytesPerSec && sizeBytes >= 16384;
     if (healthy) {
       this._thermalDegradedSegmentStreak = 0;
+      this._recordingFpsDegradedStreak = 0;
       if (this._thermalRecordingMode) {
         this._thermalHealthySegmentStreak = (this._thermalHealthySegmentStreak || 0) + 1;
         if (this._thermalHealthySegmentStreak >= THERMAL_HEALTHY_SEGMENT_STREAK_EXIT) {
           this._exitThermalRecordingMode();
         }
       }
+      return;
+    }
+    if (bytesPerSec >= thermalThreshold) {
       return;
     }
     this._thermalHealthySegmentStreak = 0;
@@ -10545,6 +10583,8 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
       sizeBytes,
       wallDurationMs: wallMs,
       bytesPerSec,
+      targetBytesPerSec,
+      thermalThreshold,
       streak: this._thermalDegradedSegmentStreak
     });
     if (
@@ -10555,15 +10595,17 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
     }
   },
   /**
-   * 设备发热时进入录制降载模式（降低 CFR 与后续 MediaRecorder 码率/fps）。
+   * 设备发热或编码吃力时进入录制降载模式（降低 CFR 与后续 MediaRecorder 码率/fps）。
+   * @param {string} [source]
    * @returns {void}
    */
-  _enterThermalRecordingMode: function () {
+  _enterThermalRecordingMode: function (source) {
     if (this._thermalRecordingMode) return;
     this._thermalRecordingMode = true;
     this._thermalHealthySegmentStreak = 0;
-    this._thermalSavedRecordFps = this.pingPongRecordFps || 24;
-    this._thermalSavedRecordKbps = this.pingPongVideoBitsPerSecondKbps || 3600;
+    this._recordingFpsDegradedStreak = 0;
+    this._thermalSavedRecordFps = this.pingPongRecordFps || 20;
+    this._thermalSavedRecordKbps = this.pingPongVideoBitsPerSecondKbps || 2400;
     this.pingPongRecordFps = THERMAL_RECORDING_NOMINAL_FPS;
     this.pingPongVideoBitsPerSecondKbps = THERMAL_RECORDING_KBPS;
     const pipeline = this._previewRecordPipeline;
@@ -10577,6 +10619,7 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
       pipeline.setCfrPumpFps(THERMAL_RECORDING_CFR_FPS);
     }
     this.appendHealthLog('recording_thermal_throttle_enter', {
+      source: source || 'segment_degraded',
       cfrFps: THERMAL_RECORDING_CFR_FPS,
       recordFps: THERMAL_RECORDING_NOMINAL_FPS,
       kbps: THERMAL_RECORDING_KBPS,
@@ -10587,7 +10630,7 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
       this._thermalThrottleToastShown = true;
       try {
         wx.showToast({
-          title: '设备发热，已自动降低录制负载',
+          title: '录制负载过高，已自动降档',
           icon: 'none',
           duration: 2600
         });
@@ -10600,13 +10643,14 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
    */
   _exitThermalRecordingMode: function () {
     if (!this._thermalRecordingMode) return;
-    const restoreFps = this._thermalSavedRecordFps > 0 ? this._thermalSavedRecordFps : 24;
-    const restoreKbps = this._thermalSavedRecordKbps > 0 ? this._thermalSavedRecordKbps : 3600;
+    const restoreFps = this._thermalSavedRecordFps > 0 ? this._thermalSavedRecordFps : 20;
+    const restoreKbps = this._thermalSavedRecordKbps > 0 ? this._thermalSavedRecordKbps : 2400;
     this.pingPongRecordFps = restoreFps;
     this.pingPongVideoBitsPerSecondKbps = restoreKbps;
     this._thermalRecordingMode = false;
     this._thermalDegradedSegmentStreak = 0;
     this._thermalHealthySegmentStreak = 0;
+    this._recordingFpsDegradedStreak = 0;
     const pipeline = this._previewRecordPipeline;
     if (pipeline && typeof pipeline.setRecordingProfile === 'function') {
       pipeline.setRecordingProfile({
@@ -10621,6 +10665,62 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
       fps: restoreFps,
       kbps: restoreKbps
     });
+  },
+  /**
+   * 启动录制质量看门狗：轮询相机送帧 fps，持续偏低时自动热节流。
+   * @returns {void}
+   */
+  _startRecordingQualityWatchdog: function () {
+    this._stopRecordingQualityWatchdog();
+    this._recordingFpsDegradedStreak = 0;
+    const self = this;
+    const tick = function () {
+      if (!self._livePageVisible || !self.rollingActive || self.data.isReplaying) {
+        self._stopRecordingQualityWatchdog();
+        return;
+      }
+      const pipeline = self._previewRecordPipeline;
+      if (!pipeline || !pipeline.isActive()) {
+        self._recordingQualityWatchdogTimer = setTimeout(tick, RECORDING_QUALITY_WATCHDOG_INTERVAL_MS);
+        return;
+      }
+      const stats = typeof pipeline.getCameraFeedStats === 'function'
+        ? pipeline.getCameraFeedStats()
+        : null;
+      const targetFps = self.pingPongRecordFps || 20;
+      const measuredFps = stats && stats.fps > 0 ? stats.fps : 0;
+      const minFps = Math.max(8, Math.floor(targetFps * RECORDING_FPS_DEGRADED_RATIO));
+      if (measuredFps > 0 && measuredFps < minFps && stats.frameCount >= 4) {
+        self._recordingFpsDegradedStreak = (self._recordingFpsDegradedStreak || 0) + 1;
+        self.appendHealthLog('recording_fps_degraded_sample', {
+          measuredFps,
+          targetFps,
+          minFps,
+          streak: self._recordingFpsDegradedStreak
+        });
+        if (
+          self._recordingFpsDegradedStreak >= RECORDING_FPS_DEGRADED_STREAK_ENTER
+          && !self._thermalRecordingMode
+        ) {
+          self._enterThermalRecordingMode('fps_watchdog');
+        }
+      } else if (measuredFps >= minFps) {
+        self._recordingFpsDegradedStreak = 0;
+      }
+      self._recordingQualityWatchdogTimer = setTimeout(tick, RECORDING_QUALITY_WATCHDOG_INTERVAL_MS);
+    };
+    this._recordingQualityWatchdogTimer = setTimeout(tick, RECORDING_QUALITY_WATCHDOG_INTERVAL_MS);
+  },
+  /**
+   * 停止录制质量看门狗。
+   * @returns {void}
+   */
+  _stopRecordingQualityWatchdog: function () {
+    if (this._recordingQualityWatchdogTimer) {
+      clearTimeout(this._recordingQualityWatchdogTimer);
+      this._recordingQualityWatchdogTimer = null;
+    }
+    this._recordingFpsDegradedStreak = 0;
   },
   /**
    * indexed 滚动母片 + tailTrim 在固化前 seek 回放易卡顿/残缺，须等 materialized（iOS/Android 同策略）。
@@ -12199,11 +12299,11 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
    * 打开抽屉（mode 1）：左侧比赛列表 + 右侧高光缩略图
    */
   openDrawerMode1: function () {
+    this._closeRecSyncPanelWithoutSave();
     this.refreshDrawerHighlights();
     this.loadMatchList();
     this.setData({
       drawerMode: 1,
-      recSyncPanelOpen: false,
       cameraSettingsOpen: false,
       footballOpsPanelOpen: false,
       quickZoomMenuOpen: false
@@ -13401,7 +13501,7 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
     const pipeline = this._previewRecordPipeline;
     const restoreFps = this._replaySavedEncoderFps > 0
       ? this._replaySavedEncoderFps
-      : (this.pingPongRecordFps || 24);
+      : (this.pingPongRecordFps || 20);
     if (pipeline && typeof pipeline.resumeCfrFeed === 'function') {
       pipeline.resumeCfrFeed(restoreFps);
     } else if (pipeline && typeof pipeline.setCfrPumpFps === 'function') {
@@ -15790,8 +15890,10 @@ onLoad: function (options) {
       this.setData({
         recordingMode: recordingMode,
         recordingModeLabel: this._recordingModeLabel(recordingMode),
+        recordingModeDraft: recordingMode,
         recSyncEnabled: this._recordingModeUsesRecSync(recordingMode),
-        recSyncRoomId: recSyncRoomId
+        recSyncRoomId: recSyncRoomId,
+        recSyncRoomIdDraft: recSyncRoomId
       });
     } catch (e) {}
     this._initLocalAds();
@@ -15831,14 +15933,14 @@ onLoad: function (options) {
     this._deviceRecordProfileTier = profile.tier || '720p';
     this.pingPongRecordCanvasWidth = profile.canvasWidth;
     this.pingPongRecordCanvasHeight = profile.canvasHeight;
-    /** camera frame-size 须与首屏 data 一致且初始化后不可变；480p 仅缩编码 canvas，不改 camera 档位。 */
+    /** camera frame-size 须与首屏 data 一致且初始化后不可变；480p 仅缩编码 canvas。 */
     if (profile.tier === '480p') {
       try {
         this.appendHealthLog('device_record_profile_downgrade', {
           tier: profile.tier,
           canvasWidth: profile.canvasWidth,
           canvasHeight: profile.canvasHeight,
-          cameraFrameSize: this.data.recordFrameSize || 'large',
+          cameraFrameSize: this.data.recordFrameSize || INITIAL_RECORD_FRAME_SIZE,
           encoderDownscaleOnly: true,
           skipMediaContainerTrim: profile.skipMediaContainerTrim
         });
@@ -16155,11 +16257,22 @@ onLoad: function (options) {
       this._showLightHint('同步失败');
     }
   },
-  _recSyncWsConnect: function () {
-    if (!this._shouldRecSyncWs()) {
+  _recSyncWsConnect: function (opts) {
+    const options = opts && typeof opts === 'object' ? opts : {};
+    const panelEditing = !!this.data.recSyncPanelOpen;
+    const mode = this._normalizeRecordingMode(
+      options.mode != null
+        ? options.mode
+        : (panelEditing ? this.data.recordingModeDraft : this.data.recordingMode)
+    );
+    if (!this._recordingModeUsesRecSync(mode)) {
       return;
     }
-    const recSyncRoomId = this.data.recSyncRoomId;
+    const recSyncRoomId = String(
+      options.roomId != null
+        ? options.roomId
+        : (panelEditing ? this.data.recSyncRoomIdDraft : this.data.recSyncRoomId)
+    );
     if (this._recSyncWs && this._recSyncWs.isConnected() && this._recSyncWs.getRoomId() === recSyncRoomId) {
       return;
     }
@@ -16195,27 +16308,127 @@ onLoad: function (options) {
     this.setData({ recSyncConnected: false });
     this.updatePipelineHealth();
   },
-  onRecSyncPanelToggle: function () {
-    const opening = !this.data.recSyncPanelOpen;
-    if (opening) {
-      this.closeAllDrawers();
-      this.setData({
-        recSyncPanelOpen: true,
-        aspectModePanelOpen: false,
-        cameraSettingsOpen: false,
-        footballOpsPanelOpen: false,
-        quickZoomMenuOpen: false
-      });
-      return;
-    }
+  /**
+   * 打开录制配置面板并初始化草稿态。
+   * @returns {void}
+   */
+  _openRecSyncPanel: function () {
+    this.closeAllDrawers();
+    const appliedMode = this._normalizeRecordingMode(this.data.recordingMode);
+    const appliedRoomId = String(this.data.recSyncRoomId || '');
+    this._recSyncPanelSnapshot = {
+      mode: appliedMode,
+      roomId: appliedRoomId,
+      connected: !!this.data.recSyncConnected,
+      connectedRoomId: this._recSyncWs && this._recSyncWs.isConnected()
+        ? String(this._recSyncWs.getRoomId() || '')
+        : ''
+    };
     this.setData({
-      recSyncPanelOpen: false
+      recSyncPanelOpen: true,
+      recordingModeDraft: appliedMode,
+      recSyncRoomIdDraft: appliedRoomId,
+      aspectModePanelOpen: false,
+      cameraSettingsOpen: false,
+      footballOpsPanelOpen: false,
+      quickZoomMenuOpen: false
     });
   },
-  onRecSyncPanelClose: function () {
+  /**
+   * 丢弃录制配置草稿并恢复打开面板前的副机连接态。
+   * @returns {void}
+   */
+  _restoreRecSyncWsAfterPanelDiscard: function () {
+    const snap = this._recSyncPanelSnapshot;
+    if (!snap) return;
+    const appliedUsesSync = this._recordingModeUsesRecSync(snap.mode);
+    const curConnected = !!this.data.recSyncConnected;
+    const curRoom = this._recSyncWs && this._recSyncWs.isConnected()
+      ? String(this._recSyncWs.getRoomId() || '')
+      : '';
+    if (!appliedUsesSync) {
+      if (curConnected) {
+        this._recSyncWsDisconnect();
+      }
+      return;
+    }
+    if (!snap.connected || snap.connectedRoomId.length !== 6) {
+      if (curConnected) {
+        this._recSyncWsDisconnect();
+      }
+      return;
+    }
+    if (!curConnected || curRoom !== snap.connectedRoomId) {
+      if (curConnected) {
+        this._recSyncWsDisconnect();
+      }
+      this._recSyncWsConnect({
+        mode: snap.mode,
+        roomId: snap.connectedRoomId
+      });
+    }
+  },
+  /**
+   * 关闭录制配置面板且不保存草稿。
+   * @returns {void}
+   */
+  _closeRecSyncPanelWithoutSave: function () {
+    if (!this.data.recSyncPanelOpen) {
+      return;
+    }
+    this._restoreRecSyncWsAfterPanelDiscard();
+    this._recSyncPanelSnapshot = null;
+    const appliedMode = this._normalizeRecordingMode(this.data.recordingMode);
     this.setData({
+      recSyncPanelOpen: false,
+      recordingModeDraft: appliedMode,
+      recSyncRoomIdDraft: String(this.data.recSyncRoomId || '')
+    });
+  },
+  onRecSyncPanelToggle: function () {
+    if (!this.data.recSyncPanelOpen) {
+      this._openRecSyncPanel();
+      return;
+    }
+    this._closeRecSyncPanelWithoutSave();
+  },
+  onRecSyncPanelClose: function () {
+    this._closeRecSyncPanelWithoutSave();
+  },
+  /**
+   * 保存录制配置草稿并应用副作用。
+   * @returns {void}
+   */
+  onRecSyncPanelSave: function () {
+    const nextMode = this._normalizeRecordingMode(this.data.recordingModeDraft);
+    const nextRoomId = String(this.data.recSyncRoomIdDraft || '').replace(/\D/g, '').slice(0, 6);
+    const prevMode = this._normalizeRecordingMode(this.data.recordingMode);
+    const prevRoomId = String(this.data.recSyncRoomId || '');
+    const modeChanged = nextMode !== prevMode;
+    const roomChanged = nextRoomId !== prevRoomId;
+    this._recSyncPanelSnapshot = null;
+    this.setData({
+      recordingMode: nextMode,
+      recordingModeLabel: this._recordingModeLabel(nextMode),
+      recSyncRoomId: nextRoomId,
       recSyncPanelOpen: false
     });
+    try {
+      wx.setStorageSync(LIVE_RECORDING_MODE_STORAGE_KEY, nextMode);
+      wx.setStorageSync('rec_sync_room_id', nextRoomId);
+    } catch (eStore) {}
+    if (modeChanged) {
+      this._scheduleRecordingModeEffects('user_save');
+    } else if (roomChanged && this._recordingModeUsesRecSync(nextMode)) {
+      if (this.data.recSyncConnected) {
+        this._recSyncWsDisconnect();
+      }
+      if (nextRoomId.length === 6) {
+        this._recSyncWsConnect();
+      }
+      this.updatePipelineHealth();
+    }
+    this._showLightHint('已保存录制配置');
   },
   /**
    * 选择录制模式。
@@ -16225,17 +16438,12 @@ onLoad: function (options) {
   onRecordingModeSelect: function (e) {
     const mode = e && e.currentTarget && e.currentTarget.dataset ? e.currentTarget.dataset.mode : '';
     const nextMode = this._normalizeRecordingMode(mode);
-    if (nextMode === this._normalizeRecordingMode(this.data.recordingMode)) {
+    if (nextMode === this._normalizeRecordingMode(this.data.recordingModeDraft)) {
       return;
     }
     this.setData({
-      recordingMode: nextMode,
-      recordingModeLabel: this._recordingModeLabel(nextMode)
+      recordingModeDraft: nextMode
     });
-    try {
-      wx.setStorageSync(LIVE_RECORDING_MODE_STORAGE_KEY, nextMode);
-    } catch (eStore) {}
-    this._scheduleRecordingModeEffects('user_select');
   },
   onRecSyncRoomIdInput: function (e) {
     const val = String(e.detail.value || '').replace(/\D/g, '').slice(0, 6);
@@ -16245,15 +16453,24 @@ onLoad: function (options) {
         this._recSyncWsDisconnect();
       }
     }
+    if (this.data.recSyncPanelOpen) {
+      this.setData({ recSyncRoomIdDraft: val });
+      return;
+    }
     this.setData({ recSyncRoomId: val });
-    wx.setStorageSync('rec_sync_room_id', val);
+    try {
+      wx.setStorageSync('rec_sync_room_id', val);
+    } catch (eStore) {}
   },
   onRecSyncConnectTap: function () {
     if (this.data.recSyncConnected) {
       this._recSyncWsDisconnect();
       return;
     }
-    if (this.data.recSyncRoomId.length !== 6) {
+    const roomId = this.data.recSyncPanelOpen
+      ? String(this.data.recSyncRoomIdDraft || '')
+      : String(this.data.recSyncRoomId || '');
+    if (roomId.length !== 6) {
       this._showLightHint('请输入6位房间号');
       return;
     }

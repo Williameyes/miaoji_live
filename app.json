@@ -31,6 +31,7 @@
         "pages/sync-lab/collector/collector",
         "pages/radar-lab/index/index",
         "pages/radar-lab/mount/index",
+        "pages/radar-lab/warmup/index",
         "pages/radar-lab/oam/oam",
         "pages/radar-lab/oam/tournament-list/tournament-list",
         "pages/radar-lab/oam/match-edit/match-edit",

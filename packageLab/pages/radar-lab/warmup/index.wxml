@@ -1,0 +1,197 @@
+<view class="rl-root">
+
+  <!-- ==================== Step 1: 监测中场次列表 ==================== -->
+  <block wx:if="{{!selectedMatchId}}">
+    <view class="rl-header">
+      <view class="rl-kicker">雷达实验 · 直播间预热</view>
+      <view class="rl-title">选择预热场次</view>
+      <view class="rl-sub">点击进行中/监测中的场次，下发自动点赞与评论预热任务</view>
+    </view>
+
+    <!-- 加载中 -->
+    <view class="rl-empty" wx:if="{{loading}}">
+      <text>加载中…</text>
+    </view>
+
+    <!-- 列表展现 -->
+    <view class="rl-card" wx:elif="{{activeMatches.length}}">
+      <block wx:for="{{activeMatches}}" wx:key="id">
+        <view
+          class="active-match-item"
+          bindtap="onSelectMatch"
+          data-id="{{item.id}}"
+          hover-class="rl-list-item-hover"
+        >
+          <view class="active-match-main">
+            <view class="rl-list-title">{{item.teamA}} vs {{item.teamB}}</view>
+            <view class="rl-list-desc">{{item.startTimeText}} · {{item.tournamentName}}</view>
+            <view class="rl-list-desc active-match-id">场次 ID: {{item.id}}</view>
+          </view>
+          <view class="active-match-badge-wrap">
+            <text class="rl-badge {{item.statusBadgeClass}}">{{item.statusLabel}}</text>
+          </view>
+        </view>
+      </block>
+    </view>
+
+    <!-- 空态 -->
+    <view class="rl-empty" wx:else>
+      <text>暂无进行中的监测场次</text>
+      <text class="rl-empty-sub">直播间预热需要先在「雷达挂载」中启动场次监控</text>
+    </view>
+  </block>
+
+  <!-- ==================== Step 2: 预热配置与下发 ==================== -->
+  <block wx:elif="{{selectedMatchId && !warmupJobId}}">
+    <view class="rl-header">
+      <view class="rl-kicker">雷达实验 · 直播间预热</view>
+      <view class="rl-title">{{selectedMatchTitle}}</view>
+      <view class="rl-sub">场次 ID: {{selectedMatchId}}</view>
+    </view>
+
+    <view class="rl-card">
+      <view class="rl-card-inner">
+        <!-- 切换源模式 -->
+        <view class="warmup-tabs" wx:if="{{boundAnchors.length > 0}}">
+          <view class="warmup-tab {{warmupSourceMode === 'select' ? 'active' : ''}}" bindtap="onSwitchSourceMode" data-mode="select">选择已绑定直播间</view>
+          <view class="warmup-tab {{warmupSourceMode === 'input' ? 'active' : ''}}" bindtap="onSwitchSourceMode" data-mode="input">手动输入直播间</view>
+        </view>
+
+        <!-- 选择已绑定直播间 -->
+        <view class="rl-field" wx:if="{{boundAnchors.length > 0 && warmupSourceMode === 'select'}}">
+          <radio-group class="anchor-radio-group" bindchange="onAnchorSelectChange">
+            <label class="anchor-radio-label" wx:for="{{boundAnchors}}" wx:key="secUserId">
+              <radio value="{{item.liveUrl}}" checked="{{warmupLiveUrl === item.liveUrl}}" color="#2563eb" />
+              <view class="anchor-radio-info">
+                <text class="anchor-radio-name">{{item.anchorName || '未命名主播'}}</text>
+                <text class="anchor-radio-url">{{item.liveUrl}}</text>
+              </view>
+            </label>
+          </radio-group>
+        </view>
+
+        <!-- 手动输入直播间 -->
+        <view class="rl-field" wx:if="{{boundAnchors.length === 0 || warmupSourceMode === 'input'}}">
+          <text class="rl-label">输入直播间链接或分享口令</text>
+          <textarea
+            class="rl-textarea"
+            placeholder="请复制抖音分享口令或粘贴直播间链接，二选一。例如：https://live.douyin.com/... 或 7.43 复制打开抖音..."
+            value="{{warmupInputText}}"
+            bindinput="onWarmupInputText"
+            maxlength="-1"
+            style="height: 140rpx;"
+          />
+        </view>
+
+        <block>
+          <!-- 账号数 -->
+          <view class="rl-field" style="margin-top: 24rpx;">
+            <view class="rl-label-row">
+              <text class="rl-label">账号数</text>
+              <text class="warmup-field-val">{{warmupAccountCount}} 个</text>
+            </view>
+            <slider
+              min="1"
+              max="10"
+              value="{{warmupAccountCount}}"
+              bindchange="onWarmupAccountChange"
+              activeColor="#2563eb"
+              show-value="{{false}}"
+            />
+          </view>
+
+          <!-- 预热时长 -->
+          <view class="rl-field">
+            <view class="rl-label-row">
+              <text class="rl-label">挂房预热时长 (只读)</text>
+            </view>
+            <input class="rl-input" style="background-color: #f1f5f9; color: #64748b;" value="{{warmupDurationMin}} 分钟" disabled="{{true}}" />
+          </view>
+
+          <!-- 可选评论 -->
+          <view class="rl-field">
+            <text class="rl-label">当次评论 (可选，每行一条)</text>
+            <textarea
+              class="rl-textarea"
+              placeholder="请输入评论内容，每行一条。如果不填写，将默认使用雷达本地评论库。"
+              value="{{warmupCommentsText}}"
+              bindinput="onWarmupCommentsInput"
+              maxlength="-1"
+              style="height: 180rpx;"
+            />
+          </view>
+
+          <!-- 提示文案 -->
+          <view class="warmup-tips">
+            <view class="warmup-tip-item">💡 未填写评论时，将使用雷达端 data/warmup/comment_pool.json，请确保评论条数 ≥ 账号数</view>
+            <view class="warmup-tip-item">⚡ 每个账号将在直播间挂房约 30 分钟，期间自动点赞 200~300 次并发送 1 条评论</view>
+          </view>
+        </block>
+      </view>
+    </view>
+
+    <view class="mon-actions">
+      <button class="rl-btn rl-btn-primary" disabled="{{submitting || (warmupSourceMode === 'select' && !warmupLiveUrl) || (warmupSourceMode === 'input' && !warmupInputText)}}" bindtap="onSubmitWarmup">下发预热任务</button>
+      <button class="rl-btn rl-btn-secondary" bindtap="onBackToList">返回列表</button>
+    </view>
+  </block>
+
+  <!-- ==================== Step 3: 进度监测轮询 ==================== -->
+  <block wx:else>
+    <view class="rl-header">
+      <view class="rl-kicker">雷达实验 · 正在预热</view>
+      <view class="rl-title">{{selectedMatchTitle}}</view>
+      <view class="rl-sub">Job ID: {{warmupJobId}}</view>
+    </view>
+
+    <view class="rl-card">
+      <view class="rl-card-inner">
+        <view class="warmup-job-header">
+          <text class="warmup-job-title">已下发 {{warmupEnqueuedCount}} 个预热任务</text>
+          <text class="warmup-job-sub">直播间: {{warmupLiveUrl}}</text>
+        </view>
+
+        <!-- 进度条 -->
+        <view class="warmup-progress-box">
+          <view class="warmup-progress-label">
+            <text>任务进度 ({{warmupCompletedCount}} / {{warmupAccountCount}})</text>
+            <text class="warmup-status-badge status-{{warmupStatus}}">{{warmupStatusLabel}}</text>
+          </view>
+          <view class="warmup-progress-bar-bg">
+            <view class="warmup-progress-bar-fill" style="width: {{warmupProgressPercent}}%;"></view>
+          </view>
+        </view>
+
+        <!-- 结果列表 -->
+        <view class="warmup-results-title">任务列表 (每 3 秒刷新)</view>
+        <view class="warmup-results-list" wx:if="{{warmupResults && warmupResults.length > 0}}">
+          <view class="warmup-result-item" wx:for="{{warmupResults}}" wx:key="sequence_index">
+            <view class="warmup-result-row">
+              <text class="warmup-result-name">{{item.account_name || '账号 ' + (item.sequence_index + 1)}}</text>
+              <text class="warmup-result-status status-{{item.status}}">{{item.statusLabel}}</text>
+            </view>
+            <view class="warmup-result-comment" wx:if="{{item.comment_text}}">
+              💬 {{item.comment_text}}
+            </view>
+            <view class="warmup-result-meta">
+              <text>点赞数: {{item.likes_done || 0}} / {{item.like_budget || 0}}</text>
+              <text style="margin-left: 20rpx;">时长: {{item.duration_sec ? item.duration_sec + '秒' : '—'}}</text>
+            </view>
+            <view class="warmup-result-error" wx:if="{{item.error_message}}">
+              ⚠️ 错误: {{item.error_message}}
+            </view>
+          </view>
+        </view>
+        <view class="rl-empty" style="padding: 48rpx 0;" wx:else>
+          正在初始化预热任务...
+        </view>
+      </view>
+    </view>
+
+    <view class="mon-actions">
+      <button class="rl-btn rl-btn-secondary" bindtap="onBackToList">返回列表</button>
+      <button class="rl-btn rl-btn-primary" wx:if="{{warmupStatus === 'completed' || warmupStatus === 'partial_failed' || warmupStatus === 'failed'}}" bindtap="onResetWarmup">重新预热</button>
+    </view>
+  </block>
+
+</view>

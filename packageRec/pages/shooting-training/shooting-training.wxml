@@ -151,12 +151,12 @@
   <!-- 5. 状态层（相机未开时用 view；相机已开时用 cover-view 保证按钮可点） -->
   <cover-view class="cover-overlay-mask" wx:if="{{cameraReady && status !== 'ready' && status !== 'training'}}">
     <cover-view class="cover-status-card" wx:if="{{status === 'modelLoading'}}">
-      <cover-view class="cover-status-title">正在加载 AI 模型</cover-view>
-      <cover-view class="cover-status-desc">{{modelProgressText || '首次使用需下载约 12MB，请保持网络畅通'}}</cover-view>
+      <cover-view class="cover-status-title">正在加载相机插件</cover-view>
+      <cover-view class="cover-status-desc">{{modelProgressText || '首次使用需下载相机插件，请保持网络畅通'}}</cover-view>
       <cover-view class="cover-progress-track">
         <cover-view class="cover-progress-fill" style="width: {{modelProgress}}%;"></cover-view>
       </cover-view>
-      <cover-view class="cover-status-hint">模型仅下载一次，之后本地缓存秒开</cover-view>
+      <cover-view class="cover-status-hint">相机插件仅下载一次，之后本地缓存秒开</cover-view>
     </cover-view>
 
     <cover-view class="cover-status-card" wx:if="{{status === 'loading'}}">
@@ -171,9 +171,9 @@
     </cover-view>
 
     <cover-view class="cover-status-card" wx:if="{{status === 'error'}}">
-      <cover-view class="cover-status-title">{{modelLoaded ? '相机启动失败' : 'AI 模型加载失败'}}</cover-view>
+      <cover-view class="cover-status-title">{{modelLoaded ? '相机启动失败' : '相机插件加载失败'}}</cover-view>
       <cover-view class="cover-status-desc">{{errorMessage || '未知错误，请重试。'}}</cover-view>
-      <cover-view class="cover-action-btn" wx:if="{{!modelLoaded}}" bindtap="onRetryModelTap">重新下载模型</cover-view>
+      <cover-view class="cover-action-btn" wx:if="{{!modelLoaded}}" bindtap="onRetryModelTap">重新下载相机插件</cover-view>
       <cover-view class="cover-action-btn" wx:if="{{modelLoaded}}" bindtap="onRetryCameraTap">重试相机</cover-view>
       <cover-view class="cover-action-btn cover-action-btn--ghost" bindtap="onBackTap">返回</cover-view>
     </cover-view>
@@ -182,12 +182,12 @@
   <view class="overlay-mask" wx:elif="{{status !== 'ready' && status !== 'training'}}">
     <view class="status-card" wx:if="{{status === 'modelLoading'}}">
       <view class="spinner"></view>
-      <text class="status-title">正在加载 AI 模型</text>
-      <text class="status-desc">{{modelProgressText || '首次使用需下载约 12MB，请保持网络畅通'}}</text>
+      <text class="status-title">正在加载相机插件</text>
+      <text class="status-desc">{{modelProgressText || '首次使用需下载相机插件，请保持网络畅通'}}</text>
       <view class="progress-track">
         <view class="progress-fill" style="width: {{modelProgress}}%;"></view>
       </view>
-      <text class="status-hint">模型仅下载一次，之后本地缓存秒开</text>
+      <text class="status-hint">相机插件仅下载一次，之后本地缓存秒开</text>
     </view>
 
     <view class="status-card" wx:if="{{status === 'loading'}}">
@@ -205,9 +205,9 @@
 
     <view class="status-card" wx:if="{{status === 'error'}}">
       <text class="status-icon">❌</text>
-      <text class="status-title">{{modelLoaded ? '相机启动失败' : 'AI 模型加载失败'}}</text>
+      <text class="status-title">{{modelLoaded ? '相机启动失败' : '相机插件加载失败'}}</text>
       <text class="status-desc">{{errorMessage || '未知错误，请重试。'}}</text>
-      <button class="action-btn" wx:if="{{!modelLoaded}}" bindtap="onRetryModelTap">重新下载模型</button>
+      <button class="action-btn" wx:if="{{!modelLoaded}}" bindtap="onRetryModelTap">重新下载相机插件</button>
       <button class="action-btn" wx:if="{{modelLoaded}}" bindtap="onRetryCameraTap">重试相机</button>
       <button class="action-btn action-btn--ghost" bindtap="onBackTap">返回</button>
     </view>
@@ -218,7 +218,7 @@
     wx:if="{{cameraReady && mlPaused && (status === 'ready' || status === 'training')}}"
     class="cover-paused-banner"
   >
-    <cover-view class="cover-paused-title">AI 检测未开启</cover-view>
+    <cover-view class="cover-paused-title">识别 检测未开启</cover-view>
     <cover-view class="cover-paused-sub">检测已停，可点顶部「复制/发送」导出日志</cover-view>
   </cover-view>
 

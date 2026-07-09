@@ -152,6 +152,12 @@ function createPreviewRecordPipeline(page) {
   let cfrMissedTicks = 0;
   /** 最近一次帧/轨道活动，供 segment watchdog 识别乒乓假死。 */
   let lastPipelineHeartbeatAt = 0;
+  /** 相机送帧时间戳样本（供录制质量看门狗估算 fps）。 */
+  let feedFrameTimestamps = [];
+  /** feed 统计窗口（ms）。 */
+  const FEED_STATS_WINDOW_MS = 5000;
+  /** feed 统计最大样本数。 */
+  const FEED_STATS_MAX_SAMPLES = 40;
   /** 当前 start() 是否已完成预热（收到足够帧）。 */
   let pipelineWarmedUp = false;
   /** 预热阶段累计帧数。 */
@@ -182,6 +188,46 @@ function createPreviewRecordPipeline(page) {
    * 污染 segmentCounter、_lastSuccessfulChunkAt 等状态，并误触 _tryGenerateHighlight。
    */
   let activeSessionId = 0;
+
+  /**
+   * 记录相机送帧时间戳，供 getCameraFeedStats 估算有效 fps。
+   * @param {number} now
+   * @returns {void}
+   */
+  function recordFeedFrameTimestamp(now) {
+    feedFrameTimestamps.push(now);
+    if (feedFrameTimestamps.length > FEED_STATS_MAX_SAMPLES) {
+      feedFrameTimestamps.shift();
+    }
+  }
+
+  /**
+   * 获取近期相机送帧统计（滑动窗口）。
+   * @returns {{ fps: number, frameCount: number, windowMs: number }}
+   */
+  function getCameraFeedStats() {
+    const now = Date.now();
+    const cutoff = now - FEED_STATS_WINDOW_MS;
+    const inWindow = feedFrameTimestamps.filter((ts) => ts >= cutoff);
+    let fps = 0;
+    if (inWindow.length >= 2) {
+      const spanSec = Math.max(0.001, (inWindow[inWindow.length - 1] - inWindow[0]) / 1000);
+      fps = Math.round(((inWindow.length - 1) / spanSec) * 10) / 10;
+    }
+    return {
+      fps,
+      frameCount: inWindow.length,
+      windowMs: FEED_STATS_WINDOW_MS
+    };
+  }
+
+  /**
+   * 清空送帧统计样本。
+   * @returns {void}
+   */
+  function resetFeedFrameStats() {
+    feedFrameTimestamps = [];
+  }
 
   /**
    * 停止 CFR 定频喂帧泵。
@@ -555,6 +601,7 @@ function createPreviewRecordPipeline(page) {
       }
     }
     if (!active || !pingPong) return;
+    recordFeedFrameTimestamp(now);
     updateLatestFeedFrame(frame);
   }
 
@@ -586,7 +633,6 @@ function createPreviewRecordPipeline(page) {
     if (
       pageVisible
       && wallMs >= 30000
-      && !isHealthy
       && typeof page._handleThermalRollingSegment === 'function'
     ) {
       page._handleThermalRollingSegment(segment);
@@ -681,6 +727,7 @@ function createPreviewRecordPipeline(page) {
        */
       activeSessionId += 1;
       const instanceSessionId = activeSessionId;
+      resetFeedFrameStats();
       const pipelineEpoch = page
         ? (page._rollingPipelineEpoch = (page._rollingPipelineEpoch || 0) + 1)
         : 0;
@@ -949,6 +996,7 @@ function createPreviewRecordPipeline(page) {
      */
     active = false;
     stopCfrPump();
+    resetFeedFrameStats();
     latestFeedFrame = null;
     pipelineWarmedUp = false;
     warmupFrameCount = 0;
@@ -1176,6 +1224,7 @@ function createPreviewRecordPipeline(page) {
     pauseCfrFeed,
     resumeCfrFeed,
     setRecordingProfile,
+    getCameraFeedStats,
     getMaxAvailableHighlightLeadMs
   };
 }

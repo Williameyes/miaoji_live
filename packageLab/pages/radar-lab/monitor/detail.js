@@ -235,8 +235,6 @@ Page({
     mediaSummary: null,
     mediaCounts: null,
     mediaStatus: null,
-    teamA: '',
-    teamB: '',
     boundAnchors: [],
     canManage: true
   },

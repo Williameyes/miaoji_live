@@ -1,5 +1,6 @@
 /**
  * 直播录制档位探测：低端 Android 自动降级 480p，减轻 MediaCodec 并发压力。
+ * onCameraFrame 使用 medium 抽帧（与 resolution=high 预览独立），降低取帧/绘制发热。
  */
 
 /** 720p 16:9 录制画布。 */
@@ -7,16 +8,16 @@ const RECORD_PROFILE_720P = {
   tier: '720p',
   canvasWidth: 1280,
   canvasHeight: 720,
-  recordFrameSize: 'large',
+  recordFrameSize: 'medium',
   skipMediaContainerTrim: false
 };
 
-/** 480p 16:9 编码画布（853×480）；camera frame-size 保持 large 以免 onCameraFrame 零帧/黑屏。 */
+/** 480p 16:9 编码画布（853×480）；抽帧 medium，预览仍由 camera resolution=high 决定。 */
 const RECORD_PROFILE_480P = {
   tier: '480p',
   canvasWidth: 853,
   canvasHeight: 480,
-  recordFrameSize: 'large',
+  recordFrameSize: 'medium',
   skipMediaContainerTrim: true
 };
 
@@ -67,10 +68,10 @@ function isLowEndAndroidDevice() {
   try {
     const sys = wx.getSystemInfoSync();
     const androidMajor = parseAndroidMajorVersion(sys.system);
-    if (androidMajor > 0 && androidMajor <= 11) return true;
+    if (androidMajor > 0 && androidMajor <= 12) return true;
     const benchmark = Number(sys.benchmarkLevel);
-    /** 微信 benchmarkLevel 越低性能越差，≤15 视为低端。 */
-    if (Number.isFinite(benchmark) && benchmark > 0 && benchmark <= 15) return true;
+    /** 微信 benchmarkLevel 越低性能越差，≤20 视为中端及以下。 */
+    if (Number.isFinite(benchmark) && benchmark > 0 && benchmark <= 20) return true;
     const memMb = Number(sys.memorySize);
     if (Number.isFinite(memMb) && memMb > 0 && memMb <= 4096) return true;
   } catch (e) {

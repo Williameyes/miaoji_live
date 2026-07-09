@@ -185,7 +185,7 @@ Page({
   },
 
   /**
-   * 按需下载并加载 ONNX 模型。
+   * 按需下载并加载 ONNX 。
    * @returns {void}
    */
   _loadBallModel: function () {
@@ -193,7 +193,7 @@ Page({
     this.setData({
       status: 'modelLoading',
       modelProgress: 0,
-      modelProgressText: '准备下载 AI 模型…',
+      modelProgressText: '准备下载相机插件…',
       errorMessage: ''
     });
     this._dlog('ML', 'load start url=' + ballModelConfig.MODEL_DOWNLOAD_URL);
@@ -204,7 +204,7 @@ Page({
       var mb = total > 0 ? (total / 1024 / 1024).toFixed(1) : '?';
       self.setData({
         modelProgress: pct,
-        modelProgressText: '下载模型 ' + pct + '%（约 ' + mb + ' MB）'
+        modelProgressText: '下载相机插件 ' + pct + '%（约 ' + mb + ' MB）'
       });
     }, {
       onStatus: function (text) {
@@ -234,7 +234,7 @@ Page({
       if (ballModelLoader.isStorageLimitError(msg) || msg.indexOf('STORAGE_FULL:') === 0) {
         friendly = '手机本地存储已满（小程序约 200MB 上限）。\n\n' +
           '请先返回首页：删除旧高光片段，或使用「下载至相册并清空」。\n\n' +
-          '清理后回到本页，点「重新下载模型」。';
+          '清理后回到本页，点「重新下载相机插件」。';
       }
       self._dlog('ML', 'load fail: ' + msg);
       self.setData({
@@ -959,7 +959,7 @@ Page({
   },
 
   /**
-   * 重新下载 AI 模型（清除缓存）。
+   * 重新下载 相机插件 模型（清除缓存）。
    * @returns {void}
    */
   onRetryModelTap: function () {
