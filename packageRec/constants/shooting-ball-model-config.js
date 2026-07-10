@@ -48,12 +48,29 @@ var OUTPUT_TENSOR = 'output0';
 var PRECISION_LEVEL = 2;
 
 /**
- * 是否启用 NPU（iOS 上关闭，避免异常快速空推理）。
+ * 是否尝试启用 NPU。
+ *
+ * 历史问题：早期 E-BARD v1（320 输入）模型在 iOS 上开 NPU 时，`session.run` 会在 1~3ms 内
+ * 返回几乎全零的输出（topBall≈0.000），比正常 CPU 推理（30~80ms）快一个量级，是典型的
+ * "NPU 委托静默失败、直接吐空结果"而非报错。当时的应对是直接关闭 iOS NPU。
+ *
+ * 现在改为"尝试 + 运行时自检兜底"：先按此开关尝试开启 NPU，页面侧会在最初几帧推理时
+ * 用同样的信号（耗时异常短 + 检出几乎为空）做自检，一旦命中就自动重建 Session 退回 CPU，
+ * 不需要用户感知或手动切换。详见 shooting-training.js 的 _maybeCheckNpuFallback。
  * @returns {boolean}
  */
 function getAllowNpu() {
-  return false;
+  return true;
 }
+
+/** NPU 自检：单帧推理耗时低于该值（ms）视为"异常快"（正常 CPU 推理通常 ≥15ms） */
+var NPU_ABNORMAL_INFER_MS = 8;
+
+/** NPU 自检：连续采样多少帧推理结果后做判定 */
+var NPU_TRIAL_SAMPLE_FRAMES = 5;
+
+/** NPU 自检：采样帧中异常耗时占比达到该阈值即判定 NPU 异常并回退 CPU */
+var NPU_ABNORMAL_RATIO_TRIGGER = 0.8;
 
 /**
  * 模型下载地址（按需下载）。
@@ -77,5 +94,8 @@ module.exports = {
   OUTPUT_TENSOR: OUTPUT_TENSOR,
   PRECISION_LEVEL: PRECISION_LEVEL,
   MODEL_DOWNLOAD_URL: MODEL_DOWNLOAD_URL,
-  getAllowNpu: getAllowNpu
+  getAllowNpu: getAllowNpu,
+  NPU_ABNORMAL_INFER_MS: NPU_ABNORMAL_INFER_MS,
+  NPU_TRIAL_SAMPLE_FRAMES: NPU_TRIAL_SAMPLE_FRAMES,
+  NPU_ABNORMAL_RATIO_TRIGGER: NPU_ABNORMAL_RATIO_TRIGGER
 };

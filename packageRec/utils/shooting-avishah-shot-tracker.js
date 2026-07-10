@@ -12,12 +12,17 @@ var HOOP_HISTORY_MAX = 25;
 /** 参与轨迹的最低篮球置信度 */
 var TRACK_BALL_CONF = 0.08;
 /**
- * 一次投篮弧线（"上升态"到"下降/穿筐"）在推理帧上允许的最大跨度。
- * 必须与真实投篮节奏（真机约 3~4s/次）相当，否则"上升态"会挂起太久，
- * 被下一次甚至下下次投篮的"下降"点误配对，导致中间多次投篮被吞掉。
- * 真机约 6~7fps，此处约 4.5s。
+ * 一次投篮弧线（"上升态"到"下降/穿筐"）允许的最大真实耗时（ms，非推理帧数）。
+ * 必须与真实投篮节奏相当，否则"上升态"会挂起太久，被下一次甚至下下次投篮的
+ * "下降"点误配对，导致中间多次投篮被吞掉；但稀疏检出（ballRate 有时仅 10%~15%）
+ * 时下降点会来得更晚，太短又会把没超时的真实投篮提前误判成"超时未完成"。
+ *
+ * 早期版本用"推理帧数"计时（45 帧），但真机推理帧率会随机型/负载波动（6~10fps 不等），
+ * 45 帧在慢的时候对应 ~7s 真实时间——用户投篮早已换手投下一个球，系统才吐出上一次的
+ * 结果，感觉"滞后好几个球"。改为直接用真实时间（wall clock）计时，与帧率解耦，
+ * 也更贴近真实投篮弧线时长（释放到落筐通常 1~2s，含篮网弹跳给到 3s 余量）。
  */
-var MAX_SHOT_ARC_FRAMES = 30;
+var MAX_SHOT_ARC_MS = 3200;
 /** 参与轨迹的最低篮筐置信度（对齐 Python 0.5） */
 var TRACK_HOOP_CONF = 0.5;
 /** 进球判定水平容差（像素，对齐 Python hoop_rebound_zone=10） */
@@ -338,6 +343,7 @@ function createAvishahShotTracker(opts) {
   var up = false;
   var down = false;
   var upFrame = 0;
+  var upAt = 0;
   var downFrame = 0;
   var makes = 0;
   var attempts = 0;
@@ -421,16 +427,23 @@ function createAvishahShotTracker(opts) {
     if (hoopActive.length > 0) {
       var hoop = hoopActive[hoopActive.length - 1];
 
-      // 超时结算：挂起的"上升"事件太久没等到"下降/穿筐"，按未完成投篮（MISS）收尾，
+      // 超时结算：挂起的"上升"事件太久没等到明确的"下降/穿筐"判定，强制收尾，
       // 防止其一直挂在状态里，被后面第 N 次投篮的下降点误配对，把中间几次投篮全部吞掉。
-      if (upFrame > 0 && frameCount - upFrame > MAX_SHOT_ARC_FRAMES) {
+      // 收尾时仍尝试用已有轨迹计分（而不是直接判 MISS）：稀疏检出下，球可能已经
+      // 静静穿网但没有明确落到"下方区域"的那一帧被抓到。
+      // 用真实耗时（wall clock）而非推理帧数判断超时，避免帧率波动时结果被拖延数秒才吐出。
+      if (upFrame > 0 && now - upAt > MAX_SHOT_ARC_MS) {
         attempts++;
-        log('SHOT', 'MISS(timeout) att=' + attempts + ' upF=' + upFrame + ' now=' + frameCount +
-          (detection.calibratedHoop ? ' hoop=cal' : ' hoop=ml'));
+        var madeTimeout = ballPos.length ? scoreShot(ballPos, hoopActive) : false;
+        log('SHOT', (madeTimeout ? 'MADE' : 'MISS') + '(timeout) att=' + attempts +
+          ' upF=' + upFrame + ' now=' + frameCount + ' elapsedMs=' + (now - upAt) +
+          ' trail=' + ballPos.length + (detection.calibratedHoop ? ' hoop=cal' : ' hoop=ml'));
         up = false;
         upFrame = 0;
+        upAt = 0;
         ballPos = [];
-        event = 'missed';
+        event = madeTimeout ? 'made' : 'missed';
+        if (madeTimeout) makes++;
         cooldownUntil = now + SHOT_COOLDOWN_MS;
       }
 
@@ -441,6 +454,7 @@ function createAvishahShotTracker(opts) {
         if (upFrame === 0) {
           if (isInUpZone(latest, hoop)) {
             upFrame = latest.frame;
+            upAt = now;
             up = true;
           }
         } else if (latest.frame > upFrame) {
@@ -468,6 +482,7 @@ function createAvishahShotTracker(opts) {
               (detection.calibratedHoop ? ' hoop=cal' : ' hoop=ml'));
             up = false;
             upFrame = 0;
+            upAt = 0;
             ballPos = [];
             event = made ? 'made' : 'missed';
             if (made) makes++;
@@ -495,6 +510,7 @@ function createAvishahShotTracker(opts) {
       up = false;
       down = false;
       upFrame = 0;
+      upAt = 0;
       downFrame = 0;
       makes = 0;
       attempts = 0;

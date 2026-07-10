@@ -497,17 +497,33 @@ page {
 
 .cover-roi-label {
   position: absolute;
-  top: -40rpx;
+  top: -44rpx;
   left: 50%;
-  width: 220rpx;
-  margin-left: -110rpx;
+  width: 300rpx;
+  margin-left: -150rpx;
   text-align: center;
   background-color: rgba(0, 0, 0, 0.65);
   color: #eff6ff;
-  font-size: 24rpx;
+  font-size: 22rpx;
   padding: 6rpx 16rpx;
   border-radius: 20rpx;
 }
+
+/* 校准框四角缩放手柄：留足触控热区，方便真机拖动 */
+.cover-roi-handle {
+  position: absolute;
+  width: 48rpx;
+  height: 48rpx;
+  background-color: rgba(59, 130, 246, 0.95);
+  border: 3rpx solid #ffffff;
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+
+.cover-roi-handle-tl { left: -24rpx; top: -24rpx; }
+.cover-roi-handle-tr { right: -24rpx; top: -24rpx; }
+.cover-roi-handle-bl { left: -24rpx; bottom: -24rpx; }
+.cover-roi-handle-br { right: -24rpx; bottom: -24rpx; }
 
 .cover-ball-pointer {
   position: fixed;
@@ -556,10 +572,10 @@ page {
   position: fixed;
   left: 30rpx;
   right: 30rpx;
-  background-color: rgba(15, 23, 42, 0.88);
-  border: 1rpx solid rgba(255, 255, 255, 0.12);
-  border-radius: 24rpx;
-  padding: 24rpx 12rpx;
+  background-color: rgba(15, 23, 42, 0.72);
+  border: 1rpx solid rgba(255, 255, 255, 0.1);
+  border-radius: 18rpx;
+  padding: 12rpx 12rpx;
   z-index: 5;
 }
 
@@ -578,23 +594,16 @@ page {
 }
 
 .cover-board-num {
-  font-size: 54rpx;
+  font-size: 38rpx;
   font-weight: 800;
   color: #3b82f6;
-  margin-bottom: 6rpx;
+  margin-bottom: 2rpx;
   text-align: center;
 }
 
 .cover-board-label {
-  font-size: 24rpx;
+  font-size: 20rpx;
   color: #94a3b8;
-  text-align: center;
-}
-
-.cover-ml-debug {
-  margin-top: 12rpx;
-  font-size: 22rpx;
-  color: #64748b;
   text-align: center;
 }
 

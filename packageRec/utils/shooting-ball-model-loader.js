@@ -304,14 +304,18 @@ function getInferenceMeta() {
 /**
  * 创建并加载推理 Session。
  * @param {string} modelPath
+ * @param {boolean} [allowNpuOverride] 显式指定是否启用 NPU（用于运行时降级重建 Session），省略则读配置默认值
  * @returns {Promise<WechatMiniprogram.InferenceSession>}
  */
-function createSession(modelPath) {
+function createSession(modelPath, allowNpuOverride) {
   if (typeof wx.createInferenceSession !== 'function') {
     return Promise.reject(new Error('当前基础库不支持 AI 推理，请升级微信'));
   }
 
   var inferMeta = getInferenceMeta();
+  if (typeof allowNpuOverride === 'boolean') {
+    inferMeta = { precisionLevel: inferMeta.precisionLevel, allowNpu: allowNpuOverride, platform: inferMeta.platform };
+  }
 
   return new Promise(function (resolve, reject) {
     var settled = false;

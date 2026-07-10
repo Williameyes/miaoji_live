@@ -24,10 +24,20 @@ var CAMERA_REMOUNT_DELAY_MS = 350;
 var BALL_UI_INTERVAL_MS = 100;
 /** 轨迹 UI 刷新间隔（ms），降低 setData 频率避免卡 UI */
 var TRAIL_UI_INTERVAL_MS = 200;
-/** iOS 640 模型帧间隔（ms）；配合异步预处理，兼顾检出与 UI 响应 */
-var FRAME_INTERVAL_IOS_MS = 80;
-/** Android 640 模型帧间隔（ms） */
-var FRAME_INTERVAL_ANDROID_MS = 50;
+/**
+ * iOS 帧处理最小间隔（ms）。真正的处理节奏由单帧推理耗时（_inferBusy 串行）
+ * 决定，这里只是一个保底下限——letterbox 优化后单帧总耗时已经降到 60~80ms
+ * 量级，不再需要用这个值人为限速，调低到接近 0 让流水线尽量吃满相机出帧率。
+ */
+var FRAME_INTERVAL_IOS_MS = 10;
+/** Android 帧处理最小间隔（ms），同上 */
+var FRAME_INTERVAL_ANDROID_MS = 10;
+/** 校准框默认宽度占屏宽比例（默认给小一点，避免强制贴近拍摄） */
+var DEFAULT_HOOP_WIDTH_RATIO = 0.36;
+/** 校准框默认高宽比 */
+var DEFAULT_HOOP_ASPECT = 0.67;
+/** 校准框可拖拽缩放的最小边长（px） */
+var HOOP_BOX_MIN_SIZE = 60;
 
 Page({
   data: {
@@ -43,9 +53,14 @@ Page({
     modelLoaded: false,
     /** 控制 <camera> 组件是否挂载 */
     cameraReady: false,
-    /** 相机预览档位（medium 兼容性优于 high） */
+    /** 相机预览档位 */
     cameraResolution: 'medium',
-    cameraFrameSize: 'medium',
+    /**
+     * onCameraFrame 抽帧档位：投篮训练是独立页面，不像 live 页需要顾及直播编码发热，
+     * 用 large 换取更大原始帧（篮球这类小目标裁剪缩放到 640 输入后细节更多），
+     * 不影响 live 页（那边是完全独立的模块级常量，与本页 data 无关）。
+     */
+    cameraFrameSize: 'large',
 
     // 看板
     shotsMade: 0,
@@ -102,7 +117,7 @@ Page({
       statusBarHeight: sys.statusBarHeight || 0,
       hudTopPx: (sys.statusBarHeight || 0) + 50,
       navRightPadding: navRightPadding,
-      cameraFrameSize: 'medium'
+      cameraFrameSize: 'large'
     });
 
     this._unloaded = false;
@@ -110,6 +125,12 @@ Page({
     this._ballDetector = null;
     this._inferSession = null;
     this._inferMeta = null;
+    this._modelPath = null;
+    this._detectorOpts = null;
+    this._npuTrialDone = false;
+    this._npuSampleCount = 0;
+    this._npuAbnormalCount = 0;
+    this._npuFallbackInFlight = false;
     this._inferBusy = false;
     this._modelLoaded = false;
     this._frameRxCount = 0;
@@ -123,6 +144,7 @@ Page({
     this._previewLayout = null;
     this._hoopROI = null;
     this._trackingROI = null;
+    this._hoopDrag = null;
     this._cameraInitTimeout = null;
     this._cameraCtx = null;
     this._frameListener = null;
@@ -170,7 +192,8 @@ Page({
    */
   _initBallDetector: function () {
     var self = this;
-    this._ballDetector = ballDetectorMod.createBallDetector({
+    // 保留 opts 对象引用：NPU 自检回退时可直接改写 session 字段，detector 内部按引用读取，无需重建 detector
+    this._detectorOpts = {
       session: this._inferSession,
       mapFrameToViewport: function (fx, fy, fw, fh) {
         return self._mapFrameToViewport(fx, fy, fw, fh);
@@ -181,7 +204,8 @@ Page({
       onLog: function (tag, msg) {
         self._dlog(tag, msg);
       }
-    });
+    };
+    this._ballDetector = ballDetectorMod.createBallDetector(this._detectorOpts);
   },
 
   /**
@@ -215,6 +239,7 @@ Page({
       if (self._unloaded) return;
       self._inferSession = result.session;
       self._inferMeta = result.inferenceMeta || null;
+      self._modelPath = result.modelPath;
       self._modelLoaded = true;
       self._initBallDetector();
       self._dlog('ML', 'session ready path=' + result.modelPath +
@@ -591,6 +616,7 @@ Page({
       modelLoaded: this._modelLoaded,
       modelVersion: ballModelConfig.MODEL_VERSION,
       inference: this._inferMeta,
+      npuTrial: { done: this._npuTrialDone, samples: this._npuSampleCount, abnormal: this._npuAbnormalCount },
       ml: this._ballDetector ? this._ballDetector.getStats() : null,
       mlPaused: !!this._mlPaused,
       inferBusy: !!this._inferBusy,
@@ -858,19 +884,27 @@ Page({
         self._previewLayout = { width: rect.width, height: rect.height };
         self._dlog('LAYOUT', 'container ' + Math.round(rect.width) + 'x' + Math.round(rect.height));
 
-        var hoopW = Math.round(rect.width * 0.45);
-        var hoopH = Math.round(hoopW * 0.67);
-        var hoopLeft = Math.round((rect.width - hoopW) / 2);
-        var hoopTop = Math.round(rect.height * 0.45);
-
         self.setData({
-          hoopStyle: { left: hoopLeft, top: hoopTop, width: hoopW, height: hoopH }
+          hoopStyle: self._defaultHoopStyle(self._previewLayout)
         }, function () {
           self._recalculateHoopROI();
           if (callback) callback();
         });
       }).exec();
     }, 100);
+  },
+
+  /**
+   * 校准框默认位置/尺寸（居中偏下，宽度为屏宽的固定比例）。
+   * @param {{width:number,height:number}} layout
+   * @returns {{left:number,top:number,width:number,height:number}}
+   */
+  _defaultHoopStyle: function (layout) {
+    var hoopW = Math.round(layout.width * DEFAULT_HOOP_WIDTH_RATIO);
+    var hoopH = Math.round(hoopW * DEFAULT_HOOP_ASPECT);
+    var hoopLeft = Math.round((layout.width - hoopW) / 2);
+    var hoopTop = Math.round(layout.height * 0.45);
+    return { left: hoopLeft, top: hoopTop, width: hoopW, height: hoopH };
   },
 
   /**
@@ -1051,13 +1085,16 @@ Page({
   },
 
   /**
-   * 复制相机帧（buffer 会被复用，必须拷贝）。
+   * 复制相机帧（buffer 可能被相机组件复用，必须真正拷贝字节而非只建视图）。
    * @param {{data: ArrayBuffer, width: number, height: number}} frame
    * @returns {{data: ArrayBuffer, width: number, height: number}}
    */
   _copyCameraFrame: function (frame) {
+    var src = new Uint8Array(frame.data);
+    var copy = new Uint8Array(src.length);
+    copy.set(src);
     return {
-      data: new Uint8Array(frame.data).buffer,
+      data: copy.buffer,
       width: frame.width,
       height: frame.height
     };
@@ -1116,18 +1153,13 @@ Page({
     var fw = fullFrame.width;
     var cropped = new Uint8Array(cw * ch * 4);
     var y;
-    var x;
     var srcIdx;
-    var dstIdx;
+    // 按行整段 set()（底层近似 memcpy），而非逐像素单写：cw*ch 次单写改成 ch 次整行拷贝，
+    // 裁剪区常见 170k+ 像素/帧时这一步此前是主线程里最重的同步循环之一。
+    var rowBytes = cw * 4;
     for (y = 0; y < ch; y++) {
-      for (x = 0; x < cw; x++) {
-        srcIdx = ((bounds.y0 + y) * fw + (bounds.x0 + x)) * 4;
-        dstIdx = (y * cw + x) * 4;
-        cropped[dstIdx] = rgba[srcIdx];
-        cropped[dstIdx + 1] = rgba[srcIdx + 1];
-        cropped[dstIdx + 2] = rgba[srcIdx + 2];
-        cropped[dstIdx + 3] = rgba[srcIdx + 3];
-      }
+      srcIdx = ((bounds.y0 + y) * fw + bounds.x0) * 4;
+      cropped.set(rgba.subarray(srcIdx, srcIdx + rowBytes), y * rowBytes);
     }
     if (this._frameProcCount === 1) {
       this._dlog('ML', 'roi crop ' + cw + 'x' + ch + ' @' + bounds.x0 + ',' + bounds.y0);
@@ -1147,6 +1179,59 @@ Page({
    * 在间隔与 busy 条件允许时消费最新帧。
    * @returns {void}
    */
+  /**
+   * NPU 自检：连续采样若干帧推理耗时，若绝大多数"异常快"（历史上是 NPU 委托静默失败、
+   * 直接吐空结果的信号），自动重建 Session 回退到 CPU，避免用户手动排查。
+   * @returns {void}
+   */
+  _maybeCheckNpuFallback: function () {
+    if (this._npuTrialDone || !this._inferMeta || !this._inferMeta.allowNpu || !this._ballDetector) return;
+    var stats = this._ballDetector.getStats();
+    var ms = stats ? stats.lastInferMs : null;
+    if (typeof ms !== 'number') return;
+
+    this._npuSampleCount += 1;
+    if (ms <= ballModelConfig.NPU_ABNORMAL_INFER_MS) this._npuAbnormalCount += 1;
+
+    if (this._npuSampleCount < ballModelConfig.NPU_TRIAL_SAMPLE_FRAMES) return;
+    this._npuTrialDone = true;
+
+    var ratio = this._npuAbnormalCount / this._npuSampleCount;
+    this._dlog('ML', 'NPU self-check samples=' + this._npuSampleCount +
+      ' abnormal=' + this._npuAbnormalCount + ' ratio=' + ratio.toFixed(2));
+    if (ratio >= ballModelConfig.NPU_ABNORMAL_RATIO_TRIGGER) {
+      this._fallbackNpuToCpu();
+    }
+  },
+
+  /**
+   * 重建推理 Session 为 CPU（allowNPU=false），并原地替换 detector 使用的 session 引用。
+   * @returns {void}
+   */
+  _fallbackNpuToCpu: function () {
+    var self = this;
+    if (this._npuFallbackInFlight || !this._modelPath) return;
+    this._npuFallbackInFlight = true;
+    this._dlog('ML', 'NPU abnormal (fast+empty) detected, rebuilding session on CPU');
+    ballModelLoader.createSession(this._modelPath, false).then(function (session) {
+      if (self._unloaded) {
+        ballModelLoader.destroySession(session);
+        return;
+      }
+      var oldSession = self._inferSession;
+      self._inferSession = session;
+      if (self._detectorOpts) self._detectorOpts.session = session;
+      if (self._inferMeta) self._inferMeta.allowNpu = false;
+      ballModelLoader.destroySession(oldSession);
+      self._dlog('ML', 'NPU fallback done, now running on CPU');
+    }).catch(function (err) {
+      var msg = err && err.message ? err.message : String(err);
+      self._dlog('ML', 'NPU fallback failed: ' + msg + ' (keep using NPU session)');
+    }).then(function () {
+      self._npuFallbackInFlight = false;
+    });
+  },
+
   _drainPendingInfer: function () {
     if (this._mlPaused || this._isSimulationMode || this._unloaded ||
       !this._shotTracker || !this._ballDetector || this._inferBusy || !this._latestFrameRef) {
@@ -1160,8 +1245,11 @@ Page({
       return;
     }
 
+    var tCopyStart = Date.now();
     var frameCopy = this._copyCameraFrame(this._latestFrameRef);
     var inferPack = this._prepareInferFrame(frameCopy);
+    var copyPrepMs = Date.now() - tCopyStart;
+    var prevProcessAt = this._lastFrameProcessAt;
     this._lastFrameProcessAt = now;
     this._frameProcCount += 1;
 
@@ -1172,11 +1260,22 @@ Page({
       if (det && det.aborted) return;
 
       if (det && (det.ball || det.ballTrack)) self._ballDetectCount += 1;
+      self._maybeCheckNpuFallback();
       if (self._frameProcCount % 40 === 0) {
         var hitRate = self._frameProcCount
           ? Math.round(self._ballDetectCount * 100 / self._frameProcCount)
           : 0;
         self._dlog('ML', 'proc#' + self._frameProcCount + ' ballRate=' + hitRate + '%');
+        // 拆解单帧耗时去向：copyPrepMs（相机帧拷贝+ROI裁剪，均为同步）+ detector 内部
+        // prepMs（letterbox 预处理）/ inferMs（session.run）/ totalMs（detector.detect 全程），
+        // gapMs 是与上一帧处理起点的实际间隔，用于定位"消失的时间"具体在哪一段。
+        var mlStats = self._ballDetector.getStats();
+        var gapMs = prevProcessAt ? (now - prevProcessAt) : 0;
+        self._dlog('ML', 'timing copyPrepMs=' + copyPrepMs +
+          ' letterboxMs=' + (mlStats ? mlStats.lastPrepMs : '?') +
+          ' inferMs=' + (mlStats ? mlStats.lastInferMs : '?') +
+          ' detectTotalMs=' + (mlStats ? mlStats.lastTotalMs : '?') +
+          ' frameGapMs=' + gapMs);
         self._refreshDebugHud();
       }
       var result = self._shotTracker.onFrame(self._enrichDetForTracker(det), Date.now());
@@ -1440,6 +1539,120 @@ Page({
     this.setData({ ballX: null, ballY: null, status: 'ready' });
   },
 
+  // ==================== 篮筐校准框：拖拽移动 / 拖角缩放 ====================
+
+  /**
+   * 开始拖动校准框（整体移动）。
+   * @param {WechatMiniprogram.TouchEvent} e
+   * @returns {void}
+   */
+  onHoopBoxTouchStart: function (e) {
+    var touch = e.touches[0];
+    this._hoopDrag = {
+      mode: 'move',
+      startX: touch.clientX,
+      startY: touch.clientY,
+      origin: Object.assign({}, this.data.hoopStyle)
+    };
+  },
+
+  /**
+   * 拖动中：整体平移校准框，限制在预览区域内。
+   * @param {WechatMiniprogram.TouchEvent} e
+   * @returns {void}
+   */
+  onHoopBoxTouchMove: function (e) {
+    var drag = this._hoopDrag;
+    if (!drag || drag.mode !== 'move') return;
+    var touch = e.touches[0];
+    var layout = this._previewLayout || { width: 402, height: 874 };
+    var dx = touch.clientX - drag.startX;
+    var dy = touch.clientY - drag.startY;
+    var left = Math.max(0, Math.min(layout.width - drag.origin.width, drag.origin.left + dx));
+    var top = Math.max(0, Math.min(layout.height - drag.origin.height, drag.origin.top + dy));
+    this.setData({
+      hoopStyle: { left: left, top: top, width: drag.origin.width, height: drag.origin.height }
+    });
+  },
+
+  /**
+   * 拖动结束：落盘校准框对应的 ROI（含推理裁剪区）。
+   * @returns {void}
+   */
+  onHoopBoxTouchEnd: function () {
+    if (!this._hoopDrag) return;
+    this._hoopDrag = null;
+    this._recalculateHoopROI();
+  },
+
+  /**
+   * 开始拖动某个角的缩放手柄。
+   * @param {WechatMiniprogram.TouchEvent} e
+   * @returns {void}
+   */
+  onHoopHandleTouchStart: function (e) {
+    var touch = e.touches[0];
+    this._hoopDrag = {
+      mode: 'resize',
+      corner: e.currentTarget.dataset.corner,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      origin: Object.assign({}, this.data.hoopStyle)
+    };
+  },
+
+  /**
+   * 拖动中：按拖动的角调整校准框宽高，另一角保持不动，限制最小尺寸与预览边界。
+   * @param {WechatMiniprogram.TouchEvent} e
+   * @returns {void}
+   */
+  onHoopHandleTouchMove: function (e) {
+    var drag = this._hoopDrag;
+    if (!drag || drag.mode !== 'resize') return;
+    var touch = e.touches[0];
+    var layout = this._previewLayout || { width: 402, height: 874 };
+    var dx = touch.clientX - drag.startX;
+    var dy = touch.clientY - drag.startY;
+    var origin = drag.origin;
+    var left = origin.left;
+    var top = origin.top;
+    var right = origin.left + origin.width;
+    var bottom = origin.top + origin.height;
+
+    if (drag.corner === 'tl') {
+      left += dx;
+      top += dy;
+    } else if (drag.corner === 'tr') {
+      right += dx;
+      top += dy;
+    } else if (drag.corner === 'bl') {
+      left += dx;
+      bottom += dy;
+    } else if (drag.corner === 'br') {
+      right += dx;
+      bottom += dy;
+    }
+
+    left = Math.max(0, Math.min(left, right - HOOP_BOX_MIN_SIZE));
+    top = Math.max(0, Math.min(top, bottom - HOOP_BOX_MIN_SIZE));
+    right = Math.min(layout.width, Math.max(right, left + HOOP_BOX_MIN_SIZE));
+    bottom = Math.min(layout.height, Math.max(bottom, top + HOOP_BOX_MIN_SIZE));
+
+    this.setData({
+      hoopStyle: { left: left, top: top, width: right - left, height: bottom - top }
+    });
+  },
+
+  /**
+   * 缩放结束：落盘校准框对应的 ROI（含推理裁剪区）。
+   * @returns {void}
+   */
+  onHoopHandleTouchEnd: function () {
+    if (!this._hoopDrag) return;
+    this._hoopDrag = null;
+    this._recalculateHoopROI();
+  },
+
   // ==================== 进球反馈 ====================
 
   /**
@@ -1488,6 +1701,7 @@ Page({
   onRecalibrateTap: function () {
     try { wx.vibrateShort({ type: 'light' }); } catch (e) {}
     if (this._shotTracker) this._shotTracker.reset();
+    var layout = this._previewLayout || { width: 402, height: 874 };
     this.setData({
       shotsMade: 0,
       shotsTotal: 0,
@@ -1498,7 +1712,8 @@ Page({
       ballY: null,
       trailPoints: [],
       fsmState: 'IDLE',
-      status: 'ready'
+      status: 'ready',
+      hoopStyle: this._defaultHoopStyle(layout)
     });
     this._recalculateHoopROI();
   },

@@ -46,8 +46,19 @@
     wx:if="{{cameraReady && !mlPaused && (status === 'ready' || status === 'training')}}"
     class="cover-hoop-roi"
     style="left: {{hoopStyle.left}}px; top: {{hoopStyle.top}}px; width: {{hoopStyle.width}}px; height: {{hoopStyle.height}}px;"
+    catchtouchstart="onHoopBoxTouchStart"
+    catchtouchmove="onHoopBoxTouchMove"
+    catchtouchend="onHoopBoxTouchEnd"
   >
-    <cover-view class="cover-roi-label">把篮筐对准此框</cover-view>
+    <cover-view class="cover-roi-label">拖动方框对准/缩放篮筐</cover-view>
+    <cover-view class="cover-roi-handle cover-roi-handle-tl" data-corner="tl"
+      catchtouchstart="onHoopHandleTouchStart" catchtouchmove="onHoopHandleTouchMove" catchtouchend="onHoopHandleTouchEnd"></cover-view>
+    <cover-view class="cover-roi-handle cover-roi-handle-tr" data-corner="tr"
+      catchtouchstart="onHoopHandleTouchStart" catchtouchmove="onHoopHandleTouchMove" catchtouchend="onHoopHandleTouchEnd"></cover-view>
+    <cover-view class="cover-roi-handle cover-roi-handle-bl" data-corner="bl"
+      catchtouchstart="onHoopHandleTouchStart" catchtouchmove="onHoopHandleTouchMove" catchtouchend="onHoopHandleTouchEnd"></cover-view>
+    <cover-view class="cover-roi-handle cover-roi-handle-br" data-corner="br"
+      catchtouchstart="onHoopHandleTouchStart" catchtouchmove="onHoopHandleTouchMove" catchtouchend="onHoopHandleTouchEnd"></cover-view>
   </cover-view>
   <cover-view
     class="cover-ball-pointer {{ballPeek ? 'cover-ball-peek' : ''}}"
@@ -72,7 +83,7 @@
   <cover-view
     wx:if="{{cameraReady && (status === 'ready' || status === 'training')}}"
     class="cover-hud-board"
-    style="top: {{hudTopPx + (mlPaused ? 0 : 88)}}px;"
+    style="top: {{hudTopPx + 88}}px;"
   >
     <cover-view class="cover-board-row">
       <cover-view class="cover-board-col">
@@ -88,7 +99,6 @@
         <cover-view class="cover-board-label">连中数</cover-view>
       </cover-view>
     </cover-view>
-    <cover-view class="cover-ml-debug">{{mlDebugText}}</cover-view>
   </cover-view>
   <view class="hud-top-board" wx:elif="{{status === 'ready' || status === 'training'}}" style="top: {{hudTopPx}}px;">
     <view class="board-row">

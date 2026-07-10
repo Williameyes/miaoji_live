@@ -47,6 +47,8 @@ function createBallDetector(opts) {
   var ballHitCount = 0;
   var hoopHitCount = 0;
   var lastInferMs = 0;
+  var lastPrepMs = 0;
+  var lastTotalMs = 0;
   var lastTopScore = 0;
   var inputBuffer = null;
   var inputSize = modelConfig.INPUT_SIZE;
@@ -177,8 +179,14 @@ function createBallDetector(opts) {
     var invScaleX = fw / newW;
     var invScaleY = fh / newH;
     var step = (fw * fh < 280000) ? 1 : 2;
-    /** 每 tick 处理的行步数（yield 给触摸事件） */
-    var rowsPerTick = 12;
+    /**
+     * 每 tick 处理的行步数：过去固定 12，配合裁剪后常见的 640 行输出要切成
+     * 50+ 个 setTimeout(0) tick，每个 tick 的宏任务调度开销（几毫秒）累加起来
+     * 反而远超真正的像素搬运耗时，是真机端到端延迟的主要来源。这里按总行数
+     * 固定切成约 4 个 tick（仍保留少量 yield 给触摸事件，但不再逐行切片）。
+     */
+    var totalPasses = Math.ceil(newH / step);
+    var rowsPerTick = Math.max(20, Math.ceil(totalPasses / 4));
 
     return new Promise(function (resolve, reject) {
       var sy = 0;
@@ -230,65 +238,6 @@ function createBallDetector(opts) {
 
       setTimeout(tick, 0);
     });
-  }
-
-  /**
-   * 同步 letterbox（devtools 降级）。
-   * @param {Uint8Array} rgba
-   * @param {number} fw
-   * @param {number} fh
-   * @returns {{ tensor: Float32Array, meta: Object }}
-   */
-  function preprocessLetterbox(rgba, fw, fh) {
-    if (!inputBuffer || inputBuffer.length !== 3 * planeSize) {
-      inputBuffer = new Float32Array(3 * planeSize);
-    }
-    var out = inputBuffer;
-    fillLetterboxPad(out);
-
-    var scale = Math.min(inputSize / fw, inputSize / fh);
-    var newW = Math.max(1, Math.round(fw * scale));
-    var newH = Math.max(1, Math.round(fh * scale));
-    var padX = Math.floor((inputSize - newW) * 0.5);
-    var padY = Math.floor((inputSize - newH) * 0.5);
-    var p1 = planeSize;
-    var p2 = planeSize * 2;
-    var invScaleX = fw / newW;
-    var invScaleY = fh / newH;
-    /** 步长采样：裁剪后画面较小时用逐步（保精度） */
-    var step = (fw * fh < 280000) ? 1 : 2;
-    var sy;
-    var sx;
-    var fy;
-    var fx;
-    var srcIdx;
-    var dstIdx;
-    var dy;
-    var dx;
-
-    for (sy = 0; sy < newH; sy += step) {
-      fy = Math.min(fh - 1, Math.floor((sy + 0.5) * invScaleY));
-      for (sx = 0; sx < newW; sx += step) {
-        fx = Math.min(fw - 1, Math.floor((sx + 0.5) * invScaleX));
-        srcIdx = (fy * fw + fx) * 4;
-        var r = rgba[srcIdx] / 255;
-        var g = rgba[srcIdx + 1] / 255;
-        var b = rgba[srcIdx + 2] / 255;
-        for (dy = 0; dy < step && sy + dy < newH; dy++) {
-          for (dx = 0; dx < step && sx + dx < newW; dx++) {
-            dstIdx = (padY + sy + dy) * inputSize + (padX + sx + dx);
-            out[dstIdx] = r;
-            out[p1 + dstIdx] = g;
-            out[p2 + dstIdx] = b;
-          }
-        }
-      }
-    }
-
-    return {
-      tensor: out,
-      meta: { scale: scale, padX: padX, padY: padY, newW: newW, newH: newH }
-    };
   }
 
   /**
@@ -541,6 +490,7 @@ function createBallDetector(opts) {
     }
 
     var shouldAbort = typeof opts.shouldAbort === 'function' ? opts.shouldAbort : null;
+    var tDetectStart = Date.now();
     var prepPromise = preprocessWithWorkerOrMain(rgba, fw, fh, shouldAbort);
 
     return prepPromise.then(function (prep) {
@@ -549,6 +499,7 @@ function createBallDetector(opts) {
       }
 
       var t0 = Date.now();
+      lastPrepMs = t0 - tDetectStart;
       var inputCopy = new Float32Array(prep.tensor);
 
       var feed = {};
@@ -568,6 +519,7 @@ function createBallDetector(opts) {
           return { ball: null, hoop: null, aborted: true };
         }
         lastInferMs = Date.now() - t0;
+      lastTotalMs = Date.now() - tDetectStart;
       inferCount++;
       var outTensor = res[modelConfig.OUTPUT_TENSOR];
       if (!outTensor || !outTensor.data) {
@@ -595,7 +547,8 @@ function createBallDetector(opts) {
           (cropMeta ? ' crop=' + fw + 'x' + fh : ''));
       } else if (inferCount % 90 === 0) {
         log('ML', 'infer#' + inferCount + ' topBall=' + parsed.topBallScore.toFixed(3) +
-          ' ballHits=' + ballHitCount + ' hoopHits=' + hoopHitCount + ' ms=' + lastInferMs);
+          ' ballHits=' + ballHitCount + ' hoopHits=' + hoopHitCount +
+          ' prepMs=' + lastPrepMs + ' inferMs=' + lastInferMs + ' totalMs=' + lastTotalMs);
       }
 
       var bestHoop = parsed.hoops.length ? parsed.hoops[0] : null;
@@ -660,6 +613,8 @@ function createBallDetector(opts) {
         hitCount: ballHitCount,
         hoopHitCount: hoopHitCount,
         lastInferMs: lastInferMs,
+        lastPrepMs: lastPrepMs,
+        lastTotalMs: lastTotalMs,
         lastTopScore: lastTopScore
       };
     },
@@ -668,6 +623,8 @@ function createBallDetector(opts) {
       ballHitCount = 0;
       hoopHitCount = 0;
       lastInferMs = 0;
+      lastPrepMs = 0;
+      lastTotalMs = 0;
       lastTopScore = 0;
       outputShapeLogged = false;
     }
