@@ -1082,10 +1082,10 @@ Page({
     var s = this.data.hoopStyle || { width: h.width, height: h.height };
     var layout = this._previewLayout || { width: 402, height: 874 };
     return {
-      left: Math.max(0, h.centerX - s.width * 1.25),
-      right: Math.min(layout.width, h.centerX + s.width * 1.25),
+      left: Math.max(0, h.centerX - s.width * 1.5),
+      right: Math.min(layout.width, h.centerX + s.width * 1.5),
       top: Math.max(0, h.top - s.height * 2.6),
-      bottom: Math.min(layout.height, h.bottom + s.height * 0.65)
+      bottom: Math.min(layout.height, h.bottom + s.height * 1.0)
     };
   },
 

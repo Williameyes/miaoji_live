@@ -9,20 +9,17 @@
 var BALL_HISTORY_MAX_AGE = 60;
 /** 篮筐历史最大长度 */
 var HOOP_HISTORY_MAX = 25;
-/** 判定投篮周期 */
-var SHOT_CHECK_INTERVAL = 3;
 /** 参与轨迹的最低篮球置信度 */
 var TRACK_BALL_CONF = 0.08;
-/** 一次投篮弧线在推理帧上的最大跨度（稀疏帧需放宽，~17s@80ms） */
-var MAX_SHOT_ARC_FRAMES = 220;
-/** 弧线上下点最少间隔帧 */
-var MIN_SHOT_ARC_FRAMES = 2;
-/** sparse 模式上下点最少间隔帧数（避免 upF=871 downF=872 噪点误触发） */
-var SPARSE_MIN_FRAME_GAP = 4;
+/**
+ * 一次投篮弧线（"上升态"到"下降/穿筐"）在推理帧上允许的最大跨度。
+ * 必须与真实投篮节奏（真机约 3~4s/次）相当，否则"上升态"会挂起太久，
+ * 被下一次甚至下下次投篮的"下降"点误配对，导致中间多次投篮被吞掉。
+ * 真机约 6~7fps，此处约 4.5s。
+ */
+var MAX_SHOT_ARC_FRAMES = 30;
 /** 参与轨迹的最低篮筐置信度（对齐 Python 0.5） */
 var TRACK_HOOP_CONF = 0.5;
-/** 触发投篮判定的最少轨迹点数 */
-var MIN_BALL_TRAIL_FOR_SHOT = 2;
 /** 进球判定水平容差（像素，对齐 Python hoop_rebound_zone=10） */
 var SCORE_REBOUND_PX = 12;
 /** 回归 predX 相对筐中心最大合理偏移（倍筐宽） */
@@ -205,194 +202,49 @@ function scoreShot(ballPos, hoopPos) {
 }
 
 /**
- * 球是否在篮筐下方区域（detect_down，对齐 Python 末点）。
- * @param {TrackPoint[]} ballPos
- * @param {TrackPoint[]} hoopPos
+ * 球心是否处于篮筐上方"待发射/弧顶"区域（触发一次投篮周期的起点）。
+ * 只看当前最新一点，配合外层状态机的 upFrame 挂起，避免整段历史扫描导致
+ * 误配对到很久之前的旧点。
+ * @param {TrackPoint} p
+ * @param {TrackPoint} hoop
  * @returns {boolean}
  */
-function detectDown(ballPos, hoopPos) {
-  if (!ballPos.length || !hoopPos.length) return false;
-  var hoop = hoopPos[hoopPos.length - 1];
-  var yLine = hoop.y + 0.5 * hoop.h;
-  return ballPos[ballPos.length - 1].y > yLine;
+function isInUpZone(p, hoop) {
+  var rimY = hoop.y - 0.5 * hoop.h;
+  var x1 = hoop.x - 3 * hoop.w;
+  var x2 = hoop.x + 3 * hoop.w;
+  var yTop = rimY - 5 * hoop.h;
+  var yBottom = rimY + 0.35 * hoop.h;
+  return p.x > x1 && p.x < x2 && p.y > yTop && p.y < yBottom;
 }
 
 /**
- * 球是否在篮筐上方/backboard 区域（detect_up，对齐 Python 末点）。
- * @param {TrackPoint[]} ballPos
- * @param {TrackPoint[]} hoopPos
+ * 球心是否已明显落至篮筐下方（一次投篮周期的终点信号之一）。
+ * @param {TrackPoint} p
+ * @param {TrackPoint} hoop
  * @returns {boolean}
  */
-function detectUp(ballPos, hoopPos) {
-  if (!ballPos.length || !hoopPos.length) return false;
-  var hoop = hoopPos[hoopPos.length - 1];
-  var ball = ballPos[ballPos.length - 1];
-  var x1 = hoop.x - 4 * hoop.w;
-  var x2 = hoop.x + 4 * hoop.w;
-  var y1 = hoop.y - 2 * hoop.h;
-  var y2 = hoop.y - 0.5 * hoop.h;
-  return ball.x > x1 && ball.x < x2 && ball.y > y1 && ball.y < y2;
+function isInDownZone(p, hoop) {
+  var x1 = hoop.x - 3 * hoop.w;
+  var x2 = hoop.x + 3 * hoop.w;
+  var belowY = hoop.y + 0.35 * hoop.h;
+  return p.x > x1 && p.x < x2 && p.y > belowY;
 }
 
 /**
- * 轨迹中是否曾在篮筐上方（稀疏帧：筐上方即可，不要求篮板大区域）。
- * @param {TrackPoint[]} ballPos
- * @param {TrackPoint[]} hoopPos
+ * 相邻两点是否恰好向下穿过篮筐水平线（比单纯"落到筐下方"更早捕获到穿筐时刻）。
+ * @param {TrackPoint|null} prev
+ * @param {TrackPoint} curr
+ * @param {TrackPoint} hoop
  * @returns {boolean}
  */
-function detectUpFromHistory(ballPos, hoopPos) {
-  if (!ballPos.length || !hoopPos.length) return false;
-  var hoop = hoopPos[hoopPos.length - 1];
+function crossedRimDownward(prev, curr, hoop) {
+  if (!prev) return false;
   var rimY = hoop.y - 0.5 * hoop.h;
-  var x1 = hoop.x - 3.5 * hoop.w;
-  var x2 = hoop.x + 3.5 * hoop.w;
-  var i;
-  for (i = 0; i < ballPos.length; i++) {
-    var b = ballPos[i];
-    if (b.x > x1 && b.x < x2 && b.y < rimY + hoop.h * 0.45) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
- * 轨迹中是否曾在篮筐下方（稀疏帧兜底）。
- * @param {TrackPoint[]} ballPos
- * @param {TrackPoint[]} hoopPos
- * @returns {boolean}
- */
-function detectDownFromHistory(ballPos, hoopPos) {
-  if (!ballPos.length || !hoopPos.length) return false;
-  var hoop = hoopPos[hoopPos.length - 1];
-  var belowY = hoop.y + 0.5 * hoop.h;
-  var i;
-  for (i = 0; i < ballPos.length; i++) {
-    if (ballPos[i].y > belowY) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
- * 轨迹中 up 点最早帧号。
- * @param {TrackPoint[]} ballPos
- * @param {TrackPoint[]} hoopPos
- * @returns {number}
- */
-function findUpFrame(ballPos, hoopPos) {
-  var hoop = hoopPos[hoopPos.length - 1];
-  var rimY = hoop.y - 0.5 * hoop.h;
-  var x1 = hoop.x - 3.5 * hoop.w;
-  var x2 = hoop.x + 3.5 * hoop.w;
-  var i;
-  for (i = 0; i < ballPos.length; i++) {
-    var b = ballPos[i];
-    if (b.x > x1 && b.x < x2 && b.y < rimY + hoop.h * 0.45) {
-      return b.frame;
-    }
-  }
-  return 0;
-}
-
-/**
- * 轨迹是否穿过篮筐水平线（下落方向，真机常见：只在筐附近才检出球）。
- * @param {TrackPoint[]} ballPos
- * @param {TrackPoint[]} hoopPos
- * @returns {{cross:boolean,crossFrame:number}}
- */
-function detectRimCross(ballPos, hoopPos) {
-  if (ballPos.length < 2 || !hoopPos.length) {
-    return { cross: false, crossFrame: 0 };
-  }
-  var hoop = hoopPos[hoopPos.length - 1];
-  var rimY = hoop.y - 0.5 * hoop.h;
-  var x1 = hoop.x - 2.8 * hoop.w;
-  var x2 = hoop.x + 2.8 * hoop.w;
-  var i;
-  for (i = 1; i < ballPos.length; i++) {
-    var a = ballPos[i - 1];
-    var b = ballPos[i];
-    if (a.x < x1 || a.x > x2 || b.x < x1 || b.x > x2) {
-      continue;
-    }
-    if (a.y < rimY && b.y >= rimY - hoop.h * 0.2) {
-      return { cross: true, crossFrame: b.frame };
-    }
-  }
-  return { cross: false, crossFrame: 0 };
-}
-
-/**
- * 移动端投篮周期：筐上→筐下 或 穿筐线。
- * @param {TrackPoint[]} ballPos
- * @param {TrackPoint[]} hoopPos
- * @returns {{ok:boolean,mode:string,upF:number,downF:number}}
- */
-function detectMobileShotCycle(ballPos, hoopPos) {
-  if (ballPos.length < MIN_BALL_TRAIL_FOR_SHOT || !hoopPos.length) {
-    return { ok: false, mode: '', upF: 0, downF: 0 };
-  }
-  var hoop = hoopPos[hoopPos.length - 1];
-  var rimY = hoop.y - 0.5 * hoop.h;
-  var belowY = hoop.y + 0.4 * hoop.h;
-  var x1 = hoop.x - 3.5 * hoop.w;
-  var x2 = hoop.x + 3.5 * hoop.w;
-  var rimCross = detectRimCross(ballPos, hoopPos);
-  var downF;
-  var upF;
-  var gap;
-  var i;
-
-  if (rimCross.cross) {
-    downF = findDownFrame(ballPos, hoopPos);
-    upF = findUpFrame(ballPos, hoopPos) || rimCross.crossFrame;
-    if (downF > 0 && upF > 0 && downF >= upF) {
-      gap = downF - upF;
-      if (gap <= MAX_SHOT_ARC_FRAMES) {
-        return { ok: true, mode: 'cross', upF: upF, downF: downF };
-      }
-    }
-  }
-
-  upF = 0;
-  downF = 0;
-  for (i = 0; i < ballPos.length; i++) {
-    var p = ballPos[i];
-    if (!upF && p.x > x1 && p.x < x2 && p.y < rimY + hoop.h * 0.55) {
-      upF = p.frame;
-    }
-    if (upF && p.frame >= upF && p.y > belowY) {
-      downF = p.frame;
-      break;
-    }
-  }
-  if (upF > 0 && downF > 0 && downF > upF) {
-    gap = downF - upF;
-    if (gap >= MIN_SHOT_ARC_FRAMES && gap <= MAX_SHOT_ARC_FRAMES) {
-      return { ok: true, mode: 'arc', upF: upF, downF: downF };
-    }
-  }
-  return { ok: false, mode: '', upF: upF, downF: downF };
-}
-
-/**
- * 轨迹中 down 点最早帧号。
- * @param {TrackPoint[]} ballPos
- * @param {TrackPoint[]} hoopPos
- * @returns {number}
- */
-function findDownFrame(ballPos, hoopPos) {
-  var hoop = hoopPos[hoopPos.length - 1];
-  var belowY = hoop.y + 0.5 * hoop.h;
-  var i;
-  for (i = 0; i < ballPos.length; i++) {
-    if (ballPos[i].y > belowY) {
-      return ballPos[i].frame;
-    }
-  }
-  return 0;
+  var x1 = hoop.x - 2.5 * hoop.w;
+  var x2 = hoop.x + 2.5 * hoop.w;
+  if (prev.x < x1 || prev.x > x2 || curr.x < x1 || curr.x > x2) return false;
+  return prev.y < rimY && curr.y >= rimY - hoop.h * 0.15;
 }
 
 /**
@@ -566,39 +418,61 @@ function createAvishahShotTracker(opts) {
       return { event: 'none', ballX: null, ballY: null, trail: trailSnapshot(), state: 'COOLDOWN' };
     }
 
-    if (hoopActive.length > 0 && ballPos.length >= MIN_BALL_TRAIL_FOR_SHOT) {
-      if (frameCount % SHOT_CHECK_INTERVAL === 0) {
-        var cycle = detectMobileShotCycle(ballPos, hoopActive);
-        if (cycle.ok) {
-          attempts++;
-          var made = scoreShot(ballPos, hoopActive);
-          var hoop = hoopActive[hoopActive.length - 1];
-          var dbg = made ? 'MADE' : 'MISS';
-          var rimH = hoop.y - 0.5 * hoop.h;
-          var scoreTrail = filterScoreTrail(ballPos, hoop);
-          var rimPts = collectRimApproachPoints(scoreTrail, rimH, hoop);
-          if (!made && scoreTrail.length >= 2) {
-            var pA = rimPts.length >= 2 ? rimPts[0] : scoreTrail[scoreTrail.length - 2];
-            var pB = rimPts.length >= 2 ? rimPts[rimPts.length - 1] : scoreTrail[scoreTrail.length - 1];
-            var fit = lineFit2(pA.x, pA.y, pB.x, pB.y);
-            var predX = fit ? ((rimH - fit.b) / fit.m).toFixed(0) : '?';
-            dbg += ' predX=' + predX + ' rim=' +
-              Math.round(hoop.x - 0.4 * hoop.w) + '~' + Math.round(hoop.x + 0.4 * hoop.w);
-          } else if (made) {
-            dbg += ' rim=' + Math.round(hoop.x - 0.4 * hoop.w) + '~' +
-              Math.round(hoop.x + 0.4 * hoop.w);
+    if (hoopActive.length > 0) {
+      var hoop = hoopActive[hoopActive.length - 1];
+
+      // 超时结算：挂起的"上升"事件太久没等到"下降/穿筐"，按未完成投篮（MISS）收尾，
+      // 防止其一直挂在状态里，被后面第 N 次投篮的下降点误配对，把中间几次投篮全部吞掉。
+      if (upFrame > 0 && frameCount - upFrame > MAX_SHOT_ARC_FRAMES) {
+        attempts++;
+        log('SHOT', 'MISS(timeout) att=' + attempts + ' upF=' + upFrame + ' now=' + frameCount +
+          (detection.calibratedHoop ? ' hoop=cal' : ' hoop=ml'));
+        up = false;
+        upFrame = 0;
+        ballPos = [];
+        event = 'missed';
+        cooldownUntil = now + SHOT_COOLDOWN_MS;
+      }
+
+      var latest = event === 'none' && ballPos.length ? ballPos[ballPos.length - 1] : null;
+      var prevPt = ballPos.length > 1 ? ballPos[ballPos.length - 2] : null;
+
+      if (latest && latest.frame === frameCount) {
+        if (upFrame === 0) {
+          if (isInUpZone(latest, hoop)) {
+            upFrame = latest.frame;
+            up = true;
           }
-          log('SHOT', dbg + ' att=' + attempts + ' mode=' + cycle.mode +
-            ' trail=' + ballPos.length + ' upF=' + cycle.upF + ' downF=' + cycle.downF +
-            (detection.calibratedHoop ? ' hoop=cal' : ' hoop=ml'));
-          up = false;
-          down = false;
-          upFrame = 0;
-          downFrame = 0;
-          ballPos = [];
-          event = made ? 'made' : 'missed';
-          if (made) makes++;
-          cooldownUntil = now + SHOT_COOLDOWN_MS;
+        } else if (latest.frame > upFrame) {
+          var crossed = crossedRimDownward(prevPt, latest, hoop);
+          if (crossed || isInDownZone(latest, hoop)) {
+            attempts++;
+            var made = scoreShot(ballPos, hoopActive);
+            var dbg = made ? 'MADE' : 'MISS';
+            var rimH = hoop.y - 0.5 * hoop.h;
+            var scoreTrail = filterScoreTrail(ballPos, hoop);
+            var rimPts = collectRimApproachPoints(scoreTrail, rimH, hoop);
+            if (!made && scoreTrail.length >= 2) {
+              var pA = rimPts.length >= 2 ? rimPts[0] : scoreTrail[scoreTrail.length - 2];
+              var pB = rimPts.length >= 2 ? rimPts[rimPts.length - 1] : scoreTrail[scoreTrail.length - 1];
+              var fit = lineFit2(pA.x, pA.y, pB.x, pB.y);
+              var predX = fit ? ((rimH - fit.b) / fit.m).toFixed(0) : '?';
+              dbg += ' predX=' + predX + ' rim=' +
+                Math.round(hoop.x - 0.4 * hoop.w) + '~' + Math.round(hoop.x + 0.4 * hoop.w);
+            } else if (made) {
+              dbg += ' rim=' + Math.round(hoop.x - 0.4 * hoop.w) + '~' +
+                Math.round(hoop.x + 0.4 * hoop.w);
+            }
+            log('SHOT', dbg + ' att=' + attempts + ' mode=' + (crossed ? 'cross' : 'arc') +
+              ' trail=' + ballPos.length + ' upF=' + upFrame + ' downF=' + latest.frame +
+              (detection.calibratedHoop ? ' hoop=cal' : ' hoop=ml'));
+            up = false;
+            upFrame = 0;
+            ballPos = [];
+            event = made ? 'made' : 'missed';
+            if (made) makes++;
+            cooldownUntil = now + SHOT_COOLDOWN_MS;
+          }
         }
       }
     }
