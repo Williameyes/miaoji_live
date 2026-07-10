@@ -36,8 +36,25 @@ var FRAME_INTERVAL_ANDROID_MS = 10;
 var DEFAULT_HOOP_WIDTH_RATIO = 0.36;
 /** 校准框默认高宽比 */
 var DEFAULT_HOOP_ASPECT = 0.67;
-/** 校准框可拖拽缩放的最小边长（px） */
-var HOOP_BOX_MIN_SIZE = 60;
+/**
+ * 校准框可拖拽缩放的最小边长（px）。
+ * 之前是 60，实测手机离篮筐较远时，画面里篮筐本身的像素尺寸可能比 60 还小，
+ * 框反而比真实篮筐大一圈，缩小手柄（48rpx 圆形热区，与框大小无关）依然好点，
+ * 调低到 32，让框能贴近远距离拍摄时更小的真实篮筐。裁剪区仍有内部最小尺寸兜底
+ * （_prepareInferFrame 的 48px 判断），不会因为框缩太小而裁出异常小的推理画面。
+ */
+var HOOP_BOX_MIN_SIZE = 32;
+/**
+ * 推理裁剪区最小宽/高（viewport px）。裁剪区目前是按校准框尺寸等比例扩展算出来的，
+ * 框越小裁剪区越小——但裁剪区最终都要 letterbox 拉伸/压缩进 640x640 输入，
+ * 裁剪区原生像素太少时，篮球这种小目标被拉伸放大后会变糊，反而更难识别
+ * （实测框缩到 50~60px 时 ballRate 从 20%+ 掉到 1%~2%，几乎认不出球）。
+ * 给裁剪区一个绝对下限，避免"框越小、裁剪区越小、识别越差"这个反直觉的坑。
+ */
+var MIN_INFER_CROP_WIDTH = 340;
+var MIN_INFER_CROP_HEIGHT = 420;
+/** 校准框边长小于此值时提示用户改用双指缩放拉近，而不是继续缩小框（viewport px） */
+var HOOP_SMALL_WARN_SIZE = 80;
 
 Page({
   data: {
@@ -61,6 +78,14 @@ Page({
      * 不影响 live 页（那边是完全独立的模块级常量，与本页 data 无关）。
      */
     cameraFrameSize: 'large',
+    /**
+     * 是否处于"校准"阶段：true 时篮筐框可拖拽/缩放且更醒目，AI 检测未运行；
+     * 首次进入、以及点击「重新校准」后为 true，点击「开始检测」后置为 false（框锁定、不可再拖动）。
+     * 与 mlPaused 分开维护：训练中途手动「暂停」不应该让框重新变成可拖拽状态。
+     */
+    calibrating: true,
+    /** 校准框是否过小（会导致裁剪区原生像素不足、识别变差），提示用户改用缩放而不是继续缩小框 */
+    hoopTooSmall: false,
 
     // 看板
     shotsMade: 0,
@@ -455,8 +480,8 @@ Page({
   _resumeMl: function () {
     if (!this._mlPaused || this._unloaded) return;
     this._mlPaused = false;
-    this._dlog('ML', 'resumed');
-    this.setData({ mlPaused: false });
+    this._dlog('ML', 'resumed calibrating->false hoop=' + JSON.stringify(this.data.hoopStyle));
+    this.setData({ mlPaused: false, calibrating: false });
     this._refreshDebugHud();
     if (this.data.status === 'ready' || this.data.status === 'training') {
       this._startFrameListener();
@@ -595,6 +620,19 @@ Page({
   },
 
   /**
+   * 说明：早期版本曾尝试用 setZoom(1) 周期性把变焦拉回 1x 来"禁用"双指缩放，
+   * 后来发现这是错误方向——onCameraFrame 拿到的原始帧内容本身就是跟随缩放后的
+   * 取景范围变化的（frame.width/height 固定，但内容是缩放后的画面），
+   * 也就是说预览画面和推理用的原始帧在缩放前后始终是一致的，缩放本身不会破坏坐标系。
+   * 真正的问题只是：如果校准框是在某个缩放倍数下调好的，之后又换了倍数（或挪动手机），
+   * 篮筐在画面里的位置自然会变，旧的校准框位置也就跟着过期了——这跟直接移动手机是同一类
+   * 情况，不是 bug，只是需要重新校准。所以不再限制缩放，缩放甚至是个好工具：站得较远、
+   * 手机拍摄角度更合适时，适当放大能让篮筐在画面里更大、裁剪区分辨率更高，反而有利于识别。
+   * 只需要记住：调整完缩放倍数之后再拖框校准，检测过程中尽量别再改变倍数（改了就点
+   * 「重新校准篮筐」）。
+   */
+
+  /**
    * 构造当前运行快照（导出/分享用）。
    * @returns {Record<string, unknown>}
    */
@@ -619,6 +657,7 @@ Page({
       npuTrial: { done: this._npuTrialDone, samples: this._npuSampleCount, abnormal: this._npuAbnormalCount },
       ml: this._ballDetector ? this._ballDetector.getStats() : null,
       mlPaused: !!this._mlPaused,
+      calibrating: !!this.data.calibrating,
       inferBusy: !!this._inferBusy,
       fsm: this._shotTracker ? this._shotTracker.getStats().state : '-',
       tracker: this._shotTracker ? this._shotTracker.getStats() : null,
@@ -931,6 +970,13 @@ Page({
     };
     console.log('[ShootingTraining] HoopROI:', JSON.stringify(this._hoopROI));
     this._dlog('ROI', 'hoop ' + s.width + 'x' + s.height + ' @' + s.left + ',' + s.top);
+
+    // 框太小时提示改用双指缩放拉近取景，而不是继续把框缩小（框越小裁剪区原生像素越少，
+    // 球被拉伸放大后更容易糊掉，实测反而更难识别）。
+    var tooSmall = s.width < HOOP_SMALL_WARN_SIZE || s.height < HOOP_SMALL_WARN_SIZE;
+    if (tooSmall !== this.data.hoopTooSmall) {
+      this.setData({ hoopTooSmall: tooSmall });
+    }
   },
 
   // ==================== Camera 回调 ====================
@@ -1118,11 +1164,29 @@ Page({
     var h = this._hoopROI;
     var s = this.data.hoopStyle || { width: h.width, height: h.height };
     var layout = this._previewLayout || { width: 402, height: 874 };
+    var left = h.centerX - s.width * 1.5;
+    var right = h.centerX + s.width * 1.5;
+    var top = h.top - s.height * 2.6;
+    var bottom = h.bottom + s.height * 1.0;
+
+    // 校准框较小（远距离/长焦不足）时按比例算出来的裁剪区可能低于原生像素够用的下限，
+    // 这里保底把裁剪区撑到最小尺寸，中心尽量对齐篮筐，避免裁剪区过小导致球被拉糊。
+    if (right - left < MIN_INFER_CROP_WIDTH) {
+      var padW = (MIN_INFER_CROP_WIDTH - (right - left)) / 2;
+      left -= padW;
+      right += padW;
+    }
+    if (bottom - top < MIN_INFER_CROP_HEIGHT) {
+      var padH = (MIN_INFER_CROP_HEIGHT - (bottom - top)) / 2;
+      top -= padH;
+      bottom += padH;
+    }
+
     return {
-      left: Math.max(0, h.centerX - s.width * 1.5),
-      right: Math.min(layout.width, h.centerX + s.width * 1.5),
-      top: Math.max(0, h.top - s.height * 2.6),
-      bottom: Math.min(layout.height, h.bottom + s.height * 1.0)
+      left: Math.max(0, left),
+      right: Math.min(layout.width, right),
+      top: Math.max(0, top),
+      bottom: Math.min(layout.height, bottom)
     };
   },
 
@@ -1547,6 +1611,7 @@ Page({
    * @returns {void}
    */
   onHoopBoxTouchStart: function (e) {
+    if (!this.data.calibrating) return;
     var touch = e.touches[0];
     this._hoopDrag = {
       mode: 'move',
@@ -1591,6 +1656,7 @@ Page({
    * @returns {void}
    */
   onHoopHandleTouchStart: function (e) {
+    if (!this.data.calibrating) return;
     var touch = e.touches[0];
     this._hoopDrag = {
       mode: 'resize',
@@ -1700,6 +1766,10 @@ Page({
    */
   onRecalibrateTap: function () {
     try { wx.vibrateShort({ type: 'light' }); } catch (e) {}
+    // 重新校准先暂停检测：避免用户拖动框的过程中 AI 还在拿旧/半调整状态的框做判断，
+    // 也强制回到"先调好框，再点开始检测"的流程，不能一边拖一边跑。
+    // 中途换了缩放倍数、或挪动了手机机位，篮筐在画面里的位置会变，也应该点这里重新校准。
+    if (!this._mlPaused) this._haltMlImmediately('recalibrate');
     if (this._shotTracker) this._shotTracker.reset();
     var layout = this._previewLayout || { width: 402, height: 874 };
     this.setData({
@@ -1713,6 +1783,7 @@ Page({
       trailPoints: [],
       fsmState: 'IDLE',
       status: 'ready',
+      calibrating: true,
       hoopStyle: this._defaultHoopStyle(layout)
     });
     this._recalculateHoopROI();

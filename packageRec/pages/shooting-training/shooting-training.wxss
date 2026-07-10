@@ -481,6 +481,13 @@ page {
   line-height: 1.5;
 }
 
+.cover-paused-hint {
+  font-size: 20rpx;
+  color: #64748b;
+  line-height: 1.5;
+  margin-top: 12rpx;
+}
+
 .cover-bottom-pause--start {
   background-color: #16a34a !important;
   color: #ffffff !important;
@@ -495,18 +502,46 @@ page {
   box-sizing: border-box;
 }
 
+/* 检测运行中：框锁定为纯参考展示，弱化视觉存在感，避免遮挡画面/误导可拖拽 */
+.cover-hoop-roi--locked {
+  border: 1.5rpx solid rgba(148, 163, 184, 0.55);
+  background-color: transparent;
+}
+
 .cover-roi-label {
   position: absolute;
   top: -44rpx;
   left: 50%;
-  width: 300rpx;
-  margin-left: -150rpx;
+  width: 320rpx;
+  margin-left: -160rpx;
   text-align: center;
   background-color: rgba(0, 0, 0, 0.65);
   color: #eff6ff;
   font-size: 22rpx;
   padding: 6rpx 16rpx;
   border-radius: 20rpx;
+}
+
+.cover-roi-label--locked {
+  background-color: transparent;
+  color: rgba(148, 163, 184, 0.85);
+  font-size: 20rpx;
+}
+
+/* 框太小提示：放在框下方，避免跟上方 label 挤在一起 */
+.cover-roi-warn {
+  position: absolute;
+  bottom: -68rpx;
+  left: 50%;
+  width: 360rpx;
+  margin-left: -180rpx;
+  text-align: center;
+  background-color: rgba(220, 38, 38, 0.85);
+  color: #fff7ed;
+  font-size: 20rpx;
+  line-height: 1.4;
+  padding: 8rpx 16rpx;
+  border-radius: 16rpx;
 }
 
 /* 校准框四角缩放手柄：留足触控热区，方便真机拖动 */

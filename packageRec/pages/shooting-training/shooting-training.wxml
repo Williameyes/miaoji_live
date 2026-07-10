@@ -41,23 +41,30 @@
     ></view>
   </view>
 
-  <!-- 篮筐引导（勿用全屏 cover-view 包裹，否则会挡住触摸） -->
+  <!-- 篮筐引导（勿用全屏 cover-view 包裹，否则会挡住触摸）
+       校准阶段（calibrating=true）：框可拖拽/缩放，提示"调好后开始检测"；
+       检测运行中（calibrating=false）：框锁定为纯参考展示，不再响应拖拽，避免误触。 -->
   <cover-view
-    wx:if="{{cameraReady && !mlPaused && (status === 'ready' || status === 'training')}}"
-    class="cover-hoop-roi"
+    wx:if="{{cameraReady && (status === 'ready' || status === 'training')}}"
+    class="cover-hoop-roi {{calibrating ? '' : 'cover-hoop-roi--locked'}}"
     style="left: {{hoopStyle.left}}px; top: {{hoopStyle.top}}px; width: {{hoopStyle.width}}px; height: {{hoopStyle.height}}px;"
     catchtouchstart="onHoopBoxTouchStart"
     catchtouchmove="onHoopBoxTouchMove"
     catchtouchend="onHoopBoxTouchEnd"
   >
-    <cover-view class="cover-roi-label">拖动方框对准/缩放篮筐</cover-view>
-    <cover-view class="cover-roi-handle cover-roi-handle-tl" data-corner="tl"
+    <cover-view class="cover-roi-label {{calibrating ? '' : 'cover-roi-label--locked'}}">
+      {{calibrating ? '拖动方框紧贴篮筐边缘，调好后点「开始检测」' : '篮筐校准位置'}}
+    </cover-view>
+    <cover-view wx:if="{{calibrating && hoopTooSmall}}" class="cover-roi-warn">
+      框太小了，建议双指放大取景后再校准，而不是继续缩小框
+    </cover-view>
+    <cover-view wx:if="{{calibrating}}" class="cover-roi-handle cover-roi-handle-tl" data-corner="tl"
       catchtouchstart="onHoopHandleTouchStart" catchtouchmove="onHoopHandleTouchMove" catchtouchend="onHoopHandleTouchEnd"></cover-view>
-    <cover-view class="cover-roi-handle cover-roi-handle-tr" data-corner="tr"
+    <cover-view wx:if="{{calibrating}}" class="cover-roi-handle cover-roi-handle-tr" data-corner="tr"
       catchtouchstart="onHoopHandleTouchStart" catchtouchmove="onHoopHandleTouchMove" catchtouchend="onHoopHandleTouchEnd"></cover-view>
-    <cover-view class="cover-roi-handle cover-roi-handle-bl" data-corner="bl"
+    <cover-view wx:if="{{calibrating}}" class="cover-roi-handle cover-roi-handle-bl" data-corner="bl"
       catchtouchstart="onHoopHandleTouchStart" catchtouchmove="onHoopHandleTouchMove" catchtouchend="onHoopHandleTouchEnd"></cover-view>
-    <cover-view class="cover-roi-handle cover-roi-handle-br" data-corner="br"
+    <cover-view wx:if="{{calibrating}}" class="cover-roi-handle cover-roi-handle-br" data-corner="br"
       catchtouchstart="onHoopHandleTouchStart" catchtouchmove="onHoopHandleTouchMove" catchtouchend="onHoopHandleTouchEnd"></cover-view>
   </cover-view>
   <cover-view
@@ -223,9 +230,17 @@
     </view>
   </view>
 
-  <!-- 暂停提示（非全屏，不挡导航） -->
+  <!-- 暂停提示（非全屏，不挡导航）：校准阶段给操作指引，手动暂停给出暂停说明 -->
   <cover-view
-    wx:if="{{cameraReady && mlPaused && (status === 'ready' || status === 'training')}}"
+    wx:if="{{cameraReady && mlPaused && calibrating && (status === 'ready' || status === 'training')}}"
+    class="cover-paused-banner"
+  >
+    <cover-view class="cover-paused-title">先对准篮筐，再开始检测</cover-view>
+    <cover-view class="cover-paused-sub">拖动上方蓝色方框边缘/四角，紧贴篮筐后点击下方「开始检测」</cover-view>
+    <cover-view class="cover-paused-hint">拍摄角度不好可以先双指缩放调整取景（篮筐显示越大越利于识别），调好后再拖框校准；检测开始后请勿再缩放，否则需要重新点「重新校准篮筐」</cover-view>
+  </cover-view>
+  <cover-view
+    wx:if="{{cameraReady && mlPaused && !calibrating && (status === 'ready' || status === 'training')}}"
     class="cover-paused-banner"
   >
     <cover-view class="cover-paused-title">识别 检测未开启</cover-view>
