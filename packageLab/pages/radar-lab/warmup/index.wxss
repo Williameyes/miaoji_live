@@ -314,3 +314,63 @@
   background-color: #2563eb;
   border-radius: 2rpx;
 }
+
+/* 预览计划卡片样式 (玻璃微光质感) */
+.preview-plan-card {
+  margin-top: 24rpx;
+  background: linear-gradient(135deg, #f0f7ff 0%, #e0f2fe 100%);
+  border: 1rpx solid #bae6fd;
+  border-radius: 16rpx;
+  padding: 24rpx;
+}
+
+.preview-title {
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #0369a1;
+  margin-bottom: 16rpx;
+}
+
+.preview-grid {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  margin-bottom: 16rpx;
+}
+
+.preview-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+}
+
+.preview-val {
+  font-size: 32rpx;
+  font-weight: 800;
+  color: #0284c7;
+}
+
+.preview-lbl {
+  font-size: 20rpx;
+  color: #0369a1;
+  margin-top: 6rpx;
+}
+
+.preview-summary-text {
+  font-size: 20rpx;
+  color: #0e7490;
+  line-height: 1.4;
+  border-top: 1rpx dashed #bae6fd;
+  padding-top: 12rpx;
+}
+
+/* 被串行跳过的状态样式 */
+.warmup-status-badge.status-room_serialized_skip {
+  background: #f1f5f9;
+  color: #94a3b8;
+  border: 1rpx solid #cbd5e1;
+}
+.warmup-result-status.status-room_serialized_skip {
+  color: #94a3b8;
+}

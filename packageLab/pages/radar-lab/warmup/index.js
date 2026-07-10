@@ -33,6 +33,17 @@ Page({
     warmupDurationMin: 30,
     warmupCommentsText: '',
 
+    // 新增调度参数与预览
+    useTiledPlan: true,
+    totalShowDurationMin: 120,
+    overlapRatio: 0.45,
+    maxConcurrentPerRoom: 2,
+    previewPlan: {
+      sessionDurationMin: 0,
+      overlapMin: 0,
+      staggerDelayMin: 0
+    },
+
     // 预热进度与轮询字段
     warmupJobId: '',
     warmupEnqueuedCount: 0,
@@ -49,6 +60,7 @@ Page({
   onLoad: function () {
     if (!ensureRadarLabAccess({ redirectBack: true })) return;
     this.loadActiveMatches();
+    this.updatePlanPreview();
   },
 
   onShow: function () {
@@ -140,6 +152,7 @@ Page({
           warmupResults: [],
           warmupProgressPercent: 0
         });
+        self.updatePlanPreview();
       })
       .catch(function (err) {
         wx.hideLoading();
@@ -181,6 +194,63 @@ Page({
   onWarmupAccountChange: function (e) {
     this.setData({
       warmupAccountCount: Number(e.detail.value)
+    });
+    this.updatePlanPreview();
+  },
+
+  onTotalDurationChange: function (e) {
+    this.setData({
+      totalShowDurationMin: Number(e.detail.value)
+    });
+    this.updatePlanPreview();
+  },
+
+  onOverlapRatioChange: function (e) {
+    this.setData({
+      overlapRatio: Number(e.detail.value)
+    });
+    this.updatePlanPreview();
+  },
+
+  onMaxConcurrentChange: function (e) {
+    this.setData({
+      maxConcurrentPerRoom: Number(e.detail.value)
+    });
+  },
+
+  onToggleTiledPlan: function (e) {
+    this.setData({
+      useTiledPlan: e.detail.value
+    });
+    this.updatePlanPreview();
+  },
+
+  updatePlanPreview: function () {
+    const accountCount = this.data.warmupAccountCount;
+    const totalSec = this.data.totalShowDurationMin * 60;
+    const ratio = this.data.overlapRatio;
+
+    if (accountCount <= 0 || totalSec <= 0) return;
+
+    let sessionSec = 0;
+    let overlapSec = 0;
+    let rawStep = 0;
+
+    if (accountCount === 1) {
+      sessionSec = totalSec;
+      overlapSec = 0;
+    } else {
+      const safeRatio = Math.min(0.8, Math.max(0, ratio));
+      const denominator = accountCount - (accountCount - 1) * safeRatio;
+      sessionSec = Math.round(totalSec / denominator);
+      rawStep = (totalSec - sessionSec) / (accountCount - 1);
+      overlapSec = Math.max(0, sessionSec - Math.round(rawStep));
+    }
+
+    this.setData({
+      'previewPlan.sessionDurationMin': Math.round(sessionSec / 60 * 10) / 10,
+      'previewPlan.overlapMin': Math.round(overlapSec / 60 * 10) / 10,
+      'previewPlan.staggerDelayMin': Math.round(rawStep / 60 * 10) / 10
     });
   },
 
@@ -236,13 +306,21 @@ Page({
     const payload = {
       match_id: Number(matchId),
       account_count: this.data.warmupAccountCount,
-      warmup_duration_sec: this.data.warmupDurationMin * 60,
-      warmup_mode: 'presence_light',
-      like_budget_min: 200,
-      like_budget_max: 300,
-      stagger_min_sec: 30,
-      stagger_max_sec: 90
+      warmup_mode: 'presence_light'
     };
+
+    if (this.data.useTiledPlan) {
+      payload.total_show_duration_sec = this.data.totalShowDurationMin * 60;
+      payload.overlap_ratio = this.data.overlapRatio;
+      payload.max_concurrent_per_room = this.data.maxConcurrentPerRoom;
+      payload.warmup_duration_sec = Math.round(this.data.previewPlan.sessionDurationMin * 60);
+    } else {
+      payload.warmup_duration_sec = this.data.warmupDurationMin * 60;
+      payload.like_budget_min = 200;
+      payload.like_budget_max = 300;
+      payload.stagger_min_sec = 30;
+      payload.stagger_max_sec = 90;
+    }
 
     if (liveUrl) {
       payload.live_url = liveUrl;
@@ -342,7 +420,8 @@ Page({
           success: '成功',
           failed: '失败',
           running: '进行中',
-          pending: '等待中'
+          pending: '等待中',
+          room_serialized_skip: '串行跳过'
         };
 
         const rawResults = Array.isArray(res.results) ? res.results : [];

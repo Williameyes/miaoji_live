@@ -100,13 +100,95 @@
             />
           </view>
 
-          <!-- 预热时长 -->
-          <view class="rl-field">
-            <view class="rl-label-row">
-              <text class="rl-label">挂房预热时长 (只读)</text>
-            </view>
-            <input class="rl-input" style="background-color: #f1f5f9; color: #64748b;" value="{{warmupDurationMin}} 分钟" disabled="{{true}}" />
+          <!-- 启用错峰接力调度 -->
+          <view class="rl-field" style="margin-top: 24rpx; display: flex; flex-direction: row; justify-content: space-between; align-items: center;">
+            <text class="rl-label">启用错峰接力调度</text>
+            <switch checked="{{useTiledPlan}}" bindchange="onToggleTiledPlan" color="#2563eb" />
           </view>
+
+          <!-- 模式 A: 错峰接力配置 -->
+          <block wx:if="{{useTiledPlan}}">
+            <view class="rl-field" style="margin-top: 24rpx;">
+              <view class="rl-label-row">
+                <text class="rl-label">直播场次总时长</text>
+                <text class="warmup-field-val">{{totalShowDurationMin}} 分钟</text>
+              </view>
+              <slider
+                min="30"
+                max="360"
+                step="10"
+                value="{{totalShowDurationMin}}"
+                bindchange="onTotalDurationChange"
+                activeColor="#2563eb"
+              />
+            </view>
+
+            <view class="rl-field" style="margin-top: 24rpx;">
+              <view class="rl-label-row">
+                <text class="rl-label">相邻账号重叠比例</text>
+                <text class="warmup-field-val">{{overlapRatio}}</text>
+              </view>
+              <slider
+                min="0.10"
+                max="0.80"
+                step="0.05"
+                value="{{overlapRatio}}"
+                bindchange="onOverlapRatioChange"
+                activeColor="#2563eb"
+              />
+            </view>
+
+            <view class="rl-field" style="margin-top: 24rpx;">
+              <view class="rl-label-row">
+                <text class="rl-label">并发账号上限</text>
+                <text class="warmup-field-val">{{maxConcurrentPerRoom}} 个</text>
+              </view>
+              <slider
+                min="1"
+                max="5"
+                step="1"
+                value="{{maxConcurrentPerRoom}}"
+                bindchange="onMaxConcurrentChange"
+                activeColor="#2563eb"
+              />
+            </view>
+
+            <!-- 方案预览卡片 -->
+            <view class="preview-plan-card">
+              <view class="preview-title">📊 错峰接力方案实时推演</view>
+              <view class="preview-grid">
+                <view class="preview-item">
+                  <text class="preview-val">{{previewPlan.sessionDurationMin}}m</text>
+                  <text class="preview-lbl">单账号挂房</text>
+                </view>
+                <view class="preview-item">
+                  <text class="preview-val">{{previewPlan.overlapMin}}m</text>
+                  <text class="preview-lbl">相邻重叠</text>
+                </view>
+                <view class="preview-item">
+                  <text class="preview-val">{{previewPlan.staggerDelayMin}}m</text>
+                  <text class="preview-lbl">接力间隔</text>
+                </view>
+                <view class="preview-item">
+                  <text class="preview-val">{{maxConcurrentPerRoom}}台</text>
+                  <text class="preview-lbl">并发上限</text>
+                </view>
+              </view>
+              <view class="preview-summary-text">
+                💡 任意时刻最多 {{maxConcurrentPerRoom}} 个账号同时在线，首尾精确覆盖 {{totalShowDurationMin}} 分钟，防止过多账号同时在线被风控。
+              </view>
+            </view>
+          </block>
+
+          <!-- 模式 B: 传统预热配置 -->
+          <block wx:else>
+            <view class="rl-field" style="margin-top: 24rpx;">
+              <view class="rl-label-row">
+                <text class="rl-label">挂房预热时长</text>
+              </view>
+              <input class="rl-input" style="background-color: #f1f5f9; color: #64748b;" value="{{warmupDurationMin}} 分钟" disabled="{{true}}" />
+            </view>
+          </block>
 
           <!-- 可选评论 -->
           <view class="rl-field">
