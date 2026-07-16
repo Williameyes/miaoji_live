@@ -234,7 +234,9 @@ Page({
         '</svg>'
       ),
     /** 是否有已通过审批的推广（有才显示「我的推广」入口） */
-    hasPromoData: false
+    hasPromoData: false,
+    /** 使用反馈自定义弹窗 */
+    showFeedbackModal: false
   },
 
   onLoad: function () {
@@ -779,13 +781,28 @@ Page({
   },
 
   onFeedbackTap: function () {
-    wx.showModal({
-      title: '使用反馈',
-      content: '如有建议或问题，可在后续版本通过客服或邮箱反馈，感谢支持。',
-      showCancel: false,
-      confirmText: '好的'
-    });
+    this.setData({ showFeedbackModal: true });
   },
+
+  /**
+   * 关闭使用反馈弹窗。
+   * @returns {void}
+   */
+  closeFeedbackModal: function () {
+    this.setData({ showFeedbackModal: false });
+  },
+
+  /**
+   * 阻止弹窗内部点击事件冒泡到遮罩。
+   * @returns {void}
+   */
+  stopFeedbackModalBubble: function () {},
+
+  /**
+   * 拦截弹窗区域的滑动穿透。
+   * @returns {void}
+   */
+  onFeedbackModalCatchMove: function () {},
 
   /**
    * 会员不足时的续期引导：展示自定义弹窗。

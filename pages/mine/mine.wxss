@@ -329,3 +329,96 @@
   color: #94a3b8;
   padding: 10rpx 0;
 }
+
+/* ───── 使用反馈自定义弹窗 ───── */
+.feedback-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 910;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(10px);
+  padding: 40rpx;
+  box-sizing: border-box;
+}
+
+.feedback-card {
+  width: 100%;
+  max-width: 600rpx;
+  padding: 48rpx 40rpx 40rpx;
+  box-sizing: border-box;
+  border-radius: 32rpx;
+  background: #ffffff;
+  box-shadow: 0 32rpx 80rpx rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.feedback-title {
+  font-size: 36rpx;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 24rpx;
+  text-align: center;
+}
+
+.feedback-content {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  font-size: 28rpx;
+  line-height: 1.8;
+  color: #475569;
+  margin-bottom: 40rpx;
+  text-align: center;
+}
+
+.feedback-text {
+  font-size: 28rpx;
+  color: #475569;
+  line-height: 1.8;
+}
+
+.feedback-actions {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  gap: 20rpx;
+}
+
+.feedback-btn {
+  flex: 1;
+  height: 88rpx;
+  line-height: 88rpx;
+  border-radius: 44rpx;
+  font-size: 28rpx;
+  font-weight: 600;
+  text-align: center;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.feedback-btn::after {
+  border: none;
+}
+
+.feedback-cancel-btn {
+  color: #64748b !important;
+  background: #f1f5f9 !important;
+  border: 1rpx solid #e2e8f0 !important;
+}
+
+.feedback-confirm-btn {
+  color: #ffffff !important;
+  background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
+  box-shadow: 0 12rpx 32rpx rgba(37, 99, 235, 0.28);
+}
+

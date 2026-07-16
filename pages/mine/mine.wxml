@@ -125,4 +125,18 @@
       <text class="list-arrow">›</text>
     </view>
   </view>
+
+  <!-- 使用反馈自定义弹窗 -->
+  <view class="feedback-overlay" wx:if="{{showFeedbackModal}}" catchtouchmove="onFeedbackModalCatchMove" bindtap="closeFeedbackModal">
+    <view class="feedback-card" catchtap="stopFeedbackModalBubble">
+      <view class="feedback-title">使用反馈</view>
+      <view class="feedback-content">
+        <text class="feedback-text">如有建议或问题，通过在线客服留言反馈，感谢支持。</text>
+      </view>
+      <view class="feedback-actions">
+        <button class="feedback-btn feedback-cancel-btn" bindtap="closeFeedbackModal">关闭</button>
+        <button class="feedback-btn feedback-confirm-btn" open-type="contact" bindtap="closeFeedbackModal">咨询客服</button>
+      </view>
+    </view>
+  </view>
 </view>
