@@ -42,14 +42,14 @@
         <text class="help-step-num">3</text>
         <view class="help-step-body">
           <text class="help-step-title">片段与列表</text>
-          <text class="help-step-text">单击 REC 保存高光片段；长按空白处打开比赛与高光列表。左下 ◎ 可调快捷变焦与对焦。</text>
+          <text class="help-step-text">单击 REC 保存高光片段；长按空白处打开比赛与高光列表。</text>
         </view>
       </view>
       <view class="help-step help-step--last">
         <text class="help-step-num">4</text>
         <view class="help-step-body">
           <text class="help-step-title">相机异常</text>
-          <text class="help-step-text">若预览异常，可尝试长按 REC 触发恢复相机（或切换增强模式为‘关闭’后再尝试切回）；仍无效请参考下文「相机黑屏」小节。</text>
+          <text class="help-step-text">若预览异常，恢复方法为：长按屏幕-》返回“记分”页，重新进入比赛，重启相机；仍无效请参考下文「相机黑屏」小节。</text>
         </view>
       </view>
     </view>
@@ -90,24 +90,9 @@
       <text class="help-card-icon">📷</text>
       <text class="help-card-title">相机黑屏怎么办</text>
     </view>
-    <view class="help-bullets">
-      <view class="help-bullet">
-        <text class="help-bullet-dot">•</text>
-        <text class="help-bullet-text">确认已授权摄像头与麦克风；在手机系统设置中检查微信是否被关闭相机权限。</text>
-      </view>
-      <view class="help-bullet">
-        <text class="help-bullet-dot">•</text>
-        <text class="help-bullet-text">结束占用相机的其他应用（如系统相机、视频会议、其他直播软件）后重试。</text>
-      </view>
-      <view class="help-bullet">
-        <text class="help-bullet-dot">•</text>
-        <text class="help-bullet-text">在直播页长按 REC 尝试「恢复相机」；或暂时退出直播页再重新进入该场次。</text>
-      </view>
-      <view class="help-bullet">
-        <text class="help-bullet-dot">•</text>
-        <text class="help-bullet-text">低电量、过热降频或机型兼容问题可能导致组件启动失败，可待设备降温后重启微信再试。</text>
-      </view>
-    </view>
+    <text class="help-p">
+      等待5s中，相机会自行恢复，如果5s后仍不恢复，长按屏幕-》返回“记分”页，重新进入比赛，重启相机。
+    </text>
   </view>
 
   <view class="help-card">
@@ -140,10 +125,7 @@
         <text class="help-faq-q">横屏与手势？</text>
         <text class="help-faq-a">直播页支持横屏使用；双指可尝试缩放取景。具体以当前版本直播页内指引为准。</text>
       </view>
-      <view class="help-faq-item">
-        <text class="help-faq-q">画质增强选项？</text>
-        <text class="help-faq-a">部分机型在抽屉内提供画质增强档位；若出现卡顿或异常，请先切回「关闭」或「标准」以优先保证稳定性。</text>
-      </view>
+
       <view class="help-faq-item">
         <text class="help-faq-q">意见反馈？</text>
         <text class="help-faq-a">欢迎在「我的 → 使用反馈」中留下建议，便于我们持续改进产品体验。</text>
