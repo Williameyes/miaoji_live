@@ -30,7 +30,7 @@ Page({
     warmupInputText: '',
     warmupLiveUrl: '',
     warmupAccountCount: 3,
-    warmupDurationMin: 30,
+    warmupDurationMin: 45,
     warmupCommentsText: '',
 
     // 新增调度参数与预览
@@ -316,10 +316,10 @@ Page({
       payload.warmup_duration_sec = Math.round(this.data.previewPlan.sessionDurationMin * 60);
     } else {
       payload.warmup_duration_sec = this.data.warmupDurationMin * 60;
-      payload.like_budget_min = 200;
-      payload.like_budget_max = 300;
-      payload.stagger_min_sec = 30;
-      payload.stagger_max_sec = 90;
+      payload.like_budget_min = 1300;
+      payload.like_budget_max = 1700;
+      payload.stagger_min_sec = 60;
+      payload.stagger_max_sec = 120;
     }
 
     if (liveUrl) {

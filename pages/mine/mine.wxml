@@ -84,7 +84,7 @@
     </block>
     <block wx:if="{{loggedIn && isInWhitelist}}">
       <view class="list-item" hover-class="list-item-hover" bindtap="onRadarLabWarmupTap">
-        <text class="list-label">直播间预热 <text class="list-label-badge">实验</text></text>
+        <text class="list-label">直播预热 <text class="list-label-badge">实验</text></text>
         <text class="list-arrow">›</text>
       </view>
       <view class="list-divider"></view>
@@ -98,7 +98,7 @@
     </block>
     <block wx:if="{{loggedIn && isInWhitelist}}">
       <view class="list-item" hover-class="list-item-hover" bindtap="onHighlightRecTap">
-        <text class="list-label">高光素材机 <text class="list-label-badge">实验</text></text>
+        <text class="list-label">副机拍摄 <text class="list-label-badge">实验</text></text>
         <text class="list-arrow">›</text>
       </view>
       <view class="list-divider"></view>

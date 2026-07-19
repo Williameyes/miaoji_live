@@ -3,7 +3,7 @@
   <!-- ==================== Step 1: 监测中场次列表 ==================== -->
   <block wx:if="{{!selectedMatchId}}">
     <view class="rl-header">
-      <view class="rl-kicker">雷达实验 · 直播间预热</view>
+      <view class="rl-kicker">雷达实验 · 直播预热</view>
       <view class="rl-title">选择预热场次</view>
       <view class="rl-sub">点击进行中/监测中的场次，下发自动点赞与评论预热任务</view>
     </view>
@@ -44,7 +44,7 @@
   <!-- ==================== Step 2: 预热配置与下发 ==================== -->
   <block wx:elif="{{selectedMatchId && !warmupJobId}}">
     <view class="rl-header">
-      <view class="rl-kicker">雷达实验 · 直播间预热</view>
+      <view class="rl-kicker">雷达实验 · 直播预热</view>
       <view class="rl-title">{{selectedMatchTitle}}</view>
       <view class="rl-sub">场次 ID: {{selectedMatchId}}</view>
     </view>
