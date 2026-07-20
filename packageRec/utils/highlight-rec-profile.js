@@ -10,10 +10,11 @@ var REC_MODE_NATIVE = 'native';
 /** @type {'native'|'preview_record'} */
 var REC_MODE_PREVIEW_RECORD = 'preview_record';
 
-/** @type {'portrait'|'landscape'} */
+/** @type {'portrait'|'portrait_4_3'|'landscape'|'landscape_4_3'} */
 var ASPECT_PORTRAIT = 'portrait';
-/** @type {'portrait'|'landscape'} */
+var ASPECT_PORTRAIT_4_3 = 'portrait_4_3';
 var ASPECT_LANDSCAPE = 'landscape';
+var ASPECT_LANDSCAPE_4_3 = 'landscape_4_3';
 
 /** @type {Object|null} */
 var cachedProfile = null;
@@ -51,10 +52,13 @@ function isXiaomiAndroid() {
  * 规范化画幅模式。
  *
  * @param {string|undefined} mode
- * @returns {'portrait'|'landscape'}
+ * @returns {'portrait'|'portrait_4_3'|'landscape'|'landscape_4_3'}
  */
 function normalizeAspectMode(mode) {
-  return mode === ASPECT_LANDSCAPE ? ASPECT_LANDSCAPE : ASPECT_PORTRAIT;
+  if (mode === ASPECT_LANDSCAPE) return ASPECT_LANDSCAPE;
+  if (mode === ASPECT_LANDSCAPE_4_3) return ASPECT_LANDSCAPE_4_3;
+  if (mode === ASPECT_PORTRAIT_4_3) return ASPECT_PORTRAIT_4_3;
+  return ASPECT_PORTRAIT;
 }
 
 /**
@@ -62,24 +66,29 @@ function normalizeAspectMode(mode) {
  *
  * @param {boolean} lowEnd
  * @param {boolean} use1080p
- * @param {'portrait'|'landscape'} aspectMode
+ * @param {'portrait'|'portrait_4_3'|'landscape'|'landscape_4_3'} aspectMode
  * @returns {{ canvasWidth: number, canvasHeight: number, label: string, aspectLabel: string }}
  */
 function resolveCanvasSize(lowEnd, use1080p, aspectMode) {
-  var landscape = aspectMode === ASPECT_LANDSCAPE;
-  if (lowEnd) {
-    return landscape
-      ? { canvasWidth: 854, canvasHeight: 480, label: '480p', aspectLabel: '16:9' }
-      : { canvasWidth: 480, canvasHeight: 854, label: '480p', aspectLabel: '9:16' };
+  if (aspectMode === ASPECT_LANDSCAPE) {
+    if (lowEnd) return { canvasWidth: 854, canvasHeight: 480, label: '480p', aspectLabel: '16:9' };
+    if (use1080p) return { canvasWidth: 1920, canvasHeight: 1080, label: '1080p', aspectLabel: '16:9' };
+    return { canvasWidth: 1280, canvasHeight: 720, label: '720p', aspectLabel: '16:9' };
   }
-  if (use1080p) {
-    return landscape
-      ? { canvasWidth: 1920, canvasHeight: 1080, label: '1080p', aspectLabel: '16:9' }
-      : { canvasWidth: 1080, canvasHeight: 1920, label: '1080p', aspectLabel: '9:16' };
+  if (aspectMode === ASPECT_LANDSCAPE_4_3) {
+    if (lowEnd) return { canvasWidth: 640, canvasHeight: 480, label: '480p', aspectLabel: '4:3' };
+    if (use1080p) return { canvasWidth: 1440, canvasHeight: 1080, label: '1080p', aspectLabel: '4:3' };
+    return { canvasWidth: 960, canvasHeight: 720, label: '720p', aspectLabel: '4:3' };
   }
-  return landscape
-    ? { canvasWidth: 1280, canvasHeight: 720, label: '720p', aspectLabel: '16:9' }
-    : { canvasWidth: 720, canvasHeight: 1280, label: '720p', aspectLabel: '9:16' };
+  if (aspectMode === ASPECT_PORTRAIT_4_3) {
+    if (lowEnd) return { canvasWidth: 480, canvasHeight: 640, label: '480p', aspectLabel: '3:4' };
+    if (use1080p) return { canvasWidth: 1080, canvasHeight: 1440, label: '1080p', aspectLabel: '3:4' };
+    return { canvasWidth: 720, canvasHeight: 960, label: '720p', aspectLabel: '3:4' };
+  }
+  // ASPECT_PORTRAIT (default 9:16)
+  if (lowEnd) return { canvasWidth: 480, canvasHeight: 854, label: '480p', aspectLabel: '9:16' };
+  if (use1080p) return { canvasWidth: 1080, canvasHeight: 1920, label: '1080p', aspectLabel: '9:16' };
+  return { canvasWidth: 720, canvasHeight: 1280, label: '720p', aspectLabel: '9:16' };
 }
 
 /**
@@ -113,7 +122,7 @@ function getHighlightRecProfile(options) {
   var cacheKey = recMode
     + '_' + (lowEnd ? '480' : (use1080p ? '1080' : '720'))
     + (actionMode ? '_action' : '')
-    + (aspectMode === ASPECT_LANDSCAPE ? '_land' : '_port');
+    + '_' + aspectMode;
 
   if (cachedProfile && cachedKey === cacheKey) {
     return cachedProfile;
@@ -178,7 +187,9 @@ module.exports = {
   REC_MODE_NATIVE: REC_MODE_NATIVE,
   REC_MODE_PREVIEW_RECORD: REC_MODE_PREVIEW_RECORD,
   ASPECT_PORTRAIT: ASPECT_PORTRAIT,
+  ASPECT_PORTRAIT_4_3: ASPECT_PORTRAIT_4_3,
   ASPECT_LANDSCAPE: ASPECT_LANDSCAPE,
+  ASPECT_LANDSCAPE_4_3: ASPECT_LANDSCAPE_4_3,
   getHighlightRecProfile: getHighlightRecProfile,
   isXiaomiAndroid: isXiaomiAndroid,
   normalizeAspectMode: normalizeAspectMode,

@@ -85,9 +85,7 @@
           <view class="focus-lock-hint">
             <text class="focus-lock-text">{{isRecording
               ? ('缓冲 ' + bufferCoverageText)
-              : (aspectMode === 'landscape'
-                ? '横置 16:9，与直播页画幅一致'
-                : '竖持 9:16，调好参数后开始监看')}}</text>
+              : ('画幅 ' + aspectLabel + '，调好参数后开始监看')}}</text>
           </view>
 
           <view class="monitor-row">
@@ -119,17 +117,26 @@
             <text class="quality-label">画幅</text>
             <view class="quality-switch">
               <view
-                class="quality-pill {{aspectMode !== 'landscape' ? 'quality-pill--active' : ''}}"
-                data-landscape="{{false}}"
+                class="quality-pill {{aspectMode === 'portrait' ? 'quality-pill--active' : ''}}"
+                data-aspect="portrait"
                 bindtap="onAspectModeToggle"
-              >竖持</view>
+              >9:16</view>
+              <view
+                class="quality-pill {{aspectMode === 'portrait_4_3' ? 'quality-pill--active' : ''}}"
+                data-aspect="portrait_4_3"
+                bindtap="onAspectModeToggle"
+              >3:4</view>
               <view
                 class="quality-pill {{aspectMode === 'landscape' ? 'quality-pill--active' : ''}}"
-                data-landscape="{{true}}"
+                data-aspect="landscape"
                 bindtap="onAspectModeToggle"
-              >横置</view>
+              >16:9</view>
+              <view
+                class="quality-pill {{aspectMode === 'landscape_4_3' ? 'quality-pill--active' : ''}}"
+                data-aspect="landscape_4_3"
+                bindtap="onAspectModeToggle"
+              >4:3</view>
             </view>
-            <text class="quality-hint">{{aspectLabel}}</text>
           </view>
 
           <view class="quality-row" wx:if="{{canUse1080p}}">

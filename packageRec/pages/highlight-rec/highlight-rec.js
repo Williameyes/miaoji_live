@@ -20,13 +20,22 @@ var STORAGE_KEY_REC_MODE = 'highlight_rec_mode_v1';
  *
  * @param {number} winW 窗口宽度（px）
  * @param {number} winH 窗口高度（px）
- * @param {'portrait'|'landscape'} aspectMode
+ * @param {'portrait'|'portrait_4_3'|'landscape'|'landscape_4_3'} aspectMode
  * @returns {{ w: number, h: number }}
  */
 function computePreviewStageSizePx(winW, winH, aspectMode) {
   var ww = Math.max(1, winW);
   var wh = Math.max(1, winH);
-  var ar = aspectMode === highlightRecProfile.ASPECT_LANDSCAPE ? (16 / 9) : (9 / 16);
+  var ar;
+  if (aspectMode === highlightRecProfile.ASPECT_LANDSCAPE) {
+    ar = 16 / 9;
+  } else if (aspectMode === highlightRecProfile.ASPECT_LANDSCAPE_4_3) {
+    ar = 4 / 3;
+  } else if (aspectMode === highlightRecProfile.ASPECT_PORTRAIT_4_3) {
+    ar = 3 / 4;
+  } else {
+    ar = 9 / 16;
+  }
   if (ww / wh > ar) {
     var h1 = wh;
     return { w: h1 * ar, h: h1 };
@@ -319,13 +328,20 @@ Page({
     if (aspectMode === highlightRecProfile.ASPECT_LANDSCAPE) {
       frameW = Math.round(box.w * 0.38);
       frameH = Math.round(frameW * 9 / 16);
+    } else if (aspectMode === highlightRecProfile.ASPECT_LANDSCAPE_4_3) {
+      frameW = Math.round(box.w * 0.38);
+      frameH = Math.round(frameW * 3 / 4);
+    } else if (aspectMode === highlightRecProfile.ASPECT_PORTRAIT_4_3) {
+      frameW = Math.round(box.w * 0.52);
+      frameH = Math.round(frameW * 4 / 3);
     } else {
       frameW = Math.round(box.w * 0.52);
       frameH = Math.round(frameW * 16 / 9);
     }
     var alignFrameStyle = 'width:' + frameW + 'px;height:' + frameH + 'px;';
+    var isLandscape = String(aspectMode || '').indexOf('landscape') === 0;
     var hudTopPx = (this.data.statusBarHeight || 20)
-      + (aspectMode === highlightRecProfile.ASPECT_LANDSCAPE ? 28 : 48);
+      + (isLandscape ? 28 : 48);
     this.setData({
       previewStageStyle: stageStyle,
       alignFrameStyle: alignFrameStyle,
@@ -349,12 +365,13 @@ Page({
   /**
    * 按画幅切换页面方向（横屏模式须物理横置手机）。
    *
-   * @param {'portrait'|'landscape'} aspectMode
+   * @param {string} aspectMode
    * @returns {void}
    */
   _applyPageOrientation: function (aspectMode) {
     if (!wx.setPageOrientation) return;
-    var want = aspectMode === highlightRecProfile.ASPECT_LANDSCAPE ? 'landscape' : 'portrait';
+    var isLandscape = String(aspectMode || '').indexOf('landscape') === 0;
+    var want = isLandscape ? 'landscape' : 'portrait';
     try {
       wx.setPageOrientation({ orientation: want });
     } catch (e) {
@@ -857,17 +874,17 @@ Page({
   },
 
   /**
-   * 切换画幅（竖屏 9:16 / 横屏 16:9）。
+   * 切换画幅（竖持 9:16 / 3:4 ，横置 16:9 / 4:3）。
    *
    * @param {Object} e
    * @returns {void}
    */
   onAspectModeToggle: function (e) {
-    var wantLandscape = !!(e && e.currentTarget && e.currentTarget.dataset
-      && e.currentTarget.dataset.landscape);
-    var nextMode = wantLandscape
-      ? highlightRecProfile.ASPECT_LANDSCAPE
-      : highlightRecProfile.ASPECT_PORTRAIT;
+    var wantAspect = e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.aspect;
+    if (!wantAspect && e && e.currentTarget && e.currentTarget.dataset && typeof e.currentTarget.dataset.landscape !== 'undefined') {
+      wantAspect = e.currentTarget.dataset.landscape ? highlightRecProfile.ASPECT_LANDSCAPE : highlightRecProfile.ASPECT_PORTRAIT;
+    }
+    var nextMode = highlightRecProfile.normalizeAspectMode(wantAspect);
     if (nextMode === this.data.aspectMode) return;
 
     var self = this;
@@ -884,14 +901,15 @@ Page({
       self._applyPageOrientation(perf.aspectMode);
       self.setData({
         aspectMode: perf.aspectMode,
-        aspectLabel: perf.aspectLabel || (wantLandscape ? '16:9' : '9:16'),
+        aspectLabel: perf.aspectLabel || '9:16',
         perfTierLabel: self._buildPerfTierLabel(perf),
         compactStatusLabel: self._buildCompactStatusLabel(perf)
       });
       self._updatePreviewStageLayout();
       self._remountCameraAfterOrientation();
+      var isLand = nextMode.indexOf('landscape') === 0;
       wx.showToast({
-        title: wantLandscape ? '请横置手机拍摄 16:9' : '已切换竖持 9:16',
+        title: isLand ? ('请横置手机拍摄 ' + perf.aspectLabel) : ('已切换竖持 ' + perf.aspectLabel),
         icon: 'none',
         duration: 2500
       });
