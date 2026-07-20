@@ -12,6 +12,8 @@ var STORAGE_KEY_USE_1080P = 'highlight_rec_use_1080p_v1';
 var STORAGE_KEY_ACTION_MODE = 'highlight_rec_action_mode_v1';
 /** 本地存储：画幅模式 portrait | landscape */
 var STORAGE_KEY_ASPECT_MODE = 'highlight_rec_aspect_mode_v1';
+/** 本地存储：录制方式 native | preview_record */
+var STORAGE_KEY_REC_MODE = 'highlight_rec_mode_v1';
 
 /**
  * 窗口内最大内接预览区（按画幅宽高比）。
@@ -45,7 +47,9 @@ Page({
     cameraResolution: 'medium',
     cameraFrameSize: 'medium',
     perfTierLabel: '',
-    compactStatusLabel: '9:16·720p',
+    compactStatusLabel: '原生·9:16·720p',
+    /** 录制方式：native 原生相机 / preview_record 视录分离 */
+    recMode: 'native',
     /** 设置弹窗是否打开 */
     settingsModalOpen: false,
     /** 录制清晰度：720p / 1080p */
@@ -99,11 +103,15 @@ Page({
     var aspectModeStored = highlightRecProfile.normalizeAspectMode(
       wx.getStorageSync(STORAGE_KEY_ASPECT_MODE)
     );
+    var recModeStored = highlightRecProfile.normalizeRecMode(
+      wx.getStorageSync(STORAGE_KEY_REC_MODE)
+    );
     highlightRecProfile.resetHighlightRecProfileCache();
     var perf = highlightRecProfile.getHighlightRecProfile({
       use1080p: use1080pStored,
       actionMode: actionModeStored,
-      aspectMode: aspectModeStored
+      aspectMode: aspectModeStored,
+      recMode: recModeStored
     });
     var canUse1080p = perf.tier !== '480p';
     var use1080p = canUse1080p && use1080pStored;
@@ -118,6 +126,7 @@ Page({
       roomId: wx.getStorageSync('rec_sync_room_id') || '',
       cameraResolution: perf.cameraResolution,
       cameraFrameSize: perf.cameraFrameSize,
+      recMode: perf.recMode,
       use1080p: use1080p,
       canUse1080p: canUse1080p,
       actionMode: actionMode,
@@ -378,10 +387,11 @@ Page({
    * @returns {string}
    */
   _buildPerfTierLabel: function (perf) {
-    if (!perf) return '720p · 视录分离';
+    if (!perf) return '原生·9:16·720p';
+    var modeTag = perf.recMode === 'preview_record' ? '视录分离' : '原生相机';
     var parts = [(perf.aspectLabel || '9:16') + ' ' + (perf.qualityLabel || '720p')];
     if (perf.actionMode) parts.push('追拍');
-    parts.push('视录分离');
+    parts.push(modeTag);
     return parts.join(' · ');
   },
 
@@ -392,8 +402,9 @@ Page({
    * @returns {string}
    */
   _buildCompactStatusLabel: function (perf) {
-    if (!perf) return '9:16·720p';
-    var parts = [perf.aspectLabel || '9:16', perf.qualityLabel || '720p'];
+    if (!perf) return '原生·9:16·720p';
+    var modeTag = perf.recMode === 'preview_record' ? '视录' : '原生';
+    var parts = [modeTag, perf.aspectLabel || '9:16', perf.qualityLabel || '720p'];
     if (perf.actionMode) parts.push('追拍');
     return parts.join('·');
   },
@@ -738,6 +749,40 @@ Page({
   },
 
   /**
+   * 切换录制方式（native 原生相机 / preview_record 视录分离）。
+   *
+   * @param {Object} e
+   * @returns {void}
+   */
+  onRecModeToggle: function (e) {
+    var wantMode = e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.mode;
+    var nextMode = highlightRecProfile.normalizeRecMode(wantMode);
+    if (nextMode === this.data.recMode) return;
+
+    var self = this;
+    this._switchProfileWithRestart(function () {
+      wx.setStorageSync(STORAGE_KEY_REC_MODE, nextMode);
+      highlightRecProfile.resetHighlightRecProfileCache();
+      return highlightRecProfile.getHighlightRecProfile({
+        use1080p: self.data.use1080p,
+        actionMode: self.data.actionMode,
+        aspectMode: self.data.aspectMode,
+        recMode: nextMode
+      });
+    }, function (perf) {
+      self.setData({
+        recMode: perf.recMode,
+        perfTierLabel: self._buildPerfTierLabel(perf),
+        compactStatusLabel: self._buildCompactStatusLabel(perf)
+      });
+      wx.showToast({
+        title: nextMode === 'native' ? '已切至原生相机(推荐·控温)' : '已切至视录分离(双录)',
+        icon: 'none'
+      });
+    });
+  },
+
+  /**
    * 切换录制清晰度（720p / 1080p）。
    *
    * @param {Object} e
@@ -760,7 +805,8 @@ Page({
       return highlightRecProfile.getHighlightRecProfile({
         use1080p: want1080,
         actionMode: self.data.actionMode,
-        aspectMode: self.data.aspectMode
+        aspectMode: self.data.aspectMode,
+        recMode: self.data.recMode
       });
     }, function (perf) {
       self.setData({
@@ -793,7 +839,8 @@ Page({
       return highlightRecProfile.getHighlightRecProfile({
         use1080p: self.data.use1080p,
         actionMode: wantAction,
-        aspectMode: self.data.aspectMode
+        aspectMode: self.data.aspectMode,
+        recMode: self.data.recMode
       });
     }, function (perf) {
       self.setData({
@@ -830,7 +877,8 @@ Page({
       return highlightRecProfile.getHighlightRecProfile({
         use1080p: self.data.use1080p,
         actionMode: self.data.actionMode,
-        aspectMode: nextMode
+        aspectMode: nextMode,
+        recMode: self.data.recMode
       });
     }, function (perf) {
       self._applyPageOrientation(perf.aspectMode);

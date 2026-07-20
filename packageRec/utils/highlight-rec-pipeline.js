@@ -1,10 +1,8 @@
-/**
- * @fileoverview 高光素材机：视录分离视频 + 独立滚动收音 + 导出 mux。
- */
-
+const highlightRecProfile = require('./highlight-rec-profile.js');
 const { createPreviewRecordPipeline } = require('../../utils/replay-buffer/preview-record-pipeline.js');
 const { createRollingAudioRecorder } = require('./rolling-audio-recorder.js');
 const { exportAvHighlightClip } = require('./av-highlight-export.js');
+const { createNativeRollingRecorder } = require('./native-rolling-recorder/index.js');
 
 /** 默认回溯窗口（ms）。 */
 var DEFAULT_LEAD_MS = 8000;
@@ -127,23 +125,115 @@ function attachRollingPageAdapter(page, rollingDir) {
 }
 
 /**
- * 创建素材机视录分离 + 收音管线。
+ * 原生相机滚动录制管线包装。
  *
- * @param {Object} page 小程序 Page 实例
- * @param {Object} [profile] highlight-rec-profile 输出
- * @returns {{
- *   isSupported: function(): boolean,
- *   start: function(): Promise<void>,
- *   stop: function(): Promise<void>,
- *   destroy: function(): void,
- *   triggerExport: function(number): Promise<string>,
- *   isActive: function(): boolean,
- *   getVideoSegments: function(): Array<Object>,
- *   estimateBufferCoverageSec: function(): number
- * }}
+ * @param {Object} page
+ * @param {Object} perf
+ * @returns {Object}
  */
-function createHighlightRecPipeline(page, profile) {
-  var perf = profile || highlightRecProfile.getHighlightRecProfile({});
+function createNativeHighlightPipeline(page, perf) {
+  var nativeRecorder = null;
+
+  function getCameraContext() {
+    return (page && (page._cameraCtx || (page.data && page.data.cameraContext))) || null;
+  }
+
+  function isSupported() {
+    return typeof wx !== 'undefined' && typeof wx.createCameraContext === 'function';
+  }
+
+  function start() {
+    var ctx = getCameraContext();
+    if (!ctx) {
+      return Promise.reject(new Error('camera_context_missing'));
+    }
+    if (nativeRecorder && nativeRecorder.isActive()) {
+      return Promise.resolve();
+    }
+    if (!nativeRecorder) {
+      nativeRecorder = createNativeRollingRecorder(ctx, {
+        segmentMs: 45000,
+        recordQuality: perf.use1080p ? 'high' : 'medium',
+        skipMediaContainerTrim: !!perf.skipMediaContainerTrim,
+        onError: function (err) {
+          console.warn('[NativeHighlightPipeline] recorder error:', err);
+        }
+      });
+    }
+    nativeRecorder.start();
+    return Promise.resolve();
+  }
+
+  function stop() {
+    if (nativeRecorder) {
+      try {
+        nativeRecorder.stop();
+      } catch (e) {}
+    }
+    return Promise.resolve();
+  }
+
+  function destroy() {
+    stop();
+    nativeRecorder = null;
+  }
+
+  function isActive() {
+    return !!(nativeRecorder && nativeRecorder.isActive());
+  }
+
+  function getVideoSegments() {
+    return nativeRecorder ? nativeRecorder.getSegments() : [];
+  }
+
+  function estimateBufferCoverageSec() {
+    if (!nativeRecorder) return 0;
+    var segs = nativeRecorder.getSegments();
+    var total = 0;
+    for (var i = 0; i < segs.length; i++) {
+      var s = segs[i];
+      if (s && s.start && s.stop) {
+        var wall = s.stop - s.start;
+        if (wall > 0) total += Math.round(wall / 1000);
+      }
+    }
+    if (nativeRecorder.isActive()) {
+      var cur = nativeRecorder.getCurrentSegment();
+      if (cur && cur.start) {
+        total += Math.round((Date.now() - cur.start) / 1000);
+      }
+    }
+    return Math.min(90, total);
+  }
+
+  function triggerExport(triggerTime) {
+    if (!nativeRecorder || !nativeRecorder.isActive()) {
+      return Promise.reject(new Error('recorder_not_active'));
+    }
+    return nativeRecorder.triggerExport();
+  }
+
+  return {
+    recMode: highlightRecProfile.REC_MODE_NATIVE,
+    isSupported: isSupported,
+    start: start,
+    stop: stop,
+    destroy: destroy,
+    triggerExport: triggerExport,
+    isActive: isActive,
+    getVideoSegments: getVideoSegments,
+    estimateBufferCoverageSec: estimateBufferCoverageSec
+  };
+}
+
+/**
+ * 视录分离管线（Preview Record + Rolling Audio）。
+ *
+ * @param {Object} page
+ * @param {Object} perf
+ * @returns {Object}
+ */
+function createPreviewHighlightPipeline(page, perf) {
   var rollingDir = (wx.env && wx.env.USER_DATA_PATH ? wx.env.USER_DATA_PATH : '') + '/highlight_rec_rolling';
   attachRollingPageAdapter(page, rollingDir);
 
@@ -162,16 +252,10 @@ function createHighlightRecPipeline(page, profile) {
   var contentLeadInSkipMs = perf.contentLeadInSkipMs || 0;
   var starting = false;
 
-  /**
-   * @returns {boolean}
-   */
   function isSupported() {
     return previewPipeline.isSupported();
   }
 
-  /**
-   * @returns {Promise<void>}
-   */
   function start() {
     if (starting || previewPipeline.isActive()) {
       return Promise.resolve();
@@ -198,7 +282,6 @@ function createHighlightRecPipeline(page, profile) {
         fps: perf.recordFps || 24,
         canvasWidth: perf.canvasWidth || 720,
         canvasHeight: perf.canvasHeight || 1280,
-        /** 固定标准画幅输出（16:9 / 9:16），不随相机帧宽漂移 */
         forceTargetCanvasSize: true,
         videoBitsPerSecondKbps: perf.videoBitsPerSecondKbps || 4800,
         maxFiles: perf.rollingMaxFiles || 2,
@@ -216,9 +299,6 @@ function createHighlightRecPipeline(page, profile) {
     });
   }
 
-  /**
-   * @returns {Promise<void>}
-   */
   function stop() {
     page._livePageVisible = false;
     var pStop = previewPipeline.isActive() ? previewPipeline.stop() : Promise.resolve();
@@ -227,9 +307,6 @@ function createHighlightRecPipeline(page, profile) {
     });
   }
 
-  /**
-   * @returns {void}
-   */
   function destroy() {
     page._livePageVisible = false;
     try {
@@ -237,25 +314,14 @@ function createHighlightRecPipeline(page, profile) {
     } catch (e) {}
   }
 
-  /**
-   * @returns {boolean}
-   */
   function isActive() {
     return previewPipeline.isActive();
   }
 
-  /**
-   * @returns {Array<Object>}
-   */
   function getVideoSegments() {
     return previewPipeline.getSegments();
   }
 
-  /**
-   * 估算当前环内视频缓冲覆盖秒数。
-   *
-   * @returns {number}
-   */
   function estimateBufferCoverageSec() {
     var segs = getVideoSegments();
     var total = 0;
@@ -275,12 +341,6 @@ function createHighlightRecPipeline(page, profile) {
     return Math.min(Math.ceil(bufferTargetMs / 1000), total);
   }
 
-  /**
-   * 触发导出：flush 视频轨 + 裁切 + 与同时段音频 mux。
-   *
-   * @param {number} [triggerTime]
-   * @returns {Promise<string>}
-   */
   function triggerExport(triggerTime) {
     if (!previewPipeline.isActive()) {
       return Promise.reject(new Error('recorder_not_active'));
@@ -305,6 +365,7 @@ function createHighlightRecPipeline(page, profile) {
   }
 
   return {
+    recMode: highlightRecProfile.REC_MODE_PREVIEW_RECORD,
     isSupported: isSupported,
     start: start,
     stop: stop,
@@ -314,6 +375,31 @@ function createHighlightRecPipeline(page, profile) {
     getVideoSegments: getVideoSegments,
     estimateBufferCoverageSec: estimateBufferCoverageSec
   };
+}
+
+/**
+ * 创建素材机录制管线（根据 profile.recMode 分发原生模式与视录分离模式）。
+ *
+ * @param {Object} page 小程序 Page 实例
+ * @param {Object} [profile] highlight-rec-profile 输出
+ * @returns {{
+ *   recMode: string,
+ *   isSupported: function(): boolean,
+ *   start: function(): Promise<void>,
+ *   stop: function(): Promise<void>,
+ *   destroy: function(): void,
+ *   triggerExport: function(number=): Promise<string>,
+ *   isActive: function(): boolean,
+ *   getVideoSegments: function(): Array<Object>,
+ *   estimateBufferCoverageSec: function(): number
+ * }}
+ */
+function createHighlightRecPipeline(page, profile) {
+  var perf = profile || highlightRecProfile.getHighlightRecProfile({});
+  if (perf.recMode === highlightRecProfile.REC_MODE_NATIVE) {
+    return createNativeHighlightPipeline(page, perf);
+  }
+  return createPreviewHighlightPipeline(page, perf);
 }
 
 module.exports = {

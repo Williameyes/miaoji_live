@@ -5,6 +5,11 @@
 
 const deviceRecordProfile = require('../../utils/device-record-profile.js');
 
+/** @type {'native'|'preview_record'} */
+var REC_MODE_NATIVE = 'native';
+/** @type {'native'|'preview_record'} */
+var REC_MODE_PREVIEW_RECORD = 'preview_record';
+
 /** @type {'portrait'|'landscape'} */
 var ASPECT_PORTRAIT = 'portrait';
 /** @type {'portrait'|'landscape'} */
@@ -15,6 +20,16 @@ var cachedProfile = null;
 
 /** @type {string} */
 var cachedKey = '';
+
+/**
+ * 规范化录制模式。
+ *
+ * @param {string|undefined} mode
+ * @returns {'native'|'preview_record'}
+ */
+function normalizeRecMode(mode) {
+  return mode === REC_MODE_PREVIEW_RECORD ? REC_MODE_PREVIEW_RECORD : REC_MODE_NATIVE;
+}
 
 /**
  * 是否为小米/Redmi 系 Android。
@@ -83,7 +98,7 @@ function computeContentLeadInSkipMs(warmupFrames, fps) {
 /**
  * 获取素材机录制/预览档位。
  *
- * @param {{ use1080p?: boolean, actionMode?: boolean, aspectMode?: string }} [options]
+ * @param {{ use1080p?: boolean, actionMode?: boolean, aspectMode?: string, recMode?: string }} [options]
  * @returns {Object}
  */
 function getHighlightRecProfile(options) {
@@ -94,7 +109,9 @@ function getHighlightRecProfile(options) {
   var use1080p = !lowEnd && !!opts.use1080p;
   var actionMode = !lowEnd && !!opts.actionMode;
   var aspectMode = normalizeAspectMode(opts.aspectMode);
-  var cacheKey = (lowEnd ? '480' : (use1080p ? '1080' : '720'))
+  var recMode = normalizeRecMode(opts.recMode);
+  var cacheKey = recMode
+    + '_' + (lowEnd ? '480' : (use1080p ? '1080' : '720'))
     + (actionMode ? '_action' : '')
     + (aspectMode === ASPECT_LANDSCAPE ? '_land' : '_port');
 
@@ -114,6 +131,7 @@ function getHighlightRecProfile(options) {
   cachedKey = cacheKey;
   cachedProfile = {
     cacheKey: cacheKey,
+    recMode: recMode,
     tier: lowEnd ? '480p' : (use1080p ? '1080p' : '720p'),
     use1080p: use1080p,
     actionMode: actionMode,
@@ -157,10 +175,13 @@ function resetHighlightRecProfileCache() {
 }
 
 module.exports = {
+  REC_MODE_NATIVE: REC_MODE_NATIVE,
+  REC_MODE_PREVIEW_RECORD: REC_MODE_PREVIEW_RECORD,
   ASPECT_PORTRAIT: ASPECT_PORTRAIT,
   ASPECT_LANDSCAPE: ASPECT_LANDSCAPE,
   getHighlightRecProfile: getHighlightRecProfile,
   isXiaomiAndroid: isXiaomiAndroid,
   normalizeAspectMode: normalizeAspectMode,
+  normalizeRecMode: normalizeRecMode,
   resetHighlightRecProfileCache: resetHighlightRecProfileCache
 };

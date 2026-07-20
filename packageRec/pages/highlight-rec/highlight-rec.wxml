@@ -99,6 +99,23 @@
           </view>
 
           <view class="quality-row">
+            <text class="quality-label">方式</text>
+            <view class="quality-switch">
+              <view
+                class="quality-pill {{recMode === 'native' ? 'quality-pill--active' : ''}}"
+                data-mode="native"
+                bindtap="onRecModeToggle"
+              >原生</view>
+              <view
+                class="quality-pill {{recMode === 'preview_record' ? 'quality-pill--active' : ''}}"
+                data-mode="preview_record"
+                bindtap="onRecModeToggle"
+              >视录分离</view>
+            </view>
+            <text class="quality-hint">{{recMode === 'native' ? '低发热' : '双录'}}</text>
+          </view>
+
+          <view class="quality-row">
             <text class="quality-label">画幅</text>
             <view class="quality-switch">
               <view
