@@ -717,6 +717,21 @@ Page({
   updateBufferStatus: function () {
     var pipeline = this._highlightPipeline;
     if (!pipeline || !pipeline.isActive()) return;
+    if (this.data.recMode === 'native') {
+      var segs = pipeline.getVideoSegments ? pipeline.getVideoSegments() : [];
+      var start = 0;
+      if (segs && segs.length > 0) {
+        start = segs[segs.length - 1].start;
+      }
+      var elapsedSec = start ? Math.max(0, Math.floor((Date.now() - start) / 1000)) : 0;
+      var m = Math.floor(elapsedSec / 60);
+      var s = elapsedSec % 60;
+      var timeStr = m > 0 ? (m + 'm ' + s + 's') : (s + 's');
+      this.setData({
+        bufferCoverageText: 'REC 8s (' + timeStr + ')'
+      });
+      return;
+    }
     var totalSec = pipeline.estimateBufferCoverageSec();
     var targetMax = Math.round((this._recPerfProfile && this._recPerfProfile.bufferTargetMs
       ? this._recPerfProfile.bufferTargetMs

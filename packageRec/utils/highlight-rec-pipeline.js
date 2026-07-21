@@ -152,7 +152,7 @@ function createNativeHighlightPipeline(page, perf) {
     }
     if (!nativeRecorder) {
       nativeRecorder = createNativeRollingRecorder(ctx, {
-        segmentMs: 45000,
+        segmentMs: 300000, // 5 分钟防膨胀落盘，只影响原生相机模式
         recordQuality: perf.use1080p ? 'high' : 'medium',
         skipMediaContainerTrim: !!perf.skipMediaContainerTrim,
         onError: function (err) {

@@ -4,7 +4,7 @@
 
 function createDualTrackRecorder(cameraCtx, options) {
   var opts = options || {};
-  var segmentMs = opts.segmentMs || 25000;
+  var segmentMs = opts.segmentMs || 300000; // 默认 5 分钟防过大落盘，大幅降低切轨频率
   var recordQuality = opts.recordQuality || 'medium';
   var stopToStartDelayMs = typeof opts.stopToStartDelayMs === 'number' ? opts.stopToStartDelayMs : 580;
   var onSegmentComplete = opts.onSegmentComplete;
