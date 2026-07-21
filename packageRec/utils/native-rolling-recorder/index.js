@@ -8,7 +8,7 @@ const { exportLast8s } = require('./clip-exporter.js');
 
 function createNativeRollingRecorder(cameraCtx, options) {
   var opts = options || {};
-  var segmentMs = opts.segmentMs || 300000; // 默认 5 分钟单轨防膨胀落盘
+  var segmentMs = opts.segmentMs || 900000; // 默认 15 分钟极长防膨胀切分
   var skipMediaContainerTrim = !!opts.skipMediaContainerTrim;
   
   // 单文件缓存容器，仅保存 1 个最新分段
