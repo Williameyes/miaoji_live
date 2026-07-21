@@ -83,6 +83,8 @@ Page({
     savedLogs: [],
     highlightCount: 0,
     savingCount: 0,
+    auditFileReady: false,
+    auditFileName: '',
     zoomStops: [
       { label: '特写', zoom: 4.0 },
       { label: '标准', zoom: 2.0 },
@@ -103,6 +105,8 @@ Page({
   _unloaded: false,
   /** 用户是否希望保持监看（切后台恢复、切换设置后重启） */
   _monitoringRequested: false,
+  _runtimeLogs: null,
+  _pendingAuditFile: null,
 
   onLoad: function (options) {
     this._unloaded = false;
@@ -130,6 +134,7 @@ Page({
     }
     this._recPerfProfile = perf;
     this._highlightPipeline = createHighlightRecPipeline(this, perf);
+    this._dlog('INIT', 'Page loaded', { recMode: perf.recMode, aspectMode: perf.aspectMode, use1080p: use1080p, actionMode: actionMode });
     this.setData({
       statusBarHeight: sys.statusBarHeight || 20,
       roomId: wx.getStorageSync('rec_sync_room_id') || '',
@@ -355,6 +360,7 @@ Page({
 
   onCameraInit: function () {
     console.log('[HighlightRec] Camera mounted successfully');
+    this._dlog('CAM', 'Camera mounted successfully');
     if (!this._cameraCtx) {
       this._cameraCtx = wx.createCameraContext();
     }
@@ -631,7 +637,9 @@ Page({
 
     var self = this;
     this._monitoringRequested = true;
+    this._dlog('REC', 'startRecorder initiated, recMode: ' + this.data.recMode);
     return pipeline.start().then(function () {
+      self._dlog('REC', 'startRecorder success, pipeline active');
       self.setData({
         isRecording: true,
         pipelineReady: true
@@ -645,6 +653,7 @@ Page({
       }, 5000);
     }).catch(function (err) {
       self._monitoringRequested = false;
+      self._dlog('REC', 'startRecorder failed', err);
       console.error('[HighlightRec] Pipeline start failed:', err);
       wx.showToast({
         title: '监看启动失败',
@@ -667,14 +676,17 @@ Page({
       return Promise.resolve();
     }
     this._clearBufferStatusTimer();
+    this._dlog('REC', 'stopRecorder initiated');
     var self = this;
     return pipeline.stop().then(function () {
+      self._dlog('REC', 'stopRecorder completed');
       self.setData({
         isRecording: false,
         pipelineReady: false,
         bufferCoverageText: '0s / 90s'
       });
     }).catch(function () {
+      self._dlog('REC', 'stopRecorder finished with catch');
       self.setData({
         isRecording: false,
         pipelineReady: false,
@@ -1149,8 +1161,10 @@ Page({
       savingCount: this.data.savingCount + 1
     });
 
+    this._dlog('EXPORT', 'doExportHighlight triggered', { isLocal: !!isLocal });
     pipeline.triggerExport(Date.now())
       .then(function (trimmedPath) {
+        self._dlog('EXPORT', 'triggerExport success', { path: trimmedPath });
         self.saveVideoToPhotos(trimmedPath, isLocal);
         self.updateBufferStatus();
         self.checkDiskSpace();
@@ -1163,6 +1177,7 @@ Page({
         if (err && err.message === 'recorder_stopped') {
           return; // 页面切出或销毁时，正常释放挂起的 promise，无需报错弹窗
         }
+        self._dlog('EXPORT', 'triggerExport failed', err);
         console.error('[HighlightRec] Export highlight failed:', err);
         var errMsg = (err && err.message) ? err.message : '裁切高光时发生错误，请重试';
         if (errMsg.indexOf('audio_mux_failed') >= 0) {
@@ -1178,11 +1193,13 @@ Page({
 
   saveVideoToPhotos: function (filePath, isLocal) {
     var self = this;
+    this._dlog('ALBUM', 'saveVideoToPhotosAlbum start', { path: filePath });
 
     // 将视频存入相册
     wx.saveVideoToPhotosAlbum({
       filePath: filePath,
       success: function () {
+        self._dlog('ALBUM', 'saveVideoToPhotosAlbum success', { path: filePath });
         self.setData({
           savingCount: Math.max(0, self.data.savingCount - 1)
         });
@@ -1217,6 +1234,7 @@ Page({
         } catch (e) {}
       },
       fail: function (err) {
+        self._dlog('ALBUM', 'saveVideoToPhotosAlbum failed', err);
         self.setData({
           savingCount: Math.max(0, self.data.savingCount - 1)
         });
@@ -1250,6 +1268,169 @@ Page({
           url: '/pages/index/index'
         });
       }
+    });
+  },
+
+  /* =========================================================================
+   * 运行审计日志收集与微信分享
+   * ========================================================================= */
+
+  _dlog: function (tag, msg, extra) {
+    if (!this._runtimeLogs) this._runtimeLogs = [];
+    var now = new Date();
+    var pad = function (n, len) {
+      var s = String(n);
+      while (s.length < (len || 2)) s = '0' + s;
+      return s;
+    };
+    var timeStr = pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' +
+                  pad(now.getSeconds()) + '.' + pad(now.getMilliseconds(), 3);
+    var entry = '[' + timeStr + '] [' + tag + '] ' + (typeof msg === 'object' ? JSON.stringify(msg) : String(msg));
+    if (extra !== undefined) {
+      try { entry += ' | ' + (typeof extra === 'object' ? JSON.stringify(extra) : String(extra)); } catch (e) {}
+    }
+    this._runtimeLogs.push(entry);
+    if (this._runtimeLogs.length > 500) this._runtimeLogs.shift();
+    console.log('[HighlightRecAudit]', entry);
+  },
+
+  _prepareAuditFile: function () {
+    var sys = {};
+    try { sys = wx.getSystemInfoSync(); } catch (e) {}
+    var storage = {};
+    try { storage = wx.getStorageInfoSync(); } catch (e) {}
+
+    var lines = [];
+    lines.push('==================================================');
+    lines.push('       Miaoji Live 高光素材机 运行审计日志');
+    lines.push('==================================================');
+    lines.push('导出时间: ' + new Date().toLocaleString());
+    lines.push('设备型号: ' + (sys.model || 'Unknown') + ' (' + (sys.brand || '') + ')');
+    lines.push('操作系统: ' + (sys.system || 'Unknown') + ' / SDK ' + (sys.SDKVersion || ''));
+    lines.push('屏幕尺寸: ' + (sys.windowWidth || 0) + 'x' + (sys.windowHeight || 0));
+    lines.push('--------------------------------------------------');
+    lines.push('【录制配置与状态】');
+    lines.push('录制模式: ' + this.data.recMode + ' (' + (this.data.recMode === 'native' ? '原生相机' : '视录分离') + ')');
+    lines.push('画幅模式: ' + this.data.aspectMode + ' (' + this.data.aspectLabel + ')');
+    lines.push('清晰度: ' + (this.data.use1080p ? '1080p' : '720p'));
+    lines.push('追拍模式: ' + (this.data.actionMode ? '开启' : '关闭'));
+    lines.push('监看状态: ' + (this.data.isRecording ? '录制/监看中' : '未开启'));
+    lines.push('相册保存计数: ' + this.data.highlightCount + ' (处理中: ' + this.data.savingCount + ')');
+    lines.push('存储空间: ' + (storage.currentSize || 0) + ' KB / ' + (storage.limitSize || 0) + ' KB');
+    if (this._recPerfProfile) {
+      lines.push('性能 Profile: ' + JSON.stringify(this._recPerfProfile));
+    }
+    lines.push('--------------------------------------------------');
+    lines.push('【近 500 条运行日志轨迹】');
+    var logs = this._runtimeLogs || [];
+    if (logs.length === 0) {
+      lines.push('(暂无运行日志)');
+    } else {
+      lines = lines.concat(logs);
+    }
+    lines.push('==================================================');
+
+    var content = lines.join('\n');
+    var fs = wx.getFileSystemManager();
+    var fileName = 'highlight_audit_' + Date.now() + '.txt';
+    var filePath = (wx.env && wx.env.USER_DATA_PATH ? wx.env.USER_DATA_PATH : '') + '/' + fileName;
+
+    try {
+      fs.writeFileSync(filePath, content, 'utf8');
+      var stat = fs.statSync(filePath);
+      var size = stat ? stat.size : content.length;
+      return {
+        ok: true,
+        path: filePath,
+        fileName: fileName,
+        sizeKb: Math.max(1, Math.round(size / 1024))
+      };
+    } catch (err) {
+      console.error('[HighlightRec] Write audit file failed:', err);
+      return { ok: false, error: err };
+    }
+  },
+
+  onPrepareAuditLog: function () {
+    var fileResult = this._prepareAuditFile();
+    if (!fileResult.ok || !fileResult.path) {
+      wx.showToast({ title: '生成日志失败', icon: 'none' });
+      return;
+    }
+    this._pendingAuditFile = fileResult;
+    this.setData({
+      auditFileReady: true,
+      auditFileName: fileResult.fileName
+    });
+    if (typeof wx.vibrateShort === 'function') {
+      wx.vibrateShort({ type: 'medium' });
+    }
+    wx.showToast({
+      title: '日志就绪！点击「发送日志」分享',
+      icon: 'none',
+      duration: 3000
+    });
+    this._dlog('AUDIT', 'Audit file generated:', fileResult.fileName);
+  },
+
+  onShareAuditFile: function () {
+    var self = this;
+    var pending = this._pendingAuditFile;
+    if (!pending || !pending.path) {
+      var res = this._prepareAuditFile();
+      if (res.ok && res.path) {
+        pending = res;
+        this._pendingAuditFile = res;
+      } else {
+        wx.showToast({ title: '生成日志失败', icon: 'none' });
+        return;
+      }
+    }
+
+    this._dlog('AUDIT', 'Sharing audit file via wx.shareFileMessage:', pending.fileName);
+
+    if (typeof wx.shareFileMessage === 'function') {
+      wx.shareFileMessage({
+        filePath: pending.path,
+        fileName: pending.fileName,
+        success: function () {
+          wx.showToast({ title: '已发送日志文件', icon: 'success' });
+          self.setData({ auditFileReady: false });
+          self._pendingAuditFile = null;
+        },
+        fail: function (err) {
+          console.warn('[HighlightRec] shareFileMessage failed:', err);
+          self._fallbackShareAuditFile(pending);
+        }
+      });
+      return;
+    }
+
+    this._fallbackShareAuditFile(pending);
+  },
+
+  _fallbackShareAuditFile: function (pending) {
+    if (typeof wx.openDocument === 'function') {
+      wx.openDocument({
+        filePath: pending.path,
+        showMenu: true,
+        success: function () {
+          wx.showToast({ title: '可通过右上角...菜单发送', icon: 'none' });
+        },
+        fail: function () {
+          wx.showModal({
+            title: '日志文件已就绪',
+            content: '文件路径:\n' + pending.path + '\n可使用微信开发者工具或调试器导出。',
+            showCancel: false
+          });
+        }
+      });
+      return;
+    }
+    wx.showModal({
+      title: '日志文件已就绪',
+      content: '文件已生成，请在微信调试器中导出。',
+      showCancel: false
     });
   }
 });

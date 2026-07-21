@@ -151,8 +151,8 @@ function createNativeHighlightPipeline(page, perf) {
       return Promise.resolve();
     }
     if (!nativeRecorder) {
-      // 1080p (码率~6.8Mbps) 选 3.5 分钟(~175MB)，720p (码率~3.2Mbps) 选 7 分钟(~155MB)，均严格低于 200MB 上限
-      var nativeSegmentMs = perf.use1080p ? 210000 : 420000;
+      // 动态读取 Profile 切分时长：1080p 选 60 秒 (~60MB)，720p 选 120 秒 (~60MB)，双分段共计 ~120MB 绝对低于 200MB 配额
+      var nativeSegmentMs = perf.nativeSegmentMs || (perf.use1080p ? 60000 : 120000);
       nativeRecorder = createNativeRollingRecorder(ctx, {
         segmentMs: nativeSegmentMs,
         recordQuality: perf.use1080p ? 'high' : 'medium',

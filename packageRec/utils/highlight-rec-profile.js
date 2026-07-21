@@ -169,6 +169,8 @@ function getHighlightRecProfile(options) {
     audioSegmentMs: 50000,
     audioMaxSegments: 4,
     audioFormat: 'mp3',
+    /** 原生模式动态分段时长：1080p (8Mbps) 选 60 秒 (~60MB)，720p (4Mbps) 选 120 秒 (~60MB)。双分段共 ~120MB，留出 80MB 余量绝对低于 200MB 配额 */
+    nativeSegmentMs: use1080p ? 60000 : 120000,
     skipMediaContainerTrim: !!base.skipMediaContainerTrim
   };
   return cachedProfile;

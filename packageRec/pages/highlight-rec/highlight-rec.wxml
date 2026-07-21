@@ -35,7 +35,7 @@
 
   <!-- 顶部精简条：状态 + 快捷操作 -->
   <view class="hud-top-bar" style="top: {{hudTopPx}}px;">
-    <view class="mini-rec-status">
+    <view class="mini-rec-status" bindlongpress="onPrepareAuditLog">
       <view class="mini-dot {{isRecording ? 'mini-dot--active' : ''}}"></view>
       <text class="mini-text">{{isRecording ? '监看' : (cameraReady ? '预览' : '相机')}}</text>
       <text class="mini-buffer-info" wx:if="{{isRecording}}">{{bufferCoverageText}}</text>
@@ -46,7 +46,8 @@
         class="hud-action-btn {{isRecording ? 'hud-action-btn--stop' : 'hud-action-btn--start'}}"
         bindtap="onMonitorToggle"
       >{{isRecording ? '停' : '监看'}}</view>
-      <view class="hud-action-btn hud-action-btn--settings" bindtap="openSettingsModal">设置</view>
+      <view class="hud-action-btn hud-action-btn--settings" bindtap="openSettingsModal" bindlongpress="onPrepareAuditLog">设置</view>
+      <view class="hud-action-btn hud-action-btn--audit" wx:if="{{auditFileReady}}" bindtap="onShareAuditFile">发送日志</view>
     </view>
   </view>
 
@@ -205,6 +206,15 @@
             </text>
             <text class="log-status">已存相册</text>
           </view>
+        </view>
+
+        <view class="hud-panel audit-panel">
+          <view class="panel-header">
+            <text class="panel-title">运行调试与审计日志</text>
+          </view>
+          <button class="audit-action-btn" bindtap="onShareAuditFile" bindlongpress="onPrepareAuditLog">
+            {{auditFileReady ? '点击发送审计日志给微信好友' : '长按或点击生成审计日志并发送'}}
+          </button>
         </view>
       </scroll-view>
     </view>

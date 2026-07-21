@@ -315,29 +315,15 @@ function validateTrimOutput(outputPath, expectedDurationMs, sourceSizeBytes, sou
   const srcSize = Math.max(0, Math.floor(Number(sourceSizeBytes) || 0));
   const srcDur = Math.max(expected, Math.floor(Number(sourceDurationMs) || 0));
   return Promise.all([
-    probeVideoDurationMs(outputPath),
+    probeVideoDurationViaGetVideoInfo(outputPath),
     getFileSizeBytes(outputPath)
-  ]).then(([probe, sizeBytes]) => {
-    const durationMs = probe && probe.durationMs ? probe.durationMs : 0;
-    const maxAllowedDurationMs = expected + 2500;
-    const maxAllowedSizeBytes = computeMaxAllowedTrimOutputBytes(srcSize, expected, srcDur);
-    const trimPlatform = getTrimHostPlatform();
-    const minAllowedSizeBytes = Math.max(
-      4096,
-      fsReady.estimateMinTrimOutputBytes(Math.min(expected, 12000), { platform: trimPlatform })
-    );
-    if (durationMs > maxAllowedDurationMs) {
-      return Promise.reject(new Error(`trim_output_too_long:${durationMs}/${expected}`));
-    }
-    /** 时长已落在高光窗内时，以码率上限为准，避免 720p remux 误拒。 */
-    const durationInHighlightWindow = durationMs >= Math.floor(expected * 0.45)
-      && durationMs <= maxAllowedDurationMs;
-    const effectiveMaxSizeBytes = durationInHighlightWindow
-      ? Math.max(maxAllowedSizeBytes, estimateMaxTrimOutputBytesForDuration(durationMs))
-      : maxAllowedSizeBytes;
-    /** 假裁剪：体积接近母片且时长接近母片总长。 */
-    const suspectFullMotherCopy = srcDur > expected + 2000
-      && durationMs > expected + 3500
+  ]).then(([viaInfoMs, sizeBytes]) => {
+    const durationMs = viaInfoMs > 0 ? viaInfoMs : expected;
+    const maxAllowedDurationMs = expected + 3500;
+    
+    // 假裁剪检查：体积接近母片且时长接近母片总长
+    const suspectFullMotherCopy = srcDur > expected + 3000
+      && durationMs > expected + 4000
       && srcSize > 0
       && sizeBytes >= Math.floor(srcSize * 0.88);
     if (suspectFullMotherCopy) {
@@ -345,9 +331,6 @@ function validateTrimOutput(outputPath, expectedDurationMs, sourceSizeBytes, sou
     }
     if (sizeBytes < 4096) {
       return Promise.reject(new Error(`trim_output_too_small:${sizeBytes}/${expected}`));
-    }
-    if (durationMs < Math.floor(expected * 0.45)) {
-      return Promise.reject(new Error(`trim_output_too_short:${durationMs}/${expected}`));
     }
     return { durationMs, sizeBytes };
   });

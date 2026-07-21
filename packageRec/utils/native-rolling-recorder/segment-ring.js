@@ -4,7 +4,7 @@
 
 function createSegmentRing(maxSegments) {
   var segments = [];
-  var limit = maxSegments || 1; // 仅保留 1 个最新分段，旧分段落盘即物理擦除，维持单文件低容量占用
+  var limit = maxSegments || 1; // 仅保留 1 个最新轻量分段（~60MB），旧段落盘即擦除，极简低内存占用
 
   /**
    * 写入新分段

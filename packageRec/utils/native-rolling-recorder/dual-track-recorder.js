@@ -4,7 +4,7 @@
 
 function createDualTrackRecorder(cameraCtx, options) {
   var opts = options || {};
-  var segmentMs = opts.segmentMs || 900000; // 默认 15 分钟极长防膨胀切分，消除平时不到 1s 的切轨卡顿
+  var segmentMs = opts.segmentMs || 60000; // 默认 60 秒切分（由 Profile 动态指定：1080p 60秒，720p 120秒）
   var recordQuality = opts.recordQuality || 'medium';
   var stopToStartDelayMs = typeof opts.stopToStartDelayMs === 'number' ? opts.stopToStartDelayMs : 580;
   var onSegmentComplete = opts.onSegmentComplete;
@@ -86,6 +86,14 @@ function createDualTrackRecorder(cameraCtx, options) {
       }
     });
 
+    // 安卓微信 API 兜底：1500ms 后强制解锁，防止安卓原生回调丢失导致状态锁死
+    setTimeout(function () {
+      if (transitioning) {
+        console.log('[DualTrack] Safety unlock transitioning state');
+        transitioning = false;
+      }
+    }, 1500);
+
     // 设定定时器自动切换轨道
     clearRotateTimer();
     rotateTimer = setTimeout(function () {
@@ -137,15 +145,22 @@ function createDualTrackRecorder(cameraCtx, options) {
   function rotate(isTimeout) {
     if (!recording) return;
     if (transitioning) {
-      console.log('[DualTrack] Rotate skipped: transition in progress');
+      console.log('[DualTrack] Rotate skipped: transition in progress. Rescheduling in 2000ms');
+      clearRotateTimer();
+      rotateTimer = setTimeout(function () {
+        if (recording) {
+          rotate(isTimeout);
+        }
+      }, 2000);
       return;
     }
 
-    // 硬件保护：微信底层开始录像后需要一定的初始化准备时间。
-    // 如果当前分段启动录制不足 2000ms，直接调用 stopRecord 会引发 operateCamera:fail:stop error。
+    // 硬件保护：微信底层开始录像后硬件编码器需要至少 5000ms 初始化与写头时间。
+    // 若起录不足 5000ms 即调用 stopRecord，Android (小米/华为等) 会引发 Native MediaRecorder 阻塞 30 秒卡死。
     var elapsed = Date.now() - (currentSegment ? currentSegment.start : 0);
-    if (elapsed < 2000) {
-      var delay = 2000 - elapsed;
+    var minRecordMs = 5000;
+    if (elapsed < minRecordMs) {
+      var delay = minRecordMs - elapsed;
       console.log('[DualTrack] Segment recording too short (' + elapsed + 'ms). Deferring rotate by ' + delay + 'ms');
       
       setTimeout(function () {

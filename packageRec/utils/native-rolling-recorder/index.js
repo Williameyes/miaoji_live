@@ -8,10 +8,10 @@ const { exportLast8s } = require('./clip-exporter.js');
 
 function createNativeRollingRecorder(cameraCtx, options) {
   var opts = options || {};
-  var segmentMs = opts.segmentMs || 900000; // 默认 15 分钟极长防膨胀切分
+  var segmentMs = opts.segmentMs || 60000; // 默认 60 秒切分（按 720p/1080p Profile 动态传入）
   var skipMediaContainerTrim = !!opts.skipMediaContainerTrim;
   
-  // 单文件缓存容器，仅保存 1 个最新分段
+  // 单分段环形缓冲区，仅保存 1 个最新分段（单段 ~60MB，总占用仅 60MB 极低风险）
   var ring = createSegmentRing(1);
   var pendingExports = [];
   var lastRotateTime = 0;
@@ -109,13 +109,14 @@ function createNativeRollingRecorder(cameraCtx, options) {
       var now = Date.now();
       var timeSinceLast = now - lastRotateTime;
 
-      // 最低限流间隔为 3000ms，防止高频连续点击冲击微信底层 Camera API 导致 stop error
-      if (timeSinceLast >= 3000) {
+      // 最低限流间隔为 4000ms，防止高频连续点击冲击微信底层 Camera API 导致 stop error
+      var minThrottleMs = 4000;
+      if (timeSinceLast >= minThrottleMs) {
         lastRotateTime = now;
         console.log('[NativeRollingRecorder] Rotating track on export trigger');
         recorder.rotate();
       } else {
-        var delay = 3000 - timeSinceLast;
+        var delay = minThrottleMs - timeSinceLast;
         console.log('[NativeRollingRecorder] Trigger throttled. Scheduling deferred rotate in', delay, 'ms');
         
         if (!throttleRotateTimer) {
