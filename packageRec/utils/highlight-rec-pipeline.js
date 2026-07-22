@@ -188,6 +188,10 @@ function createNativeHighlightPipeline(page, perf) {
     return nativeRecorder ? nativeRecorder.getSegments() : [];
   }
 
+  function getCurrentSegment() {
+    return nativeRecorder ? nativeRecorder.getCurrentSegment() : null;
+  }
+
   function estimateBufferCoverageSec() {
     if (!nativeRecorder) return 0;
     var segs = nativeRecorder.getSegments();
@@ -239,6 +243,7 @@ function createNativeHighlightPipeline(page, perf) {
     getActiveMediaPaths: getActiveMediaPaths,
     isActive: isActive,
     getVideoSegments: getVideoSegments,
+    getCurrentSegment: getCurrentSegment,
     estimateBufferCoverageSec: estimateBufferCoverageSec
   };
 }

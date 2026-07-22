@@ -664,22 +664,36 @@ Page({
    * @returns {{ removedMedia: number, removedAudit: number }}
    */
   _pruneHighlightRecStorage: function (reason) {
+    var self = this;
     var pipeline = this._highlightPipeline;
     var keepPaths = [];
     if (pipeline && typeof pipeline.getActiveMediaPaths === 'function') {
       keepPaths = pipeline.getActiveMediaPaths();
     }
-    var result = highlightRecStorageCleanup.pruneHighlightRecSandbox(keepPaths, {
+    var cleanupFn = highlightRecStorageCleanup.pruneHighlightRecSandboxAsync || highlightRecStorageCleanup.pruneHighlightRecSandbox;
+    var ret = cleanupFn(keepPaths, {
       reason: reason || 'manual'
     });
-    if (result.removedMedia > 0 || result.removedAudit > 0) {
+    if (ret && typeof ret.then === 'function') {
+      ret.then(function (result) {
+        if (result && (result.removedMedia > 0 || result.removedAudit > 0)) {
+          self._dlog('STORAGE', 'prune sandbox', {
+            reason: reason || 'manual',
+            removedMedia: result.removedMedia,
+            removedAudit: result.removedAudit
+          });
+        }
+      }).catch(function () {});
+      return { removedMedia: 0, removedAudit: 0 };
+    }
+    if (ret && (ret.removedMedia > 0 || ret.removedAudit > 0)) {
       this._dlog('STORAGE', 'prune sandbox', {
         reason: reason || 'manual',
-        removedMedia: result.removedMedia,
-        removedAudit: result.removedAudit
+        removedMedia: ret.removedMedia,
+        removedAudit: ret.removedAudit
       });
     }
-    return result;
+    return ret;
   },
 
   startRecorder: function () {
@@ -712,7 +726,7 @@ Page({
         if (!self._unloaded) {
           self.updateBufferStatus();
         }
-      }, 5000);
+      }, 1000);
       self._startStorageCleanupTimer();
       self.checkDiskSpace();
     }).catch(function (err) {
@@ -795,10 +809,13 @@ Page({
     var pipeline = this._highlightPipeline;
     if (!pipeline || !pipeline.isActive()) return;
     if (this.data.recMode === 'native') {
-      var segs = pipeline.getVideoSegments ? pipeline.getVideoSegments() : [];
-      var start = 0;
-      if (segs && segs.length > 0) {
-        start = segs[segs.length - 1].start;
+      var cur = pipeline.getCurrentSegment ? pipeline.getCurrentSegment() : null;
+      var start = (cur && cur.start) ? cur.start : 0;
+      if (!start) {
+        var segs = pipeline.getVideoSegments ? pipeline.getVideoSegments() : [];
+        if (segs && segs.length > 0) {
+          start = segs[segs.length - 1].start;
+        }
       }
       var elapsedSec = start ? Math.max(0, Math.floor((Date.now() - start) / 1000)) : 0;
       var m = Math.floor(elapsedSec / 60);
@@ -1271,12 +1288,29 @@ Page({
     var isNativeDirect = this.data.recMode === 'native'
       && this._recPerfProfile
       && this._recPerfProfile.nativeDirectExport;
+
+    // 同一路径落盘防重幂等校验，消除 Race Condition
+    if (!this._savingFilePaths) this._savingFilePaths = {};
+    if (filePath && this._savingFilePaths[filePath]) {
+      console.log('[HighlightRec] File path already being saved, skipping duplicate save:', filePath);
+      self.setData({
+        savingCount: Math.max(0, self.data.savingCount - 1)
+      });
+      return;
+    }
+    if (filePath) {
+      this._savingFilePaths[filePath] = true;
+    }
+
     this._dlog('ALBUM', 'saveVideoToPhotosAlbum start', { path: filePath, direct: !!isNativeDirect });
 
     // 将视频存入相册
     wx.saveVideoToPhotosAlbum({
       filePath: filePath,
       success: function () {
+        if (filePath && self._savingFilePaths) {
+          delete self._savingFilePaths[filePath];
+        }
         self._dlog('ALBUM', 'saveVideoToPhotosAlbum success', { path: filePath });
         self.setData({
           savingCount: Math.max(0, self.data.savingCount - 1)
@@ -1320,6 +1354,9 @@ Page({
         }
       },
       fail: function (err) {
+        if (filePath && self._savingFilePaths) {
+          delete self._savingFilePaths[filePath];
+        }
         self._dlog('ALBUM', 'saveVideoToPhotosAlbum failed', err);
         self.setData({
           savingCount: Math.max(0, self.data.savingCount - 1)

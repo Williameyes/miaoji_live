@@ -110,6 +110,14 @@ function createDualTrackRecorder(cameraCtx, options) {
     var segToComplete = currentSegment;
     segToComplete.stop = Date.now();
 
+    // 安卓微信 API 兜底：3000ms 后强制解锁，防止 stopRecord 原生回调丢失导致状态挂死
+    setTimeout(function () {
+      if (transitioning) {
+        console.log('[DualTrack] Safety unlock transitioning state from stopTrack');
+        transitioning = false;
+      }
+    }, 3000);
+
     // 微信不支持多个录像流重叠。必须先停止，在其回调成功/失败后再开启下一轨道。
     cameraCtx.stopRecord({
       success: function (res) {
@@ -164,7 +172,7 @@ function createDualTrackRecorder(cameraCtx, options) {
       console.log('[DualTrack] Segment recording too short (' + elapsed + 'ms). Deferring rotate by ' + delay + 'ms');
       
       setTimeout(function () {
-        if (recording && !transitioning) {
+        if (recording) {
           rotate(isTimeout);
         }
       }, delay);
