@@ -5,6 +5,7 @@
 const recSync = require('../../../services/rec-sync-ws-client.js');
 const { createHighlightRecPipeline } = require('../../utils/highlight-rec-pipeline.js');
 const highlightRecProfile = require('../../utils/highlight-rec-profile.js');
+const highlightRecStorageCleanup = require('../../utils/highlight-rec-storage-cleanup.js');
 
 /** 本地存储：是否启用 1080p 录制 */
 var STORAGE_KEY_USE_1080P = 'highlight_rec_use_1080p_v1';
@@ -95,6 +96,8 @@ Page({
 
   _highlightPipeline: null,
   _bufferStatusTimer: null,
+  /** 监看期间周期性沙盒清理定时器 */
+  _storageCleanupTimer: null,
   _wsClient: null,
   _cameraCtx: null,
   _zoomApplyTimer: 0,
@@ -238,22 +241,27 @@ Page({
     if (this.data.roomId.length === 6) {
       this.connectWs();
     }
+
+    this._pruneHighlightRecStorage('on_show');
   },
 
   onHide: function () {
     this._livePageVisible = false;
     this._clearBufferStatusTimer();
+    this._clearStorageCleanupTimer();
     if (this._orientationResizeTimer) {
       clearTimeout(this._orientationResizeTimer);
       this._orientationResizeTimer = null;
     }
     this.disconnectWs();
     this.stopRecorder();
+    this._pruneHighlightRecStorage('on_hide');
   },
 
   onUnload: function () {
     this._unloaded = true;
     this._clearBufferStatusTimer();
+    this._clearStorageCleanupTimer();
     this._clearZoomApplyTimer();
     if (this._orientationResizeTimer) {
       clearTimeout(this._orientationResizeTimer);
@@ -268,6 +276,7 @@ Page({
     this._unbindWindowResize();
     this.disconnectWs();
     this.stopRecorder();
+    this._pruneHighlightRecStorage('on_unload');
   },
 
   /**
@@ -621,6 +630,58 @@ Page({
     }
   },
 
+  /**
+   * 清除监看期间周期性沙盒清理定时器。
+   *
+   * @returns {void}
+   */
+  _clearStorageCleanupTimer: function () {
+    if (this._storageCleanupTimer) {
+      clearInterval(this._storageCleanupTimer);
+      this._storageCleanupTimer = null;
+    }
+  },
+
+  /**
+   * 启动监看期间周期性沙盒清理（每 60s）。
+   *
+   * @returns {void}
+   */
+  _startStorageCleanupTimer: function () {
+    var self = this;
+    this._clearStorageCleanupTimer();
+    this._storageCleanupTimer = setInterval(function () {
+      if (!self._unloaded) {
+        self._pruneHighlightRecStorage('interval');
+      }
+    }, 60000);
+  },
+
+  /**
+   * 回收副机拍摄孤儿媒体与过期审计文件，保留当前 rolling 活跃路径。
+   *
+   * @param {string} [reason]
+   * @returns {{ removedMedia: number, removedAudit: number }}
+   */
+  _pruneHighlightRecStorage: function (reason) {
+    var pipeline = this._highlightPipeline;
+    var keepPaths = [];
+    if (pipeline && typeof pipeline.getActiveMediaPaths === 'function') {
+      keepPaths = pipeline.getActiveMediaPaths();
+    }
+    var result = highlightRecStorageCleanup.pruneHighlightRecSandbox(keepPaths, {
+      reason: reason || 'manual'
+    });
+    if (result.removedMedia > 0 || result.removedAudit > 0) {
+      this._dlog('STORAGE', 'prune sandbox', {
+        reason: reason || 'manual',
+        removedMedia: result.removedMedia,
+        removedAudit: result.removedAudit
+      });
+    }
+    return result;
+  },
+
   startRecorder: function () {
     var pipeline = this._highlightPipeline;
     if (!pipeline) return Promise.resolve();
@@ -638,6 +699,7 @@ Page({
     var self = this;
     this._monitoringRequested = true;
     this._dlog('REC', 'startRecorder initiated, recMode: ' + this.data.recMode);
+    this._pruneHighlightRecStorage('before_start');
     return pipeline.start().then(function () {
       self._dlog('REC', 'startRecorder success, pipeline active');
       self.setData({
@@ -651,6 +713,8 @@ Page({
           self.updateBufferStatus();
         }
       }, 5000);
+      self._startStorageCleanupTimer();
+      self.checkDiskSpace();
     }).catch(function (err) {
       self._monitoringRequested = false;
       self._dlog('REC', 'startRecorder failed', err);
@@ -676,6 +740,7 @@ Page({
       return Promise.resolve();
     }
     this._clearBufferStatusTimer();
+    this._clearStorageCleanupTimer();
     this._dlog('REC', 'stopRecorder initiated');
     var self = this;
     return pipeline.stop().then(function () {
@@ -739,8 +804,11 @@ Page({
       var m = Math.floor(elapsedSec / 60);
       var s = elapsedSec % 60;
       var timeStr = m > 0 ? (m + 'm ' + s + 's') : (s + 's');
+      var directExport = this._recPerfProfile && this._recPerfProfile.nativeDirectExport;
       this.setData({
-        bufferCoverageText: 'REC 8s (' + timeStr + ')'
+        bufferCoverageText: directExport
+          ? ('REC 整段 (' + timeStr + ')')
+          : ('REC 8s (' + timeStr + ')')
       });
       return;
     }
@@ -758,9 +826,12 @@ Page({
     if (typeof wx.getStorageInfo === 'function') {
       wx.getStorageInfo({
         success: function (res) {
-          // 如果当前小程序本地存储占用率超过 85%，触发预警
-          var isTight = res.currentSize > res.limitSize * 0.85;
+          var ratio = res.limitSize > 0 ? res.currentSize / res.limitSize : 0;
+          var isTight = ratio > 0.85;
           self.setData({ diskWarning: isTight });
+          if (ratio > 0.75) {
+            self._pruneHighlightRecStorage(isTight ? 'storage_severe' : 'storage_warn');
+          }
         }
       });
     }
@@ -1167,6 +1238,7 @@ Page({
         self._dlog('EXPORT', 'triggerExport success', { path: trimmedPath });
         self.saveVideoToPhotos(trimmedPath, isLocal);
         self.updateBufferStatus();
+        self._pruneHighlightRecStorage('after_export');
         self.checkDiskSpace();
       })
       .catch(function (err) {
@@ -1179,9 +1251,11 @@ Page({
         }
         self._dlog('EXPORT', 'triggerExport failed', err);
         console.error('[HighlightRec] Export highlight failed:', err);
-        var errMsg = (err && err.message) ? err.message : '裁切高光时发生错误，请重试';
+        var errMsg = (err && err.message) ? err.message : '导出时发生错误，请重试';
         if (errMsg.indexOf('audio_mux_failed') >= 0) {
           errMsg = '视频已就绪但合成声音失败，请确认已授权麦克风并重试';
+        } else if (errMsg.indexOf('no_available_segment') >= 0) {
+          errMsg = '录制分段落盘失败，请停止监看后重新开启，或清理小程序缓存';
         }
         wx.showModal({
           title: '导出失败',
@@ -1193,7 +1267,11 @@ Page({
 
   saveVideoToPhotos: function (filePath, isLocal) {
     var self = this;
-    this._dlog('ALBUM', 'saveVideoToPhotosAlbum start', { path: filePath });
+    var pipeline = this._highlightPipeline;
+    var isNativeDirect = this.data.recMode === 'native'
+      && this._recPerfProfile
+      && this._recPerfProfile.nativeDirectExport;
+    this._dlog('ALBUM', 'saveVideoToPhotosAlbum start', { path: filePath, direct: !!isNativeDirect });
 
     // 将视频存入相册
     wx.saveVideoToPhotosAlbum({
@@ -1204,7 +1282,7 @@ Page({
           savingCount: Math.max(0, self.data.savingCount - 1)
         });
         wx.showToast({
-          title: '高光已存入相册',
+          title: isNativeDirect ? '整段已存入相册' : '高光已存入相册',
           icon: 'success'
         });
 
@@ -1225,13 +1303,21 @@ Page({
           highlightCount: self.data.highlightCount + 1
         });
 
-        // 裁切完成后的临时视频物理删除，释放沙盒空间
+        if (pipeline && typeof pipeline.releaseExportedPath === 'function') {
+          pipeline.releaseExportedPath(filePath);
+        }
+
+        // 落盘/导出完成后的临时视频物理删除，释放沙盒空间
         try {
           wx.getFileSystemManager().unlink({
             filePath: filePath,
-            fail: function () {}
+            complete: function () {
+              self._pruneHighlightRecStorage('after_album_save');
+            }
           });
-        } catch (e) {}
+        } catch (e) {
+          self._pruneHighlightRecStorage('after_album_save');
+        }
       },
       fail: function (err) {
         self._dlog('ALBUM', 'saveVideoToPhotosAlbum failed', err);

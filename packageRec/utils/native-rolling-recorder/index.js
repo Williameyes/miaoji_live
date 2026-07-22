@@ -133,10 +133,44 @@ function createNativeRollingRecorder(cameraCtx, options) {
     });
   }
 
+  /**
+   * 相册保存成功后释放环内分段引用（物理文件由页面 unlink）。
+   *
+   * @param {string} path
+   * @returns {void}
+   */
+  function releaseSegmentPath(path) {
+    if (ring && typeof ring.removeByPath === 'function') {
+      ring.removeByPath(path);
+    }
+  }
+
+  /**
+   * 收集当前应保留的 rolling 媒体路径，供沙盒孤儿清理使用。
+   *
+   * @returns {string[]}
+   */
+  function getActiveMediaPaths() {
+    var paths = [];
+    var segs = ring.getSegments();
+    for (var i = 0; i < segs.length; i++) {
+      if (segs[i] && segs[i].path) {
+        paths.push(segs[i].path);
+      }
+    }
+    var cur = recorder.getCurrentSegment();
+    if (cur && cur.path) {
+      paths.push(cur.path);
+    }
+    return paths;
+  }
+
   return {
     start: start,
     stop: stop,
     triggerExport: triggerExport,
+    releaseSegmentPath: releaseSegmentPath,
+    getActiveMediaPaths: getActiveMediaPaths,
     isActive: function () {
       return recorder.isActive();
     },

@@ -55,10 +55,26 @@ function createSegmentRing(maxSegments) {
     return segments;
   }
 
+  /**
+   * 从环中移除指定路径（不删除物理文件，由调用方负责 unlink）。
+   *
+   * @param {string} path
+   * @returns {boolean} 是否移除成功
+   */
+  function removeByPath(path) {
+    if (!path) return false;
+    var before = segments.length;
+    segments = segments.filter(function (seg) {
+      return !(seg && seg.path === path);
+    });
+    return segments.length < before;
+  }
+
   return {
     push: push,
     clear: clear,
-    getSegments: getSegments
+    getSegments: getSegments,
+    removeByPath: removeByPath
   };
 }
 

@@ -215,6 +215,19 @@ function createNativeHighlightPipeline(page, perf) {
     return nativeRecorder.triggerExport();
   }
 
+  function releaseExportedPath(path) {
+    if (nativeRecorder && typeof nativeRecorder.releaseSegmentPath === 'function') {
+      nativeRecorder.releaseSegmentPath(path);
+    }
+  }
+
+  function getActiveMediaPaths() {
+    if (nativeRecorder && typeof nativeRecorder.getActiveMediaPaths === 'function') {
+      return nativeRecorder.getActiveMediaPaths();
+    }
+    return [];
+  }
+
   return {
     recMode: highlightRecProfile.REC_MODE_NATIVE,
     isSupported: isSupported,
@@ -222,6 +235,8 @@ function createNativeHighlightPipeline(page, perf) {
     stop: stop,
     destroy: destroy,
     triggerExport: triggerExport,
+    releaseExportedPath: releaseExportedPath,
+    getActiveMediaPaths: getActiveMediaPaths,
     isActive: isActive,
     getVideoSegments: getVideoSegments,
     estimateBufferCoverageSec: estimateBufferCoverageSec
@@ -366,6 +381,31 @@ function createPreviewHighlightPipeline(page, perf) {
     });
   }
 
+  function releaseExportedPath(path) {
+    if (previewPipeline && typeof previewPipeline.releaseSegmentPaths === 'function' && path) {
+      previewPipeline.releaseSegmentPaths([path]);
+    }
+  }
+
+  function getActiveMediaPaths() {
+    var paths = [];
+    var segs = getVideoSegments();
+    for (var i = 0; i < segs.length; i++) {
+      if (segs[i] && segs[i].path) {
+        paths.push(segs[i].path);
+      }
+    }
+    var audioSegs = typeof audioRecorder.getSegments === 'function'
+      ? audioRecorder.getSegments()
+      : [];
+    for (var j = 0; j < audioSegs.length; j++) {
+      if (audioSegs[j] && audioSegs[j].path) {
+        paths.push(audioSegs[j].path);
+      }
+    }
+    return paths;
+  }
+
   return {
     recMode: highlightRecProfile.REC_MODE_PREVIEW_RECORD,
     isSupported: isSupported,
@@ -373,6 +413,8 @@ function createPreviewHighlightPipeline(page, perf) {
     stop: stop,
     destroy: destroy,
     triggerExport: triggerExport,
+    releaseExportedPath: releaseExportedPath,
+    getActiveMediaPaths: getActiveMediaPaths,
     isActive: isActive,
     getVideoSegments: getVideoSegments,
     estimateBufferCoverageSec: estimateBufferCoverageSec

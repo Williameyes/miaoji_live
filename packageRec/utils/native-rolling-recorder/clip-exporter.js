@@ -63,7 +63,8 @@ function exportLast8s(segments, triggerTime, options) {
   console.log('[ClipExporter] Export segment:', matchSeg.path, 'trimStart:', trimStart, 'trimEnd:', trimEnd, 'duration:', fileDurationMs);
 
   if (opts.skipTrim || fileDurationMs <= 10000) {
-    console.log('[ClipExporter] Fast path (file already <=10s or skipTrim), returning short segment:', matchSeg.path);
+    console.log('[ClipExporter] Direct segment export (skipTrim), path:', matchSeg.path,
+      'durationMs:', fileDurationMs);
     return Promise.resolve(matchSeg.path);
   }
 
