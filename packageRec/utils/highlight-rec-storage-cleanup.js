@@ -169,6 +169,10 @@ function pruneHighlightRecSandboxAsync(activeKeepPaths, opts) {
   return unlinkOrphanMediaUnderDirAsync(fs, root + '/highlight_rec_rolling', keepSet)
     .then(function (count1) {
       removedMedia += count1;
+      return unlinkOrphanMediaUnderDirAsync(fs, 'wxfile://tmp', keepSet);
+    })
+    .then(function (countTmp) {
+      removedMedia += countTmp;
       return readdirPromise(fs, root);
     })
     .then(function (rootNames) {
@@ -289,6 +293,7 @@ function pruneHighlightRecSandbox(activeKeepPaths, opts) {
     }
 
     removedMedia += unlinkOrphanMediaUnderDirSync(fs, root + '/highlight_rec_rolling', keepSet);
+    removedMedia += unlinkOrphanMediaUnderDirSync(fs, 'wxfile://tmp', keepSet);
 
     var rootNames = [];
     try {

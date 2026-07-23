@@ -653,8 +653,53 @@ Page({
     this._storageCleanupTimer = setInterval(function () {
       if (!self._unloaded) {
         self._pruneHighlightRecStorage('interval');
+        self._checkPipelineHealthAndAutoRestart();
       }
     }, 60000);
+  },
+
+  _lastAutoRestartTime: 0,
+  _lastExportTime: 0,
+  _autoRestartInProgress: false,
+
+  /**
+   * 检查监看健康度，当连续监看达到 25 分钟且在空闲状态下无感自动热重启 (Flush & Restart)
+   */
+  _checkPipelineHealthAndAutoRestart: function () {
+    if (this._unloaded || this._autoRestartInProgress) return;
+    var pipeline = this._highlightPipeline;
+    if (!pipeline || !pipeline.isActive()) return;
+
+    // 仅在完全空闲时重启：无保存导出任务，且距离上一次导出操作 > 15s
+    if (this.data.savingCount > 0) return;
+    var now = Date.now();
+    if (this._lastExportTime && (now - this._lastExportTime < 15000)) return;
+
+    // 连续监看达到 25 分钟（25 * 60 * 1000 ms）阈值
+    var autoRestartThresholdMs = 25 * 60 * 1000;
+    var lastRefTime = this._lastAutoRestartTime || now;
+    if (now - lastRefTime < autoRestartThresholdMs) return;
+
+    var self = this;
+    this._autoRestartInProgress = true;
+    this._dlog('REC', 'Auto soft-restart pipeline for health maintenance (25min idle threshold reached)');
+    console.info('[HighlightRec] Executing automatic silent pipeline soft-restart...');
+
+    this.stopRecorder()
+      .then(function () {
+        self._pruneHighlightRecStorage('auto_restart');
+        return self.startRecorder();
+      })
+      .then(function () {
+        self._lastAutoRestartTime = Date.now();
+        self._autoRestartInProgress = false;
+        self._dlog('REC', 'Auto soft-restart success, pipeline refreshed');
+        console.info('[HighlightRec] Automatic silent pipeline soft-restart completed successfully');
+      })
+      .catch(function (err) {
+        self._autoRestartInProgress = false;
+        console.error('[HighlightRec] Auto soft-restart failed:', err);
+      });
   },
 
   /**
@@ -669,6 +714,13 @@ Page({
     var keepPaths = [];
     if (pipeline && typeof pipeline.getActiveMediaPaths === 'function') {
       keepPaths = pipeline.getActiveMediaPaths();
+    }
+    if (this._savingFilePaths) {
+      for (var p in this._savingFilePaths) {
+        if (this._savingFilePaths[p]) {
+          keepPaths.push(p);
+        }
+      }
     }
     var cleanupFn = highlightRecStorageCleanup.pruneHighlightRecSandboxAsync || highlightRecStorageCleanup.pruneHighlightRecSandbox;
     var ret = cleanupFn(keepPaths, {
@@ -715,6 +767,7 @@ Page({
     this._dlog('REC', 'startRecorder initiated, recMode: ' + this.data.recMode);
     this._pruneHighlightRecStorage('before_start');
     return pipeline.start().then(function () {
+      self._lastAutoRestartTime = Date.now();
       self._dlog('REC', 'startRecorder success, pipeline active');
       self.setData({
         isRecording: true,
@@ -1222,8 +1275,16 @@ Page({
   _lastWsRecTime: 0,
 
   triggerManualRec: function () {
+    if (this.data.savingCount > 0) {
+      wx.showToast({
+        title: '高光处理中，请稍候',
+        icon: 'none'
+      });
+      return;
+    }
     var now = Date.now();
-    if (this._lastManualRecTime && now - this._lastManualRecTime < 4000) {
+    var minIntervalMs = 8000; // 调优为 8s 硬件冷却间隔，防止高频猛击冲击 Camera API
+    if (this._lastManualRecTime && now - this._lastManualRecTime < minIntervalMs) {
       wx.showToast({
         title: '点击太频繁，请稍后再试',
         icon: 'none'
@@ -1245,6 +1306,7 @@ Page({
     }
 
     var self = this;
+    this._lastExportTime = Date.now();
     this.setData({
       savingCount: this.data.savingCount + 1
     });
@@ -1341,17 +1403,8 @@ Page({
           pipeline.releaseExportedPath(filePath);
         }
 
-        // 落盘/导出完成后的临时视频物理删除，释放沙盒空间
-        try {
-          wx.getFileSystemManager().unlink({
-            filePath: filePath,
-            complete: function () {
-              self._pruneHighlightRecStorage('after_album_save');
-            }
-          });
-        } catch (e) {
-          self._pruneHighlightRecStorage('after_album_save');
-        }
+        // 保存相册成功后触发沙盒例行清理（仅擦除过期孤儿文件，不抹除当前活跃分段）
+        self._pruneHighlightRecStorage('after_album_save');
       },
       fail: function (err) {
         if (filePath && self._savingFilePaths) {

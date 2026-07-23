@@ -109,8 +109,8 @@ function createNativeRollingRecorder(cameraCtx, options) {
       var now = Date.now();
       var timeSinceLast = now - lastRotateTime;
 
-      // 最低限流间隔为 4000ms，防止高频连续点击冲击微信底层 Camera API 导致 stop error
-      var minThrottleMs = 4000;
+      // 最低限流间隔为 8000ms，防止高频连续点击冲击微信底层 Camera API 导致 stop error
+      var minThrottleMs = 8000;
       if (timeSinceLast >= minThrottleMs) {
         lastRotateTime = now;
         console.log('[NativeRollingRecorder] Rotating track on export trigger');

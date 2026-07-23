@@ -67,8 +67,10 @@ function createDualTrackRecorder(cameraCtx, options) {
       onTrackActive(trackId);
     }
 
+    var timeoutSec = Math.max(5, Math.ceil(segmentMs / 1000));
     cameraCtx.startRecord({
       quality: recordQuality,
+      timeout: timeoutSec,
       timeoutCallback: function () {
         console.log('[DualTrack] Segment timeout callback, rotate');
         rotate(true);
@@ -78,10 +80,11 @@ function createDualTrackRecorder(cameraCtx, options) {
         transitioning = false; // 启动成功，释放转换锁
       },
       fail: function (err) {
-        console.error('[DualTrack] Failed to start record for track:', trackId, err);
+        var errDetail = (err && (err.errMsg || err.message)) ? (err.errMsg || err.message) : JSON.stringify(err || {});
+        console.error('[DualTrack] Failed to start record for track:', trackId, errDetail);
         transitioning = false; // 失败也必须释放锁，防止卡死
         if (typeof onError === 'function') {
-          onError(err);
+          onError(new Error('startRecord_failed: ' + errDetail));
         }
       }
     });
@@ -123,7 +126,10 @@ function createDualTrackRecorder(cameraCtx, options) {
       success: function (res) {
         segToComplete.path = res.tempVideoPath || res.tempFilePath || '';
         console.log('[DualTrack] Track stopped successfully:', trackId, 'Path:', segToComplete.path);
-        
+        if (!segToComplete.path) {
+          console.warn('[DualTrack] stopRecord returned empty path for track:', trackId);
+        }
+
         if (typeof onSegmentComplete === 'function') {
           onSegmentComplete(segToComplete);
         }
@@ -136,9 +142,11 @@ function createDualTrackRecorder(cameraCtx, options) {
         }
       },
       fail: function (err) {
-        console.error('[DualTrack] Failed to stop record for track:', trackId, err);
+        var errDetail = (err && (err.errMsg || err.message)) ? (err.errMsg || err.message) : JSON.stringify(err || {});
+        console.error('[DualTrack] Failed to stop record for track:', trackId, errDetail);
+        segToComplete.path = '';
         if (typeof onError === 'function') {
-          onError(err);
+          onError(new Error('stopRecord_failed: ' + errDetail));
         }
 
         if (recording && nextTrackId) {
