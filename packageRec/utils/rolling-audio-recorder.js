@@ -53,6 +53,31 @@ function createRollingAudioRecorder(options) {
   var currentStartTime = 0;
   var stopResolve = null;
   var flushResolve = null;
+  var flushPromise = null;
+  var flushTimer = null;
+
+  function getLastSegment() {
+    return segments.length ? segments[segments.length - 1] : null;
+  }
+
+  function clearFlushTimer() {
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
+  }
+
+  function resolveFlush(seg, fallbackToLast) {
+    var cb = flushResolve;
+    flushResolve = null;
+    flushPromise = null;
+    clearFlushTimer();
+    if (cb) {
+      try {
+        cb(fallbackToLast && !seg ? getLastSegment() : seg);
+      } catch (eCb) {}
+    }
+  }
 
   /**
    * @param {Object} seg
@@ -89,11 +114,7 @@ function createRollingAudioRecorder(options) {
     starting = false;
 
     if (flushResolve) {
-      var cb = flushResolve;
-      flushResolve = null;
-      try {
-        cb(segments.length ? segments[segments.length - 1] : null);
-      } catch (eCb) {}
+      resolveFlush(getLastSegment(), true);
     }
 
     if (active) {
@@ -110,9 +131,7 @@ function createRollingAudioRecorder(options) {
       onError(err || {});
     }
     if (flushResolve) {
-      var cbErr = flushResolve;
-      flushResolve = null;
-      cbErr(null);
+      resolveFlush(null, false);
     }
     if (!active && stopResolve) {
       stopResolve();
@@ -181,25 +200,27 @@ function createRollingAudioRecorder(options) {
    * @returns {Promise<Object|null>}
    */
   function flushActiveSegmentForExport() {
-    return new Promise(function (resolve) {
-      if (!active && !starting) {
-        resolve(segments.length ? segments[segments.length - 1] : null);
-        return;
-      }
+    if (flushPromise) {
+      return flushPromise;
+    }
+    if (!active && !starting) {
+      return Promise.resolve(getLastSegment());
+    }
+
+    flushPromise = new Promise(function (resolve) {
       flushResolve = resolve;
-      try {
-        recorder.stop();
-      } catch (e) {
-        flushResolve = null;
-        resolve(segments.length ? segments[segments.length - 1] : null);
-      }
-      setTimeout(function () {
-        if (flushResolve) {
-          flushResolve = null;
-          resolve(segments.length ? segments[segments.length - 1] : null);
-        }
-      }, 5000);
     });
+    flushTimer = setTimeout(function () {
+      if (flushResolve) {
+        resolveFlush(getLastSegment(), true);
+      }
+    }, 5000);
+    try {
+      recorder.stop();
+    } catch (e) {
+      resolveFlush(getLastSegment(), true);
+    }
+    return flushPromise || Promise.resolve(getLastSegment());
   }
 
   /**

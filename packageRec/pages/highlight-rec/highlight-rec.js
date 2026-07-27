@@ -110,6 +110,9 @@ Page({
   _monitoringRequested: false,
   _runtimeLogs: null,
   _pendingAuditFile: null,
+  _exportInFlight: false,
+  _storagePrunePromise: null,
+  _storagePrunePendingReason: '',
 
   onLoad: function (options) {
     this._unloaded = false;
@@ -671,7 +674,7 @@ Page({
     if (!pipeline || !pipeline.isActive()) return;
 
     // 仅在完全空闲时重启：无保存导出任务，且距离上一次导出操作 > 15s
-    if (this.data.savingCount > 0) return;
+    if (this._exportInFlight || this.data.savingCount > 0) return;
     var now = Date.now();
     if (this._lastExportTime && (now - this._lastExportTime < 15000)) return;
 
@@ -710,6 +713,11 @@ Page({
    */
   _pruneHighlightRecStorage: function (reason) {
     var self = this;
+    var pruneReason = reason || 'manual';
+    if (this._storagePrunePromise) {
+      this._storagePrunePendingReason = pruneReason;
+      return { removedMedia: 0, removedAudit: 0 };
+    }
     var pipeline = this._highlightPipeline;
     var keepPaths = [];
     if (pipeline && typeof pipeline.getActiveMediaPaths === 'function') {
@@ -724,23 +732,33 @@ Page({
     }
     var cleanupFn = highlightRecStorageCleanup.pruneHighlightRecSandboxAsync || highlightRecStorageCleanup.pruneHighlightRecSandbox;
     var ret = cleanupFn(keepPaths, {
-      reason: reason || 'manual'
+      reason: pruneReason
     });
     if (ret && typeof ret.then === 'function') {
+      this._storagePrunePromise = ret;
       ret.then(function (result) {
         if (result && (result.removedMedia > 0 || result.removedAudit > 0)) {
           self._dlog('STORAGE', 'prune sandbox', {
-            reason: reason || 'manual',
+            reason: pruneReason,
             removedMedia: result.removedMedia,
             removedAudit: result.removedAudit
           });
         }
-      }).catch(function () {});
+      }).catch(function () {}).then(function () {
+        self._storagePrunePromise = null;
+        var nextReason = self._storagePrunePendingReason;
+        self._storagePrunePendingReason = '';
+        if (nextReason && !self._unloaded) {
+          setTimeout(function () {
+            self._pruneHighlightRecStorage(nextReason);
+          }, 500);
+        }
+      });
       return { removedMedia: 0, removedAudit: 0 };
     }
     if (ret && (ret.removedMedia > 0 || ret.removedAudit > 0)) {
       this._dlog('STORAGE', 'prune sandbox', {
-        reason: reason || 'manual',
+        reason: pruneReason,
         removedMedia: ret.removedMedia,
         removedAudit: ret.removedAudit
       });
@@ -1245,6 +1263,13 @@ Page({
       onTrigger: function (payload) {
         console.log('[HighlightRec] Received sync REC trigger from server, triggerId:', payload.triggerId);
         var now = Date.now();
+        if (self._exportInFlight || self.data.savingCount > 0) {
+          self._dlog('EXPORT', 'Remote sync trigger ignored: export busy', {
+            triggerId: payload.triggerId,
+            savingCount: self.data.savingCount
+          });
+          return;
+        }
         if (self._lastWsRecTime && now - self._lastWsRecTime < 4000) {
           console.log('[HighlightRec] Remote sync trigger ignored: too frequent');
           return;
@@ -1275,7 +1300,7 @@ Page({
   _lastWsRecTime: 0,
 
   triggerManualRec: function () {
-    if (this.data.savingCount > 0) {
+    if (this._exportInFlight || this.data.savingCount > 0) {
       wx.showToast({
         title: '高光处理中，请稍候',
         icon: 'none'
@@ -1296,6 +1321,19 @@ Page({
   },
 
   doExportHighlight: function (isLocal) {
+    if (this._exportInFlight || this.data.savingCount > 0) {
+      this._dlog('EXPORT', 'doExportHighlight ignored: export busy', {
+        isLocal: !!isLocal,
+        savingCount: this.data.savingCount
+      });
+      if (isLocal) {
+        wx.showToast({
+          title: '高光处理中，请稍候',
+          icon: 'none'
+        });
+      }
+      return;
+    }
     var pipeline = this._highlightPipeline;
     if (!pipeline || !pipeline.isActive()) {
       wx.showToast({
@@ -1307,6 +1345,7 @@ Page({
 
     var self = this;
     this._lastExportTime = Date.now();
+    this._exportInFlight = true;
     this.setData({
       savingCount: this.data.savingCount + 1
     });
@@ -1321,6 +1360,7 @@ Page({
         self.checkDiskSpace();
       })
       .catch(function (err) {
+        self._exportInFlight = false;
         self.setData({
           savingCount: Math.max(0, self.data.savingCount - 1)
         });
@@ -1355,6 +1395,7 @@ Page({
     if (!this._savingFilePaths) this._savingFilePaths = {};
     if (filePath && this._savingFilePaths[filePath]) {
       console.log('[HighlightRec] File path already being saved, skipping duplicate save:', filePath);
+      self._exportInFlight = false;
       self.setData({
         savingCount: Math.max(0, self.data.savingCount - 1)
       });
@@ -1373,6 +1414,7 @@ Page({
         if (filePath && self._savingFilePaths) {
           delete self._savingFilePaths[filePath];
         }
+        self._exportInFlight = false;
         self._dlog('ALBUM', 'saveVideoToPhotosAlbum success', { path: filePath });
         self.setData({
           savingCount: Math.max(0, self.data.savingCount - 1)
@@ -1410,6 +1452,7 @@ Page({
         if (filePath && self._savingFilePaths) {
           delete self._savingFilePaths[filePath];
         }
+        self._exportInFlight = false;
         self._dlog('ALBUM', 'saveVideoToPhotosAlbum failed', err);
         self.setData({
           savingCount: Math.max(0, self.data.savingCount - 1)

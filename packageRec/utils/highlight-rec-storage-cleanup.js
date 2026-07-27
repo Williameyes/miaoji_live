@@ -5,6 +5,11 @@
 /** highlight 审计 txt 在 USER_DATA 根目录最多保留份数 */
 var HIGHLIGHT_AUDIT_MAX_KEEP = 2;
 
+function shouldPruneTmpMedia(reason) {
+  var r = String(reason || '');
+  return r === 'storage_severe' || r === 'manual' || r === 'on_unload';
+}
+
 /**
  * 将路径列表转为 Set。
  *
@@ -169,6 +174,9 @@ function pruneHighlightRecSandboxAsync(activeKeepPaths, opts) {
   return unlinkOrphanMediaUnderDirAsync(fs, root + '/highlight_rec_rolling', keepSet)
     .then(function (count1) {
       removedMedia += count1;
+      if (!shouldPruneTmpMedia(options.reason)) {
+        return 0;
+      }
       return unlinkOrphanMediaUnderDirAsync(fs, 'wxfile://tmp', keepSet);
     })
     .then(function (countTmp) {
@@ -293,7 +301,9 @@ function pruneHighlightRecSandbox(activeKeepPaths, opts) {
     }
 
     removedMedia += unlinkOrphanMediaUnderDirSync(fs, root + '/highlight_rec_rolling', keepSet);
-    removedMedia += unlinkOrphanMediaUnderDirSync(fs, 'wxfile://tmp', keepSet);
+    if (shouldPruneTmpMedia(options.reason)) {
+      removedMedia += unlinkOrphanMediaUnderDirSync(fs, 'wxfile://tmp', keepSet);
+    }
 
     var rootNames = [];
     try {
