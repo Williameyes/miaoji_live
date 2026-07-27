@@ -876,6 +876,48 @@ page {
   flex-shrink: 0;
 }
 
+/* 勾选当前片段按钮 */
+.player-select-btn {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  padding: 6rpx 16rpx;
+  border-radius: 20rpx;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1rpx solid rgba(255, 255, 255, 0.25);
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+.player-select-btn--active {
+  background: rgba(37, 99, 235, 0.35);
+  border-color: #3B82F6;
+}
+
+.player-select-check {
+  width: 26rpx;
+  height: 26rpx;
+  border-radius: 50%;
+  border: 2rpx solid rgba(255, 255, 255, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18rpx;
+  color: #fff;
+  line-height: 1;
+}
+
+.player-select-check--on {
+  background: #2563EB;
+  border-color: #2563EB;
+}
+
+.player-select-text {
+  font-size: 22rpx;
+  color: #FFFFFF;
+  font-weight: 500;
+}
+
 /* 左右翻页箭头：相对于 player-video-wrap 绝对定位，与暂停按钮同高 */
 .player-nav {
   position: absolute;
@@ -908,6 +950,76 @@ page {
   pointer-events: none;
 }
 
+/* 片段快捷导航与多选标号条 */
+.player-strip-container {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.player-clip-strip {
+  flex: 1;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.player-strip-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6rpx;
+  padding: 8rpx 16rpx;
+  margin-right: 10rpx;
+  border-radius: 16rpx;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1rpx solid rgba(255, 255, 255, 0.18);
+  transition: all 0.2s ease;
+}
+
+.player-strip-item--active {
+  border-color: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.player-strip-item--selected {
+  background: rgba(37, 99, 235, 0.3);
+  border-color: #3B82F6;
+}
+
+.player-strip-num {
+  font-size: 22rpx;
+  color: #FFFFFF;
+  font-weight: 600;
+}
+
+.player-strip-check {
+  width: 24rpx;
+  height: 24rpx;
+  border-radius: 50%;
+  border: 2rpx solid rgba(255, 255, 255, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16rpx;
+  color: #fff;
+  line-height: 1;
+}
+
+.player-strip-check--on {
+  background: #2563EB;
+  border-color: #2563EB;
+}
+
+.player-toggle-all-btn {
+  padding: 8rpx 18rpx;
+  border-radius: 16rpx;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1rpx solid rgba(255, 255, 255, 0.22);
+  font-size: 22rpx;
+  color: rgba(255, 255, 255, 0.9);
+  flex-shrink: 0;
+}
+
 /* 底部操作栏 */
 .player-bottom-bar {
   width: 100%;
@@ -936,6 +1048,11 @@ page {
 .player-action--download {
   background: rgba(37, 99, 235, 0.22);
   border: 1rpx solid rgba(37, 99, 235, 0.4);
+}
+
+.player-action--merge {
+  background: rgba(168, 85, 247, 0.26);
+  border: 1rpx solid rgba(168, 85, 247, 0.45);
 }
 
 .player-action--dl-del {

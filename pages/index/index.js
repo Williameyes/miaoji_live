@@ -482,12 +482,16 @@ Page({
 
     /** 自定义播放器是否可见 */
     showPlayer: false,
-    /** 播放列表（全部片段展平） */
+    /** 播放列表（单场比赛片段展平） */
     playerList: [],
     /** 当前播放索引 */
     playerIndex: 0,
     /** 页内播放器是否暂停（用于 UI 状态） */
     playerPaused: false,
+    /** 预览模式：已选片段 ID -> true 映射 */
+    playerSelectedIdsMap: {},
+    /** 预览模式：已选片段数量 */
+    playerSelectedCount: 0,
 
     defaultCover: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90" viewBox="0 0 160 90"><rect width="160" height="90" rx="12" ry="12" fill="%2322262f"/><path d="M66 58V32l28 13-28 13z" fill="%23ffffff" fill-opacity="0.75"/></svg>',
 
@@ -1944,7 +1948,7 @@ Page({
   },
 
   /**
-   * 打开自定义播放器，只加载所属场次的片段列表并定位到所点击项
+   * 打开自定义播放器，只加载所属场次的片段列表并定位到所点击项（同一比赛约束）
    * @param {WechatMiniprogram.TouchEvent} e  data-id: 片段ID, data-matchid: 场次ID
    */
   openPlayer(e) {
@@ -1954,17 +1958,24 @@ Page({
       wx.showToast({ title: '该片段已导出至系统相册，请到相册观看', icon: 'none', duration: 2800 });
       return;
     }
-    // 只加载同一场次的片段，避免误操作跨场次视频
-    const targetGroup = matchid
-      ? this.data.groupedHighlights.find((g) => g.matchId === matchid)
-      : null;
-    const groups = targetGroup ? [targetGroup] : this.data.groupedHighlights;
+    // 只加载同一场次的片段，避免跨场次混选
+    let targetGroup = null;
+    if (matchid) {
+      targetGroup = this.data.groupedHighlights.find((g) => g.matchId === matchid);
+    }
+    if (!targetGroup && id) {
+      targetGroup = this.data.groupedHighlights.find((g) =>
+        Array.isArray(g.videos) && g.videos.some((v) => String(v.id) === String(id))
+      );
+    }
+    const groups = targetGroup ? [targetGroup] : (this.data.groupedHighlights.length > 0 ? [this.data.groupedHighlights[0]] : []);
     const playerList = [];
     groups.forEach((group) => {
       group.videos.forEach((v) => {
         if (v.videoPath) {
           playerList.push({
             id: v.id,
+            matchId: group.matchId || matchid || '',
             videoPath: v.videoPath,
             segments: Array.isArray(v.segments) ? v.segments : [v.videoPath],
             timeText: v.timeText || '',
@@ -1974,17 +1985,232 @@ Page({
         }
       });
     });
-    const index = playerList.findIndex((x) => x.id === id);
+    const index = playerList.findIndex((x) => String(x.id) === String(id));
     if (index < 0) {
       wx.showToast({ title: '视频文件不存在', icon: 'none' });
       return;
     }
-    this.setData({ showPlayer: true, playerList, playerIndex: index, playerPaused: false });
+    this.setData({
+      showPlayer: true,
+      playerList,
+      playerIndex: index,
+      playerPaused: false,
+      playerSelectedIdsMap: {},
+      playerSelectedCount: 0
+    });
   },
 
   /** 关闭播放器面板 */
   closePlayer() {
-    this.setData({ showPlayer: false, playerList: [], playerIndex: 0, playerPaused: false });
+    this.setData({
+      showPlayer: false,
+      playerList: [],
+      playerIndex: 0,
+      playerPaused: false,
+      playerSelectedIdsMap: {},
+      playerSelectedCount: 0
+    });
+  },
+
+  /**
+   * 预览模式：切换当前播放片段的勾选状态
+   */
+  playerToggleSelectCurrent() {
+    const current = this.data.playerList[this.data.playerIndex];
+    if (!current || !current.id) return;
+    const id = current.id;
+    const map = Object.assign({}, this.data.playerSelectedIdsMap);
+    if (map[id]) {
+      delete map[id];
+    } else {
+      map[id] = true;
+    }
+    this.setData({
+      playerSelectedIdsMap: map,
+      playerSelectedCount: Object.keys(map).length
+    });
+  },
+
+  /**
+   * 预览模式：点击标号条上的某个片段项
+   * @param {WechatMiniprogram.TouchEvent} e data-index
+   */
+  playerSelectClipIndex(e) {
+    const idx = Number(e.currentTarget.dataset.index);
+    if (typeof idx === 'number' && idx >= 0 && idx < this.data.playerList.length) {
+      this.setData({ playerIndex: idx, playerPaused: false });
+    }
+  },
+
+  /**
+   * 预览模式：勾选/取消指定 ID 片段
+   * @param {WechatMiniprogram.TouchEvent} e data-id
+   */
+  playerToggleSelectId(e) {
+    const { id } = e.currentTarget.dataset;
+    if (!id) return;
+    const map = Object.assign({}, this.data.playerSelectedIdsMap);
+    if (map[id]) {
+      delete map[id];
+    } else {
+      map[id] = true;
+    }
+    this.setData({
+      playerSelectedIdsMap: map,
+      playerSelectedCount: Object.keys(map).length
+    });
+  },
+
+  /**
+   * 预览模式：一键全选/全不选同一比赛内的全部片段
+   */
+  playerToggleSelectAll() {
+    const playerList = this.data.playerList || [];
+    if (playerList.length === 0) return;
+    const count = this.data.playerSelectedCount || 0;
+    if (count === playerList.length) {
+      this.setData({ playerSelectedIdsMap: {}, playerSelectedCount: 0 });
+      return;
+    }
+    const map = {};
+    playerList.forEach((v) => {
+      if (v && v.id) map[v.id] = true;
+    });
+    this.setData({ playerSelectedIdsMap: map, playerSelectedCount: Object.keys(map).length });
+  },
+
+  /** 预览模式：批量下载选中片段到相册 */
+  playerBatchDownload() {
+    const ids = Object.keys(this.data.playerSelectedIdsMap || {});
+    if (ids.length === 0) {
+      wx.showToast({ title: '请先选择片段', icon: 'none' });
+      return;
+    }
+    const clips = [];
+    ids.forEach((id) => {
+      const item = this.findClipById(id);
+      if (item && item.exportedToAlbum) return;
+      if (item && Array.isArray(item.segments)) {
+        clips.push(item);
+      }
+    });
+    if (clips.length === 0) {
+      wx.showToast({ title: '所选片段无有效视频文件', icon: 'none' });
+      return;
+    }
+    this.saveClipsToAlbum(clips);
+  },
+
+  /** 预览模式：批量合并导出选中片段 */
+  playerBatchMergeExport() {
+    const ids = Object.keys(this.data.playerSelectedIdsMap || {});
+    if (ids.length < 2) {
+      wx.showToast({ title: '请至少选择2个片段', icon: 'none' });
+      return;
+    }
+    if (ids.length > MERGE_MAX_CLIPS) {
+      wx.showToast({ title: `最多合并 ${MERGE_MAX_CLIPS} 个片段`, icon: 'none' });
+      return;
+    }
+    if (!mediaContainerTrim || typeof mediaContainerTrim.isMediaContainerSupported !== 'function'
+      || !mediaContainerTrim.isMediaContainerSupported()) {
+      wx.showToast({ title: '当前微信版本不支持视频合并', icon: 'none', duration: 2800 });
+      return;
+    }
+
+    /** @type {Record<string, unknown>|null} */
+    let matchGroup = null;
+    /** @type {string} */
+    let matchId = '';
+    /** @type {Record<string, unknown>[]} */
+    const clips = [];
+
+    ids.forEach((id) => {
+      const item = this.findClipById(id);
+      if (!item || !Array.isArray(item.segments) || !item.segments.length) return;
+      clips.push(item);
+      const clipMatchId = item.matchId != null ? String(item.matchId) : '';
+      if (clipMatchId) {
+        if (matchId && matchId !== clipMatchId) {
+          matchId = '__mixed__';
+        } else {
+          matchId = clipMatchId;
+        }
+      }
+    });
+
+    if (clips.length < 2) {
+      wx.showToast({ title: '所选片段无有效视频', icon: 'none' });
+      return;
+    }
+    if (matchId === '__mixed__') {
+      wx.showToast({ title: '请选择同一场比赛内的片段', icon: 'none', duration: 2800 });
+      return;
+    }
+
+    this.data.groupedHighlights.forEach((g) => {
+      const hasSelected = Array.isArray(g.videos) && g.videos.some((v) => v && ids.includes(String(v.id)));
+      if (hasSelected) {
+        matchGroup = g;
+        matchId = g.matchId || matchId;
+      }
+    });
+
+    clips.sort((a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0));
+
+    wx.showModal({
+      title: `合并导出 ${clips.length} 个片段`,
+      content: '将按时间顺序合并为一条视频保存到相册，便于导入剪映编辑。',
+      confirmText: '合并导出',
+      success: (res) => {
+        if (!res.confirm) return;
+        this.runMergeExport(clips, matchGroup, matchId);
+      }
+    });
+  },
+
+  /** 预览模式：批量删除选中片段 */
+  playerBatchDelete() {
+    const ids = Object.keys(this.data.playerSelectedIdsMap || {});
+    if (ids.length === 0) {
+      wx.showToast({ title: '请先选择片段', icon: 'none' });
+      return;
+    }
+    wx.showModal({
+      title: `删除 ${ids.length} 个片段`,
+      content: '确定要永久删除选中的高光视频吗？此操作不可撤销。',
+      confirmColor: '#E64340',
+      success: (res) => {
+        if (!res.confirm) return;
+        ids.forEach((id) => this.doDeleteHighlight(id, true));
+        const clipsMapAfter = clipsStorage.readClipsMapSafe();
+        if (clipsMapAfter) {
+          const deadRm = clipsStorage.pruneUnplayableClipsFromMap(clipsMapAfter);
+          if (deadRm > 0) {
+            clipsStorage.writeClipsMapSafe(clipsMapAfter);
+          }
+        }
+        wx.showToast({ title: `已删除 ${ids.length} 个片段`, icon: 'success' });
+
+        const remainingPlayerList = this.data.playerList.filter((x) => !ids.includes(String(x.id)));
+        if (remainingPlayerList.length === 0) {
+          this.closePlayer();
+          this.loadHighlights();
+          this.refreshFileStorageEstimate();
+          return;
+        }
+        const newIndex = Math.min(this.data.playerIndex, remainingPlayerList.length - 1);
+        this.setData({
+          playerList: remainingPlayerList,
+          playerIndex: newIndex,
+          playerPaused: false,
+          playerSelectedIdsMap: {},
+          playerSelectedCount: 0
+        });
+        this.loadHighlights();
+        this.refreshFileStorageEstimate();
+      }
+    });
   },
 
   /**

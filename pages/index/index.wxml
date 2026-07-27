@@ -220,10 +220,20 @@
       <!-- 信息区：靠近视频上方，便于阅读 -->
       <view class="player-info-row">
         <view class="player-meta">
-          <text class="player-counter">{{playerIndex + 1}} / {{playerList.length}}</text>
+          <text class="player-counter">{{playerIndex + 1}} / {{playerList.length}} {{playerSelectedCount > 0 ? '(已选 ' + playerSelectedCount + ' 项)' : ''}}</text>
           <text class="player-match-title">{{playerList[playerIndex].matchTitle}}</text>
         </view>
         <text class="player-time-label">{{playerList[playerIndex].timeText}}</text>
+        <!-- 勾选当前片段按钮 -->
+        <view
+          class="player-select-btn {{playerSelectedIdsMap[playerList[playerIndex].id] ? 'player-select-btn--active' : ''}}"
+          bindtap="playerToggleSelectCurrent"
+        >
+          <view class="player-select-check {{playerSelectedIdsMap[playerList[playerIndex].id] ? 'player-select-check--on' : ''}}">
+            <text wx:if="{{playerSelectedIdsMap[playerList[playerIndex].id]}}">✓</text>
+          </view>
+          <text class="player-select-text">{{playerSelectedIdsMap[playerList[playerIndex].id] ? '已选' : '选择'}}</text>
+        </view>
       </view>
 
       <!-- 页内真实播放（左右箭头内嵌，与暂停图标同层对齐） -->
@@ -258,8 +268,49 @@
         >›</view>
       </view>
 
-      <!-- 操作栏：放在视频下方，不被 tab 遮挡 -->
-      <view class="player-bottom-bar">
+      <!-- 片段快捷导航与多选标号条 -->
+      <view class="player-strip-container">
+        <scroll-view scroll-x class="player-clip-strip" show-scrollbar="{{false}}">
+          <view
+            class="player-strip-item {{index === playerIndex ? 'player-strip-item--active' : ''}} {{playerSelectedIdsMap[item.id] ? 'player-strip-item--selected' : ''}}"
+            wx:for="{{playerList}}"
+            wx:key="id"
+            bindtap="playerSelectClipIndex"
+            data-index="{{index}}"
+          >
+            <text class="player-strip-num">#{{index + 1}}</text>
+            <view
+              class="player-strip-check {{playerSelectedIdsMap[item.id] ? 'player-strip-check--on' : ''}}"
+              catchtap="playerToggleSelectId"
+              data-id="{{item.id}}"
+            >
+              <text wx:if="{{playerSelectedIdsMap[item.id]}}">✓</text>
+            </view>
+          </view>
+        </scroll-view>
+        <view
+          class="player-toggle-all-btn"
+          bindtap="playerToggleSelectAll"
+        >
+          <text>{{playerSelectedCount >= playerList.length ? '全不选' : '全选'}}</text>
+        </view>
+      </view>
+
+      <!-- 选中片段时的批量操作栏 OR 默认单片操作栏 -->
+      <view class="player-bottom-bar" wx:if="{{playerSelectedCount > 0}}">
+        <view class="player-action-btn player-action--download" bindtap="playerBatchDownload">
+          <text class="player-action-label">下载选中({{playerSelectedCount}})</text>
+        </view>
+        <view class="player-action-btn player-action--merge" bindtap="playerBatchMergeExport">
+          <text class="player-action-label">合并导出({{playerSelectedCount}})</text>
+        </view>
+        <view class="player-action-btn player-action--delete" bindtap="playerBatchDelete">
+          <text class="player-action-label">删除选中({{playerSelectedCount}})</text>
+        </view>
+      </view>
+
+      <!-- 未选中任何片段时的单片操作栏 -->
+      <view class="player-bottom-bar" wx:else>
         <view class="player-action-btn player-action--delete" bindtap="playerDelete">
           <text class="player-action-label">删除</text>
         </view>
