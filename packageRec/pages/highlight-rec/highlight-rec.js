@@ -691,6 +691,11 @@ Page({
     this.stopRecorder()
       .then(function () {
         self._pruneHighlightRecStorage('auto_restart');
+        return new Promise(function (resolve) {
+          setTimeout(resolve, 800);
+        });
+      })
+      .then(function () {
         return self.startRecorder();
       })
       .then(function () {
@@ -1411,7 +1416,9 @@ Page({
   _scheduleUnlinkSavedTempPath: function (filePath) {
     var self = this;
     var path = typeof filePath === 'string' ? filePath : '';
-    if (!path || path.indexOf('wxfile://tmp') !== 0) return;
+    // 微信小程序沙盒只有权限 unlink USER_DATA_PATH (wxfile://usr) 目录下的文件。
+    // 跳过对 wxfile://tmp 试图 unlink 规避 permission denied 错误日志，系统将在进程退出/缓存清理时自行回收 tmp。
+    if (!path || path.indexOf('wxfile://usr') !== 0) return;
     setTimeout(function () {
       if (self._unloaded) return;
       var pipeline = self._highlightPipeline;

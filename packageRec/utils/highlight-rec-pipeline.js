@@ -174,8 +174,10 @@ function createNativeHighlightPipeline(page, perf) {
   function stop() {
     if (nativeRecorder) {
       try {
-        nativeRecorder.stop();
-      } catch (e) {}
+        return nativeRecorder.stop() || Promise.resolve();
+      } catch (e) {
+        return Promise.resolve();
+      }
     }
     return Promise.resolve();
   }

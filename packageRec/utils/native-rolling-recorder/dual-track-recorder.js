@@ -104,9 +104,12 @@ function createDualTrackRecorder(cameraCtx, options) {
     }, segmentMs);
   }
 
-  function stopTrack(trackId, nextTrackId) {
+  function stopTrack(trackId, nextTrackId, doneCb) {
     if (!currentSegment || currentSegment.trackId !== trackId) {
       transitioning = false;
+      if (typeof doneCb === 'function') {
+        doneCb();
+      }
       return;
     }
 
@@ -134,6 +137,10 @@ function createDualTrackRecorder(cameraCtx, options) {
           onSegmentComplete(segToComplete);
         }
 
+        if (typeof doneCb === 'function') {
+          try { doneCb(null, segToComplete); } catch (e) {}
+        }
+
         // stop→start 冷却，减轻 Android（尤其小米）Native 句柄未释放时的重试风暴与发热
         if (recording && nextTrackId) {
           scheduleStartTrack(nextTrackId);
@@ -147,6 +154,10 @@ function createDualTrackRecorder(cameraCtx, options) {
         segToComplete.path = '';
         if (typeof onError === 'function') {
           onError(new Error('stopRecord_failed: ' + errDetail));
+        }
+
+        if (typeof doneCb === 'function') {
+          try { doneCb(err); } catch (e) {}
         }
 
         if (recording && nextTrackId) {
@@ -205,13 +216,20 @@ function createDualTrackRecorder(cameraCtx, options) {
   }
 
   function stop() {
-    if (!recording) return;
+    if (!recording) return Promise.resolve();
     recording = false;
     clearRotateTimer();
     clearStartDelayTimer();
     if (activeTrack) {
-      stopTrack(activeTrack, null);
+      var targetTrack = activeTrack;
+      activeTrack = null;
+      return new Promise(function (resolve) {
+        stopTrack(targetTrack, null, function () {
+          resolve();
+        });
+      });
     }
+    return Promise.resolve();
   }
 
   function forceRotate() {

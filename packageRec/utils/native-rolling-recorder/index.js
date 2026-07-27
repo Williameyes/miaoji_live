@@ -48,6 +48,10 @@ function createNativeRollingRecorder(cameraCtx, options) {
           var item = pendingExports[i];
           // 如果触发时间戳早于当前刚落盘分段的结束时间，即可在该分段或历史分段中完成裁剪
           if (item.triggerTime <= seg.stop + 1000) {
+            if (item.timer) {
+              clearTimeout(item.timer);
+              item.timer = null;
+            }
             (function (pendingItem) {
               resolveExportPath(ring.getSegments(), pendingItem.triggerTime)
                 .then(function (path) {
@@ -80,13 +84,17 @@ function createNativeRollingRecorder(cameraCtx, options) {
 
   function stop() {
     clearThrottleTimer();
-    recorder.stop();
+    var pStop = recorder.stop();
     // 释放所有等待中的导出 Promise
     for (var i = 0; i < pendingExports.length; i++) {
+      if (pendingExports[i].timer) {
+        clearTimeout(pendingExports[i].timer);
+      }
       pendingExports[i].reject(new Error('recorder_stopped'));
     }
     pendingExports = [];
     ring.clear();
+    return pStop || Promise.resolve();
   }
 
   /**
@@ -99,12 +107,42 @@ function createNativeRollingRecorder(cameraCtx, options) {
     }
 
     var triggerTime = Date.now();
+
+    // 检查环形缓冲区中是否有已经落盘的完备分段（能覆盖过去 8 秒）
+    // 如果最新落盘分段结束时间足够新鲜（10 秒内），可以直接利用，无需卡死等待当段
+    var currentSegs = ring.getSegments();
+    if (currentSegs && currentSegs.length > 0) {
+      var latestSeg = currentSegs[currentSegs.length - 1];
+      if (latestSeg && latestSeg.path && (triggerTime - latestSeg.stop <= 10000)) {
+        console.log('[NativeRollingRecorder] Export fulfilled using existing completed segment in ring:', latestSeg.path);
+        return resolveExportPath(currentSegs, triggerTime);
+      }
+    }
+
     return new Promise(function (resolve, reject) {
-      pendingExports.push({
+      var exportItem = {
         triggerTime: triggerTime,
         resolve: resolve,
-        reject: reject
-      });
+        reject: reject,
+        timer: null
+      };
+
+      // 10 秒超时关口：若 rotate 或底层 stopRecord 卡死未及时落盘，兜底使用环中最新可用分段响应
+      exportItem.timer = setTimeout(function () {
+        var idx = pendingExports.indexOf(exportItem);
+        if (idx >= 0) {
+          pendingExports.splice(idx, 1);
+        }
+        var segs = ring.getSegments();
+        if (segs && segs.length > 0) {
+          console.warn('[NativeRollingRecorder] Export timeout (10s), resolving with latest available ring segment');
+          resolveExportPath(segs, triggerTime).then(resolve).catch(reject);
+        } else {
+          reject(new Error('export_timeout_no_segment'));
+        }
+      }, 10000);
+
+      pendingExports.push(exportItem);
 
       var now = Date.now();
       var timeSinceLast = now - lastRotateTime;
