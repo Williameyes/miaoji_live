@@ -151,7 +151,7 @@ function createNativeHighlightPipeline(page, perf) {
       return Promise.resolve();
     }
     if (!nativeRecorder) {
-      // 动态读取 Profile 切分时长：1080p 选 60 秒 (~60MB)，720p 选 120 秒 (~60MB)，双分段共计 ~120MB 绝对低于 200MB 配额
+      // 动态读取 Profile 切分时长：1080p 保持 60s，避免过于频繁 stop/start 增加硬件切换开销。
       var nativeSegmentMs = perf.nativeSegmentMs || (perf.use1080p ? 60000 : 120000);
       nativeRecorder = createNativeRollingRecorder(ctx, {
         segmentMs: nativeSegmentMs,
@@ -159,6 +159,11 @@ function createNativeHighlightPipeline(page, perf) {
         skipMediaContainerTrim: !!perf.skipMediaContainerTrim,
         onError: function (err) {
           console.warn('[NativeHighlightPipeline] recorder error:', err);
+          if (page && typeof page._dlog === 'function') {
+            page._dlog('REC', 'native recorder error', {
+              err: err && err.message ? err.message : String(err || '')
+            });
+          }
         }
       });
     }

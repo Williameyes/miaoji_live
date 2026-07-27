@@ -11,7 +11,7 @@ function createNativeRollingRecorder(cameraCtx, options) {
   var segmentMs = opts.segmentMs || 60000; // 默认 60 秒切分（按 720p/1080p Profile 动态传入）
   var skipMediaContainerTrim = !!opts.skipMediaContainerTrim;
   
-  // 单分段环形缓冲区，仅保存 1 个最新分段（单段 ~60MB，总占用仅 60MB 极低风险）
+  // 单分段环形缓冲区，仅保存 1 个最新分段（单段 ~60MB），避免长时监看堆积临时文件。
   var ring = createSegmentRing(1);
   var pendingExports = [];
   var lastRotateTime = 0;

@@ -169,7 +169,7 @@ function getHighlightRecProfile(options) {
     audioSegmentMs: 50000,
     audioMaxSegments: 4,
     audioFormat: 'mp3',
-    /** 原生模式动态分段时长：1080p (8Mbps) 选 60 秒 (~60MB)，720p (4Mbps) 选 120 秒 (~60MB)。双分段共 ~120MB，留出 80MB 余量绝对低于 200MB 配额 */
+    /** 原生模式动态分段时长：1080p (8Mbps) 选 60 秒，720p 选 120 秒，减少不必要的 stop/start 频率。 */
     nativeSegmentMs: use1080p ? 60000 : 120000,
     /**
      * 原生模式导出跳过 MediaContainer 裁切，整段 stopRecord 落盘文件直存相册，避免长时监看后裁切失败。

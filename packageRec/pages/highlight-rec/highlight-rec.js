@@ -1344,7 +1344,17 @@ Page({
     }
 
     var self = this;
-    this._lastExportTime = Date.now();
+    var exportStartedAt = Date.now();
+    var slowExportTimer = setTimeout(function () {
+      slowExportTimer = null;
+      self._dlog('EXPORT', 'triggerExport slow wait', {
+        costMs: Date.now() - exportStartedAt,
+        recMode: self.data.recMode,
+        qualityLabel: self.data.qualityLabel || '',
+        actionMode: !!self.data.actionMode
+      });
+    }, 12000);
+    this._lastExportTime = exportStartedAt;
     this._exportInFlight = true;
     this.setData({
       savingCount: this.data.savingCount + 1
@@ -1353,13 +1363,24 @@ Page({
     this._dlog('EXPORT', 'doExportHighlight triggered', { isLocal: !!isLocal });
     pipeline.triggerExport(Date.now())
       .then(function (trimmedPath) {
-        self._dlog('EXPORT', 'triggerExport success', { path: trimmedPath });
+        if (slowExportTimer) {
+          clearTimeout(slowExportTimer);
+          slowExportTimer = null;
+        }
+        self._dlog('EXPORT', 'triggerExport success', {
+          path: trimmedPath,
+          costMs: Date.now() - exportStartedAt
+        });
         self.saveVideoToPhotos(trimmedPath, isLocal);
         self.updateBufferStatus();
         self._pruneHighlightRecStorage('after_export');
         self.checkDiskSpace();
       })
       .catch(function (err) {
+        if (slowExportTimer) {
+          clearTimeout(slowExportTimer);
+          slowExportTimer = null;
+        }
         self._exportInFlight = false;
         self.setData({
           savingCount: Math.max(0, self.data.savingCount - 1)
@@ -1368,7 +1389,10 @@ Page({
         if (err && err.message === 'recorder_stopped') {
           return; // 页面切出或销毁时，正常释放挂起的 promise，无需报错弹窗
         }
-        self._dlog('EXPORT', 'triggerExport failed', err);
+        self._dlog('EXPORT', 'triggerExport failed', {
+          err: err && err.message ? err.message : String(err || ''),
+          costMs: Date.now() - exportStartedAt
+        });
         console.error('[HighlightRec] Export highlight failed:', err);
         var errMsg = (err && err.message) ? err.message : '导出时发生错误，请重试';
         if (errMsg.indexOf('audio_mux_failed') >= 0) {
@@ -1382,6 +1406,37 @@ Page({
           showCancel: false
         });
       });
+  },
+
+  _scheduleUnlinkSavedTempPath: function (filePath) {
+    var self = this;
+    var path = typeof filePath === 'string' ? filePath : '';
+    if (!path || path.indexOf('wxfile://tmp') !== 0) return;
+    setTimeout(function () {
+      if (self._unloaded) return;
+      var pipeline = self._highlightPipeline;
+      var activePaths = pipeline && typeof pipeline.getActiveMediaPaths === 'function'
+        ? pipeline.getActiveMediaPaths()
+        : [];
+      if (activePaths && activePaths.indexOf(path) >= 0) {
+        self._dlog('STORAGE', 'skip unlink saved temp still active', { path: path });
+        return;
+      }
+      try {
+        wx.getFileSystemManager().unlink({
+          filePath: path,
+          success: function () {
+            self._dlog('STORAGE', 'unlink saved temp video', { path: path });
+          },
+          fail: function (err) {
+            self._dlog('STORAGE', 'unlink saved temp video skipped', {
+              path: path,
+              err: err && err.errMsg ? err.errMsg : String(err || '')
+            });
+          }
+        });
+      } catch (e) {}
+    }, 1800);
   },
 
   saveVideoToPhotos: function (filePath, isLocal) {
@@ -1444,6 +1499,7 @@ Page({
         if (pipeline && typeof pipeline.releaseExportedPath === 'function') {
           pipeline.releaseExportedPath(filePath);
         }
+        self._scheduleUnlinkSavedTempPath(filePath);
 
         // 保存相册成功后触发沙盒例行清理（仅擦除过期孤儿文件，不抹除当前活跃分段）
         self._pruneHighlightRecStorage('after_album_save');
