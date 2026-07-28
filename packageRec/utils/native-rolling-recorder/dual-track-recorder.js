@@ -86,6 +86,16 @@ function createDualTrackRecorder(cameraCtx, options) {
         if (typeof onError === 'function') {
           onError(new Error('startRecord_failed: ' + errDetail));
         }
+
+        // 状态自愈：若因 Native 相机繁忙 (is recording / is stopping) 启动失败，延时 2s 后自动尝试复位重启
+        if (recording && (errDetail.indexOf('is recording') >= 0 || errDetail.indexOf('is stopping') >= 0)) {
+          console.warn('[DualTrack] Attempting self-healing recovery start for track:', trackId);
+          setTimeout(function () {
+            if (recording && !transitioning) {
+              startTrack(trackId);
+            }
+          }, 2000);
+        }
       }
     });
 
@@ -161,7 +171,15 @@ function createDualTrackRecorder(cameraCtx, options) {
         }
 
         if (recording && nextTrackId) {
-          scheduleStartTrack(nextTrackId);
+          var extraCoolingMs = (errDetail.indexOf('is stopping') >= 0 || errDetail.indexOf('is recording') >= 0) ? 2000 : 0;
+          if (extraCoolingMs > 0) {
+            console.log('[DualTrack] Native camera busy (is stopping/recording), deferring next track start by', extraCoolingMs, 'ms');
+            setTimeout(function () {
+              scheduleStartTrack(nextTrackId);
+            }, extraCoolingMs);
+          } else {
+            scheduleStartTrack(nextTrackId);
+          }
         } else {
           transitioning = false;
         }

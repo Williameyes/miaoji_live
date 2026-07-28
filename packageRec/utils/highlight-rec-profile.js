@@ -146,9 +146,9 @@ function getHighlightRecProfile(options) {
     actionMode: actionMode,
     aspectMode: aspectMode,
     aspectLabel: canvas.aspectLabel,
-    lockCenterFocus: !actionMode,
+    lockCenterFocus: true, // 锁定中心焦点（关闭追拍频繁转镜头时的 AF 自动对焦寻焦，大幅降低 CPU/GPU 负载与发热）
     exposureCompensationEv: actionMode ? -0.7 : 0,
-    cameraResolution: (use1080p || actionMode) ? 'high' : 'medium',
+    cameraResolution: use1080p ? 'high' : 'medium', // 720p 追拍降至 medium，降低全屏预览 GPU 渲染开销，把资源留给硬件编码
     cameraFrameSize: 'large',
     chunkDurationMs: 50000,
     staggerMs: 8000,
