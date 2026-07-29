@@ -338,8 +338,10 @@ Page({
     }
     var aspectMode = this.data.aspectMode || highlightRecProfile.ASPECT_PORTRAIT;
     var box = computePreviewStageSizePx(sysW, sysH, aspectMode);
-    var stageStyle = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);' +
-      'width:' + box.w + 'px;height:' + box.h + 'px;';
+    var leftPx = Math.round((sysW - box.w) / 2);
+    var topPx = Math.round((sysH - box.h) / 2);
+    var stageStyle = 'position:fixed;left:' + leftPx + 'px;top:' + topPx + 'px;' +
+      'width:' + Math.round(box.w) + 'px;height:' + Math.round(box.h) + 'px;';
     var frameW;
     var frameH;
     if (aspectMode === highlightRecProfile.ASPECT_LANDSCAPE) {
