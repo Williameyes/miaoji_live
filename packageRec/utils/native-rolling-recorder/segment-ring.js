@@ -4,7 +4,34 @@
 
 function createSegmentRing(maxSegments) {
   var segments = [];
-  var limit = maxSegments || 1; // 仅保留 1 个最新轻量分段（~60MB），旧段落盘即擦除，极简低内存占用
+  var limit = maxSegments || 1; // 仅保留 1 个最新分段，旧段落盘即擦除，极简低内存占用
+
+  function safeUnlink(filePath) {
+    if (!filePath || typeof filePath !== 'string') return;
+    try {
+      var fs = wx.getFileSystemManager();
+      fs.unlink({
+        filePath: filePath,
+        success: function () {
+          console.log('[SegmentRing] Successfully deleted expired segment:', filePath);
+        },
+        fail: function (err) {
+          // 若因原生层尚未完全关闭文件句柄导致首次 unlink 失败，1000ms 后兜底重试
+          setTimeout(function () {
+            try {
+              fs.unlink({
+                filePath: filePath,
+                success: function () {
+                  console.log('[SegmentRing] Retry deleted expired segment:', filePath);
+                },
+                fail: function () {}
+              });
+            } catch (e) {}
+          }, 1000);
+        }
+      });
+    } catch (e) {}
+  }
 
   /**
    * 写入新分段
@@ -15,20 +42,7 @@ function createSegmentRing(maxSegments) {
     if (segments.length > limit) {
       var removed = segments.shift();
       if (removed && removed.path) {
-        try {
-          var fs = wx.getFileSystemManager();
-          fs.unlink({
-            filePath: removed.path,
-            success: function () {
-              console.log('[SegmentRing] Deleted expired temp segment:', removed.path);
-            },
-            fail: function (err) {
-              console.log('[SegmentRing] Temp segment release request passed:', removed.path, err.errMsg || err);
-            }
-          });
-        } catch (e) {
-          console.log('[SegmentRing] unlink pass:', e);
-        }
+        safeUnlink(removed.path);
       }
     }
   }
@@ -40,13 +54,7 @@ function createSegmentRing(maxSegments) {
     while (segments.length > 0) {
       var seg = segments.shift();
       if (seg && seg.path) {
-        try {
-          var fs = wx.getFileSystemManager();
-          fs.unlink({
-            filePath: seg.path,
-            fail: function () {}
-          });
-        } catch (e) {}
+        safeUnlink(seg.path);
       }
     }
   }

@@ -668,7 +668,7 @@ Page({
   _autoRestartInProgress: false,
 
   /**
-   * 检查监看健康度，当连续监看达到 25 分钟且在空闲状态下无感自动热重启 (Flush & Restart)
+   * 检查监看健康度，当连续监看达到 8 分钟且在空闲状态下无感自动热重启 (Flush & Restart)
    */
   _checkPipelineHealthAndAutoRestart: function () {
     if (this._unloaded || this._autoRestartInProgress) return;
@@ -680,14 +680,14 @@ Page({
     var now = Date.now();
     if (this._lastExportTime && (now - this._lastExportTime < 15000)) return;
 
-    // 连续监看达到 25 分钟（25 * 60 * 1000 ms）阈值
-    var autoRestartThresholdMs = 25 * 60 * 1000;
+    // 连续监看达到 8 分钟（8 * 60 * 1000 ms）阈值，提前在硬件卡顿临界点到来前静默解包重连
+    var autoRestartThresholdMs = 8 * 60 * 1000;
     var lastRefTime = this._lastAutoRestartTime || now;
     if (now - lastRefTime < autoRestartThresholdMs) return;
 
     var self = this;
     this._autoRestartInProgress = true;
-    this._dlog('REC', 'Auto soft-restart pipeline for health maintenance (25min idle threshold reached)');
+    this._dlog('REC', 'Auto soft-restart pipeline for health maintenance (8min idle threshold reached)');
     console.info('[HighlightRec] Executing automatic silent pipeline soft-restart...');
 
     this.stopRecorder()
