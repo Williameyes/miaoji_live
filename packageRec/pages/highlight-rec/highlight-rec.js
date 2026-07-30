@@ -883,9 +883,13 @@ Page({
     }).catch(function () {});
   },
 
+  _lastBufferCoverageText: '',
+  _lastDiskCheckTime: 0,
+
   updateBufferStatus: function () {
     var pipeline = this._highlightPipeline;
     if (!pipeline || !pipeline.isActive()) return;
+    var nextText = '';
     if (this.data.recMode === 'native') {
       var cur = pipeline.getCurrentSegment ? pipeline.getCurrentSegment() : null;
       var start = (cur && cur.start) ? cur.start : 0;
@@ -900,30 +904,38 @@ Page({
       var s = elapsedSec % 60;
       var timeStr = m > 0 ? (m + 'm ' + s + 's') : (s + 's');
       var directExport = this._recPerfProfile && this._recPerfProfile.nativeDirectExport;
-      this.setData({
-        bufferCoverageText: directExport
-          ? ('REC 整段 (' + timeStr + ')')
-          : ('REC 8s (' + timeStr + ')')
-      });
-      return;
+      nextText = directExport
+        ? ('REC 整段 (' + timeStr + ')')
+        : ('REC 8s (' + timeStr + ')');
+    } else {
+      var totalSec = pipeline.estimateBufferCoverageSec();
+      var targetMax = Math.round((this._recPerfProfile && this._recPerfProfile.bufferTargetMs
+        ? this._recPerfProfile.bufferTargetMs
+        : this.data.segmentMs) / 1000);
+      nextText = Math.min(targetMax, totalSec) + 's / ' + targetMax + 's';
     }
-    var totalSec = pipeline.estimateBufferCoverageSec();
-    var targetMax = Math.round((this._recPerfProfile && this._recPerfProfile.bufferTargetMs
-      ? this._recPerfProfile.bufferTargetMs
-      : this.data.segmentMs) / 1000);
-    this.setData({
-      bufferCoverageText: Math.min(targetMax, totalSec) + 's / ' + targetMax + 's'
-    });
+
+    if (this._lastBufferCoverageText !== nextText) {
+      this._lastBufferCoverageText = nextText;
+      this.setData({
+        bufferCoverageText: nextText
+      });
+    }
   },
 
   checkDiskSpace: function () {
     var self = this;
+    var now = Date.now();
+    if (this._lastDiskCheckTime && now - this._lastDiskCheckTime < 180000) return;
+    this._lastDiskCheckTime = now;
     if (typeof wx.getStorageInfo === 'function') {
       wx.getStorageInfo({
         success: function (res) {
           var ratio = res.limitSize > 0 ? res.currentSize / res.limitSize : 0;
           var isTight = ratio > 0.85;
-          self.setData({ diskWarning: isTight });
+          if (self.data.diskWarning !== isTight) {
+            self.setData({ diskWarning: isTight });
+          }
           if (ratio > 0.75) {
             self._pruneHighlightRecStorage(isTight ? 'storage_severe' : 'storage_warn');
           }
@@ -1573,8 +1585,13 @@ Page({
     if (extra !== undefined) {
       try { entry += ' | ' + (typeof extra === 'object' ? JSON.stringify(extra) : String(extra)); } catch (e) {}
     }
-    this._runtimeLogs.push(entry);
-    if (this._runtimeLogs.length > 500) this._runtimeLogs.shift();
+    this._logRingIdx = this._logRingIdx || 0;
+    if (this._runtimeLogs.length < 500) {
+      this._runtimeLogs.push(entry);
+    } else {
+      this._runtimeLogs[this._logRingIdx % 500] = entry;
+      this._logRingIdx++;
+    }
     console.log('[HighlightRecAudit]', entry);
   },
 

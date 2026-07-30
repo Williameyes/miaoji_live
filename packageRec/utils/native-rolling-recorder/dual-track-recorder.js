@@ -6,7 +6,7 @@ function createDualTrackRecorder(cameraCtx, options) {
   var opts = options || {};
   var segmentMs = opts.segmentMs || 60000; // 默认 60 秒切分（由 Profile 动态指定：1080p 60秒，720p 120秒）
   var recordQuality = opts.recordQuality || 'medium';
-  var stopToStartDelayMs = typeof opts.stopToStartDelayMs === 'number' ? opts.stopToStartDelayMs : 580;
+  var stopToStartDelayMs = typeof opts.stopToStartDelayMs === 'number' ? opts.stopToStartDelayMs : 380;
   var onSegmentComplete = opts.onSegmentComplete;
   var onTrackActive = opts.onTrackActive;
   var onError = opts.onError;
