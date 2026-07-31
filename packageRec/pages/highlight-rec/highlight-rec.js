@@ -116,6 +116,7 @@ Page({
 
   onLoad: function (options) {
     this._unloaded = false;
+    this._initHealthMonitor();
     var sys = wx.getSystemInfoSync();
     var use1080pStored = !!wx.getStorageSync(STORAGE_KEY_USE_1080P);
     var actionModeStored = !!wx.getStorageSync(STORAGE_KEY_ACTION_MODE);
@@ -178,6 +179,81 @@ Page({
     this.setData({
       segmentMs: 90000
     });
+  },
+
+  _healthStats: null,
+  _healthTimer: null,
+
+  _initHealthMonitor: function () {
+    var self = this;
+    this._healthStats = {
+      heapSamples: [],
+      memoryWarnings: [],
+      jankCount: 0
+    };
+
+    if (typeof wx.onMemoryWarning === 'function') {
+      this._onMemWarnHandler = function (res) {
+        var level = res && typeof res.level === 'number' ? res.level : 'warn';
+        self._dlog('HEALTH_WARN', 'Memory Warning Triggered!', { level: level });
+        if (self._healthStats) {
+          self._healthStats.memoryWarnings.push({ t: Date.now(), level: level });
+        }
+      };
+      wx.onMemoryWarning(this._onMemWarnHandler);
+    }
+    this._startHealthMonitorTimer();
+  },
+
+  _startHealthMonitorTimer: function () {
+    var self = this;
+    this._stopHealthMonitorTimer();
+    this._healthTimer = setInterval(function () {
+      self._sampleHealthMetrics();
+    }, 15000);
+  },
+
+  _stopHealthMonitorTimer: function () {
+    if (this._healthTimer) {
+      clearInterval(this._healthTimer);
+      this._healthTimer = null;
+    }
+  },
+
+  _sampleHealthMetrics: function () {
+    try {
+      var heapMB = 0;
+      if (typeof wx.getPerformance === 'function') {
+        var perf = wx.getPerformance();
+        if (perf) {
+          if (typeof perf.currentMemory === 'number' && perf.currentMemory > 0) {
+            heapMB = Math.round(perf.currentMemory / (1024 * 1024) * 100) / 100;
+          } else if (perf.memory && typeof perf.memory.usedJSHeapSize === 'number') {
+            heapMB = Math.round(perf.memory.usedJSHeapSize / (1024 * 1024) * 100) / 100;
+          }
+        }
+      }
+      var storage = {};
+      try { storage = wx.getStorageInfoSync(); } catch (eS) {}
+
+      var activeSegments = this.rollingSegments || [];
+      var activeCount = activeSegments.length;
+
+      if (this._healthStats && heapMB > 0) {
+        this._healthStats.heapSamples.push(heapMB);
+      }
+
+      this._dlog('HEALTH', '15s Health Snapshot', {
+        jsHeapMB: heapMB > 0 ? heapMB : 'N/A',
+        storageUsedKB: storage.currentSize || 0,
+        storageLimitKB: storage.limitSize || 0,
+        activeRollingFiles: activeCount,
+        isRecording: !!this.data.isRecording,
+        wsConnected: !!this.data.wsConnected
+      });
+    } catch (eHealth) {
+      console.warn('[HighlightRec] Sample health metrics failed:', eHealth);
+    }
   },
 
   onReady: function () {
@@ -250,6 +326,7 @@ Page({
 
   onHide: function () {
     this._livePageVisible = false;
+    this._stopHealthMonitorTimer();
     this._clearBufferStatusTimer();
     this._clearStorageCleanupTimer();
     if (this._orientationResizeTimer) {
@@ -263,6 +340,7 @@ Page({
 
   onUnload: function () {
     this._unloaded = true;
+    this._stopHealthMonitorTimer();
     this._clearBufferStatusTimer();
     this._clearStorageCleanupTimer();
     this._clearZoomApplyTimer();
@@ -1571,6 +1649,10 @@ Page({
    * 运行审计日志收集与微信分享
    * ========================================================================= */
 
+  /* =========================================================================
+   * 运行审计日志收集与微信分享
+   * ========================================================================= */
+
   _dlog: function (tag, msg, extra) {
     if (!this._runtimeLogs) this._runtimeLogs = [];
     var now = new Date();
@@ -1586,10 +1668,11 @@ Page({
       try { entry += ' | ' + (typeof extra === 'object' ? JSON.stringify(extra) : String(extra)); } catch (e) {}
     }
     this._logRingIdx = this._logRingIdx || 0;
-    if (this._runtimeLogs.length < 500) {
+    var MAX_LOG_CAPACITY = 3000;
+    if (this._runtimeLogs.length < MAX_LOG_CAPACITY) {
       this._runtimeLogs.push(entry);
     } else {
-      this._runtimeLogs[this._logRingIdx % 500] = entry;
+      this._runtimeLogs[this._logRingIdx % MAX_LOG_CAPACITY] = entry;
       this._logRingIdx++;
     }
     console.log('[HighlightRecAudit]', entry);
@@ -1600,6 +1683,14 @@ Page({
     try { sys = wx.getSystemInfoSync(); } catch (e) {}
     var storage = {};
     try { storage = wx.getStorageInfoSync(); } catch (e) {}
+
+    var stats = this._healthStats || {};
+    var memWarnings = stats.memoryWarnings || [];
+    var jankCount = stats.jankCount || 0;
+    var heapSamples = stats.heapSamples || [];
+    var startHeap = heapSamples.length > 0 ? heapSamples[0] : 0;
+    var endHeap = heapSamples.length > 0 ? heapSamples[heapSamples.length - 1] : 0;
+    var heapDelta = Math.round((endHeap - startHeap) * 100) / 100;
 
     var lines = [];
     lines.push('==================================================');
@@ -1622,7 +1713,41 @@ Page({
       lines.push('性能 Profile: ' + JSON.stringify(this._recPerfProfile));
     }
     lines.push('--------------------------------------------------');
-    lines.push('【近 500 条运行日志轨迹】');
+    lines.push('【10 分钟健康诊断与耗时总结】');
+    lines.push('运行采样点数: ' + heapSamples.length + ' 次 (15s/采样)');
+    lines.push('内存 (Heap) 起点: ' + (startHeap ? startHeap + ' MB' : '未采集'));
+    lines.push('内存 (Heap) 终点: ' + (endHeap ? endHeap + ' MB' : '未采集'));
+    lines.push('内存 增量 (Delta): ' + (heapDelta > 0 ? '+' : '') + heapDelta + ' MB (' + (heapDelta > 20 ? 'WARNING: 疑似存在内存泄漏' : '正常') + ')');
+    lines.push('系统内存告警次数: ' + memWarnings.length + ' 次');
+    lines.push('单帧耗时 >150ms 卡顿数: ' + jankCount + ' 次');
+    lines.push('--------------------------------------------------');
+    lines.push('【滚动录制活跃文件清单 (Rolling Sandbox Files)】');
+    var activeSegments = (this.rollingSegments || []).slice();
+    if (activeSegments.length === 0) {
+      lines.push('(当前沙盒无活跃滚动切片文件)');
+    } else {
+      var fsMgr = null;
+      try { fsMgr = wx.getFileSystemManager(); } catch (e) {}
+      var totalRollingBytes = 0;
+      for (var i = 0; i < activeSegments.length; i++) {
+        var seg = activeSegments[i];
+        var segPath = seg.path || seg.filePath || '';
+        var segSize = 0;
+        if (segPath && fsMgr) {
+          try {
+            var st = fsMgr.statSync(segPath);
+            segSize = st ? st.size : 0;
+          } catch (eSt) {}
+        }
+        totalRollingBytes += segSize;
+        var durMs = seg.stop && seg.start ? (seg.stop - seg.start) : (seg.durationMs || 0);
+        lines.push(' 切片[' + i + '] 轨道:' + (seg.trackId || 'N/A') + ' | 大小:' + Math.round(segSize / 1024) + 'KB | 时长:' + Math.round(durMs / 1000) + 's');
+        lines.push('   路径: ' + segPath);
+      }
+      lines.push(' 活跃滚动切片总占用: ' + Math.round(totalRollingBytes / (1024 * 1024) * 100) / 100 + ' MB');
+    }
+    lines.push('--------------------------------------------------');
+    lines.push('【运行日志轨迹 (最新 3000 条)】');
     var logs = this._runtimeLogs || [];
     if (logs.length === 0) {
       lines.push('(暂无运行日志)');

@@ -205,8 +205,8 @@ function pruneHighlightRecSandboxAsync(activeKeepPaths, opts) {
     })
     .then(function (auditCount) {
       removedAudit = auditCount;
-      if ((removedMedia > 0 || removedAudit > 0) && options.reason) {
-        console.info('[highlight_rec_storage_cleanup_async]', options.reason, removedMedia, removedAudit);
+      if (options.reason) {
+        console.info('[STORAGE_CLEANUP][ROLLING_FILE]', 'reason:', options.reason, '| removedMediaFiles:', removedMedia, '| removedAuditFiles:', removedAudit);
       }
       return { removedMedia: removedMedia, removedAudit: removedAudit };
     })
