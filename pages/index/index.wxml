@@ -24,6 +24,8 @@
       wx:for="{{matches}}"
       wx:key="id"
       style="animation-delay: {{index * 55}}ms"
+      bindlongpress="onLongPressMatchCard"
+      data-id="{{item.id}}"
     >
       <!-- 队伍行 -->
       <view class="card-teams-row">
@@ -673,5 +675,100 @@
   <view class="wso-seo-block" aria-role="description">
     <text>高光记分 - 专业的篮球比赛记分板与足球比分记录工具。支持篮球计分、足球计分、羽毛球记分等多种运动类型。实时直播记分板，比赛计分助手，赛事比分统计，适用于业余篮球赛、校园足球联赛、羽毛球锦标赛等各类比赛场景。一键创建比赛，实时记录比分，高光片段回放保存。</text>
   </view>
+
+  <!-- ===== 抖音发帖文案已复制弹窗 ===== -->
+  <view class="douyin-modal-mask" wx:if="{{showDouyinModal}}" bindtap="onCloseDouyinModal">
+    <view class="douyin-modal-card" catchtap="onStopPropagation">
+      <view class="douyin-modal-header">
+        <view class="douyin-modal-badge">
+          <text class="douyin-modal-icon">📱</text>
+        </view>
+        <view class="douyin-modal-titles">
+          <text class="douyin-modal-title">抖音发帖文案已复制</text>
+          <text class="douyin-modal-sub">长按卡片自动生成，可在抖音发帖时直接粘贴</text>
+        </view>
+      </view>
+
+      <view class="douyin-text-container">
+        <text class="douyin-text-body" selectable="true">{{douyinTextContent}}</text>
+      </view>
+
+      <!-- 海报宣发可选附加信息 -->
+      <view class="poster-optional-inputs">
+        <text class="poster-input-title">🎨 海报宣发附加信息（可选）：</text>
+        <view class="poster-input-item">
+          <text class="poster-input-icon">📍</text>
+          <input class="poster-input-field" placeholder="比赛地点（如: 广西大学体育馆）" placeholder-class="poster-input-ph" value="{{posterMatchLocation}}" bindinput="onInputPosterLocation" />
+        </view>
+        <view class="poster-input-item">
+          <text class="poster-input-icon">📺</text>
+          <input class="poster-input-field" placeholder="直播账号（如: 抖音搜索 高光记分）" placeholder-class="poster-input-ph" value="{{posterLiveAccount}}" bindinput="onInputLiveAccount" />
+        </view>
+      </view>
+
+      <view class="douyin-modal-actions">
+        <view class="btn-douyin-secondary" hover-class="btn-douyin-hover" bindtap="onCopyDouyinText">
+          <text>📋 重新复制文案</text>
+        </view>
+        <view class="btn-douyin-primary" hover-class="btn-douyin-hover" bindtap="onGeneratePosterFromModal">
+          <text>🖼️ 生成推广海报</text>
+        </view>
+      </view>
+
+      <view class="btn-douyin-close" bindtap="onCloseDouyinModal">✕</view>
+    </view>
+  </view>
+
+  <!-- ===== 场次专属 AI 风格推广海报预览弹窗 ===== -->
+  <view class="poster-modal-mask" wx:if="{{showPosterModal}}" bindtap="onClosePosterModal">
+    <view class="poster-modal-card" catchtap="onStopPropagation">
+      <view class="poster-modal-header">
+        <text class="poster-modal-title">🎨 专属 AI 风格推广海报</text>
+        <text class="poster-modal-desc">场次独一无二渲染 · 无二维码干净合规</text>
+      </view>
+
+      <view class="poster-preview-wrapper">
+        <image class="poster-preview-img" src="{{posterImagePath}}" mode="widthFix" wx:if="{{posterImagePath}}"></image>
+        <view class="poster-loading-box" wx:else>
+          <block wx:if="{{generatingPoster}}">
+            <view class="poster-spinner"></view>
+            <text class="poster-loading-text">正在生成独一无二的海报...</text>
+          </block>
+          <block wx:else>
+            <text class="poster-error-icon">⚠️</text>
+            <text class="poster-loading-text">海报生成失败</text>
+            
+            <view class="poster-log-box" wx:if="{{posterLogText}}">
+              <text class="poster-log-title">📋 诊断日志（可滚动选择复制）：</text>
+              <scroll-view class="poster-log-scroll" scroll-y="true">
+                <text class="poster-log-content" selectable="true">{{posterLogText}}</text>
+              </scroll-view>
+            </view>
+
+            <view class="poster-actions-row">
+              <view class="btn-poster-retry" hover-class="btn-poster-hover" bindtap="onRetryGeneratePoster">点击重新生成</view>
+              <view class="btn-poster-copy-log" hover-class="btn-poster-hover" bindtap="onCopyPosterLogs">📋 复制诊断日志</view>
+            </view>
+          </block>
+        </view>
+      </view>
+
+      <view class="poster-modal-footer">
+        <view class="btn-poster-close" hover-class="btn-poster-hover" bindtap="onClosePosterModal">关 闭</view>
+        <view class="btn-poster-copy-log-footer" hover-class="btn-poster-hover" bindtap="onCopyPosterLogs" wx:if="{{!posterImagePath && posterLogText}}">📋 复制日志</view>
+        <block wx:if="{{posterImagePath}}">
+          <view class="btn-poster-share" hover-class="btn-poster-hover" bindtap="onSharePosterToFriend">
+            <text>📤 发送给朋友</text>
+          </view>
+          <view class="btn-poster-save" hover-class="btn-poster-hover" bindtap="onSavePosterToPhotos">
+            <text>💾 保存相册</text>
+          </view>
+        </block>
+      </view>
+    </view>
+  </view>
+
+  <!-- 离屏 2D Canvas 画布（与战报宣发页 1:1 对齐） -->
+  <canvas type="2d" id="douyinPosterCanvas" class="poster-canvas-offscreen"></canvas>
 
 </view>

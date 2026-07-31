@@ -1741,3 +1741,438 @@ page {
   color: #94A3B8;
   margin-top: 12rpx;
 }
+
+/* ===== 卡片长按按压视觉反馈 ===== */
+.match-card:active {
+  transform: scale(0.985);
+  box-shadow: 0 8rpx 32rpx rgba(37, 99, 235, 0.18), 0 2rpx 8rpx rgba(15, 23, 42, 0.08);
+  transition: transform 0.12s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.12s ease;
+}
+
+/* ===== 抖音文案复制弹窗 ===== */
+.douyin-modal-mask {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(15, 23, 42, 0.72);
+  backdrop-filter: blur(8px);
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40rpx;
+  animation: fadeIn 0.22s ease-out;
+}
+
+.douyin-modal-card {
+  position: relative;
+  width: 100%;
+  max-width: 640rpx;
+  background: #FFFFFF;
+  border-radius: 36rpx;
+  padding: 40rpx;
+  box-shadow: 0 24rpx 64rpx rgba(15, 23, 42, 0.28);
+  animation: modalScaleIn 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  box-sizing: border-box;
+}
+
+.douyin-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  margin-bottom: 24rpx;
+}
+
+.douyin-modal-badge {
+  width: 76rpx;
+  height: 76rpx;
+  border-radius: 22rpx;
+  background: linear-gradient(135deg, #181824 0%, #292938 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4rpx 16rpx rgba(24, 24, 36, 0.25);
+  flex-shrink: 0;
+}
+
+.douyin-modal-icon {
+  font-size: 38rpx;
+}
+
+.douyin-modal-titles {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.douyin-modal-title {
+  font-size: 32rpx;
+  font-weight: 700;
+  color: #0F172A;
+}
+
+.douyin-modal-sub {
+  font-size: 22rpx;
+  color: #64748B;
+  margin-top: 4rpx;
+}
+
+.douyin-text-container {
+  background: #F8FAFC;
+  border: 2rpx solid #E2E8F0;
+  border-radius: 20rpx;
+  padding: 24rpx;
+  margin-bottom: 32rpx;
+  max-height: 400rpx;
+  overflow-y: auto;
+}
+
+.douyin-text-body {
+  font-size: 26rpx;
+  color: #1E293B;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.douyin-modal-actions {
+  display: flex;
+  gap: 16rpx;
+}
+
+.btn-douyin-secondary {
+  flex: 1;
+  height: 84rpx;
+  background: #F1F5F9;
+  border-radius: 22rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #475569;
+}
+
+.btn-douyin-primary {
+  flex: 1.2;
+  height: 84rpx;
+  background: linear-gradient(135deg, #FF2C55 0%, #E60039 100%);
+  border-radius: 22rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26rpx;
+  font-weight: 700;
+  color: #FFFFFF;
+  box-shadow: 0 8rpx 24rpx rgba(255, 44, 85, 0.35);
+}
+
+.btn-douyin-hover {
+  opacity: 0.85;
+  transform: translateY(1rpx);
+}
+
+.btn-douyin-close {
+  position: absolute;
+  top: 24rpx;
+  right: 28rpx;
+  width: 52rpx;
+  height: 52rpx;
+  border-radius: 50%;
+  background: #F1F5F9;
+  color: #64748B;
+  font-size: 26rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ===== 专属 AI 风格推广海报弹窗 ===== */
+.poster-modal-mask {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(11, 15, 25, 0.82);
+  backdrop-filter: blur(12px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 30rpx;
+  animation: fadeIn 0.22s ease-out;
+}
+
+.poster-modal-card {
+  position: relative;
+  width: 100%;
+  max-width: 620rpx;
+  background: #1E293B;
+  border-radius: 36rpx;
+  padding: 32rpx;
+  box-shadow: 0 32rpx 80rpx rgba(0, 0, 0, 0.5);
+  border: 1rpx solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  box-sizing: border-box;
+}
+
+.poster-modal-header {
+  text-align: center;
+  margin-bottom: 24rpx;
+}
+
+.poster-modal-title {
+  font-size: 32rpx;
+  font-weight: 700;
+  color: #F8FAFC;
+  display: block;
+}
+
+.poster-modal-desc {
+  font-size: 22rpx;
+  color: #94A3B8;
+  margin-top: 6rpx;
+  display: block;
+}
+
+.poster-preview-wrapper {
+  position: relative;
+  width: 100%;
+  border-radius: 24rpx;
+  overflow: hidden;
+  box-shadow: 0 12rpx 36rpx rgba(0, 0, 0, 0.4);
+  background: #0F172A;
+  min-height: 480rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 28rpx;
+}
+
+.poster-preview-img {
+  width: 100%;
+  display: block;
+  border-radius: 24rpx;
+}
+
+.poster-loading-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 60rpx 0;
+}
+
+.poster-spinner {
+  width: 56rpx;
+  height: 56rpx;
+  border: 4rpx solid rgba(255, 255, 255, 0.15);
+  border-top-color: #3B82F6;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.poster-loading-text {
+  margin-top: 20rpx;
+  font-size: 24rpx;
+  color: #94A3B8;
+}
+
+.poster-modal-footer {
+  width: 100%;
+  display: flex;
+  gap: 16rpx;
+}
+
+.btn-poster-close {
+  flex: 1;
+  height: 84rpx;
+  background: #334155;
+  border-radius: 22rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #CBD5E1;
+}
+
+.btn-poster-share {
+  flex: 1.3;
+  height: 84rpx;
+  background: linear-gradient(135deg, #059669 0%, #10B981 100%);
+  border-radius: 22rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26rpx;
+  font-weight: 700;
+  color: #FFFFFF;
+  box-shadow: 0 8rpx 24rpx rgba(16, 185, 129, 0.35);
+}
+
+.btn-poster-save {
+  flex: 1.3;
+  height: 84rpx;
+  background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+  border-radius: 22rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26rpx;
+  font-weight: 700;
+  color: #FFFFFF;
+  box-shadow: 0 8rpx 24rpx rgba(37, 99, 235, 0.4);
+}
+
+/* 宣传海报可选输入框样式 */
+.poster-optional-inputs {
+  margin-top: 20rpx;
+  width: 100%;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1rpx solid rgba(255, 255, 255, 0.1);
+  border-radius: 20rpx;
+  padding: 16rpx 20rpx;
+  box-sizing: border-box;
+}
+
+.poster-input-title {
+  font-size: 22rpx;
+  color: #94A3B8;
+  font-weight: 600;
+  margin-bottom: 12rpx;
+  display: block;
+}
+
+.poster-input-item {
+  display: flex;
+  align-items: center;
+  background: rgba(30, 41, 59, 0.7);
+  border-radius: 12rpx;
+  padding: 10rpx 16rpx;
+  margin-bottom: 12rpx;
+}
+
+.poster-input-item:last-child {
+  margin-bottom: 0;
+}
+
+.poster-input-icon {
+  font-size: 24rpx;
+  margin-right: 12rpx;
+}
+
+.poster-input-field {
+  flex: 1;
+  font-size: 22rpx;
+  color: #F8FAFC;
+  height: 36rpx;
+}
+
+.poster-input-ph {
+  color: #64748B;
+  font-size: 22rpx;
+}
+
+.btn-poster-hover {
+  opacity: 0.88;
+}
+
+.poster-error-icon {
+  font-size: 56rpx;
+  margin-bottom: 12rpx;
+}
+
+.btn-poster-retry {
+  padding: 16rpx 32rpx;
+  background: #3B82F6;
+  color: #FFFFFF;
+  font-size: 24rpx;
+  font-weight: 600;
+  border-radius: 16rpx;
+}
+
+.poster-actions-row {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 24rpx;
+}
+
+.btn-poster-copy-log {
+  padding: 16rpx 32rpx;
+  background: #475569;
+  color: #F8FAFC;
+  font-size: 24rpx;
+  font-weight: 600;
+  border-radius: 16rpx;
+}
+
+.btn-poster-copy-log-footer {
+  flex: 1.2;
+  height: 84rpx;
+  background: #475569;
+  border-radius: 22rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #FFFFFF;
+}
+
+.poster-log-box {
+  width: 90%;
+  margin-top: 18rpx;
+  background: #090D16;
+  border: 1rpx solid #334155;
+  border-radius: 16rpx;
+  padding: 16rpx;
+  box-sizing: border-box;
+  text-align: left;
+}
+
+.poster-log-title {
+  font-size: 20rpx;
+  color: #38BDF8;
+  font-weight: 600;
+  display: block;
+  margin-bottom: 8rpx;
+}
+
+.poster-log-scroll {
+  max-height: 240rpx;
+  width: 100%;
+}
+
+.poster-log-content {
+  font-size: 18rpx;
+  color: #94A3B8;
+  font-family: monospace;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* 离屏 2D Canvas 隐藏样式（iOS 兼容 fixed 定位） */
+.poster-canvas-offscreen {
+  position: fixed;
+  left: -9999px;
+  top: 0;
+  width: 375px;
+  height: 600px;
+  z-index: -9999;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes modalScaleIn {
+  0% { opacity: 0; transform: scale(0.88); }
+  100% { opacity: 1; transform: scale(1); }
+}

@@ -506,7 +506,19 @@ Page({
     /* 本地广告设置相关状态 */
     showLocalAdModal: false,
     adMatchConfig: null,
-    localAdsPool: []
+    localAdsPool: [],
+
+    /* 抖音发帖与 AI 推广海报相关状态 */
+    showDouyinModal: false,
+    douyinTextContent: '',
+    currentLongPressMatch: null,
+    showPosterModal: false,
+    posterImagePath: '',
+    generatingPoster: false,
+    posterLogs: [],
+    posterLogText: '',
+    posterMatchLocation: (wx.getStorageSync && wx.getStorageSync('MIAOXIE_LAST_POSTER_LOCATION')) || '',
+    posterLiveAccount: (wx.getStorageSync && wx.getStorageSync('MIAOXIE_LAST_POSTER_LIVE_ACCOUNT')) || ''
   },
 
   /**
@@ -2706,5 +2718,714 @@ Page({
       return;
     }
     this.saveClipsToAlbum([item]);
+  },
+
+  /**
+   * 生成发抖音的标准单段落比赛文案
+   * @param {Object} match 比赛对象
+   * @returns {string} 单段自然文案
+   */
+  generateDouyinMatchText(match) {
+    if (!match) return '';
+    const teamA = match.teamA || {};
+    const teamB = match.teamB || {};
+    const teamAName = (teamA.name || '主队').trim();
+    const teamBName = (teamB.name || '客队').trim();
+    const scoreA = Number(teamA.score) || 0;
+    const scoreB = Number(teamB.score) || 0;
+    const isFinished = !!match.isFinished;
+    const sportLabel = match.sportLabel || '篮球';
+    const matchName = (match.matchName || '').trim() || `${sportLabel}精彩赛场`;
+
+    const hasScore = scoreA > 0 || scoreB > 0 || isFinished;
+
+    if (hasScore) {
+      let resultText = '';
+      if (scoreA > scoreB) {
+        resultText = `${teamAName}获得胜利；`;
+      } else if (scoreB > scoreA) {
+        resultText = `${teamBName}获得胜利；`;
+      } else {
+        resultText = `双方握手言和；`;
+      }
+      return `${matchName} 比赛战报：${teamAName} ${scoreA} : ${scoreB} ${teamBName}，${resultText}精彩比赛记录与高光时刻，尽在高光记分！ #高光记分 #${sportLabel} #比赛战报`;
+    }
+
+    const startAtTs = match.startAt || match.createdAt || Date.now();
+    const d = new Date(startAtTs);
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    return `${matchName} 赛事预告：${teamAName} VS ${teamBName}，开赛时间：${dateStr}。强强对话即将来袭，谁能问鼎？敬请期待！ #高光记分 #${sportLabel} #赛事预告`;
+  },
+
+  /**
+   * 长按比赛卡片触发抖音文案复制与海报快捷弹窗
+   * @param {WechatMiniprogram.TouchEvent} e
+   */
+  onLongPressMatchCard(e) {
+    const matchId = e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.id;
+    if (!matchId) return;
+
+    const list = this.data.matches || [];
+    const match = list.find((m) => String(m.id) === String(matchId));
+    if (!match) return;
+
+    wx.vibrateShort({ type: 'medium' });
+
+    const douyinText = this.generateDouyinMatchText(match);
+
+    wx.setClipboardData({
+      data: douyinText,
+      success: () => {
+        wx.showToast({
+          title: '抖音文案已复制',
+          icon: 'success',
+          duration: 2000
+        });
+      }
+    });
+
+    this.setData({
+      currentLongPressMatch: match,
+      douyinTextContent: douyinText,
+      showDouyinModal: true
+    });
+  },
+
+  onCopyDouyinText() {
+    if (!this.data.douyinTextContent) return;
+    wx.setClipboardData({
+      data: this.data.douyinTextContent,
+      success: () => {
+        wx.showToast({ title: '已复制到剪贴板', icon: 'success' });
+      }
+    });
+  },
+
+  onCloseDouyinModal() {
+    this.setData({ showDouyinModal: false });
+  },
+
+  onInputPosterLocation(e) {
+    const val = e && e.detail ? (e.detail.value || '').trim() : '';
+    this.setData({ posterMatchLocation: val });
+    try {
+      wx.setStorageSync('MIAOXIE_LAST_POSTER_LOCATION', val);
+    } catch (err) {}
+  },
+
+  onInputLiveAccount(e) {
+    const val = e && e.detail ? (e.detail.value || '').trim() : '';
+    this.setData({ posterLiveAccount: val });
+    try {
+      wx.setStorageSync('MIAOXIE_LAST_POSTER_LIVE_ACCOUNT', val);
+    } catch (err) {}
+  },
+
+  onGeneratePosterFromModal() {
+    const match = this.data.currentLongPressMatch;
+    if (!match) return;
+    this.setData({
+      showDouyinModal: false,
+      showPosterModal: true,
+      posterImagePath: '',
+      generatingPoster: true
+    });
+    this.generateUniquePoster(match);
+  },
+
+  onClosePosterModal() {
+    this.setData({
+      showPosterModal: false,
+      posterImagePath: '',
+      generatingPoster: false
+    });
+  },
+
+  /**
+   * 使用离屏 Canvas 2D 为指定比赛生成场次专属 AI 风格推广海报
+   * @param {Object} match 比赛对象
+   */
+  generateUniquePoster(match) {
+    const self = this;
+    const POSTER_W = 375;
+    const POSTER_H = 600;
+
+    self.setData({
+      generatingPoster: true,
+      posterImagePath: '',
+      posterLogs: [],
+      posterLogText: ''
+    });
+
+    const extraInfo = {
+      location: self.data.posterMatchLocation,
+      liveAccount: self.data.posterLiveAccount
+    };
+
+    logPosterDiag(self, `开始生成海报, 场次ID=${match ? match.id : 'null'}, 地点=${extraInfo.location}, 直播=${extraInfo.liveAccount}`);
+
+    const query = wx.createSelectorQuery();
+    query
+      .select('#douyinPosterCanvas')
+      .fields({ node: true, size: true })
+      .exec((res) => {
+        const item = res && res[0];
+        logPosterDiag(self, `Selector 结果: item=${!!item}, node=${!!(item && item.node)}`);
+
+        if (!item || !item.node) {
+          logPosterDiag(self, '错误：未找到 #douyinPosterCanvas 画布节点');
+          wx.showToast({ title: '海报生成失败', icon: 'none' });
+          self.setData({ generatingPoster: false });
+          return;
+        }
+
+        const canvas = item.node;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          logPosterDiag(self, '错误：getContext("2d") 返回 null');
+          wx.showToast({ title: '海报生成失败', icon: 'none' });
+          self.setData({ generatingPoster: false });
+          return;
+        }
+
+        const sys = (wx.getSystemInfoSync && wx.getSystemInfoSync()) || {};
+        const dpr = sys.pixelRatio || 2;
+        logPosterDiag(self, `系统设备 dpr=${dpr}, platform=${sys.platform}, SDKVersion=${sys.SDKVersion}`);
+
+        canvas.width = POSTER_W * dpr;
+        canvas.height = POSTER_H * dpr;
+        ctx.scale(dpr, dpr);
+        logPosterDiag(self, `Canvas 维度匹配设置: width=${canvas.width}, height=${canvas.height}`);
+
+        try {
+          drawUniqueMatchPoster(canvas, ctx, POSTER_W, POSTER_H, match, extraInfo, (msg) => {
+            logPosterDiag(self, msg);
+          });
+          logPosterDiag(self, '绘图渲染完成');
+        } catch (drawErr) {
+          const errStr = (drawErr && (drawErr.stack || drawErr.message)) || String(drawErr);
+          logPosterDiag(self, `绘图异常: ${errStr}`);
+        }
+
+        logPosterDiag(self, '同步触发 wx.canvasToTempFilePath...');
+        wx.canvasToTempFilePath({
+          canvas: canvas,
+          fileType: 'png',
+          quality: 1,
+          success: (out) => {
+            logPosterDiag(self, `海报导出成功! path=${out.tempFilePath}`);
+            self.setData({
+              posterImagePath: out.tempFilePath,
+              generatingPoster: false
+            });
+          },
+          fail: (err) => {
+            const errStr = (err && (err.errMsg || JSON.stringify(err))) || String(err);
+            logPosterDiag(self, `canvasToTempFilePath 导出失败: ${errStr}`);
+            wx.showToast({ title: '海报生成失败', icon: 'none' });
+            self.setData({ generatingPoster: false });
+          }
+        });
+      });
+  },
+
+  onStopPropagation() {},
+
+  /**
+   * 一键复制诊断日志到剪贴板
+   */
+  onCopyPosterLogs() {
+    const logs = this.data.posterLogText || '暂无诊断日志';
+    wx.setClipboardData({
+      data: logs,
+      success: () => {
+        wx.showToast({ title: '诊断日志已复制', icon: 'success' });
+      }
+    });
+  },
+
+  /**
+   * 海报生成失败时重试
+   */
+  onRetryGeneratePoster() {
+    const match = this.data.currentLongPressMatch;
+    if (!match) return;
+    this.generateUniquePoster(match);
+  },
+
+  /**
+   * 调起微信原生分享菜单将海报直接发送给好友
+   */
+  onSharePosterToFriend() {
+    const filePath = this.data.posterImagePath;
+    if (!filePath) return;
+
+    if (wx.showShareImageMenu) {
+      wx.showShareImageMenu({
+        path: filePath,
+        success: () => {
+          wx.showToast({ title: '已发送', icon: 'success' });
+        },
+        fail: (err) => {
+          if (err && err.errMsg && err.errMsg.indexOf('cancel') >= 0) return;
+          wx.showToast({ title: '取消发送', icon: 'none' });
+        }
+      });
+    } else if (wx.shareFileMessage) {
+      wx.shareFileMessage({
+        filePath: filePath,
+        success: () => {
+          wx.showToast({ title: '发送成功', icon: 'success' });
+        }
+      });
+    } else {
+      wx.showToast({ title: '版本较低，请手动保存相册发送', icon: 'none' });
+    }
+  },
+
+  /**
+   * 保存生成的推广海报到手机相册
+   */
+  onSavePosterToPhotos() {
+    const filePath = this.data.posterImagePath;
+    if (!filePath) return;
+
+    wx.saveImageToPhotosAlbum({
+      filePath: filePath,
+      success: () => {
+        wx.showToast({
+          title: '已保存至手机相册',
+          icon: 'success',
+          duration: 2000
+        });
+      },
+      fail: (err) => {
+        if (err && err.errMsg && err.errMsg.indexOf('auth deny') >= 0) {
+          wx.showModal({
+            title: '需要相册权限',
+            content: '请在设置中允许高光记分保存图片到相册，以便发布抖音图文',
+            confirmText: '去设置',
+            success: (res) => {
+              if (res.confirm) {
+                wx.openSetting();
+              }
+            }
+          });
+        } else {
+          wx.showToast({
+            title: '保存失败',
+            icon: 'none'
+          });
+        }
+      }
+    });
   }
 });
+
+/**
+ * 记录海报生成诊断日志
+ * @param {Object} page 页面实例
+ * @param {string} msg 日志内容
+ */
+function logPosterDiag(page, msg) {
+  if (!page) return;
+  const ts = new Date();
+  const time = `${String(ts.getHours()).padStart(2, '0')}:${String(ts.getMinutes()).padStart(2, '0')}:${String(ts.getSeconds()).padStart(2, '0')}.${String(ts.getMilliseconds()).padStart(3, '0')}`;
+  const entry = `[${time}] ${msg}`;
+  console.log('[PosterDiag]', entry);
+  const logs = (page.data.posterLogs || []).concat([entry]);
+  page.setData({
+    posterLogs: logs,
+    posterLogText: logs.join('\n')
+  });
+}
+
+/**
+ * 绘制多行居中文本（Canvas 2D）
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {string} text
+ * @param {number} x
+ * @param {number} y
+ * @param {number} maxWidth
+ * @param {number} lineHeight
+ * @param {number} maxLines
+ */
+function drawMultiLineTextPoster(ctx, text, x, y, maxWidth, lineHeight, maxLines) {
+  const str = String(text || '').trim();
+  if (!str) return;
+
+  const words = str.split('');
+  const lines = [];
+  let currentLine = '';
+
+  for (let i = 0; i < words.length; i++) {
+    const char = words[i];
+    const testLine = currentLine + char;
+    const metrics = ctx.measureText(testLine);
+    if (metrics.width > maxWidth && i > 0) {
+      lines.push(currentLine);
+      currentLine = char;
+    } else {
+      currentLine = testLine;
+    }
+  }
+  if (currentLine) {
+    lines.push(currentLine);
+  }
+
+  const totalLines = Math.min(lines.length, maxLines || 2);
+  for (let l = 0; l < totalLines; l++) {
+    let lineStr = lines[l];
+    if (l === totalLines - 1 && lines.length > totalLines) {
+      while (lineStr.length > 0 && ctx.measureText(lineStr + '...').width > maxWidth) {
+        lineStr = lineStr.slice(0, -1);
+      }
+      lineStr += '...';
+    }
+    const lineY = y + l * lineHeight;
+    ctx.fillText(lineStr, x, lineY);
+  }
+}
+
+/**
+ * 根据背景色 RGB 亮度自动计算高对比度的文字颜色（浅色背景返回深色文字 #0F172A，深色背景返回 #FFFFFF）
+ * @param {string} hexColor 16进制背景颜色代码
+ * @returns {string} '#FFFFFF' 或 '#0F172A'
+ */
+function getContrastingTextColor(hexColor) {
+  let c = (hexColor || '#FFFFFF').replace('#', '');
+  if (c.length === 3) {
+    c = c[0] + c[0] + c[1] + c[1] + c[2] + c[2];
+  }
+  const r = parseInt(c.substring(0, 2), 16) || 0;
+  const g = parseInt(c.substring(2, 4), 16) || 0;
+  const b = parseInt(c.substring(4, 6), 16) || 0;
+  const luminance = (r * 299 + g * 587 + b * 114) / 1000;
+  return luminance > 165 ? '#0F172A' : '#FFFFFF';
+}
+
+/**
+ * 绘制队名战牌与响应式折行文字（自动对比度 + 解决超长队名错乱问题）
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {string} name 队名
+ * @param {number} boxX 战牌 X
+ * @param {number} boxY 战牌 Y
+ * @param {number} boxW 战牌宽
+ * @param {number} boxH 战牌高
+ * @param {string} bgColor 背景色
+ */
+function drawTeamBoxPoster(ctx, name, boxX, boxY, boxW, boxH, bgColor) {
+  const grad = ctx.createLinearGradient(boxX, boxY, boxX + boxW, boxY + boxH);
+  grad.addColorStop(0, bgColor);
+  grad.addColorStop(1, hexToRgbaPoster(bgColor, 0.75));
+  drawRoundRectPoster(ctx, boxX, boxY, boxW, boxH, 16, grad, 'rgba(255, 255, 255, 0.35)', 1.5);
+
+  const textColor = getContrastingTextColor(bgColor);
+  ctx.fillStyle = textColor;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const str = String(name || '').trim();
+  const len = str.length;
+
+  if (len <= 5) {
+    ctx.font = 'bold 17px sans-serif';
+    ctx.fillText(str, boxX + boxW / 2, boxY + boxH / 2);
+  } else if (len <= 8) {
+    ctx.font = 'bold 13px sans-serif';
+    const half = Math.ceil(len / 2);
+    const line1 = str.slice(0, half);
+    const line2 = str.slice(half);
+    ctx.fillText(line1, boxX + boxW / 2, boxY + boxH / 2 - 9);
+    ctx.fillText(line2, boxX + boxW / 2, boxY + boxH / 2 + 9);
+  } else {
+    ctx.font = 'bold 11px sans-serif';
+    const half = Math.ceil(len / 2);
+    let line1 = str.slice(0, half);
+    let line2 = str.slice(half);
+    if (line2.length > 5) line2 = line2.slice(0, 4) + '..';
+    ctx.fillText(line1, boxX + boxW / 2, boxY + boxH / 2 - 8);
+    ctx.fillText(line2, boxX + boxW / 2, boxY + boxH / 2 + 8);
+  }
+}
+
+/**
+ * 离屏 Canvas 2D 绘制专属 AI 风格推广海报（高光赛博/竞技爆款宣发设计）
+ * @param {Object} canvas Canvas 实例
+ * @param {CanvasRenderingContext2D} ctx 2d context
+ * @param {number} width 画布宽 (375)
+ * @param {number} height 画布高 (600)
+ * @param {Object} match 比赛数据对象
+ * @param {Object} [extra] 附加信息（地点、直播账号）
+ * @param {Function} [logFn] 日志函数
+ */
+function drawUniqueMatchPoster(canvas, ctx, width, height, match, extra, logFn) {
+  const log = typeof logFn === 'function' ? logFn : () => {};
+
+  const teamA = match.teamA || {};
+  const teamB = match.teamB || {};
+  const teamAName = (teamA.name || '队伍A').trim();
+  const teamBName = (teamB.name || '队伍B').trim();
+  const colorA = teamA.bgColor || '#E64340';
+  const colorB = teamB.bgColor || '#10AEFF';
+  const scoreA = Number(teamA.score) || 0;
+  const scoreB = Number(teamB.score) || 0;
+  const isFinished = !!match.isFinished;
+  const hasScore = scoreA > 0 || scoreB > 0 || isFinished;
+  const sportLabel = match.sportLabel || '篮球';
+  const sportIcon = match.sportIcon || '🏀';
+  const matchName = (match.matchName || '').trim() || `${sportLabel}精彩赛事`;
+  const location = (extra && extra.location) || '';
+  const liveAccount = (extra && extra.liveAccount) || '';
+
+  log(`[CyberPoster] match: ${teamAName} vs ${teamBName}, ${scoreA}:${scoreB}, loc=${location}, live=${liveAccount}`);
+
+  // 清空画布
+  ctx.clearRect(0, 0, width, height);
+
+  // 1. 暗夜赛博主渐变背景 (Dark Cyber Atmosphere Gradient)
+  const bgGrad = ctx.createLinearGradient(0, 0, width, height);
+  bgGrad.addColorStop(0, '#0B0F19');
+  bgGrad.addColorStop(0.45, '#111827');
+  bgGrad.addColorStop(1, '#050811');
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(0, 0, width, height);
+
+  // 2. 主客队主色双向霓虹发光晕影 (Team Color Ambient Light Leaks)
+  ctx.save();
+  // 左上角 Team A 霓虹发光
+  const radGradA = ctx.createRadialGradient(
+    width * 0.15, height * 0.2, 10,
+    width * 0.15, height * 0.2, width * 0.75
+  );
+  radGradA.addColorStop(0, hexToRgbaPoster(colorA, 0.45));
+  radGradA.addColorStop(0.5, hexToRgbaPoster(colorA, 0.12));
+  radGradA.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = radGradA;
+  ctx.beginPath();
+  ctx.arc(width * 0.15, height * 0.2, width * 0.75, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 右下角 Team B 霓虹发光
+  const radGradB = ctx.createRadialGradient(
+    width * 0.85, height * 0.75, 10,
+    width * 0.85, height * 0.75, width * 0.8
+  );
+  radGradB.addColorStop(0, hexToRgbaPoster(colorB, 0.45));
+  radGradB.addColorStop(0.5, hexToRgbaPoster(colorB, 0.12));
+  radGradB.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = radGradB;
+  ctx.beginPath();
+  ctx.arc(width * 0.85, height * 0.75, width * 0.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // 3. 动态竞技暗纹与粒子
+  const matchIdStr = String(match.id || Date.now());
+  let hashSeed = 0;
+  for (let i = 0; i < matchIdStr.length; i++) {
+    hashSeed = (hashSeed * 31 + matchIdStr.charCodeAt(i)) % 1000007;
+  }
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+  for (let i = 0; i < 15; i++) {
+    const px = ((hashSeed * (i + 1) * 37) % width);
+    const py = ((hashSeed * (i + 1) * 59) % height);
+    const pr = 2 + (i % 4);
+    ctx.beginPath();
+    ctx.arc(px, py, pr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 4. 顶栏高饱度和琥珀金/电光蓝徽章
+  const badgeText = hasScore ? '🏆 MATCH REPORT / 比赛战报' : '🔥 MATCH PREVIEW / 赛事预告';
+  const badgeBg = hasScore ? 'rgba(234, 179, 8, 0.25)' : 'rgba(59, 130, 246, 0.3)';
+  const badgeBorder = hasScore ? '#F59E0B' : '#3B82F6';
+  drawRoundRectPoster(ctx, width / 2 - 85, 20, 170, 26, 13, badgeBg, badgeBorder, 1);
+  ctx.fillStyle = hasScore ? '#FDE047' : '#93C5FD';
+  ctx.font = 'bold 11px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(badgeText, width / 2, 33);
+
+  // 5. 赛事名称（19px 粗体白字，多行自动折行）
+  ctx.fillStyle = '#FFFFFF';
+  ctx.font = 'bold 19px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  drawMultiLineTextPoster(ctx, matchName, width / 2, 54, width - 40, 24, 2);
+
+  // 6. 核心对决区面板 (Cyber Glass Card)
+  const cardX = 16;
+  const cardY = 114;
+  const cardW = width - 32;
+  const cardH = 405;
+
+  // 玻璃态背景
+  drawRoundRectPoster(ctx, cardX, cardY, cardW, cardH, 20, 'rgba(255, 255, 255, 0.07)', 'rgba(255, 255, 255, 0.15)', 1.5);
+
+  // 运动项目与 Icon 标牌
+  drawRoundRectPoster(ctx, width / 2 - 45, cardY + 16, 90, 24, 12, 'rgba(255, 255, 255, 0.12)', 'rgba(255, 255, 255, 0.2)', 1);
+  ctx.fillStyle = '#E2E8F0';
+  ctx.font = 'bold 12px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`${sportIcon} ${sportLabel}`, width / 2, cardY + 28);
+
+  // 7. 队伍名称超大战牌 (响应式多行 + 智能颜色对比度)
+  const teamBoxY = cardY + 52;
+  const teamBoxW = 108;
+  const teamBoxH = 64;
+
+  // 队伍 A 战牌 (左)
+  drawTeamBoxPoster(ctx, teamAName, cardX + 10, teamBoxY, teamBoxW, teamBoxH, colorA);
+
+  // 队伍 B 战牌 (右)
+  const teamBX = cardX + cardW - 10 - teamBoxW;
+  drawTeamBoxPoster(ctx, teamBName, teamBX, teamBoxY, teamBoxW, teamBoxH, colorB);
+
+  // 中间 VS 或 比分 (精准几何布局，拒绝任何碰撞与错乱)
+  if (hasScore) {
+    // 战报比分黑金浮雕胶囊
+    drawRoundRectPoster(ctx, width / 2 - 38, teamBoxY + 14, 76, 36, 12, 'rgba(15, 23, 42, 0.75)', 'rgba(255, 255, 255, 0.25)', 1);
+
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = 'bold 24px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${scoreA}`, width / 2 - 18, teamBoxY + 32);
+
+    ctx.fillStyle = '#F59E0B';
+    ctx.font = 'bold 18px sans-serif';
+    ctx.fillText(':', width / 2, teamBoxY + 31);
+
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = 'bold 24px sans-serif';
+    ctx.fillText(`${scoreB}`, width / 2 + 18, teamBoxY + 32);
+  } else {
+    // 倾斜金色发光 VS 徽章
+    ctx.fillStyle = '#F59E0B';
+    ctx.font = 'italic bold 30px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('VS', width / 2, teamBoxY + 32);
+  }
+
+  // 8. 胜负/预告宣发横条
+  const summaryY = cardY + 134;
+  if (hasScore) {
+    let winnerText = '';
+    let winnerBg = 'rgba(245, 158, 11, 0.2)';
+    let winnerBorder = '#F59E0B';
+    let winnerColor = '#FDE047';
+
+    if (scoreA > scoreB) {
+      winnerText = `👑 ${teamAName} 赢下比赛！`;
+    } else if (scoreB > scoreA) {
+      winnerText = `👑 ${teamBName} 赢下比赛！`;
+    } else {
+      winnerText = `🤝 战平 · 双方握手言和`;
+      winnerBg = 'rgba(59, 130, 246, 0.2)';
+      winnerBorder = '#3B82F6';
+      winnerColor = '#93C5FD';
+    }
+    drawRoundRectPoster(ctx, cardX + 16, summaryY, cardW - 32, 36, 18, winnerBg, winnerBorder, 1);
+    ctx.fillStyle = winnerColor;
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(winnerText, width / 2, summaryY + 18);
+  } else {
+    drawRoundRectPoster(ctx, cardX + 16, summaryY, cardW - 32, 36, 18, 'rgba(99, 102, 241, 0.25)', '#818CF8', 1);
+    ctx.fillStyle = '#C7D2FE';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('📢 巅峰对决即将来袭，敬请期待！', width / 2, summaryY + 18);
+  }
+
+  // 9. 比赛附加信息悬浮胶囊卡片（时间 / 地点 / 直播账号）
+  let infoY = cardY + 188;
+  const startAtTs = match.startAt || match.createdAt || Date.now();
+  const d = new Date(startAtTs);
+  const timeStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+
+  // 开赛时间胶囊
+  drawRoundRectPoster(ctx, cardX + 16, infoY, cardW - 32, 36, 12, 'rgba(30, 41, 59, 0.75)', 'rgba(255, 255, 255, 0.1)', 1);
+  ctx.fillStyle = '#CBD5E1';
+  ctx.font = 'bold 12px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`⏰  开赛时间：${timeStr}`, width / 2, infoY + 18);
+  infoY += 44;
+
+  // 比赛地点胶囊 (如果用户填写)
+  if (location) {
+    drawRoundRectPoster(ctx, cardX + 16, infoY, cardW - 32, 36, 12, 'rgba(14, 165, 233, 0.18)', '#38BDF8', 1);
+    ctx.fillStyle = '#38BDF8';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const locDisp = location.length > 20 ? location.slice(0, 20) + '..' : location;
+    ctx.fillText(`📍  比赛地点：${locDisp}`, width / 2, infoY + 18);
+    infoY += 44;
+  }
+
+  // 直播账号胶囊 (如果用户填写) - 抖音紫粉炫彩发光
+  if (liveAccount) {
+    const liveGrad = ctx.createLinearGradient(cardX + 16, infoY, cardX + cardW - 16, infoY + 36);
+    liveGrad.addColorStop(0, 'rgba(236, 72, 153, 0.25)');
+    liveGrad.addColorStop(1, 'rgba(139, 92, 246, 0.25)');
+    drawRoundRectPoster(ctx, cardX + 16, infoY, cardW - 32, 36, 12, liveGrad, '#F472B6', 1);
+
+    ctx.fillStyle = '#F472B6';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const liveDisp = liveAccount.length > 20 ? liveAccount.slice(0, 20) + '..' : liveAccount;
+    ctx.fillText(`📺  直播账号：${liveDisp}`, width / 2, infoY + 18);
+    infoY += 44;
+  }
+
+  // 10. 底部高光记分官方 Logo
+  ctx.fillStyle = '#38BDF8';
+  ctx.font = 'bold 18px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('⚡ 高光记分', width / 2, height - 42);
+
+  ctx.fillStyle = '#64748B';
+  ctx.font = 'bold 10px sans-serif';
+  ctx.fillText('MATCH CENTER · 实时记分与高光战报', width / 2, height - 22);
+}
+
+function hexToRgbaPoster(hex, alpha) {
+  let c = (hex || '#FFFFFF').replace('#', '');
+  if (c.length === 3) {
+    c = c[0] + c[0] + c[1] + c[1] + c[2] + c[2];
+  }
+  const r = parseInt(c.substring(0, 2), 16) || 0;
+  const g = parseInt(c.substring(2, 4), 16) || 0;
+  const b = parseInt(c.substring(4, 6), 16) || 0;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function drawRoundRectPoster(ctx, x, y, w, h, r, fillColor, strokeColor, strokeWidth) {
+  const radius = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + w, y, x + w, y + h, radius);
+  ctx.arcTo(x + w, y + h, x, y + h, radius);
+  ctx.arcTo(x, y + h, x, y, radius);
+  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.closePath();
+
+  if (fillColor) {
+    ctx.fillStyle = fillColor;
+    ctx.fill();
+  }
+  if (strokeColor && strokeWidth > 0) {
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = strokeWidth;
+    ctx.stroke();
+  }
+}
