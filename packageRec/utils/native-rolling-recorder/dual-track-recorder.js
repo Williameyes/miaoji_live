@@ -13,6 +13,7 @@ function createDualTrackRecorder(cameraCtx, options) {
 
   var activeTrack = null; // 'A' | 'B' | null
   var recording = false;
+  var consecutiveFailures = 0;
   var rotateTimer = null;
   var startDelayTimer = null;
   var currentSegment = null;
@@ -77,24 +78,40 @@ function createDualTrackRecorder(cameraCtx, options) {
       },
       success: function () {
         console.log('[DualTrack] Track started:', trackId);
+        consecutiveFailures = 0; // 重置连续失败计数
         transitioning = false; // 启动成功，释放转换锁
       },
       fail: function (err) {
         var errDetail = (err && (err.errMsg || err.message)) ? (err.errMsg || err.message) : JSON.stringify(err || {});
         console.error('[DualTrack] Failed to start record for track:', trackId, errDetail);
         transitioning = false; // 失败也必须释放锁，防止卡死
+        consecutiveFailures += 1;
         if (typeof onError === 'function') {
           onError(new Error('startRecord_failed: ' + errDetail));
         }
 
-        // 状态自愈：若因 Native 相机繁忙 (is recording / is stopping) 启动失败，延时 2s 后自动尝试复位重启
+        // 防雪崩熔断：若连续失败超过 3 次，停止无限自愈重试，防止 JNI 死循环轰炸挤爆主线程
+        if (consecutiveFailures > 3) {
+          console.error('[DualTrack] Circuit breaker triggered! Too many consecutive start failures (' + consecutiveFailures + '). Disabling auto-retry.');
+          recording = false;
+          return;
+        }
+
+        // 状态自愈：若因 Native 相机繁忙 (is recording / is stopping) 启动失败，尝试主动 stop 强行释放硬件句柄
         if (recording && (errDetail.indexOf('is recording') >= 0 || errDetail.indexOf('is stopping') >= 0)) {
-          console.warn('[DualTrack] Attempting self-healing recovery start for track:', trackId);
+          console.warn('[DualTrack] Attempting hardware unlock and deferred retry (' + consecutiveFailures + '/3) for track:', trackId);
+          try {
+            cameraCtx.stopRecord({
+              success: function () {},
+              fail: function () {}
+            });
+          } catch (eStop) {}
+          
           setTimeout(function () {
-            if (recording && !transitioning) {
+            if (recording && !transitioning && consecutiveFailures <= 3) {
               startTrack(trackId);
             }
-          }, 2000);
+          }, 3000);
         }
       }
     });
@@ -229,6 +246,7 @@ function createDualTrackRecorder(cameraCtx, options) {
   function start() {
     if (recording) return;
     recording = true;
+    consecutiveFailures = 0;
     transitioning = false;
     startTrack('A');
   }
