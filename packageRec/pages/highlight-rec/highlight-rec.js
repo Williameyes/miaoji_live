@@ -91,6 +91,7 @@ Page({
       { label: '标准', zoom: 2.0 },
       { label: '广角', zoom: 1.0 }
     ],
+    enableThermalProtect: true,
     controlsCollapsed: true // 已废弃，保留兼容
   },
 
@@ -195,14 +196,56 @@ Page({
     if (typeof wx.onMemoryWarning === 'function') {
       this._onMemWarnHandler = function (res) {
         var level = res && typeof res.level === 'number' ? res.level : 'warn';
-        self._dlog('HEALTH_WARN', 'Memory Warning Triggered!', { level: level });
+        self._dlog('HEALTH_WARN', 'Memory/Power Warning Triggered!', { level: level });
         if (self._healthStats) {
           self._healthStats.memoryWarnings.push({ t: Date.now(), level: level });
         }
+        self._handleThermalOrMemoryWarning(level);
       };
       wx.onMemoryWarning(this._onMemWarnHandler);
     }
     this._startHealthMonitorTimer();
+  },
+
+  /**
+   * 响应发热/能耗/内存告警：若开启了降级保护则自动将 1080p 降级为 720p
+   */
+  _handleThermalOrMemoryWarning: function (level) {
+    if (this._unloaded) return;
+    var self = this;
+    
+    // 用户可自主选择关闭能耗降级保护（强制高能 1080p）
+    var enableThermalProtect = this.data.enableThermalProtect !== false;
+    if (!enableThermalProtect) {
+      console.log('[HighlightRec] Thermal protection disabled by user. Maintaining 1080p high performance mode.');
+      this._dlog('HEALTH_WARN', 'Thermal warning received, but protection disabled. Keeping 1080p.', { level: level });
+      return;
+    }
+
+    if (this.data.use1080p) {
+      console.warn('[HighlightRec] High thermal/memory pressure detected. Auto-degrading 1080p to 720p to preserve performance.');
+      this._dlog('DEGRADE', 'Auto-degrade 1080p -> 720p due to thermal/memory warning', { level: level });
+      
+      wx.showToast({
+        title: '设备发热能耗较高，已切至720p控温',
+        icon: 'none',
+        duration: 3500
+      });
+
+      this.setData({ use1080p: false });
+      wx.setStorageSync(STORAGE_KEY_USE_1080P, false);
+
+      var newPerf = highlightRecProfile.getHighlightRecProfile({
+        use1080p: false,
+        actionMode: this.data.actionMode,
+        aspectMode: this.data.aspectMode,
+        recMode: this.data.recMode
+      });
+
+      this._rebuildHighlightPipeline(newPerf, {
+        autoStart: this.data.isRecording
+      });
+    }
   },
 
   _startHealthMonitorTimer: function () {
