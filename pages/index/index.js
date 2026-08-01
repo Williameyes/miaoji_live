@@ -24,6 +24,7 @@ const {
   appendMergeExportDiag,
   buildMergeExportDiagText
 } = require('../../utils/merge-export-diag.js');
+const highlightFilenameHelper = require('../../utils/highlight-filename-helper.js');
 
 /**
  * 根据编辑草稿中的队服色生成球衣剪影 data URL，供浮层内 `<image>` 绑定。
@@ -1861,15 +1862,87 @@ Page({
     return chain;
   },
 
+  _isAndroidPlatform() {
+    try {
+      if (typeof wx !== 'undefined') {
+        let p = '';
+        let sys = '';
+        if (typeof wx.getDeviceInfo === 'function') {
+          const info = wx.getDeviceInfo();
+          if (info && info.platform) p = info.platform;
+          if (info && info.system) sys = info.system;
+        }
+        if (typeof wx.getSystemInfoSync === 'function') {
+          const info = wx.getSystemInfoSync();
+          if (!p && info && info.platform) p = info.platform;
+          if (!sys && info && info.system) sys = info.system;
+        }
+        const combined = (String(p) + ' ' + String(sys)).toLowerCase();
+        if (combined.indexOf('android') >= 0) {
+          return true;
+        }
+      }
+    } catch (e) {}
+    return false;
+  },
+
+  _ensureIndexExportFormattedPath(sourcePath, clip) {
+    const src = typeof sourcePath === 'string' ? sourcePath : '';
+    if (!src) return src;
+    const fileName = (clip && clip.exportFileName)
+      ? clip.exportFileName
+      : highlightFilenameHelper.buildLiveHighlightFileName(clip || {});
+    if (src.indexOf(fileName) >= 0) return src;
+    try {
+      const fs = wx.getFileSystemManager();
+      const dir = `${wx.env.USER_DATA_PATH}/highlights/_export`;
+      try { fs.mkdirSync(dir, true); } catch (eMk) {}
+      const target = `${dir}/${fileName}`;
+      fs.copyFileSync(src, target);
+      return target;
+    } catch (eCopy) {
+      console.warn('[Index] copy formatted export path failed:', eCopy);
+    }
+    return src;
+  },
+
+  _exportHighlightToFileAndroid(clip, sourcePath, done) {
+    const cb = typeof done === 'function' ? done : () => {};
+    const rawP = typeof sourcePath === 'string' ? sourcePath : '';
+    if (!rawP) {
+      wx.showToast({ title: '视频路径为空', icon: 'none' });
+      cb('no_path');
+      return;
+    }
+    const p = this._ensureIndexExportFormattedPath(rawP, clip);
+    const fileName = (clip && clip.exportFileName)
+      ? clip.exportFileName
+      : highlightFilenameHelper.buildLiveHighlightFileName(clip || {});
+
+    if (typeof wx !== 'undefined' && typeof wx.shareFileMessage === 'function') {
+      wx.shareFileMessage({
+        filePath: p,
+        fileName: fileName,
+        success: () => cb(null),
+        fail: (errShare) => {
+          console.warn('[Index] shareFileMessage failed:', errShare);
+          cb(errShare && errShare.errMsg ? errShare.errMsg : 'share_fail');
+        }
+      });
+    } else {
+      wx.showToast({ title: '设备不支持文件转发', icon: 'none' });
+      cb('not_supported');
+    }
+  },
+
   /**
    * 将高光条目批量存入相册（必要时先补裁剪）。
    * @param {Record<string, unknown>[]} clips
    * @param {Function} [onComplete]
-   * @returns {void}
    */
   saveClipsToAlbum(clips, onComplete) {
     const validClips = (Array.isArray(clips) ? clips : []).filter(
-      (c) => c && Array.isArray(c.segments) && c.segments.length
+      (c) => c && (Array.isArray(c.segments) && c.segments.length || c.replaySegment)
     );
     if (!validClips.length) {
       wx.showToast({ title: '无有效视频文件', icon: 'none' });
@@ -1887,7 +1960,6 @@ Page({
         validClips.forEach((clip) => {
           (clip.segments || []).forEach((p) => { if (p) fallback.push(p); });
         });
-        this.doSaveToAlbum(fallback, onComplete);
       });
   },
 
@@ -2347,6 +2419,54 @@ Page({
     });
   },
 
+  /**
+   * 将单个视频文件保存到系统相册（含权限处理）。
+   * @param {string} filePath
+   * @returns {Promise<void>}
+   */
+  saveSingleVideoToAlbum(filePath) {
+    const fs = wx.getFileSystemManager();
+    const path = typeof filePath === 'string' ? filePath : '';
+    if (!path) return Promise.reject(new Error('video_path_missing'));
+    try {
+      fs.accessSync(path);
+    } catch (e) {
+      return Promise.reject(new Error('video_file_missing'));
+    }
+
+    return new Promise((resolve, reject) => {
+      const proceed = () => {
+        wx.saveVideoToPhotosAlbum({
+          filePath: path,
+          success: () => resolve(),
+          fail: (err) => reject(err || new Error('save_album_fail'))
+        });
+      };
+      wx.getSetting({
+        success: (res) => {
+          if (res.authSetting && res.authSetting['scope.writePhotosAlbum']) {
+            proceed();
+          } else {
+            wx.authorize({
+              scope: 'scope.writePhotosAlbum',
+              success: proceed,
+              fail: () => {
+                wx.showModal({
+                  title: '需要相册权限',
+                  content: '请在设置中允许访问相册，以便保存视频到相册',
+                  confirmText: '去设置',
+                  success: (r) => { if (r.confirm) wx.openSetting({}); }
+                });
+                reject(new Error('scope.writePhotosAlbum denied'));
+              }
+            });
+          }
+        },
+        fail: (err) => reject(err || new Error('get_setting_fail'))
+      });
+    });
+  },
+
   // ─────────────────────────────────────────────
   // 批量管理
   // ─────────────────────────────────────────────
@@ -2585,11 +2705,6 @@ Page({
     });
   },
 
-  /**
-   * 将单个视频文件保存到系统相册（含权限处理）。
-   * @param {string} filePath
-   * @returns {Promise<void>}
-   */
   saveSingleVideoToAlbum(filePath) {
     const fs = wx.getFileSystemManager();
     const path = typeof filePath === 'string' ? filePath : '';
@@ -2610,25 +2725,23 @@ Page({
       };
       wx.getSetting({
         success: (res) => {
-          if (res.authSetting['scope.writePhotosAlbum']) {
+          if (res.authSetting && res.authSetting['scope.writePhotosAlbum']) {
             proceed();
-            return;
+          } else {
+            wx.authorize({
+              scope: 'scope.writePhotosAlbum',
+              success: proceed,
+              fail: () => {
+                wx.showModal({
+                  title: '需要相册权限',
+                  content: '请在设置中允许访问相册，以便保存视频到相册',
+                  confirmText: '去设置',
+                  success: (r) => { if (r.confirm) wx.openSetting({}); }
+                });
+                reject(new Error('scope.writePhotosAlbum denied'));
+              }
+            });
           }
-          wx.authorize({
-            scope: 'scope.writePhotosAlbum',
-            success: proceed,
-            fail: () => {
-              wx.showModal({
-                title: '需要相册权限',
-                content: '请在设置中允许访问相册，以便保存合并视频',
-                confirmText: '去设置',
-                success: (r) => {
-                  if (r.confirm) wx.openSetting({});
-                }
-              });
-              reject(new Error('scope.writePhotosAlbum denied'));
-            }
-          });
         },
         fail: (err) => reject(err || new Error('get_setting_fail'))
       });

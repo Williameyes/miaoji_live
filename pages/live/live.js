@@ -22,6 +22,7 @@ const INITIAL_RECORD_FRAME_SIZE = INITIAL_RECORD_PROFILE.recordFrameSize || 'med
 const LIVE_AUDIT = require('./audit.js');
 const footballClockBehavior = require('./behaviors/footballClockBehavior.js');
 const liveWsBehavior = require('./behaviors/liveWsBehavior.js');
+const highlightFilenameHelper = require('../../utils/highlight-filename-helper.js');
 
 /** 视录分离重构后保留空壳，避免遗留 VK/增强引用导致运行时错误。 */
 
@@ -6861,22 +6862,37 @@ maybeToastFileStoragePressureFromGlobal: function () {
         }
         return;
       }
-      const p = paths[pi];
+      const rawP = paths[pi];
+      const p = this._ensureLiveExportFormattedPath(rawP, item);
       const nextPi = pi + 1;
       let failCount = failStreak;
-      wx.saveVideoToPhotosAlbum({
-        filePath: p,
-        success: () => {
-          try {
-            fs.unlinkSync(p);
-          } catch (eUn) {}
+      const isAndroid = this._isAndroidPlatform();
+      if (isAndroid) {
+        this._exportHighlightToFileAndroid(item, rawP, (err) => {
+          if (err) failCount += 1;
           runPaths(nextPi, failCount);
-        },
-        fail: () => {
-          failCount += 1;
-          runPaths(nextPi, failCount);
-        }
-      });
+        });
+      } else {
+        wx.saveVideoToPhotosAlbum({
+          filePath: p,
+          success: () => {
+            try {
+              fs.unlinkSync(p);
+            } catch (eUn) {}
+            if (p !== rawP) {
+              try { fs.unlinkSync(rawP); } catch (eUn2) {}
+            }
+            runPaths(nextPi, failCount);
+          },
+          fail: () => {
+            failCount += 1;
+            if (p !== rawP) {
+              try { fs.unlinkSync(p); } catch (eUn3) {}
+            }
+            runPaths(nextPi, failCount);
+          }
+        });
+      }
     };
     const start = () => runPaths(0, 0);
     wx.getSetting({
@@ -11348,7 +11364,8 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
       nameB,
       colorA,
       colorB,
-      isVkTimeshift: !!pending.isVkTimeshift
+      isVkTimeshift: !!pending.isVkTimeshift,
+      exportFileName: highlightFilenameHelper.buildLiveHighlightFileName(this.getRecSyncMatchMeta())
     };
   },
   /**
@@ -11799,7 +11816,7 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
     const anchorClickTime = now;
     if (this._shouldRecSyncTrigger() && this._recSyncWs && this._recSyncWs.isConnected()) {
       try {
-        const triggerId = this._recSyncWs.sendTrigger();
+        const triggerId = this._recSyncWs.sendTrigger(this.getRecSyncMatchMeta());
         this.appendHealthLog('rec_trigger_sent', {
           triggerId: triggerId,
           recRoomId: this.data.recSyncRoomId,
@@ -11873,18 +11890,35 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
         const chunkMs = self.pingPongChunkDurationMs || 180000;
         const waitHint = chunkMs >= 45000 ? '正在生成高光…' : '录制缓冲同步中…';
         self._showLightHint(waitHint);
-        self.onHighlightClick({
-          id,
-          matchName,
-          matchId: currentMatchId,
-          cover: self.data.defaultCover,
-          clickTime: anchorClickTime,
-          afterMs: 0
+        const item = { id, matchName, matchId: currentMatchId };
+        const rawP = seekPlan ? seekPlan.path : '';
+        const p = this._ensureLiveExportFormattedPath(rawP, item);
+        const step = () => {
+          self.onHighlightClick({
+            id,
+            matchName,
+            matchId: currentMatchId,
+            cover: self.data.defaultCover,
+            clickTime: anchorClickTime,
+            afterMs: 0
+          });
+          self.tryStartRollingWhenCameraReady('highlight_request');
+          const flushProgressMs = Math.min((self.pingPongHighlightFlushMinIntervalMs || 10000) + 6000, 22000);
+          self.startHighlightSaveProgressAnim(anchorClickTime, anchorClickTime + flushProgressMs);
+          self._tryGenerateHighlight();
+        };
+        wx.saveVideoToPhotosAlbum({
+          filePath: p,
+          success: () => {
+            try { fs.unlinkSync(p); } catch (eUn) {}
+            if (p !== rawP) { try { fs.unlinkSync(rawP); } catch (eUn2) {} }
+            step();
+          },
+          fail: () => {
+            if (p !== rawP) { try { fs.unlinkSync(rawP); } catch (eUn3) {} }
+            step();
+          }
         });
-        self.tryStartRollingWhenCameraReady('highlight_request');
-        const flushProgressMs = Math.min((self.pingPongHighlightFlushMinIntervalMs || 10000) + 6000, 22000);
-        self.startHighlightSaveProgressAnim(anchorClickTime, anchorClickTime + flushProgressMs);
-        self._tryGenerateHighlight();
         return;
       }
       pipeline.pinPaths([seekPlan.path]);
@@ -12113,6 +12147,7 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
     this.enqueueHighlightMaterializeTask({
       id: pending.id,
       matchId,
+      exportFileName: pending.exportFileName || highlightFilenameHelper.buildLiveHighlightFileName(this.getRecSyncMatchMeta()),
       segments: segments.slice(),
       coverTempPath: coverTempPath,
       isVkTimeshift: !!pending.isVkTimeshift,
@@ -13061,17 +13096,23 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
           runChain(taskIdx + 1);
           return;
         }
-        const p = paths[pi];
-        pi += 1;
+        const rawP = paths[pi];
+        const p = this._ensureLiveExportFormattedPath(rawP, item);
         wx.saveVideoToPhotosAlbum({
           filePath: p,
           success: () => {
             try {
               fs.unlinkSync(p);
             } catch (eUn) {}
+            if (p !== rawP) {
+              try { fs.unlinkSync(rawP); } catch (eUn2) {}
+            }
             step();
           },
           fail: () => {
+            if (p !== rawP) {
+              try { fs.unlinkSync(p); } catch (eUn3) {}
+            }
             step();
           }
         });
@@ -13401,14 +13442,97 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
     });
     this.refreshDrawerHighlights();
   },
+  _isAndroidPlatform: function () {
+    try {
+      if (typeof wx !== 'undefined') {
+        let p = '';
+        if (typeof wx.getDeviceInfo === 'function') {
+          const info = wx.getDeviceInfo();
+          if (info && info.platform) p = info.platform;
+          if (!p && info && info.system) p = info.system;
+        }
+        if (!p && typeof wx.getSystemInfoSync === 'function') {
+          const info = wx.getSystemInfoSync();
+          if (info && info.platform) p = info.platform;
+          if (!p && info && info.system) p = info.system;
+        }
+        if (p && String(p).toLowerCase().indexOf('android') >= 0) {
+          return true;
+        }
+      }
+    } catch (e) {}
+    return false;
+  },
+  _exportHighlightToFileAndroid: function (item, sourcePath, done) {
+    const cb = typeof done === 'function' ? done : () => {};
+    const rawP = typeof sourcePath === 'string' ? sourcePath : '';
+    if (!rawP) {
+      cb('no_path');
+      return;
+    }
+    const p = this._ensureLiveExportFormattedPath(rawP, item);
+
+    if (typeof wx !== 'undefined' && typeof wx.openDocument === 'function') {
+      wx.openDocument({
+        filePath: p,
+        fileType: 'mp4',
+        showMenu: true,
+        success: () => cb(null),
+        fail: (errDoc) => {
+          console.warn('[Live] openDocument failed:', errDoc);
+          cb(errDoc && errDoc.errMsg ? errDoc.errMsg : 'open_fail');
+        }
+      });
+    } else {
+      cb('not_supported');
+    }
+  },
+  _ensureLiveExportFormattedPath: function (sourcePath, item) {
+    const src = typeof sourcePath === 'string' ? sourcePath : '';
+    if (!src) return src;
+    const fileName = (item && item.exportFileName)
+      ? item.exportFileName
+      : highlightFilenameHelper.buildLiveHighlightFileName(this.getRecSyncMatchMeta());
+    if (src.indexOf(fileName) >= 0) {
+      return src;
+    }
+    try {
+      const fs = wx.getFileSystemManager();
+      const dir = `${this.getHighlightDir()}/_export`;
+      try { fs.mkdirSync(dir, true); } catch (eMk) {}
+      const target = `${dir}/${fileName}`;
+      fs.copyFileSync(src, target);
+      return target;
+    } catch (eCopy) {
+      console.warn('[Live] copy formatted export path failed, fallback to original:', eCopy);
+    }
+    return src;
+  },
   /**
    * 自动将高光保存至相册并删除微信本地缓存（仅针对 VK 模式）
    * @param {object} item 高光对象
    */
   _saveHighlightToAlbumAndClean: function (item, silent) {
     if (!item || !item.isVkTimeshift || item.savedToAlbum) return;
-    const src = item.preSegments && item.preSegments[0] || item.replaySegment;
-    if (!src) return;
+    const rawSrc = item.preSegments && item.preSegments[0] || item.replaySegment;
+    if (!rawSrc) return;
+    const src = this._ensureLiveExportFormattedPath(rawSrc, item);
+    const isAndroid = this._isAndroidPlatform();
+    if (isAndroid) {
+      this._exportHighlightToFileAndroid(item, rawSrc, () => {
+        const clipsMap = clipsStorage.readClipsMapSafe();
+        if (clipsMap && clipsMap[item.matchId]) {
+          const bucket = clipsMap[item.matchId];
+          const target = bucket.find(c => String(c.id) === String(item.id));
+          if (target) {
+            target.savedToAlbum = true;
+            target.preSegments = [];
+            clipsStorage.writeClipsMapSafe(clipsMap);
+          }
+        }
+      });
+      return;
+    }
     wx.saveVideoToPhotosAlbum({
       filePath: src,
       success: () => {
@@ -13416,6 +13540,9 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
         try {
           fs.unlinkSync(src);
         } catch (e) {}
+        if (src !== rawSrc) {
+          try { fs.unlinkSync(rawSrc); } catch (e2) {}
+        }
         const clipsMap = clipsStorage.readClipsMapSafe();
         if (clipsMap && clipsMap[item.matchId]) {
           const bucket = clipsMap[item.matchId];
@@ -15248,7 +15375,10 @@ pauseRollingForReplay: function (onPaused) {
     const fs = wx.getFileSystemManager();
     const replayBufferMod = require('../../utils/replay-buffer/index.js');
     return new Promise(resolve => {
-      const filePath = `${dir}/${task.id}_${idx}.mp4`;
+      const nameBase = typeof task.exportFileName === 'string' && task.exportFileName
+        ? task.exportFileName.replace(/\.mp4$/i, '')
+        : `${task.id}`;
+      const filePath = `${dir}/${nameBase}${idx > 0 ? '_' + idx : ''}.mp4`;
       const trimStartMs = typeof task.trimStartMs === 'number' ? task.trimStartMs : -1;
       const trimEndMs = typeof task.trimEndMs === 'number' ? task.trimEndMs : -1;
       const trimMod = replayBufferMod.mediaContainerTrim;
@@ -16244,7 +16374,7 @@ onLoad: function (options) {
       return;
     }
     try {
-      const triggerId = this._recSyncWs.sendTrigger();
+      const triggerId = this._recSyncWs.sendTrigger(this.getRecSyncMatchMeta());
       this._lastRemoteTriggerAt = now;
       this.vibrate('heavy');
       this._showLightHint('已触发副机');
@@ -16256,6 +16386,18 @@ onLoad: function (options) {
     } catch (err) {
       this._showLightHint('同步失败');
     }
+  },
+  getRecSyncMatchMeta: function () {
+    const mc = this.data.matchConfig || {};
+    const teamA = (mc.teamA && mc.teamA.name) ? String(mc.teamA.name) : '主队';
+    const teamB = (mc.teamB && mc.teamB.name) ? String(mc.teamB.name) : '客队';
+    let periodText = '第1节';
+    if (Array.isArray(this.data.periods) && typeof mc.period === 'number') {
+      periodText = this.data.periods[mc.period] || `第${mc.period + 1}节`;
+    } else if (typeof mc.period === 'number') {
+      periodText = `第${mc.period + 1}节`;
+    }
+    return { teamA, teamB, periodText };
   },
   _recSyncWsConnect: function (opts) {
     const options = opts && typeof opts === 'object' ? opts : {};

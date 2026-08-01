@@ -151,7 +151,7 @@ function getHighlightRecProfile(options) {
     lockCenterFocus: true, // 锁定中心焦点（关闭追拍频繁转镜头时的 AF 自动对焦寻焦，大幅降低 CPU/GPU 负载与发热）
     exposureCompensationEv: actionMode ? -0.7 : 0,
     // 预览分辨率（控制屏幕取景框）：追拍或 720p 下采用 medium/low 降频预览，极大地释放 GPU/CPU 算力，不影响 MP4 文件的 1080p/720p 画质
-    cameraResolution: lowEnd ? 'low' : (actionMode ? 'medium' : 'medium'),
+    cameraResolution: 'high',
     cameraFrameSize: 'medium',
     chunkDurationMs: 50000,
     staggerMs: 8000,

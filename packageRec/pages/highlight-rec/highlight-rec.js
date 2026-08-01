@@ -6,6 +6,7 @@ const recSync = require('../../../services/rec-sync-ws-client.js');
 const { createHighlightRecPipeline } = require('../../utils/highlight-rec-pipeline.js');
 const highlightRecProfile = require('../../utils/highlight-rec-profile.js');
 const highlightRecStorageCleanup = require('../../utils/highlight-rec-storage-cleanup.js');
+const highlightFilenameHelper = require('../../utils/highlight-filename-helper.js');
 
 /** 本地存储：是否启用 1080p 录制 */
 var STORAGE_KEY_USE_1080P = 'highlight_rec_use_1080p_v1';
@@ -56,7 +57,7 @@ Page({
     /** 中心对准框 inline style（相对取景区 9:16） */
     alignFrameStyle: '',
     /** 相机预览/编码档位（由 highlight-rec-profile 注入，长时监看控温） */
-    cameraResolution: 'medium',
+    cameraResolution: 'high',
     cameraFrameSize: 'medium',
     perfTierLabel: '',
     compactStatusLabel: '原生·9:16·720p',
@@ -75,7 +76,7 @@ Page({
     aspectLabel: '9:16',
     zoom: 1.0,
     zoomDisplay: '1.0',
-    cameraReady: false,
+    cameraReady: true,
     wsConnected: false,
     isRecording: false,
     roomId: '',
@@ -335,18 +336,28 @@ Page({
         } else {
           self.setData({ cameraReady: true });
         }
+      },
+      fail: function () {
+        self.setData({ cameraReady: true });
       }
     });
   },
 
   showPermissionModal: function () {
+    var self = this;
     wx.showModal({
       title: '权限申请',
       content: '需要相机和麦克风权限，以用于高光的有声画面录制。请在设置中开启。',
       showCancel: false,
       success: function (res) {
         if (res.confirm) {
-          wx.openSetting();
+          wx.openSetting({
+            success: function (sRes) {
+              if (sRes.authSetting && sRes.authSetting['scope.camera'] && sRes.authSetting['scope.record']) {
+                self.setData({ cameraReady: true });
+              }
+            }
+          });
         }
       }
     });
@@ -1428,6 +1439,9 @@ Page({
       onTrigger: function (payload) {
         console.log('[HighlightRec] Received sync REC trigger from server, triggerId:', payload.triggerId);
         var now = Date.now();
+        if (payload && payload.meta) {
+          self._latestSyncMeta = payload.meta;
+        }
         if (self._exportInFlight || self.data.savingCount > 0) {
           self._dlog('EXPORT', 'Remote sync trigger ignored: export busy', {
             triggerId: payload.triggerId,
@@ -1538,7 +1552,6 @@ Page({
         });
         self.saveVideoToPhotos(trimmedPath, isLocal);
         self.updateBufferStatus();
-        self._pruneHighlightRecStorage('after_export');
         self.checkDiskSpace();
       })
       .catch(function (err) {
@@ -1613,6 +1626,24 @@ Page({
       && this._recPerfProfile
       && this._recPerfProfile.nativeDirectExport;
 
+    var formattedName = highlightFilenameHelper.buildSlaveHighlightFileName(this._latestSyncMeta || {});
+    var savePath = filePath;
+    var needUnlinkFormatted = false;
+
+    if (filePath && typeof wx !== 'undefined' && wx.getFileSystemManager && wx.env && wx.env.USER_DATA_PATH) {
+      try {
+        var fs = wx.getFileSystemManager();
+        var exportDir = wx.env.USER_DATA_PATH + '/highlights/_export';
+        try { fs.mkdirSync(exportDir, true); } catch (eMk) {}
+        var targetPath = exportDir + '/' + formattedName;
+        fs.copyFileSync(filePath, targetPath);
+        savePath = targetPath;
+        needUnlinkFormatted = true;
+      } catch (eCopy) {
+        console.warn('[HighlightRec] copyFileSync formatted path failed, fallback:', eCopy);
+      }
+    }
+
     // 同一路径落盘防重幂等校验，消除 Race Condition
     if (!this._savingFilePaths) this._savingFilePaths = {};
     if (filePath && this._savingFilePaths[filePath]) {
@@ -1627,15 +1658,22 @@ Page({
       this._savingFilePaths[filePath] = true;
     }
 
-    this._dlog('ALBUM', 'saveVideoToPhotosAlbum start', { path: filePath, direct: !!isNativeDirect });
+    this._dlog('ALBUM', 'saveVideoToPhotosAlbum start', { path: savePath, direct: !!isNativeDirect });
+
+    var cleanupAndPrune = function () {
+      if (filePath && self._savingFilePaths) {
+        delete self._savingFilePaths[filePath];
+      }
+      if (needUnlinkFormatted && savePath) {
+        try { wx.getFileSystemManager().unlinkSync(savePath); } catch (eU) {}
+      }
+      self._pruneHighlightRecStorage('after_export');
+    };
 
     // 将视频存入相册
     wx.saveVideoToPhotosAlbum({
-      filePath: filePath,
+      filePath: savePath,
       success: function () {
-        if (filePath && self._savingFilePaths) {
-          delete self._savingFilePaths[filePath];
-        }
         self._exportInFlight = false;
         self._dlog('ALBUM', 'saveVideoToPhotosAlbum success', { path: filePath });
         self.setData({
@@ -1667,21 +1705,16 @@ Page({
           pipeline.releaseExportedPath(filePath);
         }
         self._scheduleUnlinkSavedTempPath(filePath);
-
-        // 保存相册成功后触发沙盒例行清理（仅擦除过期孤儿文件，不抹除当前活跃分段）
-        self._pruneHighlightRecStorage('after_album_save');
+        cleanupAndPrune();
       },
       fail: function (err) {
-        if (filePath && self._savingFilePaths) {
-          delete self._savingFilePaths[filePath];
-        }
         self._exportInFlight = false;
         self._dlog('ALBUM', 'saveVideoToPhotosAlbum failed', err);
         self.setData({
           savingCount: Math.max(0, self.data.savingCount - 1)
         });
         console.error('[HighlightRec] Save to album failed:', err);
-        
+
         // 如果是权限被拒，引导授权
         if (err.errMsg && (err.errMsg.indexOf('auth') >= 0 || err.errMsg.indexOf('deny') >= 0)) {
           wx.showModal({
@@ -1699,6 +1732,7 @@ Page({
             icon: 'none'
           });
         }
+        cleanupAndPrune();
       }
     });
   },

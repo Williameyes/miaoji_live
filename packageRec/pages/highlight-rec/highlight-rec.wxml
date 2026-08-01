@@ -5,7 +5,7 @@
       wx:if="{{cameraReady}}"
       device-position="back"
       flash="off"
-      resolution="{{cameraResolution}}"
+      resolution="high"
       frame-size="{{cameraFrameSize}}"
       zoom="{{zoom}}"
       class="preview-camera"

@@ -265,6 +265,7 @@ function createRecSyncWsClient(handlers) {
             if (typeof cb.onTrigger === 'function') {
               cb.onTrigger({
                 triggerId: payload.triggerId,
+                meta: payload.meta || null,
                 relay_t: payload.relay_t || Date.now()
               });
             }
@@ -329,15 +330,19 @@ function createRecSyncWsClient(handlers) {
     safeLog(logger, 'disconnect', { manual: manualClose });
   }
 
-  function sendTrigger() {
+  function sendTrigger(meta) {
     if (!socketTask || manualClose) {
       throw new Error('Socket not connected');
     }
     var triggerId = generateUUID();
-    var packet = JSON.stringify({
+    var packetPayload = {
       type: 'REC_TRIGGER',
       triggerId: triggerId
-    });
+    };
+    if (meta && typeof meta === 'object') {
+      packetPayload.meta = meta;
+    }
+    var packet = JSON.stringify(packetPayload);
 
     socketTask.send({
       data: packet,
