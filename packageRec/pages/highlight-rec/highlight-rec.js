@@ -1649,10 +1649,6 @@ Page({
    * 运行审计日志收集与微信分享
    * ========================================================================= */
 
-  /* =========================================================================
-   * 运行审计日志收集与微信分享
-   * ========================================================================= */
-
   _dlog: function (tag, msg, extra) {
     if (!this._runtimeLogs) this._runtimeLogs = [];
     var now = new Date();
@@ -1676,6 +1672,52 @@ Page({
       this._logRingIdx++;
     }
     console.log('[HighlightRecAudit]', entry);
+
+    // 实时持久化落盘至沙盒文件，防止崩溃/自动退出后日志丢失
+    this._appendLogToFile(entry);
+  },
+
+  _appendLogToFile: function (entry) {
+    try {
+      if (typeof wx === 'undefined' || typeof wx.getFileSystemManager !== 'function') return;
+      var fs = wx.getFileSystemManager();
+      var dir = wx.env && wx.env.USER_DATA_PATH ? wx.env.USER_DATA_PATH : '';
+      if (!fs || !dir) return;
+      var logPath = dir + '/highlight_rec_persistent.log';
+      var line = entry + '\n';
+      
+      if (typeof fs.appendFile === 'function') {
+        fs.appendFile({
+          filePath: logPath,
+          data: line,
+          encoding: 'utf8',
+          fail: function () {
+            try { fs.writeFileSync(logPath, line, 'utf8'); } catch (eW) {}
+          }
+        });
+      }
+    } catch (e) {}
+  },
+
+  _readPersistentHistoryLog: function () {
+    try {
+      if (typeof wx === 'undefined' || typeof wx.getFileSystemManager !== 'function') return [];
+      var fs = wx.getFileSystemManager();
+      var dir = wx.env && wx.env.USER_DATA_PATH ? wx.env.USER_DATA_PATH : '';
+      if (!fs || !dir) return [];
+      var logPath = dir + '/highlight_rec_persistent.log';
+      var content = fs.readFileSync(logPath, 'utf8');
+      if (!content) return [];
+      var lines = content.split('\n');
+      var cleaned = [];
+      for (var i = 0; i < lines.length; i++) {
+        var l = lines[i] ? lines[i].trim() : '';
+        if (l) cleaned.push(l);
+      }
+      return cleaned.slice(-3000); // 最多读取最近 3000 条历史日志
+    } catch (e) {
+      return [];
+    }
   },
 
   _prepareAuditFile: function () {
@@ -1691,6 +1733,8 @@ Page({
     var startHeap = heapSamples.length > 0 ? heapSamples[0] : 0;
     var endHeap = heapSamples.length > 0 ? heapSamples[heapSamples.length - 1] : 0;
     var heapDelta = Math.round((endHeap - startHeap) * 100) / 100;
+
+    var persistentLogs = this._readPersistentHistoryLog();
 
     var lines = [];
     lines.push('==================================================');
@@ -1720,6 +1764,7 @@ Page({
     lines.push('内存 增量 (Delta): ' + (heapDelta > 0 ? '+' : '') + heapDelta + ' MB (' + (heapDelta > 20 ? 'WARNING: 疑似存在内存泄漏' : '正常') + ')');
     lines.push('系统内存告警次数: ' + memWarnings.length + ' 次');
     lines.push('单帧耗时 >150ms 卡顿数: ' + jankCount + ' 次');
+    lines.push('持久化历史日志条数: ' + persistentLogs.length + ' 条');
     lines.push('--------------------------------------------------');
     lines.push('【滚动录制活跃文件清单 (Rolling Sandbox Files)】');
     var activeSegments = (this.rollingSegments || []).slice();
@@ -1747,8 +1792,8 @@ Page({
       lines.push(' 活跃滚动切片总占用: ' + Math.round(totalRollingBytes / (1024 * 1024) * 100) / 100 + ' MB');
     }
     lines.push('--------------------------------------------------');
-    lines.push('【运行日志轨迹 (最新 3000 条)】');
-    var logs = this._runtimeLogs || [];
+    lines.push('【全量历史运行日志轨迹 (包含跨崩溃/跨会话日志)】');
+    var logs = persistentLogs.length > 0 ? persistentLogs : (this._runtimeLogs || []);
     if (logs.length === 0) {
       lines.push('(暂无运行日志)');
     } else {
