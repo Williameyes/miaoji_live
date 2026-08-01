@@ -15,6 +15,8 @@ var STORAGE_KEY_ACTION_MODE = 'highlight_rec_action_mode_v1';
 var STORAGE_KEY_ASPECT_MODE = 'highlight_rec_aspect_mode_v1';
 /** 本地存储：录制方式 native | preview_record */
 var STORAGE_KEY_REC_MODE = 'highlight_rec_mode_v1';
+/** 本地存储：能耗/发热降级保护开关 */
+var STORAGE_KEY_THERMAL_PROTECT = 'highlight_rec_thermal_protect_v1';
 
 /**
  * 窗口内最大内接预览区（按画幅宽高比）。
@@ -127,6 +129,9 @@ Page({
     var recModeStored = highlightRecProfile.normalizeRecMode(
       wx.getStorageSync(STORAGE_KEY_REC_MODE)
     );
+    var thermalProtectStored = wx.getStorageSync(STORAGE_KEY_THERMAL_PROTECT);
+    var enableThermalProtect = thermalProtectStored === '' || thermalProtectStored === undefined ? true : !!thermalProtectStored;
+
     highlightRecProfile.resetHighlightRecProfileCache();
     var perf = highlightRecProfile.getHighlightRecProfile({
       use1080p: use1080pStored,
@@ -142,7 +147,7 @@ Page({
     }
     this._recPerfProfile = perf;
     this._highlightPipeline = createHighlightRecPipeline(this, perf);
-    this._dlog('INIT', 'Page loaded', { recMode: perf.recMode, aspectMode: perf.aspectMode, use1080p: use1080p, actionMode: actionMode });
+    this._dlog('INIT', 'Page loaded', { recMode: perf.recMode, aspectMode: perf.aspectMode, use1080p: use1080p, actionMode: actionMode, enableThermalProtect: enableThermalProtect });
     this.setData({
       statusBarHeight: sys.statusBarHeight || 20,
       roomId: wx.getStorageSync('rec_sync_room_id') || '',
@@ -152,6 +157,7 @@ Page({
       use1080p: use1080p,
       canUse1080p: canUse1080p,
       actionMode: actionMode,
+      enableThermalProtect: enableThermalProtect,
       aspectMode: perf.aspectMode,
       aspectLabel: perf.aspectLabel || '9:16',
       qualityLabel: perf.qualityLabel || '720p',
@@ -1196,6 +1202,25 @@ Page({
         title: wantAction ? '已开启追拍模式' : '已切换标准模式',
         icon: 'none'
       });
+    });
+  },
+
+  /**
+   * 切换能耗/发热降级控温保护开关。
+   *
+   * @param {Object} e
+   * @returns {void}
+   */
+  onThermalProtectToggle: function (e) {
+    var protect = !!(e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.protect);
+    if (protect === this.data.enableThermalProtect) return;
+    this.setData({ enableThermalProtect: protect });
+    wx.setStorageSync(STORAGE_KEY_THERMAL_PROTECT, protect);
+    this._dlog('CONFIG', 'Thermal protect toggled:', { enableThermalProtect: protect });
+    wx.showToast({
+      title: protect ? '已开启发热降级控温' : '已关闭控温，强保1080p',
+      icon: 'none',
+      duration: 3000
     });
   },
 

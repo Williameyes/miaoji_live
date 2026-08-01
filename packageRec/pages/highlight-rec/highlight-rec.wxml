@@ -172,6 +172,23 @@
             </view>
           </view>
 
+          <view class="quality-row">
+            <text class="quality-label">控温</text>
+            <view class="quality-switch">
+              <view
+                class="quality-pill {{enableThermalProtect ? 'quality-pill--active' : ''}}"
+                data-protect="{{true}}"
+                bindtap="onThermalProtectToggle"
+              >降级</view>
+              <view
+                class="quality-pill {{!enableThermalProtect ? 'quality-pill--active' : ''}}"
+                data-protect="{{false}}"
+                bindtap="onThermalProtectToggle"
+              >高能</view>
+            </view>
+            <text class="quality-hint">{{enableThermalProtect ? '自动切720p' : '强保1080p'}}</text>
+          </view>
+
           <view class="zoom-row">
             <text class="zoom-label">变焦 {{zoomDisplay}}x</text>
             <slider
