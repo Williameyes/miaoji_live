@@ -754,20 +754,52 @@
 
   <!-- Level 2: 导播回放遮罩与播放层 -->
   <view class="replay-mask replay-mask--{{replayMaskKind}}" wx:if="{{showReplayMask}}">
-    <view class="replay-mask-text">{{replayMaskText}}</view>
-  </view>
-  
-  <view class="replay-mask" wx:if="{{replayFastForwarding}}" style="z-index: 1000; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center;">
-    <view class="replay-premium-loader">
-      <view class="replay-loader-ring"></view>
-      <view class="replay-loader-dot"></view>
+    <!-- 专业广播级转场 Wipe 扫光层 -->
+    <view class="replay-stinger-wipe"></view>
+    <view class="replay-stinger-slash"></view>
+
+    <!-- 专业电播勋章徽标层 -->
+    <view class="replay-badge-container">
+      <view class="replay-badge-glow"></view>
+      <view class="replay-badge-card">
+        <view class="replay-badge-icon-box">
+          <text class="replay-badge-flash">⚡</text>
+        </view>
+        <view class="replay-badge-content">
+          <view class="replay-badge-main">{{replayMaskKind === 'replay' ? '精彩回放' : '实时直播'}}</view>
+          <view class="replay-badge-sub">{{replayMaskKind === 'replay' ? 'INSTANT REPLAY' : 'LIVE STREAM'}}</view>
+        </view>
+        <view class="replay-badge-shimmer"></view>
+      </view>
     </view>
-    <view class="replay-mask-text" style="font-size: 32rpx; margin-top: 40rpx; letter-spacing: 4rpx; font-weight: 500; opacity: 0.8; animation: replayTextPulse 1.5s infinite alternate;">正在定位高光时刻</view>
+  </view>
+
+  <!-- 定位高光时刻 / 快进科技遮罩 -->
+  <view class="replay-seeking-mask" wx:if="{{replayFastForwarding}}">
+    <view class="replay-seeking-content">
+      <view class="replay-radar-container">
+        <view class="replay-radar-pulse"></view>
+        <view class="replay-radar-ring"></view>
+        <text class="replay-radar-icon">⚡</text>
+      </view>
+      <view class="replay-seeking-title">正在定位高光瞬间</view>
+      <view class="replay-seeking-bar">
+        <view class="replay-seeking-bar-fill"></view>
+      </view>
+      <view class="replay-seeking-sub">REPLAY SEEKING</view>
+    </view>
   </view>
 
   <view class="replay-overlay" wx:if="{{isReplaying}}">
     <!-- 与直播 live-stage 同尺寸的 16:9 内接区域，仅承载视频与手势；控件在 replay-chrome 全屏层 -->
     <view class="replay-stage" style="{{liveStageInlineStyle}}">
+      <!-- 专业摄影机取景框角标 -->
+      <view class="replay-viewfinder-brackets">
+        <view class="replay-bracket replay-bracket--tl"></view>
+        <view class="replay-bracket replay-bracket--tr"></view>
+        <view class="replay-bracket replay-bracket--bl"></view>
+        <view class="replay-bracket replay-bracket--br"></view>
+      </view>
     <movable-area class="replay-movable-area">
       <movable-view
         class="replay-movable-view"
@@ -848,7 +880,8 @@
     <view class="replay-chrome">
       <view class="replay-status-indicator">
         <view class="replay-status-indicator__dot"></view>
-        <text class="replay-status-indicator__text">实时回看</text>
+        <text class="replay-status-indicator__text">INSTANT REPLAY</text>
+        <text class="replay-status-indicator__badge">精彩回看</text>
       </view>
       <view class="replay-rail" style="{{replayRailStyle}}">
         <view class="replay-rail__stack">

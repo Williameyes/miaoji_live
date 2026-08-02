@@ -13827,8 +13827,8 @@ pauseRollingForReplay: function (onPaused) {
       });
     }
 
-    /** 缩短全黑 REPLAY 叠层，首帧略早露出（与 replayIntroDurationMs 可再对齐 WXSS） */
-    const introMs = 520;
+    /** 延长 REPLAY 叠层显示时间（从 520ms 提升至 880ms），使转场勋章文字清晰易读 */
+    const introMs = 880;
     const peakMs = 140;
     let initialSec = replayPlan[0] && typeof replayPlan[0].initialTimeSec === 'number' ? replayPlan[0].initialTimeSec : typeof item.replayInitialTimeSec === 'number' ? item.replayInitialTimeSec : 0;
     let replayStopSec = replayPlan[0] && typeof replayPlan[0].stopAtSec === 'number' ? replayPlan[0].stopAtSec : typeof item.replayMediaStopAtSec === 'number' ? item.replayMediaStopAtSec : 0;
@@ -14094,7 +14094,7 @@ pauseRollingForReplay: function (onPaused) {
         });
       } catch (e) {}
     }
-    const outroMs = this.data.replayOutroDurationMs || 720;
+    const outroMs = this.data.replayOutroDurationMs || 920;
     this.setData({
       isReplaying: false,
       replaySrc: '',

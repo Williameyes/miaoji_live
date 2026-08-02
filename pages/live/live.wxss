@@ -1657,11 +1657,11 @@ button.live-ble-btn::after {
   box-sizing: border-box;
 }
 
-/* 纯状态指示：与左缘留白，避免贴边；非按钮 */
+/* 纯状态指示：屏幕顶部水平居中，精细化广播级慢动作回看标牌 */
 .replay-status-indicator {
   position: fixed;
-  left: calc(24rpx + env(safe-area-inset-left));
-  left: calc(24rpx + constant(safe-area-inset-left));
+  left: 50%;
+  transform: translateX(-50%);
   top: calc(10rpx + env(safe-area-inset-top));
   top: calc(10rpx + constant(safe-area-inset-top));
   z-index: 103;
@@ -1669,12 +1669,15 @@ button.live-ble-btn::after {
   flex-direction: row;
   align-items: center;
   gap: 6rpx;
-  height: 30rpx;
+  height: 28rpx;
   padding: 0 12rpx;
-  border-radius: 15rpx;
-  background: rgba(0, 0, 0, 0.5);
+  border-radius: 14rpx;
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.8) 0%, rgba(30, 58, 138, 0.8) 100%);
+  border: 1rpx solid rgba(0, 240, 255, 0.35);
+  backdrop-filter: blur(6px);
   pointer-events: none;
   box-sizing: border-box;
+  box-shadow: 0 0 10rpx rgba(0, 240, 255, 0.2);
 }
 
 .replay-status-indicator__dot {
@@ -1682,31 +1685,46 @@ button.live-ble-btn::after {
   height: 6rpx;
   border-radius: 50%;
   flex-shrink: 0;
-  background-color: #ff4d4f;
-  box-shadow: 0 0 4rpx rgba(255, 77, 79, 0.65);
-  animation: replayIndicatorBreath 1.6s ease-in-out infinite;
+  background-color: #00f0ff;
+  box-shadow: 0 0 6rpx #00f0ff;
+  animation: replayIndicatorBreath 1.4s ease-in-out infinite;
 }
 
 .replay-status-indicator__text {
   font-size: 12rpx;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.72);
-  letter-spacing: 0.2rpx;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: 0.5rpx;
+  line-height: 1;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  text-shadow: 0 0 6rpx rgba(0, 240, 255, 0.4);
+}
+
+.replay-status-indicator__badge {
+  font-size: 11rpx;
+  font-weight: 600;
+  color: #00f0ff;
+  margin-left: 2rpx;
+  padding-left: 8rpx;
+  border-left: 1rpx solid rgba(255, 255, 255, 0.25);
   line-height: 1;
 }
 
 @keyframes replayIndicatorBreath {
   0% {
-    transform: scale(0.92);
-    opacity: 0.65;
+    transform: scale(0.85);
+    opacity: 0.7;
+    box-shadow: 0 0 4rpx #00f0ff;
   }
   50% {
-    transform: scale(1.08);
+    transform: scale(1.15);
     opacity: 1;
+    box-shadow: 0 0 12rpx #00f0ff;
   }
   100% {
-    transform: scale(0.92);
-    opacity: 0.65;
+    transform: scale(0.85);
+    opacity: 0.7;
+    box-shadow: 0 0 4rpx #00f0ff;
   }
 }
 
@@ -1793,6 +1811,7 @@ button.live-ble-btn::after {
   mask-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iIzAwMCIgZD0iTTE1IDNsMi4zIDIuMy0yLjg5IDIuODcgMS40MiAxLjQyTDE4LjcgNi43IDIxIDlWM2gtNnpNMyA5bDIuMy0yLjMgMi44NyAyLjg5IDEuNDItMS40Mkw2LjcgNS4zIDkgM0gzdjZ6bTYgMTJsLTIuMy0yLjMgMi44OS0yLjg3LTEuNDItMS40Mkw1LjMgMTcuMyAzIDE1djZoNnptMTItNmwtMi4zIDIuMy0yLjg3LTIuODktMS40MiAxLjQyIDIuODkgMi44N0wxNSAyMWg2di02eiIvPjwvc3ZnPg==");
 }
 
+/* 专业广播级回放转场遮罩（深空半透明高斯模糊背景，告别黑屏） */
 .replay-mask {
   position: absolute;
   top: 0;
@@ -1800,74 +1819,383 @@ button.live-ble-btn::after {
   width: 100vw;
   height: 100vh;
   z-index: 120;
-  background: rgba(0,0,0,0.92);
+  background: radial-gradient(circle at center, rgba(15, 23, 42, 0.85) 0%, rgba(7, 11, 22, 0.95) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* 动感斜向 Wipe 切割光条 */
+.replay-stinger-wipe {
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: linear-gradient(135deg, 
+    transparent 42%, 
+    rgba(0, 240, 255, 0.45) 47%, 
+    rgba(255, 255, 255, 0.95) 50%, 
+    rgba(255, 215, 0, 0.65) 53%, 
+    transparent 58%
+  );
+  transform: rotate(-25deg) translateY(-120%);
+  pointer-events: none;
+}
+
+.replay-stinger-slash {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: linear-gradient(90deg, rgba(0, 162, 255, 0.18), rgba(255, 170, 0, 0.18));
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 广播级 3D 悬浮勋章徽标层 */
+.replay-badge-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: skewX(-12deg);
+  transform-origin: center center;
+}
+
+.replay-badge-card {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 20rpx 48rpx;
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.92) 0%, rgba(30, 58, 138, 0.88) 100%);
+  border: 2rpx solid rgba(0, 240, 255, 0.65);
+  border-radius: 14rpx;
+  box-shadow: 
+    0 0 40rpx rgba(0, 240, 255, 0.4),
+    inset 0 0 24rpx rgba(0, 240, 255, 0.25);
+  overflow: hidden;
+}
+
+.replay-mask--live .replay-badge-card {
+  background: linear-gradient(135deg, rgba(40, 12, 18, 0.92) 0%, rgba(190, 24, 42, 0.88) 100%);
+  border-color: rgba(255, 77, 79, 0.75);
+  box-shadow: 
+    0 0 40rpx rgba(255, 77, 79, 0.45),
+    inset 0 0 24rpx rgba(255, 77, 79, 0.3);
+}
+
+.replay-badge-icon-box {
+  margin-right: 24rpx;
+  font-size: 48rpx;
+  line-height: 1;
+}
+
+.replay-badge-flash {
+  color: #00f0ff;
+  text-shadow: 0 0 16rpx #00f0ff;
+}
+
+.replay-mask--live .replay-badge-flash {
+  color: #ff4d4f;
+  text-shadow: 0 0 16rpx #ff4d4f;
+}
+
+.replay-badge-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.replay-badge-main {
+  color: #ffffff;
+  font-size: 60rpx;
+  font-weight: 900;
+  letter-spacing: 8rpx;
+  line-height: 1;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  text-shadow: 0 4rpx 12rpx rgba(0, 0, 0, 0.6);
+}
+
+.replay-badge-sub {
+  color: #00f0ff;
+  font-size: 22rpx;
+  font-weight: 800;
+  letter-spacing: 5rpx;
+  margin-top: 8rpx;
+  text-transform: uppercase;
+}
+
+.replay-mask--live .replay-badge-sub {
+  color: #ff7875;
+}
+
+/* 扫过勋章的光芒动效 */
+.replay-badge-shimmer {
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.7), transparent);
+  transform: skewX(-20deg);
+}
+
+/* 进入回放：Stinger Wipe 与徽标组合擦除动效 (调慢至 0.88s，便于看清) */
+.replay-mask--replay {
+  animation: replayBackdropFade 0.88s ease-out both;
+}
+
+.replay-mask--replay .replay-stinger-wipe {
+  animation: stingerWipeMotion 0.88s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.replay-mask--replay .replay-stinger-slash {
+  animation: stingerSlashPulse 0.88s ease-in-out both;
+}
+
+.replay-mask--replay .replay-badge-container {
+  animation: replayBadgePop 0.88s cubic-bezier(0.34, 1.3, 0.64, 1) both;
+}
+
+.replay-mask--replay .replay-badge-shimmer {
+  animation: badgeShimmer 0.88s ease-in-out both;
+}
+
+/* 回到直播：红色切回动效 (调慢至 0.92s) */
+.replay-mask--live {
+  animation: replayBackdropFade 0.92s ease-out both;
+}
+
+.replay-mask--live .replay-stinger-wipe {
+  animation: stingerWipeMotion 0.92s cubic-bezier(0.16, 1, 0.3, 1) reverse both;
+}
+
+.replay-mask--live .replay-badge-container {
+  animation: liveBadgePop 0.92s cubic-bezier(0.34, 1.2, 0.64, 1) both;
+}
+
+@keyframes stingerWipeMotion {
+  0% {
+    transform: rotate(-25deg) translateY(-130%);
+  }
+  50% {
+    transform: rotate(-25deg) translateY(0%);
+  }
+  100% {
+    transform: rotate(-25deg) translateY(130%);
+  }
+}
+
+@keyframes stingerSlashPulse {
+  0% { opacity: 0; }
+  25% { opacity: 0.85; }
+  100% { opacity: 0; }
+}
+
+@keyframes replayBackdropFade {
+  0% { opacity: 0; }
+  25% { opacity: 1; }
+  75% { opacity: 0.95; }
+  100% { opacity: 0; }
+}
+
+@keyframes replayBadgePop {
+  0% {
+    opacity: 0;
+    transform: scale(0.55) skewX(-12deg) translateY(36rpx);
+  }
+  25% {
+    opacity: 1;
+    transform: scale(1.05) skewX(-12deg) translateY(0);
+  }
+  75% {
+    opacity: 1;
+    transform: scale(1) skewX(-12deg) translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.15) skewX(-12deg) translateY(-24rpx);
+  }
+}
+
+@keyframes liveBadgePop {
+  0% {
+    opacity: 0;
+    transform: scale(1.3) skewX(-12deg) translateY(-30rpx);
+  }
+  25% {
+    opacity: 1;
+    transform: scale(0.94) skewX(-12deg) translateY(0);
+  }
+  75% {
+    opacity: 1;
+    transform: scale(1) skewX(-12deg) translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.75) skewX(-12deg) translateY(24rpx);
+  }
+}
+
+@keyframes badgeShimmer {
+  0% { left: -100%; }
+  100% { left: 200%; }
+}
+
+/* 定位高光时刻 / 快进科技雷达遮罩 */
+.replay-seeking-mask {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 1000;
+  background: radial-gradient(circle at center, rgba(15, 23, 42, 0.94) 0%, rgba(5, 8, 16, 0.98) 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.replay-seeking-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.replay-radar-container {
+  position: relative;
+  width: 120rpx;
+  height: 120rpx;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.replay-mask-text {
+.replay-radar-ring {
+  position: absolute;
+  width: 100rpx;
+  height: 100rpx;
+  border: 4rpx solid rgba(0, 240, 255, 0.2);
+  border-top-color: #00f0ff;
+  border-radius: 50%;
+  animation: radarSpin 1s linear infinite;
+}
+
+.replay-radar-pulse {
+  position: absolute;
+  width: 120rpx;
+  height: 120rpx;
+  border: 2rpx solid rgba(0, 240, 255, 0.5);
+  border-radius: 50%;
+  animation: radarPulse 1.5s ease-out infinite;
+}
+
+.replay-radar-icon {
+  font-size: 40rpx;
+  color: #00f0ff;
+  text-shadow: 0 0 16rpx #00f0ff;
+}
+
+.replay-seeking-title {
   color: #ffffff;
-  font-size: 80rpx;
-  font-weight: 800;
-  letter-spacing: 10rpx;
-  text-shadow: 0 0 24rpx rgba(255,255,255,0.35);
-  transform-origin: center center;
+  font-size: 32rpx;
+  font-weight: 600;
+  letter-spacing: 4rpx;
+  margin-top: 36rpx;
+  text-shadow: 0 0 12rpx rgba(0, 240, 255, 0.4);
 }
 
-/* 进入回放：与 live.js introMs≈520ms 对齐，缩短全黑等待 */
-.replay-mask--replay {
-  background: rgba(0,0,0,1);
-  animation: replayMaskMotion 0.52s both;
+.replay-seeking-sub {
+  color: rgba(0, 240, 255, 0.7);
+  font-size: 18rpx;
+  font-weight: 700;
+  letter-spacing: 6rpx;
+  margin-top: 12rpx;
 }
 
-.replay-mask--replay .replay-mask-text {
-  animation: replayBadgeMotion 0.52s both;
+.replay-seeking-bar {
+  width: 240rpx;
+  height: 4rpx;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2rpx;
+  margin-top: 24rpx;
+  overflow: hidden;
+  position: relative;
 }
 
-/* 回到直播：反向旋转收束，与 REPLAY 动效区分 */
-.replay-mask--live .replay-mask-text {
-  animation: liveBadgeMotion 680ms cubic-bezier(0.34, 1.2, 0.64, 1) both;
+.replay-seeking-bar-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 60%;
+  background: linear-gradient(90deg, transparent, #00f0ff, transparent);
+  animation: seekingBarMove 1.2s ease-in-out infinite;
 }
 
-@keyframes replayMaskMotion {
-  0% { opacity: 0; }
-  35% { opacity: 1; } /* 0.35s / 1.0s = 35% */
-  100% { opacity: 0; }
+@keyframes radarSpin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
-@keyframes replayBadgeMotion {
-  0% {
-    opacity: 0;
-    transform: scale(0.6) rotate(-10deg);
-  }
-  35% {
-    opacity: 1;
-    transform: scale(1.1) rotate(0deg);
-  }
-  100% {
-    opacity: 0;
-    transform: scale(1.3) rotate(5deg);
-  }
+@keyframes radarPulse {
+  0% { transform: scale(0.7); opacity: 0.8; }
+  100% { transform: scale(1.3); opacity: 0; }
 }
 
-@keyframes liveBadgeMotion {
-  0% {
-    opacity: 0;
-    transform: scale(1.4) rotate(10deg);
-  }
-  40% {
-    opacity: 1;
-    transform: scale(0.92) rotate(-6deg);
-  }
-  70% {
-    opacity: 0.9;
-    transform: scale(1.06) rotate(2deg);
-  }
-  100% {
-    opacity: 0;
-    transform: scale(0.75) rotate(-12deg);
-  }
+@keyframes seekingBarMove {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
+
+/* 专业摄影机取景框角标 (Viewfinder Brackets) */
+.replay-viewfinder-brackets {
+  position: absolute;
+  top: 16rpx;
+  left: 16rpx;
+  right: 16rpx;
+  bottom: 16rpx;
+  pointer-events: none;
+  z-index: 101;
+}
+
+.replay-bracket {
+  position: absolute;
+  width: 28rpx;
+  height: 28rpx;
+  border-color: rgba(0, 240, 255, 0.6);
+  border-style: solid;
+  box-shadow: 0 0 6rpx rgba(0, 240, 255, 0.3);
+}
+
+.replay-bracket--tl {
+  top: 0;
+  left: 0;
+  border-width: 4rpx 0 0 4rpx;
+}
+
+.replay-bracket--tr {
+  top: 0;
+  right: 0;
+  border-width: 4rpx 4rpx 0 0;
+}
+
+.replay-bracket--bl {
+  bottom: 0;
+  left: 0;
+  border-width: 0 0 4rpx 4rpx;
+}
+
+.replay-bracket--br {
+  bottom: 0;
+  right: 0;
+  border-width: 0 4rpx 4rpx 0;
 }
 
 .drawer-backdrop {

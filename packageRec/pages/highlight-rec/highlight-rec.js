@@ -1576,12 +1576,17 @@ Page({
         if (errMsg.indexOf('audio_mux_failed') >= 0) {
           errMsg = '视频已就绪但合成声音失败，请确认已授权麦克风并重试';
         } else if (errMsg.indexOf('no_available_segment') >= 0) {
-          errMsg = '录制分段落盘失败，请停止监看后重新开启，或清理小程序缓存';
+          var timeSinceLastExport = self._lastExportTime ? (Date.now() - self._lastExportTime) : 999999;
+          if (timeSinceLastExport < 8000) {
+            errMsg = '高光触发太频繁，画面切片落盘中，请间隔 8 秒后再试';
+          } else {
+            errMsg = '切片缓冲建立中，请监看 10 秒后再试';
+          }
         }
-        wx.showModal({
-          title: '导出失败',
-          content: errMsg,
-          showCancel: false
+        wx.showToast({
+          title: errMsg,
+          icon: 'none',
+          duration: 3000
         });
       });
   },
