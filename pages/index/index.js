@@ -3001,14 +3001,17 @@ Page({
           return;
         }
 
-        const sys = (wx.getSystemInfoSync && wx.getSystemInfoSync()) || {};
-        const dpr = sys.pixelRatio || 2;
-        logPosterDiag(self, `系统设备 dpr=${dpr}, platform=${sys.platform}, SDKVersion=${sys.SDKVersion}`);
+        // 1. 获取设备 DPR (高清化处理：优先 getWindowInfo，兼容 getSystemInfoSync)
+        const windowInfo = wx.getWindowInfo ? wx.getWindowInfo() : (wx.getSystemInfoSync ? wx.getSystemInfoSync() : {});
+        const dpr = windowInfo.pixelRatio || 2;
+        logPosterDiag(self, `系统设备 dpr=${dpr}, platform=${windowInfo.platform || ''}, SDKVersion=${windowInfo.SDKVersion || ''}`);
 
+        // 初始化 Canvas 物理分辨率（按 DPR 放大），消除高清屏发虚问题
         canvas.width = POSTER_W * dpr;
         canvas.height = POSTER_H * dpr;
+        // 缩放 2D 绘图上下文逻辑坐标系，后续所有绘制参数仍保持 CSS 逻辑点 (375x600)
         ctx.scale(dpr, dpr);
-        logPosterDiag(self, `Canvas 维度匹配设置: width=${canvas.width}, height=${canvas.height}`);
+        logPosterDiag(self, `Canvas 高清维度设置: 物理分辨率=${canvas.width}x${canvas.height}, 逻辑尺寸=${POSTER_W}x${POSTER_H}`);
 
         try {
           drawUniqueMatchPoster(canvas, ctx, POSTER_W, POSTER_H, match, extraInfo, (msg) => {
@@ -3020,13 +3023,20 @@ Page({
           logPosterDiag(self, `绘图异常: ${errStr}`);
         }
 
-        logPosterDiag(self, '同步触发 wx.canvasToTempFilePath...');
+        logPosterDiag(self, '同步触发 wx.canvasToTempFilePath 导出高清图...');
+        // 导出时显式指定 destWidth 和 destHeight (乘以 DPR)，输出无损高清图
         wx.canvasToTempFilePath({
           canvas: canvas,
+          x: 0,
+          y: 0,
+          width: POSTER_W,
+          height: POSTER_H,
+          destWidth: POSTER_W * dpr,
+          destHeight: POSTER_H * dpr,
           fileType: 'png',
           quality: 1,
           success: (out) => {
-            logPosterDiag(self, `海报导出成功! path=${out.tempFilePath}`);
+            logPosterDiag(self, `高清海报导出成功! path=${out.tempFilePath}`);
             self.setData({
               posterImagePath: out.tempFilePath,
               generatingPoster: false
@@ -3154,50 +3164,83 @@ function logPosterDiag(page, msg) {
 }
 
 /**
- * 绘制多行居中文本（Canvas 2D）
- * @param {CanvasRenderingContext2D} ctx
- * @param {string} text
- * @param {number} x
- * @param {number} y
- * @param {number} maxWidth
- * @param {number} lineHeight
- * @param {number} maxLines
+ * 动态字号计算绘制主标题，彻底解决“孤字”单字独占一行问题
+ * @param {CanvasRenderingContext2D} ctx 2d context
+ * @param {string} text 标题文本
+ * @param {number} x X 坐标
+ * @param {number} y Y 坐标
+ * @param {number} maxWidth 最大允许渲染宽度
+ * @param {number} [initialFontSize=19] 初始字号 (px)
+ * @param {number} [minFontSize=12] 最小字号 (px)
  */
-function drawMultiLineTextPoster(ctx, text, x, y, maxWidth, lineHeight, maxLines) {
+function drawDynamicTitlePoster(ctx, text, x, y, maxWidth, initialFontSize = 19, minFontSize = 12) {
   const str = String(text || '').trim();
   if (!str) return;
 
-  const words = str.split('');
-  const lines = [];
-  let currentLine = '';
+  ctx.fillStyle = '#FFFFFF';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
 
-  for (let i = 0; i < words.length; i++) {
-    const char = words[i];
-    const testLine = currentLine + char;
-    const metrics = ctx.measureText(testLine);
-    if (metrics.width > maxWidth && i > 0) {
-      lines.push(currentLine);
-      currentLine = char;
-    } else {
-      currentLine = testLine;
+  // 1. 优先尝试单行自适应：从 initialFontSize 递减至单行门槛 (如 14px)
+  let fontSize = initialFontSize;
+  ctx.font = `bold ${fontSize}px sans-serif`;
+  while (fontSize >= 14) {
+    ctx.font = `bold ${fontSize}px sans-serif`;
+    if (ctx.measureText(str).width <= maxWidth) {
+      ctx.fillText(str, x, y);
+      return;
     }
-  }
-  if (currentLine) {
-    lines.push(currentLine);
+    fontSize -= 1;
   }
 
-  const totalLines = Math.min(lines.length, maxLines || 2);
-  for (let l = 0; l < totalLines; l++) {
-    let lineStr = lines[l];
-    if (l === totalLines - 1 && lines.length > totalLines) {
-      while (lineStr.length > 0 && ctx.measureText(lineStr + '...').width > maxWidth) {
-        lineStr = lineStr.slice(0, -1);
-      }
-      lineStr += '...';
-    }
-    const lineY = y + l * lineHeight;
-    ctx.fillText(lineStr, x, lineY);
+  // 2. 超长文本拆分为视效合理的两行（对称断句，拒绝末行出现单字/孤字）
+  const len = str.length;
+  let mid = Math.floor(len / 2);
+  // 防止第二行仅留一个字
+  if (len - mid < 2 && mid > 1) {
+    mid = len - 2;
   }
+
+  // 优先寻找分隔符（空格、中划线、点等）断句
+  const separators = [' ', ' ', '·', '-', '—', ':', '：'];
+  for (let offset = 0; offset <= 2; offset++) {
+    if (mid + offset < len - 1 && separators.includes(str[mid + offset])) {
+      mid = mid + offset + 1;
+      break;
+    }
+    if (mid - offset > 1 && separators.includes(str[mid - offset])) {
+      mid = mid - offset;
+      break;
+    }
+  }
+
+  const line1 = str.slice(0, mid).trim();
+  let line2 = str.slice(mid).trim();
+
+  // 3. 两行模式下，从 16px 动态递减字号至 minFontSize
+  let twoLineFontSize = 16;
+  while (twoLineFontSize >= minFontSize) {
+    ctx.font = `bold ${twoLineFontSize}px sans-serif`;
+    const w1 = ctx.measureText(line1).width;
+    const w2 = ctx.measureText(line2).width;
+    if (w1 <= maxWidth && w2 <= maxWidth) {
+      break;
+    }
+    twoLineFontSize -= 1;
+  }
+
+  ctx.font = `bold ${twoLineFontSize}px sans-serif`;
+  // 极端情况下若第二行在 minFontSize 下仍放不下，末尾追加省略号
+  if (ctx.measureText(line2).width > maxWidth) {
+    while (line2.length > 0 && ctx.measureText(line2 + '...').width > maxWidth) {
+      line2 = line2.slice(0, -1);
+    }
+    line2 += '...';
+  }
+
+  const lineHeight = Math.round(twoLineFontSize * 1.3);
+  ctx.fillText(line1, x, y);
+  ctx.fillText(line2, x, y + lineHeight);
 }
 
 /**
@@ -3218,7 +3261,7 @@ function getContrastingTextColor(hexColor) {
 }
 
 /**
- * 绘制队名战牌与响应式折行文字（自动对比度 + 解决超长队名错乱问题）
+ * 绘制队名战牌与自适应单行文本（自适应缩放，绝对不换行，保障队名语义完整）
  * @param {CanvasRenderingContext2D} ctx
  * @param {string} name 队名
  * @param {number} boxX 战牌 X
@@ -3228,6 +3271,7 @@ function getContrastingTextColor(hexColor) {
  * @param {string} bgColor 背景色
  */
 function drawTeamBoxPoster(ctx, name, boxX, boxY, boxW, boxH, bgColor) {
+  // 1. 绘制战牌渐变背景与圆角边框
   const grad = ctx.createLinearGradient(boxX, boxY, boxX + boxW, boxY + boxH);
   grad.addColorStop(0, bgColor);
   grad.addColorStop(1, hexToRgbaPoster(bgColor, 0.75));
@@ -3239,27 +3283,34 @@ function drawTeamBoxPoster(ctx, name, boxX, boxY, boxW, boxH, bgColor) {
   ctx.textBaseline = 'middle';
 
   const str = String(name || '').trim();
-  const len = str.length;
+  if (!str) return;
 
-  if (len <= 5) {
-    ctx.font = 'bold 17px sans-serif';
-    ctx.fillText(str, boxX + boxW / 2, boxY + boxH / 2);
-  } else if (len <= 8) {
-    ctx.font = 'bold 13px sans-serif';
-    const half = Math.ceil(len / 2);
-    const line1 = str.slice(0, half);
-    const line2 = str.slice(half);
-    ctx.fillText(line1, boxX + boxW / 2, boxY + boxH / 2 - 9);
-    ctx.fillText(line2, boxX + boxW / 2, boxY + boxH / 2 + 9);
-  } else {
-    ctx.font = 'bold 11px sans-serif';
-    const half = Math.ceil(len / 2);
-    let line1 = str.slice(0, half);
-    let line2 = str.slice(half);
-    if (line2.length > 5) line2 = line2.slice(0, 4) + '..';
-    ctx.fillText(line1, boxX + boxW / 2, boxY + boxH / 2 - 8);
-    ctx.fillText(line2, boxX + boxW / 2, boxY + boxH / 2 + 8);
+  // 2. 自适应单行文本字号缩放（使用 ctx.measureText 测量安全宽度，拒绝任何折行）
+  const safeWidth = boxW - 12; // 战牌内部左右留 6px 边距
+  let fontSize = 16;           // 初始字号
+  const minFontSize = 9;       // 最小保障字号
+
+  ctx.font = `bold ${fontSize}px sans-serif`;
+  let textWidth = ctx.measureText(str).width;
+
+  // 如果超出战牌安全宽度，动态按 0.5px 步进缩小字号
+  while (textWidth > safeWidth && fontSize > minFontSize) {
+    fontSize -= 0.5;
+    ctx.font = `bold ${fontSize}px sans-serif`;
+    textWidth = ctx.measureText(str).width;
   }
+
+  // 极端超长情况下，若最小字号下依然超出，则使用省略号进行单行截断
+  let displayStr = str;
+  if (textWidth > safeWidth) {
+    while (displayStr.length > 0 && ctx.measureText(displayStr + '..').width > safeWidth) {
+      displayStr = displayStr.slice(0, -1);
+    }
+    displayStr += '..';
+  }
+
+  // 3. 单行居中绘制队名
+  ctx.fillText(displayStr, boxX + boxW / 2, boxY + boxH / 2);
 }
 
 /**
@@ -3353,23 +3404,19 @@ function drawUniqueMatchPoster(canvas, ctx, width, height, match, extra, logFn) 
   const badgeText = hasScore ? '🏆 MATCH REPORT / 比赛战报' : '🔥 MATCH PREVIEW / 赛事预告';
   const badgeBg = hasScore ? 'rgba(234, 179, 8, 0.25)' : 'rgba(59, 130, 246, 0.3)';
   const badgeBorder = hasScore ? '#F59E0B' : '#3B82F6';
-  drawRoundRectPoster(ctx, width / 2 - 85, 20, 170, 26, 13, badgeBg, badgeBorder, 1);
+  drawRoundRectPoster(ctx, width / 2 - 85, 18, 170, 26, 13, badgeBg, badgeBorder, 1);
   ctx.fillStyle = hasScore ? '#FDE047' : '#93C5FD';
   ctx.font = 'bold 11px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(badgeText, width / 2, 33);
+  ctx.fillText(badgeText, width / 2, 31);
 
-  // 5. 赛事名称（19px 粗体白字，多行自动折行）
-  ctx.fillStyle = '#FFFFFF';
-  ctx.font = 'bold 19px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'top';
-  drawMultiLineTextPoster(ctx, matchName, width / 2, 54, width - 40, 24, 2);
+  // 5. 赛事名称（动态字号计算，彻底解决孤字折行）
+  drawDynamicTitlePoster(ctx, matchName, width / 2, 50, width - 40, 19, 12);
 
   // 6. 核心对决区面板 (Cyber Glass Card)
   const cardX = 16;
-  const cardY = 114;
+  const cardY = 108;
   const cardW = width - 32;
   const cardH = 405;
 
@@ -3384,7 +3431,7 @@ function drawUniqueMatchPoster(canvas, ctx, width, height, match, extra, logFn) 
   ctx.textBaseline = 'middle';
   ctx.fillText(`${sportIcon} ${sportLabel}`, width / 2, cardY + 28);
 
-  // 7. 队伍名称超大战牌 (响应式多行 + 智能颜色对比度)
+  // 7. 队伍名称战牌 (自适应单行缩放，保证队名语义完整绝对不换行)
   const teamBoxY = cardY + 52;
   const teamBoxW = 108;
   const teamBoxH = 64;
@@ -3442,8 +3489,15 @@ function drawUniqueMatchPoster(canvas, ctx, width, height, match, extra, logFn) 
       winnerColor = '#93C5FD';
     }
     drawRoundRectPoster(ctx, cardX + 16, summaryY, cardW - 32, 36, 18, winnerBg, winnerBorder, 1);
+    
+    // 动态调整胜负横条文字大小
+    let winnerFontSize = 13;
+    ctx.font = `bold ${winnerFontSize}px sans-serif`;
+    while (ctx.measureText(winnerText).width > cardW - 48 && winnerFontSize > 10) {
+      winnerFontSize -= 0.5;
+      ctx.font = `bold ${winnerFontSize}px sans-serif`;
+    }
     ctx.fillStyle = winnerColor;
-    ctx.font = 'bold 13px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(winnerText, width / 2, summaryY + 18);
@@ -3499,16 +3553,17 @@ function drawUniqueMatchPoster(canvas, ctx, width, height, match, extra, logFn) 
     infoY += 44;
   }
 
-  // 10. 底部高光记分官方 Logo
+  // 10. 底部高光记分官方 Logo 与 Slogan (整体向上移动，预留 5% 底部空白安全区)
+  // 600px 高度下的 5% 底部安全区为 30px，Logo 与 Slogan 向上避让至 Y <= 565px
   ctx.fillStyle = '#38BDF8';
   ctx.font = 'bold 18px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('⚡ 高光记分', width / 2, height - 42);
+  ctx.fillText('⚡ 高光记分', width / 2, height - 58);
 
   ctx.fillStyle = '#64748B';
   ctx.font = 'bold 10px sans-serif';
-  ctx.fillText('MATCH CENTER · 实时记分与高光战报', width / 2, height - 22);
+  ctx.fillText('MATCH CENTER · 实时记分与高光战报', width / 2, height - 38);
 }
 
 function hexToRgbaPoster(hex, alpha) {
