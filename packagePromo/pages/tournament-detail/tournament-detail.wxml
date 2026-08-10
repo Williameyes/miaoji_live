@@ -112,9 +112,10 @@
               </block>
             </view>
 
-            <!-- 比赛时间 -->
+            <!-- 比赛时间 (固定分成两行: 日期 + 时间) -->
             <view class="col-sch-time">
-              <text class="td-sch-time-val">{{item.displayTime || item.start_time}}</text>
+              <text class="td-sch-date-val">{{item.datePart}}</text>
+              <text class="td-sch-clock-val">{{item.timePart}}</text>
             </view>
 
             <!-- 比赛场地 (不合并，逐行填充) -->

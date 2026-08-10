@@ -62,16 +62,26 @@ Page({
       .then(function (detail) {
         const rawMatches = detail.matches || [];
         const formattedMatches = rawMatches.map(function (m) {
-          let timeText = m.start_time || '';
-          if (/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/.test(timeText)) {
-            timeText = timeText.slice(5, 16);
+          const rawTime = String(m.start_time || '').trim();
+          let datePart = '';
+          let timePart = '';
+          const timeMatch = rawTime.match(/(\d{2}-\d{2})\s+(\d{2}:\d{2})/);
+          if (timeMatch) {
+            datePart = timeMatch[1];
+            timePart = timeMatch[2];
+          } else {
+            const parts = rawTime.split(/[\sT]+/);
+            datePart = parts[0] ? parts[0].replace(/^\d{4}-/, '') : '';
+            timePart = parts[1] ? parts[1].slice(0, 5) : '';
           }
+
           const hasScoreA = m.score_a !== null && m.score_a !== undefined && m.score_a !== 'null' && m.score_a !== '';
           const hasScoreB = m.score_b !== null && m.score_b !== undefined && m.score_b !== 'null' && m.score_b !== '';
           const hasValidScores = hasScoreA && hasScoreB;
 
           return Object.assign({}, m, {
-            displayTime: timeText,
+            datePart: datePart || '—',
+            timePart: timePart || '—',
             team_a: String(m.team_a || '主队').replace(/null/g, ''),
             team_b: String(m.team_b || '客队').replace(/null/g, ''),
             score_a: hasScoreA ? Number(m.score_a) : 0,
