@@ -573,6 +573,31 @@ page {
   text-align: center;
 }
 
+.td-quick-teams-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8rpx;
+  margin-top: 10rpx;
+  max-height: 120rpx;
+  overflow-y: auto;
+}
+
+.td-quick-team-pill {
+  font-size: 18rpx;
+  font-weight: 600;
+  color: #475569;
+  background: #F1F5F9;
+  padding: 4rpx 12rpx;
+  border-radius: 8rpx;
+  transition: all 0.15s ease;
+}
+
+.td-quick-team-pill.selected {
+  background: #2563EB;
+  color: #FFFFFF;
+  font-weight: 700;
+}
+
 .td-teams-vs-badge {
   font-size: 22rpx;
   font-weight: 900;

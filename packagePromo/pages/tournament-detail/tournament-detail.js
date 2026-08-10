@@ -96,6 +96,46 @@ function resolveStageListForTab(activeTab, formattedMatches, rawStages) {
   }
 }
 
+/**
+ * 智能解析队伍占位词（如 “39胜”、“40负”），若前置场次已完赛则自动算出胜者/负者队伍名
+ */
+function resolveTeamPlaceholderName(rawTeamName, allMatches) {
+  if (!rawTeamName || typeof rawTeamName !== 'string') return '';
+  const str = rawTeamName.trim();
+
+  const matchIndexPattern = /^(\d+)(胜|负)$/;
+  const mRes = str.match(matchIndexPattern);
+  if (mRes && Array.isArray(allMatches) && allMatches.length > 0) {
+    const targetSeqNum = Number(mRes[1]);
+    const type = mRes[2];
+
+    let targetMatch = null;
+    if (allMatches[targetSeqNum - 1]) {
+      targetMatch = allMatches[targetSeqNum - 1];
+    } else {
+      targetMatch = allMatches.find(function (item, idx) {
+        return (idx + 1) === targetSeqNum;
+      });
+    }
+
+    if (targetMatch && targetMatch.hasValidScores) {
+      const sA = Number(targetMatch.score_a);
+      const sB = Number(targetMatch.score_b);
+      if (sA > sB) {
+        return type === '胜' ? targetMatch.team_a : targetMatch.team_b;
+      } else if (sB > sA) {
+        return type === '胜' ? targetMatch.team_b : targetMatch.team_a;
+      }
+    }
+  }
+
+  if (/^\d+(胜|负)$/.test(str)) {
+    return '';
+  }
+
+  return str;
+}
+
 Page({
   data: {
     statusBarHeight: 20,
@@ -106,6 +146,7 @@ Page({
     activeTab: 'schedule', // schedule | standings
     selectedStageId: 'all',
     stageList: [],
+    allTeamList: [],
     formattedMatches: [],
     currentMatches: [],
     currentStandings: [],
@@ -113,6 +154,8 @@ Page({
     // 比分修改 Modal
     showScoreModal: false,
     editingMatch: null,
+    editTeamA: '',
+    editTeamB: '',
     scoreA: '',
     scoreB: '',
     submittingScore: false
@@ -182,6 +225,17 @@ Page({
         const standings = detail.standings || {};
         const pinned = isTournamentPinned(id);
         
+        const teamSet = new Set();
+        formattedMatches.forEach(function (m) {
+          if (m.team_a && !/^\d+胜|^\d+负|待定|TBD/i.test(m.team_a)) {
+            teamSet.add(m.team_a);
+          }
+          if (m.team_b && !/^\d+胜|^\d+负|待定|TBD/i.test(m.team_b)) {
+            teamSet.add(m.team_b);
+          }
+        });
+        const allTeamList = Array.from(teamSet);
+
         const activeTab = self.data.activeTab || 'schedule';
         const stages = resolveStageListForTab(activeTab, formattedMatches, rawStages);
         const stageId = 'all';
@@ -189,6 +243,7 @@ Page({
         self.setData({
           detail: detail,
           stageList: stages,
+          allTeamList: allTeamList,
           selectedStageId: stageId,
           formattedMatches: formattedMatches,
           isPinned: pinned,
@@ -404,14 +459,31 @@ Page({
   onEditMatchScore: function (e) {
     const match = e.currentTarget.dataset.match;
     if (!match) return;
+
+    const allMatches = this.data.formattedMatches || [];
+    const resolvedA = resolveTeamPlaceholderName(match.team_a, allMatches);
+    const resolvedB = resolveTeamPlaceholderName(match.team_b, allMatches);
+
     this.setData({
       showScoreModal: true,
       editingMatch: match,
-      editTeamA: match.team_a || '',
-      editTeamB: match.team_b || '',
+      editTeamA: resolvedA || (match.team_a && !/^\d+胜|^\d+负/.test(match.team_a) ? match.team_a : ''),
+      editTeamB: resolvedB || (match.team_b && !/^\d+胜|^\d+负/.test(match.team_b) ? match.team_b : ''),
       scoreA: match.score_a !== null && match.score_a !== undefined && match.hasValidScores ? String(match.score_a) : '',
       scoreB: match.score_b !== null && match.score_b !== undefined && match.hasValidScores ? String(match.score_b) : ''
     });
+  },
+
+  onQuickSelectTeam: function (e) {
+    const team = e.currentTarget.dataset.team;
+    const target = e.currentTarget.dataset.target;
+    if (!team || !target) return;
+
+    if (target === 'teamA') {
+      this.setData({ editTeamA: team });
+    } else if (target === 'teamB') {
+      this.setData({ editTeamB: team });
+    }
   },
 
   onCloseScoreModal: function () {
