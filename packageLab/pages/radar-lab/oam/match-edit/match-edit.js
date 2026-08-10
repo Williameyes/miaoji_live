@@ -24,6 +24,10 @@ Page({
     tournamentId: '',
     teamA: '',
     teamB: '',
+    stageId: '',
+    venue: '',
+    scoreA: '',
+    scoreB: '',
     startDate: '',
     startTime: '',
     totalPool: '',
@@ -68,6 +72,10 @@ Page({
         let tournamentId = presetTournamentId;
         let teamA = '';
         let teamB = '';
+        let stageId = '';
+        let venue = '';
+        let scoreA = '';
+        let scoreB = '';
         let startDate = self.data.startDate;
         let startTime = self.data.startTime;
         let totalPool = '';
@@ -78,6 +86,10 @@ Page({
                 tournamentId = detail.tournamentId || tournamentId;
                 teamA = detail.teamA;
                 teamB = detail.teamB;
+                stageId = detail.stageId || '';
+                venue = detail.venue || '';
+                scoreA = detail.scoreA !== undefined && detail.scoreA !== null ? String(detail.scoreA) : '';
+                scoreB = detail.scoreB !== undefined && detail.scoreB !== null ? String(detail.scoreB) : '';
                 // 编辑态以服务端为准；若用户已先拨盘则保留本地选择
                 if (!self._startTimeTouched) {
                   const parts = parseStartTimeToParts(detail.startTime);
@@ -106,6 +118,10 @@ Page({
             tournamentId: tournamentId,
             teamA: teamA,
             teamB: teamB,
+            stageId: stageId,
+            venue: venue,
+            scoreA: scoreA,
+            scoreB: scoreB,
             totalPool: totalPool,
             minViewers: minViewers,
             loading: false
@@ -128,26 +144,30 @@ Page({
       });
   },
 
-  /**
-   * @param {WechatMiniprogram.Input} e
-   * @returns {void}
-   */
   onTeamAInput: function (e) {
     this.setData({ teamA: e.detail.value });
   },
 
-  /**
-   * @param {WechatMiniprogram.Input} e
-   * @returns {void}
-   */
   onTeamBInput: function (e) {
     this.setData({ teamB: e.detail.value });
   },
 
-  /**
-   * @param {WechatMiniprogram.PickerChange} e
-   * @returns {void}
-   */
+  onStageIdInput: function (e) {
+    this.setData({ stageId: e.detail.value });
+  },
+
+  onVenueInput: function (e) {
+    this.setData({ venue: e.detail.value });
+  },
+
+  onScoreAInput: function (e) {
+    this.setData({ scoreA: e.detail.value });
+  },
+
+  onScoreBInput: function (e) {
+    this.setData({ scoreB: e.detail.value });
+  },
+
   onTournamentChange: function (e) {
     const idx = Number(e.detail.value);
     const item = this.data.tournaments[idx];
@@ -158,10 +178,6 @@ Page({
     });
   },
 
-  /**
-   * @param {WechatMiniprogram.PickerChange} e
-   * @returns {void}
-   */
   onStartDateChange: function (e) {
     const value = e && e.detail ? String(e.detail.value || '') : '';
     if (!value) return;
@@ -169,10 +185,6 @@ Page({
     this.setData({ startDate: value });
   },
 
-  /**
-   * @param {WechatMiniprogram.PickerChange} e
-   * @returns {void}
-   */
   onStartTimeChange: function (e) {
     const value = e && e.detail ? String(e.detail.value || '') : '';
     if (!value) return;
@@ -180,25 +192,14 @@ Page({
     this.setData({ startTime: value });
   },
 
-  /**
-   * @param {WechatMiniprogram.Input} e
-   * @returns {void}
-   */
   onTotalPoolInput: function (e) {
     this.setData({ totalPool: e.detail.value });
   },
 
-  /**
-   * @param {WechatMiniprogram.Input} e
-   * @returns {void}
-   */
   onMinViewersInput: function (e) {
     this.setData({ minViewers: e.detail.value });
   },
 
-  /**
-   * @returns {{totalPool: number, minViewers: number} | null}
-   */
   _readCommercialConfig: function () {
     const poolText = String(this.data.totalPool || '').trim();
     const minText = String(this.data.minViewers || '').trim();
@@ -215,10 +216,6 @@ Page({
     return { totalPool: totalPool, minViewers: minViewers };
   },
 
-  /**
-   * @param {Record<string, unknown>} data
-   * @returns {Record<string, unknown> | null}
-   */
   _appendCommercialConfig: function (data) {
     const cfg = this._readCommercialConfig();
     if (!cfg) return null;
@@ -231,10 +228,6 @@ Page({
     return data;
   },
 
-  /**
-   * 组装场次 upsert 的 data 字段。
-   * @returns {Record<string, unknown> | null}
-   */
   _buildMatchData: function () {
     const d = this.data;
     if (!d.tournamentId || !d.teamA.trim() || !d.teamB.trim()) {
@@ -246,11 +239,20 @@ Page({
       return null;
     }
     const startTimeStr = combineDateTimeToStartTime(d.startDate, d.startTime);
+    const scoreAText = String(d.scoreA || '').trim();
+    const scoreBText = String(d.scoreB || '').trim();
+    const hasScores = scoreAText !== '' && scoreBText !== '';
+
     const matchData = this._appendCommercialConfig({
       tournament_id: d.tournamentId,
       team_a: d.teamA.trim(),
       team_b: d.teamB.trim(),
-      start_time: startTimeStr
+      start_time: startTimeStr,
+      stage_id: d.stageId.trim() || 'stage_default',
+      venue: d.venue.trim(),
+      score_a: hasScores ? Number(scoreAText) : null,
+      score_b: hasScores ? Number(scoreBText) : null,
+      is_finished: hasScores ? 1 : 0
     });
     if (!matchData) return null;
     if (d.matchId) {

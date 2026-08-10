@@ -76,6 +76,19 @@ function fetchTournamentList(query) {
 }
 
 /**
+ * 拉取 C 端赛事详情、赛程与排行榜。
+ * @param {number|string} tournamentId
+ * @returns {Promise<Record<string, unknown>>}
+ */
+function fetchTournamentDetail(tournamentId) {
+  return get('/api/app/tournament/detail', { tournament_id: tournamentId })
+    .then(parseRadarAppResponse)
+    .catch(function (err) {
+      throw normalizeRadarAppError(err);
+    });
+}
+
+/**
  * 拉取场次列表。
  * @param {Object} [query]
  * @param {string} [query.tournamentId] - 赛事 ID，不传则全部
@@ -391,11 +404,12 @@ function fetchWarmupStatus(jobId) {
     });
 }
 
-module.exports = {
+  module.exports = {
   parseRadarAppResponse,
   normalizeRadarAppError,
   oamUpsert,
   fetchTournamentList,
+  fetchTournamentDetail,
   fetchMatchList,
   fetchMatchDetail,
   addMatchTask,

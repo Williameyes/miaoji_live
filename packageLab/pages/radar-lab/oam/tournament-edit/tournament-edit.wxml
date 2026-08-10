@@ -36,6 +36,18 @@
           <view class="rl-input rl-picker-display">{{endDate}}</view>
         </picker>
       </view>
+      <view class="rl-field">
+        <text class="rl-label">运动类型</text>
+        <picker mode="selector" range="{{sportTypes}}" range-key="label" value="{{sportTypeIndex}}" bindchange="onSportTypeChange">
+          <view class="rl-input rl-picker-display">{{sportTypes[sportTypeIndex].label}}</view>
+        </picker>
+      </view>
+      <view class="rl-field">
+        <text class="rl-label">赛事制式</text>
+        <picker mode="selector" range="{{formats}}" range-key="label" value="{{formatIndex}}" bindchange="onFormatChange">
+          <view class="rl-input rl-picker-display">{{formats[formatIndex].label}}</view>
+        </picker>
+      </view>
       <button class="rl-btn rl-btn-primary" disabled="{{submitting}}" bindtap="onSave">保存赛事</button>
     </view>
   </view>

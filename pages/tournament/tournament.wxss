@@ -1,0 +1,312 @@
+/* ─────────────────────────────────────
+   全局与页面底色（清新亮色主题 - 继承主页风格）
+───────────────────────────────────── */
+page {
+  background-color: #EEF6FF;
+  min-height: 100%;
+}
+
+.page-root {
+  min-height: 100vh;
+  padding: 0 28rpx calc(80rpx + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  background: linear-gradient(160deg, #EEF6FF 0%, #E8F8F2 55%, #EFF6FF 100%);
+  color: #1E293B;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  position: relative;
+}
+
+/* ─────────────────────────────────────
+   头部 Header
+───────────────────────────────────── */
+.header {
+  padding: 40rpx 8rpx 32rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.logo-text {
+  font-size: 44rpx;
+  font-weight: bold;
+  color: #0F172A;
+  display: flex;
+  align-items: center;
+}
+
+.italic-text {
+  color: #0047FF;
+  display: inline-block;
+  transform: skewX(-15deg);
+  margin: 0 4rpx;
+}
+
+.header-sub {
+  font-size: 20rpx;
+  color: #94A3B8;
+  letter-spacing: 6rpx;
+  font-weight: 600;
+  margin-top: 4rpx;
+}
+
+/* ─────────────────────────────────────
+   Filter Tabs 软色温切换控件
+───────────────────────────────────── */
+.tn-filter-bar {
+  display: flex;
+  background: rgba(255, 255, 255, 0.88);
+  padding: 8rpx;
+  border-radius: 24rpx;
+  margin-bottom: 32rpx;
+  box-shadow: 0 4rpx 16rpx rgba(15, 23, 42, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+}
+
+.tn-filter-item {
+  flex: 1;
+  text-align: center;
+  padding: 16rpx 0;
+  font-size: 26rpx;
+  color: #64748B;
+  font-weight: 600;
+  border-radius: 18rpx;
+  transition: all 0.25s ease;
+}
+
+.tn-filter-item.active {
+  background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+  color: #FFFFFF;
+  font-weight: 700;
+  box-shadow: 0 4rpx 14rpx rgba(37, 99, 235, 0.28);
+}
+
+/* ─────────────────────────────────────
+   通用 Section 规范
+───────────────────────────────────── */
+.section {
+  margin-bottom: 48rpx;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20rpx;
+}
+
+.section-label {
+  font-size: 26rpx;
+  font-weight: 700;
+  color: #64748B;
+  letter-spacing: 1rpx;
+}
+
+.match-count-badge {
+  font-size: 22rpx;
+  color: #3B82F6;
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 20rpx;
+  padding: 4rpx 18rpx;
+}
+
+/* ─────────────────────────────────────
+   加载态与空状态
+───────────────────────────────────── */
+.tn-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 100rpx 0;
+  color: #64748B;
+  font-size: 26rpx;
+}
+
+.tn-spinner {
+  width: 44rpx;
+  height: 44rpx;
+  border: 4rpx solid rgba(37, 99, 235, 0.2);
+  border-top-color: #2563EB;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 18rpx;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 100rpx 0;
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 28rpx;
+  border: 2rpx dashed #CBD5E1;
+}
+
+.empty-icon {
+  font-size: 72rpx;
+  margin-bottom: 16rpx;
+}
+
+.empty-text {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #334155;
+  margin-bottom: 8rpx;
+}
+
+.empty-hint {
+  font-size: 22rpx;
+  color: #94A3B8;
+}
+
+/* ─────────────────────────────────────
+   双列网格卡片 (双列小红书/抖音瀑布卡片风格 + 白色清新记分牌主题)
+───────────────────────────────────── */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(24rpx);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.tn-grid-2col {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+
+.tn-grid-card {
+  width: 48.5%;
+  background: #FFFFFF;
+  border-radius: 24rpx;
+  overflow: hidden;
+  margin-bottom: 24rpx;
+  box-shadow: 0 4rpx 24rpx rgba(15, 23, 42, 0.07), 0 1rpx 4rpx rgba(15, 23, 42, 0.04);
+  box-sizing: border-box;
+  animation: slideUp 0.38s ease both;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  display: flex;
+  flex-direction: column;
+}
+
+.tn-card-hover {
+  transform: translateY(-4rpx);
+  box-shadow: 0 8rpx 32rpx rgba(15, 23, 42, 0.12);
+}
+
+.tn-card-banner {
+  height: 140rpx;
+  background: linear-gradient(135deg, #EFF6FF 0%, #E2E8F0 100%);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-bottom: 1rpx solid #F1F5F9;
+}
+
+.tn-banner-icon-box {
+  font-size: 56rpx;
+}
+
+.tn-badge {
+  position: absolute;
+  top: 14rpx;
+  right: 14rpx;
+  padding: 4rpx 12rpx;
+  border-radius: 10rpx;
+  font-size: 18rpx;
+  font-weight: 700;
+}
+
+.status-active {
+  background: rgba(16, 185, 129, 0.15);
+  color: #059669;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.status-ended {
+  background: rgba(100, 116, 139, 0.12);
+  color: #64748B;
+  border: 1px solid rgba(100, 116, 139, 0.2);
+}
+
+.status-pending {
+  background: rgba(245, 158, 11, 0.15);
+  color: #D97706;
+  border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+.tn-card-content {
+  padding: 20rpx;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.tn-card-title {
+  font-size: 28rpx;
+  font-weight: 800;
+  color: #0F172A;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  height: 72rpx;
+  margin-bottom: 12rpx;
+}
+
+.tn-tags-row {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  margin-bottom: 16rpx;
+  flex-wrap: wrap;
+}
+
+.tn-sport-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4rpx;
+  padding: 2rpx 10rpx;
+  border-radius: 999rpx;
+  background: rgba(15, 23, 42, 0.05);
+}
+
+.tn-sport-icon { font-size: 18rpx; }
+.tn-sport-label { font-size: 18rpx; color: #64748B; font-weight: 600; }
+
+.tn-format-tag {
+  font-size: 18rpx;
+  color: #2563EB;
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  border-radius: 8rpx;
+  padding: 2rpx 10rpx;
+  font-weight: 600;
+}
+
+.tn-card-meta {
+  margin-top: auto;
+  padding-top: 12rpx;
+  border-top: 1rpx dashed #F1F5F9;
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+}
+
+.tn-meta-date, .tn-meta-count {
+  font-size: 20rpx;
+  color: #64748B;
+  font-weight: 500;
+}

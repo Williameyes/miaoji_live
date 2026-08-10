@@ -7,8 +7,13 @@ Component({
     list: [
       {
         pagePath: '/pages/index/index',
-        text: '记分',
+        text: '直播记分',
         iconKey: 'score'
+      },
+      {
+        pagePath: '/pages/tournament/tournament',
+        text: '赛事资讯',
+        iconKey: 'trophy'
       },
       {
         pagePath: '/pages/mine/mine',

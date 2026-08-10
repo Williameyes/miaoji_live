@@ -1,0 +1,173 @@
+<view class="page-root" style="padding-top: {{statusBarHeight}}px;">
+
+  <!-- ===== 头部 ===== -->
+  <view class="header">
+    <view class="header-nav-row">
+      <view class="back-btn" bindtap="onGoBack" hover-class="back-btn-hover">
+        <text class="back-icon">‹</text>
+      </view>
+      <view class="logo-text">
+        赛事<text class="italic-text">详</text>情
+      </view>
+    </view>
+    <text class="header-sub">STANDINGS & SCHEDULE</text>
+  </view>
+
+  <view class="tn-loading" wx:if="{{loading}}">
+    <view class="tn-spinner"></view>
+    <text>正在加载赛事详情与实时排行榜…</text>
+  </view>
+
+  <block wx:elif="{{detail}}">
+    <!-- 头部 Banner Card (白色清新风格) -->
+    <view class="td-header-card">
+      <view class="td-header-top">
+        <view class="td-sport-pill">
+          <text class="td-sport-icon">{{detail.sport_type === 'soccer' ? '⚽' : '🏀'}}</text>
+          <text class="td-sport-label">{{detail.sport_type === 'soccer' ? '足球' : '篮球'}}</text>
+        </view>
+        <view class="td-header-badge">{{detail.format === 'CUP' ? '赛会制 (分组+淘汰)' : '联赛制 (循环赛)'}}</view>
+      </view>
+      <text class="td-header-title">{{detail.tournament_name}}</text>
+      <view class="td-header-meta">
+        <text class="td-meta-item">📅 {{detail.start_date}} ~ {{detail.end_date}}</text>
+      </view>
+    </view>
+
+    <!-- 主 Tab 切换 (赛程 | 排行榜) -->
+    <view class="td-nav-tabs">
+      <view class="td-nav-tab {{activeTab === 'schedule' ? 'active' : ''}}" data-tab="schedule" bindtap="onTabSwitch">
+        赛程列表
+      </view>
+      <view class="td-nav-tab {{activeTab === 'standings' ? 'active' : ''}}" data-tab="standings" bindtap="onTabSwitch">
+        🏆 积分排行榜
+      </view>
+    </view>
+
+    <!-- 阶段切换微条 (Stage Pills) -->
+    <view class="td-stage-bar" wx:if="{{stageList.length > 1}}">
+      <block wx:for="{{stageList}}" wx:key="id">
+        <view 
+          class="td-stage-pill {{selectedStageId === item.id ? 'active' : ''}}" 
+          data-stage="{{item.id}}" 
+          bindtap="onStageSwitch"
+        >
+          {{item.name}}
+        </view>
+      </block>
+    </view>
+
+    <!-- Tab 1: 赛程页面 (紧凑高效高密度列表) -->
+    <view class="td-tab-content" wx:if="{{activeTab === 'schedule'}}">
+      <view class="empty-state" wx:if="{{!currentMatches.length}}">
+        <text class="empty-icon">📅</text>
+        <text class="empty-text">该阶段下暂无赛程安排</text>
+      </view>
+
+      <view class="td-match-list" wx:else>
+        <block wx:for="{{currentMatches}}" wx:key="match_id">
+          <view class="td-mc-card">
+            <!-- 顶栏微元：阶段、场地、时间与状态 -->
+            <view class="td-mc-top">
+              <view class="td-mc-tags">
+                <text class="td-mc-stage" wx:if="{{item.stage_id !== 'stage_default'}}">{{item.stage_id}}</text>
+                <text class="td-mc-venue" wx:if="{{item.venue}}">📍 {{item.venue}}</text>
+              </view>
+              <view class="td-mc-right">
+                <text class="td-mc-time">{{item.displayTime || item.start_time}}</text>
+                <view class="td-mc-status {{item.is_finished || item.hasValidScores ? 'finished' : 'pending'}}">
+                  {{item.is_finished || item.hasValidScores ? '已完赛' : '未开始'}}
+                </view>
+              </view>
+            </view>
+
+            <!-- 中栏：主队 VS 客队与比分 (高密度单行布局) -->
+            <view class="td-mc-body">
+              <text class="td-mc-team home">{{item.team_a}}</text>
+
+              <view class="td-mc-score-box">
+                <block wx:if="{{item.hasValidScores}}">
+                  <text class="td-mc-score-num {{item.score_a > item.score_b ? 'win' : ''}}">{{item.score_a}}</text>
+                  <text class="td-mc-score-sep">:</text>
+                  <text class="td-mc-score-num {{item.score_b > item.score_a ? 'win' : ''}}">{{item.score_b}}</text>
+                </block>
+                <block wx:else>
+                  <text class="td-mc-vs-text">VS</text>
+                </block>
+              </view>
+
+              <text class="td-mc-team away">{{item.team_b}}</text>
+
+              <!-- 所有者极简修改按钮 -->
+              <view class="td-mc-edit-action" wx:if="{{detail.can_manage}}" data-match="{{item}}" bindtap="onEditMatchScore">
+                <text class="td-mc-edit-icon">✏️</text>
+              </view>
+            </view>
+          </view>
+        </block>
+      </view>
+    </view>
+
+    <!-- Tab 2: 排行榜页面 -->
+    <view class="td-tab-content" wx:if="{{activeTab === 'standings'}}">
+      <view class="empty-state" wx:if="{{!currentStandings.length}}">
+        <text class="empty-icon">🏆</text>
+        <text class="empty-text">暂无排行榜数据</text>
+        <text class="empty-hint">比赛录入比分完赛后将自动计算积分与排名</text>
+      </view>
+
+      <view class="td-table-card" wx:else>
+        <view class="td-table-header">
+          <text class="col-rank">排名</text>
+          <text class="col-team">球队</text>
+          <text class="col-stat">已赛</text>
+          <text class="col-stat">胜/平/负</text>
+          <text class="col-stat">净胜</text>
+          <text class="col-pts">积分</text>
+        </view>
+
+        <block wx:for="{{currentStandings}}" wx:key="team_name">
+          <view class="td-table-row {{index < 3 ? 'top3' : ''}}">
+            <view class="col-rank">
+              <text class="td-rank-badge rank-{{item.rank}}">{{item.rank}}</text>
+            </view>
+            <text class="col-team td-team-title">{{item.team_name}}</text>
+            <text class="col-stat">{{item.played}}</text>
+            <text class="col-stat">{{item.won}}/{{item.draw}}/{{item.lost}}</text>
+            <text class="col-stat">{{item.net_score > 0 ? '+' + item.net_score : item.net_score}}</text>
+            <text class="col-pts td-pts-highlight">{{item.points}}</text>
+          </view>
+        </block>
+      </view>
+    </view>
+  </block>
+
+  <!-- 比分编辑 Modal (所有者) -->
+  <view class="td-modal-overlay" wx:if="{{showScoreModal}}">
+    <view class="td-modal-card">
+      <view class="td-modal-title">录入/修改比赛结果</view>
+      <view class="td-modal-versus">
+        <text class="td-modal-team">{{editingMatch.team_a}}</text>
+        <text class="td-modal-vs">VS</text>
+        <text class="td-modal-team">{{editingMatch.team_b}}</text>
+      </view>
+
+      <view class="td-modal-inputs">
+        <view class="td-input-group">
+          <text class="td-input-label">{{editingMatch.team_a}} 比分</text>
+          <input class="td-modal-input" type="number" value="{{scoreA}}" bindinput="onScoreAInput" placeholder="得分" />
+        </view>
+        <view class="td-input-group">
+          <text class="td-input-label">{{editingMatch.team_b}} 比分</text>
+          <input class="td-modal-input" type="number" value="{{scoreB}}" bindinput="onScoreBInput" placeholder="得分" />
+        </view>
+      </view>
+
+      <view class="td-modal-actions">
+        <button class="td-btn td-btn-cancel" bindtap="onCloseScoreModal">取消</button>
+        <button class="td-btn td-btn-confirm" disabled="{{submittingScore}}" bindtap="onSaveScore">保存并更新积分榜</button>
+      </view>
+    </view>
+  </view>
+
+</view>

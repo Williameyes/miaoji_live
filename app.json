@@ -1,6 +1,7 @@
 {
   "pages": [
     "pages/index/index",
+    "pages/tournament/tournament",
     "pages/live/live",
     "pages/mine/mine",
     "pages/help/help",
@@ -21,7 +22,8 @@
         "pages/promo-bind/promo-bind",
         "pages/promo-square/promo-square",
         "pages/promo-my/promo-my",
-        "pages/promo-review/promo-review"
+        "pages/promo-review/promo-review",
+        "pages/tournament-detail/tournament-detail"
       ]
     },
     {
@@ -82,7 +84,13 @@
     "list": [
       {
         "pagePath": "pages/index/index",
-        "text": "记分",
+        "text": "直播记分",
+        "iconPath": "assets/tab/tab-score.png",
+        "selectedIconPath": "assets/tab/tab-score-active.png"
+      },
+      {
+        "pagePath": "pages/tournament/tournament",
+        "text": "赛事资讯",
         "iconPath": "assets/tab/tab-score.png",
         "selectedIconPath": "assets/tab/tab-score-active.png"
       },

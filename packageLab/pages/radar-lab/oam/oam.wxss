@@ -162,3 +162,102 @@
   font-size: 32rpx;
   font-weight: 700;
 }
+
+/* AI 辅助导入工具栏 */
+.oam-ai-helper-bar {
+  display: flex;
+  gap: 16rpx;
+  margin-bottom: 24rpx;
+}
+
+.oam-ai-btn {
+  flex: 1;
+  height: 68rpx;
+  line-height: 68rpx;
+  font-size: 24rpx;
+  font-weight: 600;
+  border-radius: 16rpx;
+  background: #ffffff;
+  color: #2563eb;
+  border: 1rpx solid rgba(37, 99, 235, 0.2);
+  box-shadow: 0 2rpx 10rpx rgba(15, 23, 42, 0.04);
+  margin: 0;
+}
+
+.oam-ai-btn--primary {
+  background: rgba(37, 99, 235, 0.08);
+  color: #1d4ed8;
+}
+
+/* Modal 弹窗 */
+.oam-modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(8rpx);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.oam-modal-card {
+  width: 86%;
+  background: #ffffff;
+  border-radius: 28rpx;
+  padding: 36rpx;
+  box-shadow: 0 20rpx 60rpx rgba(15, 23, 42, 0.2);
+}
+
+.oam-modal-title {
+  font-size: 32rpx;
+  font-weight: 800;
+  color: #0f172a;
+  text-align: center;
+  margin-bottom: 12rpx;
+}
+
+.oam-modal-sub {
+  font-size: 22rpx;
+  color: #64748b;
+  text-align: center;
+  margin-bottom: 24rpx;
+}
+
+.oam-modal-textarea {
+  width: 100%;
+  height: 320rpx;
+  background: #f8fafc;
+  border: 1rpx solid #e2e8f0;
+  border-radius: 18rpx;
+  padding: 20rpx;
+  box-sizing: border-box;
+  font-size: 24rpx;
+  color: #0f172a;
+  line-height: 1.5;
+  margin-bottom: 28rpx;
+}
+
+.oam-modal-actions {
+  display: flex;
+  gap: 20rpx;
+}
+
+.oam-modal-btn {
+  flex: 1;
+  height: 80rpx;
+  line-height: 80rpx;
+  border-radius: 18rpx;
+  font-size: 28rpx;
+  font-weight: 700;
+}
+
+.oam-modal-btn--cancel {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.oam-modal-btn--confirm {
+  background: #2563eb;
+  color: #ffffff;
+}

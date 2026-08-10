@@ -15,6 +15,17 @@ Page({
     tournamentName: '',
     startDate: '',
     endDate: '',
+    sportTypes: [
+      { key: 'basketball', label: '篮球 (胜2/负1)' },
+      { key: 'soccer', label: '足球 (胜3/平1/负0)' },
+      { key: 'custom', label: '自定义规则' }
+    ],
+    sportTypeIndex: 0,
+    formats: [
+      { key: 'LEAGUE', label: '联赛制 (循环赛)' },
+      { key: 'CUP', label: '赛会制 (分组+淘汰赛)' }
+    ],
+    formatIndex: 0,
     submitting: false,
     loading: true
   },
@@ -62,6 +73,8 @@ Page({
     let name = '';
     let startDate = now;
     let endDate = now;
+    let sportTypeIndex = 0;
+    let formatIndex = 0;
     if (!isNew && tournamentId) {
       pickerIndex = tournaments.findIndex(function (t) {
         return String(t.id) === tournamentId;
@@ -73,6 +86,9 @@ Page({
         startDate = item.startDate || now;
         endDate = item.endDate || now;
         tournamentId = String(item.id);
+        if (item.sportType === 'soccer') sportTypeIndex = 1;
+        else if (item.sportType === 'custom') sportTypeIndex = 2;
+        if (item.format === 'CUP') formatIndex = 1;
       }
     }
     this.setData({
@@ -82,7 +98,9 @@ Page({
       tournamentId: tournamentId,
       tournamentName: name,
       startDate: startDate,
-      endDate: endDate
+      endDate: endDate,
+      sportTypeIndex: sportTypeIndex,
+      formatIndex: formatIndex
     });
   },
 
@@ -108,7 +126,9 @@ Page({
       tournamentId: '',
       tournamentName: '',
       startDate: now,
-      endDate: now
+      endDate: now,
+      sportTypeIndex: 0,
+      formatIndex: 0
     });
   },
 
@@ -136,6 +156,14 @@ Page({
     this.setData({ endDate: e.detail.value });
   },
 
+  onSportTypeChange: function (e) {
+    this.setData({ sportTypeIndex: Number(e.detail.value) });
+  },
+
+  onFormatChange: function (e) {
+    this.setData({ formatIndex: Number(e.detail.value) });
+  },
+
   /**
    * @returns {void}
    */
@@ -148,12 +176,16 @@ Page({
       return;
     }
     this.setData({ submitting: true });
+    const selectedSport = d.sportTypes[d.sportTypeIndex] ? d.sportTypes[d.sportTypeIndex].key : 'basketball';
+    const selectedFormat = d.formats[d.formatIndex] ? d.formats[d.formatIndex].key : 'LEAGUE';
     const payload = {
       action: 'upsert_tournament',
       data: {
         tournament_name: d.tournamentName.trim(),
         start_date: d.startDate,
-        end_date: d.endDate
+        end_date: d.endDate,
+        sport_type: selectedSport,
+        format: selectedFormat
       }
     };
     if (d.tournamentId && !d.isCreatingNew) {

@@ -12,7 +12,7 @@ const {
   deleteMatch
 } = require('../../../services/radar-api.js');
 const { formatStartTimeDisplay } = require('../../../utils/radar-datetime.js');
-const { parseMatchExcelBuffer } = require('../../../utils/radar-excel-parser.js');
+const { parseMatchExcelBuffer, parseMatchCsvText } = require('../../../utils/radar-excel-parser.js');
 
 /**
  * @param {import('../../../utils/radar-model.js').RadarMatchView} m
@@ -33,7 +33,9 @@ Page({
     matchRows: [],
     submitting: false,
     loading: false,
-    adminViewAll: false
+    adminViewAll: false,
+    showPasteModal: false,
+    pastedCsvText: ''
   },
 
   /**
@@ -173,10 +175,131 @@ Page({
   onPlusTap: function () {
     const self = this;
     wx.showActionSheet({
-      itemList: ['新增场次', 'Excel 批量导入'],
+      itemList: [
+        '新增单场',
+        '📁 微信文件(Excel/CSV)批量导入',
+        '📝 粘贴 AI 整理文本/CSV 导入',
+        '📋 复制 AI 整理提示词'
+      ],
       success: function (res) {
         if (res.tapIndex === 0) self.onNewMatch();
         else if (res.tapIndex === 1) self.onBatchImport();
+        else if (res.tapIndex === 2) self.onOpenPasteModal();
+        else if (res.tapIndex === 3) self.onCopyAiPrompt();
+      }
+    });
+  },
+
+  /**
+   * 复制大模型赛程整理提示词到剪贴板。
+   */
+  onCopyAiPrompt: function () {
+    const promptText = `请你作为赛程数据格式化助手。以下是我收集到的原始赛程信息（可能为聊天记录、文字公告或图片文本）：
+
+请将所有比赛场次整理成符合以下标准的 CSV 格式，并用 \`\`\`csv 代码块包裹输出。请勿包含其他解释性文字。
+
+CSV 表头格式（第一行为表头）：
+阶段,队伍A,队伍B,比赛时间,比赛场地,主队比分,客队比分
+
+字段说明：
+- 阶段: 所在分组或阶段，如 "A组"、"B组"、"淘汰赛" 或 "常规赛"（若无可留空）
+- 队伍A: 主队/第一支队伍名称（必填）
+- 队伍B: 客队/第二支队伍名称（必填）
+- 比赛时间: 标准时间格式 YYYY-MM-DD HH:mm:ss 或 YYYY-MM-DD HH:mm（必填）
+- 比赛场地: 比赛球场或场馆名称，如 "1号场"、"奥体中心3号场"（可选，若无可留空）
+- 主队比分: 完赛比分（可选，若未开赛留空）
+- 客队比分: 完赛比分（可选，若未开赛留空）
+
+原始赛程数据如下：
+`;
+    wx.setClipboardData({
+      data: promptText,
+      success: function () {
+        wx.showModal({
+          title: '提示词已复制！',
+          content: '请将提示词粘贴发送给任意大模型（如 DeepSeek / Kimi / 豆包 / ChatGPT），并在文末附上您的赛程聊天记录或图片文字。\n\n大模型输出 CSV 后，复制文本回小程序点击「粘贴 AI 文本导入」即可！',
+          confirmText: '知道了',
+          showCancel: false
+        });
+      }
+    });
+  },
+
+  onOpenPasteModal: function () {
+    const tournamentId = this._resolveImportTournamentId();
+    if (!tournamentId) {
+      wx.showModal({
+        title: '请选择导入赛事',
+        content: '请先在左上角筛选器选择要导入到的具体赛事（不可选「全部赛事」），再执行批量导入。',
+        showCancel: false,
+        confirmText: '知道了'
+      });
+      return;
+    }
+    this.setData({ showPasteModal: true, pastedCsvText: '' });
+  },
+
+  onClosePasteModal: function () {
+    this.setData({ showPasteModal: false, pastedCsvText: '' });
+  },
+
+  onPasteTextChange: function (e) {
+    this.setData({ pastedCsvText: e.detail.value });
+  },
+
+  onSubmitPasteImport: function () {
+    const self = this;
+    if (!ensureRadarLabAccess()) return;
+    const tournamentId = this._resolveImportTournamentId();
+    if (!tournamentId) {
+      wx.showModal({
+        title: '请选择导入赛事',
+        content: '请先在左上角筛选器选择要导入到的具体赛事（不可选「全部赛事」），再执行批量导入。',
+        showCancel: false,
+        confirmText: '知道了'
+      });
+      return;
+    }
+    const text = String(this.data.pastedCsvText || '').trim();
+    if (!text) {
+      wx.showToast({ title: '请输入或粘贴 CSV 文本', icon: 'none' });
+      return;
+    }
+
+    let rows;
+    try {
+      rows = parseMatchCsvText(text);
+    } catch (err) {
+      wx.showToast({ title: err.message || '解析文本失败', icon: 'none' });
+      return;
+    }
+
+    const tourName = self._currentFilterTournamentName();
+    wx.showModal({
+      title: '确认导入',
+      content: '成功解析出 ' + rows.length + ' 条场次，是否导入到「' + tourName + '」？',
+      success: function (modalRes) {
+        if (!modalRes.confirm) return;
+        self.setData({ submitting: true });
+        wx.showLoading({ title: '导入中…', mask: true });
+        oamUpsert({
+          action: 'batch_import_matches',
+          tournament_id: tournamentId,
+          matches_list: rows
+        })
+          .then(function () {
+            wx.hideLoading();
+            wx.showToast({ title: '已导入 ' + rows.length + ' 场', icon: 'success' });
+            self.onClosePasteModal();
+            self._reloadList(true);
+          })
+          .catch(function (err) {
+            wx.hideLoading();
+            wx.showToast({ title: err.message || '导入失败', icon: 'none' });
+          })
+          .finally(function () {
+            self.setData({ submitting: false });
+          });
       }
     });
   },

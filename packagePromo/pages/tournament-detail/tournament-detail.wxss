@@ -1,0 +1,551 @@
+/* ─────────────────────────────────────
+   全局与页面底色（清新亮色主题 - 继承主页风格）
+───────────────────────────────────── */
+page {
+  background-color: #EEF6FF;
+  min-height: 100%;
+}
+
+.page-root {
+  min-height: 100vh;
+  padding: 0 28rpx calc(80rpx + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  background: linear-gradient(160deg, #EEF6FF 0%, #E8F8F2 55%, #EFF6FF 100%);
+  color: #1E293B;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  position: relative;
+}
+
+/* ─────────────────────────────────────
+   头部 Header
+───────────────────────────────────── */
+.header {
+  padding: 40rpx 8rpx 32rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.header-nav-row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.back-btn {
+  width: 60rpx;
+  height: 60rpx;
+  border-radius: 50%;
+  background: #FFFFFF;
+  box-shadow: 0 4rpx 16rpx rgba(15, 23, 42, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.back-btn-hover {
+  background: #F1F5F9;
+  transform: scale(0.92);
+}
+
+.back-icon {
+  font-size: 40rpx;
+  color: #0F172A;
+  font-weight: 300;
+  line-height: 1;
+  margin-top: -4rpx;
+}
+
+.logo-text {
+  font-size: 44rpx;
+  font-weight: bold;
+  color: #0F172A;
+  display: flex;
+  align-items: center;
+}
+
+.italic-text {
+  color: #0047FF;
+  display: inline-block;
+  transform: skewX(-15deg);
+  margin: 0 4rpx;
+}
+
+.header-sub {
+  font-size: 20rpx;
+  color: #94A3B8;
+  letter-spacing: 6rpx;
+  font-weight: 600;
+  margin-top: 4rpx;
+}
+
+/* 加载态 */
+.tn-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 100rpx 0;
+  color: #64748B;
+  font-size: 26rpx;
+}
+
+.tn-spinner {
+  width: 44rpx;
+  height: 44rpx;
+  border: 4rpx solid rgba(37, 99, 235, 0.2);
+  border-top-color: #2563EB;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 18rpx;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 空状态 */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 100rpx 0;
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 28rpx;
+  border: 2rpx dashed #CBD5E1;
+  margin: 20rpx 0;
+}
+
+.empty-icon {
+  font-size: 72rpx;
+  margin-bottom: 16rpx;
+}
+
+.empty-text {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #334155;
+  margin-bottom: 8rpx;
+}
+
+.empty-hint {
+  font-size: 22rpx;
+  color: #94A3B8;
+}
+
+/* ─────────────────────────────────────
+   赛事 Banner Card (白色清新风格)
+───────────────────────────────────── */
+.td-header-card {
+  background: #FFFFFF;
+  padding: 28rpx 32rpx;
+  border-radius: 24rpx;
+  margin-bottom: 20rpx;
+  box-shadow: 0 4rpx 24rpx rgba(15, 23, 42, 0.07), 0 1rpx 4rpx rgba(15, 23, 42, 0.04);
+}
+
+.td-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12rpx;
+}
+
+.td-sport-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6rpx;
+  padding: 4rpx 14rpx;
+  border-radius: 999rpx;
+  background: rgba(15, 23, 42, 0.05);
+}
+
+.td-sport-icon { font-size: 20rpx; }
+.td-sport-label { font-size: 20rpx; color: #64748B; font-weight: 600; }
+
+.td-header-badge {
+  background: rgba(37, 99, 235, 0.08);
+  color: #2563EB;
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  font-size: 20rpx;
+  padding: 4rpx 14rpx;
+  border-radius: 12rpx;
+  font-weight: 600;
+}
+
+.td-header-title {
+  font-size: 34rpx;
+  font-weight: 800;
+  color: #0F172A;
+  display: block;
+  margin-bottom: 12rpx;
+}
+
+.td-header-meta {
+  display: flex;
+  gap: 24rpx;
+}
+
+.td-meta-item {
+  font-size: 22rpx;
+  color: #64748B;
+  font-weight: 500;
+}
+
+/* ─────────────────────────────────────
+   Tab Switcher 导航
+───────────────────────────────────── */
+.td-nav-tabs {
+  display: flex;
+  background: rgba(255, 255, 255, 0.88);
+  padding: 6rpx;
+  border-radius: 20rpx;
+  margin-bottom: 20rpx;
+  box-shadow: 0 4rpx 16rpx rgba(15, 23, 42, 0.04);
+}
+
+.td-nav-tab {
+  flex: 1;
+  text-align: center;
+  padding: 16rpx 0;
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #64748B;
+  border-radius: 16rpx;
+  transition: all 0.25s ease;
+}
+
+.td-nav-tab.active {
+  background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+  color: #FFFFFF;
+  font-weight: 700;
+  box-shadow: 0 4rpx 14rpx rgba(37, 99, 235, 0.28);
+}
+
+/* Stage Pill Bar */
+.td-stage-bar {
+  display: flex;
+  gap: 14rpx;
+  overflow-x: auto;
+  margin-bottom: 20rpx;
+  padding-bottom: 6rpx;
+}
+
+.td-stage-pill {
+  padding: 8rpx 24rpx;
+  background: #FFFFFF;
+  border-radius: 24rpx;
+  font-size: 22rpx;
+  color: #64748B;
+  white-space: nowrap;
+  box-shadow: 0 2rpx 8rpx rgba(15, 23, 42, 0.04);
+  font-weight: 600;
+}
+
+.td-stage-pill.active {
+  background: rgba(37, 99, 235, 0.1);
+  color: #2563EB;
+  border: 1px solid rgba(37, 99, 235, 0.25);
+  font-weight: 700;
+}
+
+/* ─────────────────────────────────────
+   赛程 Match Card (紧凑高效高密度列表)
+───────────────────────────────────── */
+.td-mc-card {
+  background: #FFFFFF;
+  border-radius: 20rpx;
+  padding: 18rpx 24rpx;
+  margin-bottom: 14rpx;
+  box-shadow: 0 2rpx 16rpx rgba(15, 23, 42, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 10rpx;
+}
+
+.td-mc-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.td-mc-tags {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+}
+
+.td-mc-stage {
+  font-size: 20rpx;
+  font-weight: 700;
+  color: #475569;
+  background: #F1F5F9;
+  padding: 2rpx 10rpx;
+  border-radius: 6rpx;
+}
+
+.td-mc-venue {
+  font-size: 20rpx;
+  font-weight: 600;
+  color: #2563EB;
+  background: rgba(37, 99, 235, 0.08);
+  padding: 2rpx 10rpx;
+  border-radius: 6rpx;
+}
+
+.td-mc-right {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.td-mc-time {
+  font-size: 20rpx;
+  color: #94A3B8;
+  font-weight: 500;
+}
+
+.td-mc-status {
+  font-size: 18rpx;
+  font-weight: 700;
+  padding: 2rpx 10rpx;
+  border-radius: 6rpx;
+}
+
+.td-mc-status.finished {
+  background: rgba(16, 185, 129, 0.1);
+  color: #059669;
+}
+
+.td-mc-status.pending {
+  background: rgba(148, 163, 184, 0.1);
+  color: #64748B;
+}
+
+/* VS Body Row */
+.td-mc-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.td-mc-team {
+  flex: 1;
+  min-width: 0;
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #0F172A;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.td-mc-team.home { text-align: right; padding-right: 12rpx; }
+.td-mc-team.away { text-align: left; padding-left: 12rpx; }
+
+.td-mc-score-box {
+  min-width: 120rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6rpx;
+  flex-shrink: 0;
+  padding: 0 4rpx;
+}
+
+.td-mc-score-num {
+  font-size: 36rpx;
+  font-weight: 900;
+  color: #64748B;
+}
+
+.td-mc-score-num.win {
+  color: #059669;
+}
+
+.td-mc-score-sep {
+  font-size: 24rpx;
+  color: #CBD5E1;
+  font-weight: 300;
+}
+
+.td-mc-vs-text {
+  font-size: 28rpx;
+  font-weight: 900;
+  color: #CBD5E1;
+}
+
+.td-mc-edit-action {
+  padding: 4rpx 12rpx;
+  background: rgba(37, 99, 235, 0.08);
+  border-radius: 10rpx;
+  margin-left: 12rpx;
+  flex-shrink: 0;
+}
+
+.td-mc-edit-icon {
+  font-size: 22rpx;
+}
+
+/* ─────────────────────────────────────
+   排行榜 Table Standings Card (白色卡片)
+───────────────────────────────────── */
+.td-table-card {
+  background: #FFFFFF;
+  border-radius: 24rpx;
+  overflow: hidden;
+  box-shadow: 0 4rpx 24rpx rgba(15, 23, 42, 0.07);
+}
+
+.td-table-header {
+  display: flex;
+  background: #F8FAFC;
+  padding: 18rpx 14rpx;
+  font-size: 22rpx;
+  color: #64748B;
+  font-weight: 700;
+  text-align: center;
+  border-bottom: 1rpx solid #E2E8F0;
+}
+
+.td-table-row {
+  display: flex;
+  padding: 20rpx 14rpx;
+  border-bottom: 1rpx solid #F1F5F9;
+  font-size: 26rpx;
+  align-items: center;
+  text-align: center;
+}
+
+.col-rank { width: 60rpx; }
+.col-team { flex: 1; text-align: left; padding-left: 10rpx; }
+.col-stat { width: 100rpx; font-size: 22rpx; color: #64748B; }
+.col-pts { width: 70rpx; font-size: 26rpx; font-weight: 800; }
+
+.td-rank-badge {
+  display: inline-block;
+  width: 36rpx;
+  height: 36rpx;
+  line-height: 36rpx;
+  text-align: center;
+  border-radius: 50%;
+  font-size: 20rpx;
+  font-weight: 800;
+  background: #F1F5F9;
+  color: #64748B;
+}
+
+.rank-1 { background: linear-gradient(135deg, #F59E0B, #D97706); color: #FFF; }
+.rank-2 { background: linear-gradient(135deg, #94A3B8, #64748B); color: #FFF; }
+.rank-3 { background: linear-gradient(135deg, #D97706, #B45309); color: #FFF; }
+
+.td-team-title {
+  font-weight: 700;
+  color: #0F172A;
+}
+
+.td-pts-highlight {
+  color: #2563EB;
+}
+
+/* ─────────────────────────────────────
+   Modal 比分修改弹窗
+───────────────────────────────────── */
+.td-modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(8rpx);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.td-modal-card {
+  width: 84%;
+  background: #FFFFFF;
+  border-radius: 32rpx;
+  padding: 40rpx;
+  box-shadow: 0 20rpx 60rpx rgba(15, 23, 42, 0.2);
+}
+
+.td-modal-title {
+  font-size: 34rpx;
+  font-weight: 800;
+  text-align: center;
+  color: #0F172A;
+  margin-bottom: 16rpx;
+}
+
+.td-modal-versus {
+  text-align: center;
+  font-size: 28rpx;
+  color: #64748B;
+  margin-bottom: 36rpx;
+}
+
+.td-modal-team {
+  font-weight: 700;
+  color: #0F172A;
+}
+
+.td-modal-vs {
+  color: #2563EB;
+  font-weight: 800;
+  margin: 0 12rpx;
+}
+
+.td-modal-inputs {
+  display: flex;
+  gap: 20rpx;
+  margin-bottom: 40rpx;
+}
+
+.td-input-group { flex: 1; }
+
+.td-input-label {
+  font-size: 22rpx;
+  color: #64748B;
+  display: block;
+  margin-bottom: 10rpx;
+}
+
+.td-modal-input {
+  background: #F8FAFC;
+  border: 2rpx solid #E2E8F0;
+  border-radius: 18rpx;
+  height: 80rpx;
+  padding: 0 20rpx;
+  color: #0F172A;
+  font-size: 36rpx;
+  font-weight: 800;
+  text-align: center;
+}
+
+.td-modal-actions {
+  display: flex;
+  gap: 20rpx;
+}
+
+.td-btn {
+  flex: 1;
+  height: 84rpx;
+  line-height: 84rpx;
+  border-radius: 20rpx;
+  font-size: 28rpx;
+  font-weight: 700;
+}
+
+.td-btn-cancel {
+  background: #F1F5F9;
+  color: #64748B;
+}
+
+.td-btn-confirm {
+  background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+  color: #FFFFFF;
+  box-shadow: 0 4rpx 14rpx rgba(37, 99, 235, 0.3);
+}

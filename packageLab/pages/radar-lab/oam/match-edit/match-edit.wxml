@@ -19,6 +19,10 @@
         <text class="rl-notice-text">请先创建赛事后再新增场次</text>
       </view>
       <view class="rl-field">
+        <text class="rl-label">所属阶段/分组</text>
+        <input class="rl-input" placeholder="如：A组、B组、常规赛" value="{{stageId}}" bindinput="onStageIdInput" />
+      </view>
+      <view class="rl-field">
         <text class="rl-label">队伍 A</text>
         <input class="rl-input" placeholder="主队名称" value="{{teamA}}" bindinput="onTeamAInput" />
       </view>
@@ -35,6 +39,18 @@
           <picker mode="time" value="{{startTime}}" bindchange="onStartTimeChange">
             <view class="rl-input rl-picker-display">{{startTime || '选择时间'}}</view>
           </picker>
+        </view>
+      </view>
+      <view class="rl-field">
+        <text class="rl-label">比赛场地/球场</text>
+        <input class="rl-input" placeholder="如：1号场、奥体中心3号场地" value="{{venue}}" bindinput="onVenueInput" />
+      </view>
+      <view class="rl-field">
+        <text class="rl-label">比分记录 (完赛可填)</text>
+        <view class="rl-datetime-row">
+          <input class="rl-input" type="number" placeholder="主队比分" value="{{scoreA}}" bindinput="onScoreAInput" />
+          <text style="color:#64748B;padding:0 12rpx;">:</text>
+          <input class="rl-input" type="number" placeholder="客队比分" value="{{scoreB}}" bindinput="onScoreBInput" />
         </view>
       </view>
       <view class="rl-field">

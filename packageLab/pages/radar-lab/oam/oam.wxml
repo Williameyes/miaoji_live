@@ -25,6 +25,11 @@
     </view>
   </view>
 
+  <view class="oam-ai-helper-bar">
+    <button class="oam-ai-btn" bindtap="onCopyAiPrompt">📋 复制 AI 整理提示词</button>
+    <button class="oam-ai-btn oam-ai-btn--primary" bindtap="onOpenPasteModal">📝 粘贴 AI 文本导入</button>
+  </view>
+
   <view class="rl-empty" wx:if="{{loading}}">
     <text>加载中…</text>
   </view>
@@ -79,6 +84,27 @@
 
   <view class="oam-fab" bindtap="onNewMatch" hover-class="oam-fab-hover">
     <text class="oam-fab-text">新增场次</text>
+  </view>
+
+  <!-- 粘贴 LLM 文本/CSV 导入 Modal -->
+  <view class="oam-modal-overlay" wx:if="{{showPasteModal}}">
+    <view class="oam-modal-card">
+      <view class="oam-modal-title">粘贴 AI 整理文本/CSV 导入</view>
+      <view class="oam-modal-sub">将 DeepSeek/ChatGPT/Kimi/豆包 输出的 CSV 文本粘贴在下方</view>
+
+      <textarea 
+        class="oam-modal-textarea" 
+        value="{{pastedCsvText}}" 
+        bindinput="onPasteTextChange"
+        placeholder="例如：&#10;阶段,队伍A,队伍B,比赛时间,比赛场地&#10;A组,湖人队,勇士队,2026-08-15 19:30,1号场" 
+        maxlength="10000"
+      />
+
+      <view class="oam-modal-actions">
+        <button class="oam-modal-btn oam-modal-btn--cancel" bindtap="onClosePasteModal">取消</button>
+        <button class="oam-modal-btn oam-modal-btn--confirm" bindtap="onSubmitPasteImport">解析并导入</button>
+      </view>
+    </view>
   </view>
 
 </view>

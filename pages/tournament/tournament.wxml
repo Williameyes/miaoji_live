@@ -1,0 +1,75 @@
+<view class="page-root" style="padding-top: {{statusBarHeight}}px;">
+
+  <!-- ===== 头部 ===== -->
+  <view class="header">
+    <view class="logo-text">
+      赛事<text class="italic-text">资</text>讯
+    </view>
+    <text class="header-sub">TOURNAMENT CENTER</text>
+  </view>
+
+  <!-- ===== 分类 Filter Tabs ===== -->
+  <view class="tn-filter-bar">
+    <view class="tn-filter-item {{filterTab === 'all' ? 'active' : ''}}" data-tab="all" bindtap="onFilterTabChange">全部赛事</view>
+    <view class="tn-filter-item {{filterTab === 'active' ? 'active' : ''}}" data-tab="active" bindtap="onFilterTabChange">进行中</view>
+    <view class="tn-filter-item {{filterTab === 'ended' ? 'active' : ''}}" data-tab="ended" bindtap="onFilterTabChange">已完赛</view>
+  </view>
+
+  <!-- ===== 列表内容区 ===== -->
+  <view class="section">
+    <view class="section-header">
+      <text class="section-label">赛事大厅</text>
+      <text class="match-count-badge" wx:if="{{tournamentList.length > 0}}">{{tournamentList.length}} 赛事</text>
+    </view>
+
+    <!-- 加载态 -->
+    <view class="tn-loading" wx:if="{{loading}}">
+      <view class="tn-spinner"></view>
+      <text>正在加载赛事列表…</text>
+    </view>
+
+    <!-- 空状态 -->
+    <view class="empty-state" wx:elif="{{!tournamentList.length}}">
+      <text class="empty-icon">🏆</text>
+      <text class="empty-text">暂无公开展览的赛事</text>
+      <text class="empty-hint">在「我的 -> 比赛管理」中创建公开展览赛事</text>
+    </view>
+
+    <!-- 双列网格卡片布局 (保持小红书/抖音卡片体验，配色与风格完全匹配记分页) -->
+    <view class="tn-grid-2col" wx:else>
+      <block wx:for="{{tournamentList}}" wx:key="id">
+        <view 
+          class="tn-grid-card" 
+          hover-class="tn-card-hover"
+          wx:if="{{filterTab === 'all' || (filterTab === 'active' && !item.isEnded) || (filterTab === 'ended' && item.isEnded)}}"
+          data-id="{{item.id}}" 
+          bindtap="onTournamentTap"
+          style="animation-delay: {{index * 55}}ms"
+        >
+          <view class="tn-card-banner">
+            <view class="tn-banner-icon-box">🏆</view>
+            <view class="tn-badge {{item.statusClass}}">{{item.statusText}}</view>
+          </view>
+
+          <view class="tn-card-content">
+            <text class="tn-card-title">{{item.name}}</text>
+
+            <view class="tn-tags-row">
+              <view class="tn-sport-pill">
+                <text class="tn-sport-icon">{{item.sportIcon}}</text>
+                <text class="tn-sport-label">{{item.sportLabel}}</text>
+              </view>
+              <view class="tn-format-tag">{{item.formatLabel}}</view>
+            </view>
+
+            <view class="tn-card-meta">
+              <text class="tn-meta-date">📅 {{item.dateRange}}</text>
+              <text class="tn-meta-count">⚽ {{item.scheduledCount}} 场比赛</text>
+            </view>
+          </view>
+        </view>
+      </block>
+    </view>
+  </view>
+
+</view>
