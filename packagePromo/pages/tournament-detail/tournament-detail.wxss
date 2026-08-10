@@ -339,13 +339,15 @@ page {
 }
 
 /* ─────────────────────────────────────
-   赛程表格专属列 (Schedule Table Columns)
+   赛程表格专属列 (Schedule Table Columns - 支持文本自动换行不隐藏)
 ───────────────────────────────────── */
 .col-sch-group {
-  width: 100rpx;
+  width: 95rpx;
   display: flex;
   justify-content: center;
   align-items: center;
+  text-align: center;
+  flex-shrink: 0;
 }
 
 .td-sch-group-tag {
@@ -353,32 +355,34 @@ page {
   font-weight: 700;
   color: #475569;
   background: #F1F5F9;
-  padding: 2rpx 8rpx;
+  padding: 4rpx 6rpx;
   border-radius: 6rpx;
-  max-width: 90rpx;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-all;
+  white-space: normal;
+  line-height: 1.25;
+  text-align: center;
+  display: inline-block;
 }
 
 .col-sch-teams {
-  flex: 1;
+  flex: 1.2;
   min-width: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 4rpx;
   padding: 0 4rpx;
+  text-align: center;
 }
 
 .td-sch-team {
   font-size: 22rpx;
   font-weight: 700;
   color: #0F172A;
-  max-width: 110rpx;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-all;
+  white-space: normal;
+  line-height: 1.25;
+  flex: 1;
 }
 
 .td-sch-team.home { text-align: right; }
@@ -393,13 +397,15 @@ page {
   color: #94A3B8;
   font-weight: 400;
   margin: 0 2rpx;
+  flex-shrink: 0;
 }
 
 .col-sch-score {
-  width: 90rpx;
+  width: 85rpx;
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
 }
 
 .td-sch-score-num {
@@ -422,46 +428,41 @@ page {
   font-size: 18rpx;
   color: #64748B;
   background: #F1F5F9;
-  padding: 2rpx 8rpx;
+  padding: 4rpx 6rpx;
   border-radius: 6rpx;
   font-weight: 600;
+  word-break: break-all;
+  white-space: normal;
 }
 
 .col-sch-time {
-  width: 100rpx;
+  width: 95rpx;
   font-size: 20rpx;
   color: #94A3B8;
   text-align: center;
+  word-break: break-all;
+  white-space: normal;
+  line-height: 1.2;
+  flex-shrink: 0;
 }
 
 .col-sch-venue {
-  width: 120rpx;
+  width: 125rpx;
   font-size: 20rpx;
   color: #2563EB;
   text-align: center;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-weight: 600;
+  word-break: break-all;
+  white-space: normal;
+  line-height: 1.25;
+  flex-shrink: 0;
 }
 
 .td-sch-venue-val {
-  max-width: 110rpx;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-all;
+  white-space: normal;
   display: inline-block;
-}
-
-.col-sch-edit {
-  width: 36rpx;
-  display: flex;
-  justify-content: center;
-}
-
-.td-sch-edit-btn {
-  font-size: 20rpx;
-  padding: 2rpx;
+  line-height: 1.25;
 }
 
 /* ─────────────────────────────────────
