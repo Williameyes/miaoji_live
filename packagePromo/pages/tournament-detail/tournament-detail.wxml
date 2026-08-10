@@ -88,8 +88,9 @@
         <!-- 赛程表格行 -->
         <block wx:for="{{currentMatches}}" wx:key="match_id">
           <view class="td-table-row td-sched-row" data-match="{{item}}" bindlongpress="onMatchLongPress" hover-class="td-sched-row-hover">
-            <!-- 组别/阶段 -->
+            <!-- 组别/阶段与场次序号 -->
             <view class="col-sch-group">
+              <text class="td-sch-seq-badge" wx:if="{{item.match_seq}}">#{{item.match_seq}}</text>
               <text class="td-sch-group-tag">{{item.stage_id !== 'stage_default' ? item.stage_id : '常规赛'}}</text>
             </view>
 

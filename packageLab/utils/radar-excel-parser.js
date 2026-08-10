@@ -29,16 +29,17 @@ function normalizeHeader(cell) {
 /**
  * 从二维数组中定位表头行与列索引。
  * @param {unknown[][]} rows
- * @returns {{ headerRow: number, colA: number, colB: number, colTime: number, colStage: number, colVenue: number, colScoreA: number, colScoreB: number } | null}
+ * @returns {{ headerRow: number, colA: number, colB: number, colTime: number, colStage: number, colVenue: number, colScoreA: number, colScoreB: number, colSeq: number } | null}
  */
 function locateTemplateColumns(rows) {
   const aliasesA = ['队伍a', '队伍A', '主队', 'team_a', 'teama'];
   const aliasesB = ['队伍b', '队伍B', '客队', 'team_b', 'teamb'];
-  const aliasesT = ['比赛时间', '开赛时间', 'start_time', '时间'];
-  const aliasesStage = ['阶段', '分组', 'stage_id', 'stageid', 'stage'];
+  const aliasesT = ['比赛时间', '开赛时间', 'start_time', '时间', 'time'];
+  const aliasesStage = ['阶段', '分组', '组别', 'stage_id', 'stageid', 'stage'];
   const aliasesVenue = ['比赛场地', '场地', '球场', '场馆', 'venue', 'location'];
   const aliasesScoreA = ['主队比分', '队伍a比分', 'score_a', 'scorea'];
   const aliasesScoreB = ['客队比分', '队伍b比分', 'score_b', 'scoreb'];
+  const aliasesSeq = ['场次', '场序', '序号', '场次序号', 'match_seq', 'seq'];
 
   for (let r = 0; r < Math.min(rows.length, 8); r += 1) {
     const row = rows[r];
@@ -50,6 +51,7 @@ function locateTemplateColumns(rows) {
     let colVenue = -1;
     let colScoreA = -1;
     let colScoreB = -1;
+    let colSeq = -1;
 
     for (let c = 0; c < row.length; c += 1) {
       const h = normalizeHeader(row[c]).toLowerCase();
@@ -60,6 +62,7 @@ function locateTemplateColumns(rows) {
       if (aliasesVenue.some(v => h === v.toLowerCase())) colVenue = c;
       if (aliasesScoreA.some(sa => h === sa.toLowerCase())) colScoreA = c;
       if (aliasesScoreB.some(sb => h === sb.toLowerCase())) colScoreB = c;
+      if (aliasesSeq.some(sq => h === sq.toLowerCase())) colSeq = c;
     }
     if (colA >= 0 && colB >= 0 && colTime >= 0) {
       return {
@@ -70,7 +73,8 @@ function locateTemplateColumns(rows) {
         colStage: colStage,
         colVenue: colVenue,
         colScoreA: colScoreA,
-        colScoreB: colScoreB
+        colScoreB: colScoreB,
+        colSeq: colSeq
       };
     }
   }
@@ -121,6 +125,7 @@ function formatStartTime(raw) {
 function extractMatchesFromRows(rows, loc) {
   if (!loc) throw new Error('未找到「队伍A / 队伍B / 比赛时间」表头');
   const result = [];
+  let seqCounter = 1;
   for (let r = loc.headerRow + 1; r < rows.length; r += 1) {
     const row = rows[r];
     if (!Array.isArray(row)) continue;
@@ -132,7 +137,16 @@ function extractMatchesFromRows(rows, loc) {
       throw new Error('第 ' + (r + 1) + ' 行数据不完整（需包含队伍A、队伍B和比赛时间）');
     }
 
-    const item = { team_a: teamA, team_b: teamB, start_time: startTime };
+    let matchSeq = seqCounter;
+    if (loc.colSeq >= 0 && row[loc.colSeq] != null && String(row[loc.colSeq]).trim() !== '') {
+      const parsedSeq = Number(row[loc.colSeq]);
+      if (!isNaN(parsedSeq) && parsedSeq > 0) {
+        matchSeq = parsedSeq;
+      }
+    }
+    seqCounter += 1;
+
+    const item = { match_seq: matchSeq, team_a: teamA, team_b: teamB, start_time: startTime };
 
     if (loc.colStage >= 0 && row[loc.colStage] != null && String(row[loc.colStage]).trim()) {
       item.stage_id = String(row[loc.colStage]).trim();

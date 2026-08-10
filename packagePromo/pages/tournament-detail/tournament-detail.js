@@ -109,13 +109,20 @@ function resolveTeamPlaceholderName(rawTeamName, allMatches) {
     const targetSeqNum = Number(mRes[1]);
     const type = mRes[2];
 
-    let targetMatch = null;
-    if (allMatches[targetSeqNum - 1]) {
-      targetMatch = allMatches[targetSeqNum - 1];
-    } else {
-      targetMatch = allMatches.find(function (item, idx) {
-        return (idx + 1) === targetSeqNum;
-      });
+    // 优先通过显式持久化的 match_seq (场次序号，如第 39 场) 精确匹配
+    let targetMatch = allMatches.find(function (item) {
+      return Number(item.match_seq) === targetSeqNum;
+    });
+
+    // 兜底降级：若未显式指定，按列表索引比对
+    if (!targetMatch) {
+      if (allMatches[targetSeqNum - 1]) {
+        targetMatch = allMatches[targetSeqNum - 1];
+      } else {
+        targetMatch = allMatches.find(function (item, idx) {
+          return (idx + 1) === targetSeqNum;
+        });
+      }
     }
 
     if (targetMatch && targetMatch.hasValidScores) {

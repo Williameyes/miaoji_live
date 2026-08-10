@@ -344,10 +344,22 @@ page {
 .col-sch-group {
   width: 95rpx;
   display: flex;
+  flex-direction: column;
   justify-content: center;
   align-items: center;
+  gap: 4rpx;
   text-align: center;
   flex-shrink: 0;
+}
+
+.td-sch-seq-badge {
+  font-size: 16rpx;
+  font-weight: 800;
+  color: #2563EB;
+  background: rgba(37, 99, 235, 0.08);
+  padding: 1rpx 6rpx;
+  border-radius: 4rpx;
+  line-height: 1.1;
 }
 
 .td-sch-group-tag {
