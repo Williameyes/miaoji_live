@@ -22,16 +22,20 @@
     <!-- 头部 Banner Card (白色清新风格) -->
     <view class="td-header-card">
       <view class="td-header-top">
-        <view class="td-sport-pill">
-          <text class="td-sport-icon">{{detail.sport_type === 'soccer' ? '⚽' : '🏀'}}</text>
-          <text class="td-sport-label">{{detail.sport_type === 'soccer' ? '足球' : '篮球'}}</text>
-        </view>
-        <view class="td-header-right-actions">
-          <view class="td-pin-btn {{isPinned ? 'pinned' : ''}}" bindtap="onTogglePin" hover-class="td-pin-btn-hover">
-            <text class="td-pin-icon">📌</text>
-            <text class="td-pin-text">{{isPinned ? '已置顶' : '置顶'}}</text>
+        <view class="td-tags-inline">
+          <view class="td-sport-pill">
+            <text class="td-sport-icon">{{detail.sport_type === 'soccer' ? '⚽' : '🏀'}}</text>
+            <text class="td-sport-label">{{detail.sport_type === 'soccer' ? '足球' : '篮球'}}</text>
           </view>
-          <view class="td-header-badge">{{detail.format === 'CUP' ? '赛会制' : '联赛制'}}</view>
+          <view class="td-format-pill">
+            {{detail.format === 'CUP' ? '赛会制' : '联赛制'}}
+          </view>
+        </view>
+
+        <!-- 极简精美置顶按钮 -->
+        <view class="td-pin-btn {{isPinned ? 'pinned' : ''}}" bindtap="onTogglePin" hover-class="td-pin-btn-hover">
+          <text class="td-pin-icon">📌</text>
+          <text class="td-pin-text">{{isPinned ? '已置顶' : '置顶'}}</text>
         </view>
       </view>
       <text class="td-header-title">{{detail.tournament_name}}</text>
@@ -63,51 +67,54 @@
       </block>
     </view>
 
-    <!-- Tab 1: 赛程页面 (紧凑高效高密度列表) -->
+    <!-- Tab 1: 赛程页面 (精美表格风赛程表，与排行榜风格一致) -->
     <view class="td-tab-content" wx:if="{{activeTab === 'schedule'}}">
       <view class="empty-state" wx:if="{{!currentMatches.length}}">
         <text class="empty-icon">📅</text>
         <text class="empty-text">该阶段下暂无赛程安排</text>
       </view>
 
-      <view class="td-match-list" wx:else>
+      <view class="td-table-card" wx:else>
+        <!-- 赛程表格头 -->
+        <view class="td-table-header td-sched-header">
+          <text class="col-sch-stage">阶段/场地</text>
+          <text class="col-sch-vs">对阵球队</text>
+          <text class="col-sch-score">比分</text>
+          <text class="col-sch-time">时间</text>
+          <text class="col-sch-edit" wx:if="{{detail.can_manage}}">操作</text>
+        </view>
+
+        <!-- 赛程表格行 -->
         <block wx:for="{{currentMatches}}" wx:key="match_id">
-          <view class="td-mc-card">
-            <!-- 顶栏微元：阶段、场地、时间与状态 -->
-            <view class="td-mc-top">
-              <view class="td-mc-tags">
-                <text class="td-mc-stage" wx:if="{{item.stage_id !== 'stage_default'}}">{{item.stage_id}}</text>
-                <text class="td-mc-venue" wx:if="{{item.venue}}">📍 {{item.venue}}</text>
-              </view>
-              <view class="td-mc-right">
-                <text class="td-mc-time">{{item.displayTime || item.start_time}}</text>
-                <view class="td-mc-status {{item.is_finished || item.hasValidScores ? 'finished' : 'pending'}}">
-                  {{item.is_finished || item.hasValidScores ? '已完赛' : '未开始'}}
-                </view>
-              </view>
+          <view class="td-table-row td-sched-row">
+            <view class="col-sch-stage">
+              <text class="td-sch-stage-text">{{item.stage_id !== 'stage_default' ? item.stage_id : '常规赛'}}</text>
+              <text class="td-sch-venue-text" wx:if="{{item.venue}}">📍 {{item.venue}}</text>
             </view>
 
-            <!-- 中栏：主队 VS 客队与比分 (高密度单行布局) -->
-            <view class="td-mc-body">
-              <text class="td-mc-team home">{{item.team_a}}</text>
+            <view class="col-sch-vs">
+              <text class="td-sch-team home {{item.score_a > item.score_b ? 'win-team' : ''}}">{{item.team_a}}</text>
+              <text class="td-sch-vs-sep">vs</text>
+              <text class="td-sch-team away {{item.score_b > item.score_a ? 'win-team' : ''}}">{{item.team_b}}</text>
+            </view>
 
-              <view class="td-mc-score-box">
-                <block wx:if="{{item.hasValidScores}}">
-                  <text class="td-mc-score-num {{item.score_a > item.score_b ? 'win' : ''}}">{{item.score_a}}</text>
-                  <text class="td-mc-score-sep">:</text>
-                  <text class="td-mc-score-num {{item.score_b > item.score_a ? 'win' : ''}}">{{item.score_b}}</text>
-                </block>
-                <block wx:else>
-                  <text class="td-mc-vs-text">VS</text>
-                </block>
-              </view>
+            <view class="col-sch-score">
+              <block wx:if="{{item.hasValidScores}}">
+                <text class="td-sch-score-num {{item.score_a > item.score_b ? 'win' : ''}}">{{item.score_a}}</text>
+                <text class="td-sch-score-sep">:</text>
+                <text class="td-sch-score-num {{item.score_b > item.score_a ? 'win' : ''}}">{{item.score_b}}</text>
+              </block>
+              <block wx:else>
+                <text class="td-sch-pending-tag">未开始</text>
+              </block>
+            </view>
 
-              <text class="td-mc-team away">{{item.team_b}}</text>
+            <view class="col-sch-time">
+              <text class="td-sch-time-val">{{item.displayTime || item.start_time}}</text>
+            </view>
 
-              <!-- 所有者极简修改按钮 -->
-              <view class="td-mc-edit-action" wx:if="{{detail.can_manage}}" data-match="{{item}}" bindtap="onEditMatchScore">
-                <text class="td-mc-edit-icon">✏️</text>
-              </view>
+            <view class="col-sch-edit" wx:if="{{detail.can_manage}}">
+              <view class="td-sch-edit-btn" data-match="{{item}}" bindtap="onEditMatchScore">✏️</view>
             </view>
           </view>
         </block>
