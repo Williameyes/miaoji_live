@@ -75,6 +75,7 @@
       </view>
 
       <view class="td-table-card" wx:else>
+        <view class="td-sched-hint" wx:if="{{detail.can_manage}}">💡 管理员提示：长按任意比赛行即可快捷修改比分</view>
         <!-- 赛程表格头 -->
         <view class="td-table-header td-sched-header">
           <text class="col-sch-group">组别</text>
@@ -82,12 +83,11 @@
           <text class="col-sch-score">比分/状态</text>
           <text class="col-sch-time">时间</text>
           <text class="col-sch-venue">场地</text>
-          <text class="col-sch-edit" wx:if="{{detail.can_manage}}"></text>
         </view>
 
         <!-- 赛程表格行 -->
         <block wx:for="{{currentMatches}}" wx:key="match_id">
-          <view class="td-table-row td-sched-row">
+          <view class="td-table-row td-sched-row" data-match="{{item}}" bindlongpress="onMatchLongPress" hover-class="td-sched-row-hover">
             <!-- 组别/阶段 -->
             <view class="col-sch-group">
               <text class="td-sch-group-tag">{{item.stage_id !== 'stage_default' ? item.stage_id : '常规赛'}}</text>
@@ -120,11 +120,6 @@
             <!-- 比赛场地 (不合并，逐行填充) -->
             <view class="col-sch-venue">
               <text class="td-sch-venue-val">{{item.venue || '—'}}</text>
-            </view>
-
-            <!-- 所有者修改按钮 -->
-            <view class="col-sch-edit" wx:if="{{detail.can_manage}}">
-              <view class="td-sch-edit-btn" data-match="{{item}}" bindtap="onEditMatchScore">✏️</view>
             </view>
           </view>
         </block>

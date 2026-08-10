@@ -60,11 +60,6 @@ Page({
     this.setData({ loading: true });
     return fetchTournamentDetail(id)
       .then(function (detail) {
-        let stages = detail.stages || [];
-        if (!stages.length) {
-          stages = [{ id: 'stage_default', name: '常规赛/循环赛', type: 'GROUP' }];
-        }
-
         const rawMatches = detail.matches || [];
         const formattedMatches = rawMatches.map(function (m) {
           let timeText = m.start_time || '';
@@ -85,15 +80,35 @@ Page({
           });
         });
 
-        const standings = detail.standings || {};
+        const rawStages = detail.stages || [];
+        const stageSet = new Set();
+        formattedMatches.forEach(function (m) {
+          if (m.stage_id && m.stage_id !== 'stage_default') {
+            stageSet.add(m.stage_id);
+          }
+        });
 
-        const stageId = self.data.selectedStageId || stages[0].id;
+        let stages = [];
+        if (stageSet.size > 0) {
+          stages.push({ id: 'all', name: '全部阶段/组别' });
+          stageSet.forEach(function (s) {
+            stages.push({ id: s, name: s, type: 'GROUP' });
+          });
+        } else if (rawStages.length > 0) {
+          stages = rawStages;
+        } else {
+          stages = [{ id: 'all', name: '全阶段赛程', type: 'GROUP' }];
+        }
+
+        const standings = detail.standings || {};
+        const stageId = 'all';
         const pinned = isTournamentPinned(id);
         
         self.setData({
           detail: detail,
           stageList: stages,
           selectedStageId: stageId,
+          formattedMatches: formattedMatches,
           isPinned: pinned,
           loading: false
         });
@@ -203,7 +218,7 @@ Page({
   },
 
   _filterStageData: function (stageId, matchesList, standingsMap) {
-    const matches = matchesList || (this.data.detail ? this.data.detail.matches : []);
+    const matches = matchesList || (this.data.formattedMatches || (this.data.detail ? this.data.detail.matches : []));
     const standings = standingsMap || (this.data.detail ? this.data.detail.standings : {});
 
     let filteredMatches = matches;
@@ -213,12 +228,37 @@ Page({
       });
     }
 
-    const filteredStandings = standings[stageId] || standings['stage_default'] || [];
+    let filteredStandings = [];
+    if (stageId && stageId !== 'all' && standings[stageId]) {
+      filteredStandings = standings[stageId];
+    } else {
+      const allLists = Object.values(standings);
+      if (allLists.length > 0) {
+        filteredStandings = allLists[0];
+      }
+    }
 
     this.setData({
       currentMatches: filteredMatches,
       currentStandings: filteredStandings
     });
+  },
+
+  /**
+   * 长按比赛行触发编辑比分 Modal
+   */
+  onMatchLongPress: function (e) {
+    const match = e.currentTarget.dataset.match;
+    if (!match) return;
+
+    if (this.data.detail && this.data.detail.can_manage) {
+      if (wx.vibrateShort) {
+        wx.vibrateShort({ type: 'medium' });
+      }
+      this.onEditMatchScore(e);
+    } else {
+      wx.showToast({ title: '长按修改比分仅管理者可用', icon: 'none' });
+    }
   },
 
   onGoBack: function () {
