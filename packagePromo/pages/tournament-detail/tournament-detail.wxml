@@ -54,7 +54,7 @@
       </view>
     </view>
 
-    <!-- 阶段切换微条 (Stage Pills) -->
+    <!-- 阶段/组别切换微条 (Stage Pills) -->
     <view class="td-stage-bar" wx:if="{{stageList.length > 1}}">
       <block wx:for="{{stageList}}" wx:key="id">
         <view 
@@ -67,7 +67,7 @@
       </block>
     </view>
 
-    <!-- Tab 1: 赛程页面 (精美表格风赛程表，与排行榜风格一致) -->
+    <!-- Tab 1: 赛程页面 (专业表格风赛程表：参考标准赛程排版，每行充实组别、对阵、比分、时间、场地) -->
     <view class="td-tab-content" wx:if="{{activeTab === 'schedule'}}">
       <view class="empty-state" wx:if="{{!currentMatches.length}}">
         <text class="empty-icon">📅</text>
@@ -77,27 +77,30 @@
       <view class="td-table-card" wx:else>
         <!-- 赛程表格头 -->
         <view class="td-table-header td-sched-header">
-          <text class="col-sch-stage">阶段/场地</text>
-          <text class="col-sch-vs">对阵球队</text>
-          <text class="col-sch-score">比分</text>
+          <text class="col-sch-group">组别</text>
+          <text class="col-sch-teams">比赛队 (对阵)</text>
+          <text class="col-sch-score">比分/状态</text>
           <text class="col-sch-time">时间</text>
-          <text class="col-sch-edit" wx:if="{{detail.can_manage}}">操作</text>
+          <text class="col-sch-venue">场地</text>
+          <text class="col-sch-edit" wx:if="{{detail.can_manage}}"></text>
         </view>
 
         <!-- 赛程表格行 -->
         <block wx:for="{{currentMatches}}" wx:key="match_id">
           <view class="td-table-row td-sched-row">
-            <view class="col-sch-stage">
-              <text class="td-sch-stage-text">{{item.stage_id !== 'stage_default' ? item.stage_id : '常规赛'}}</text>
-              <text class="td-sch-venue-text" wx:if="{{item.venue}}">📍 {{item.venue}}</text>
+            <!-- 组别/阶段 -->
+            <view class="col-sch-group">
+              <text class="td-sch-group-tag">{{item.stage_id !== 'stage_default' ? item.stage_id : '常规赛'}}</text>
             </view>
 
-            <view class="col-sch-vs">
+            <!-- 对阵球队 (队伍A vs 队伍B) -->
+            <view class="col-sch-teams">
               <text class="td-sch-team home {{item.score_a > item.score_b ? 'win-team' : ''}}">{{item.team_a}}</text>
-              <text class="td-sch-vs-sep">vs</text>
+              <text class="td-sch-vs-sep">-</text>
               <text class="td-sch-team away {{item.score_b > item.score_a ? 'win-team' : ''}}">{{item.team_b}}</text>
             </view>
 
+            <!-- 比分 / 未开始 状态 -->
             <view class="col-sch-score">
               <block wx:if="{{item.hasValidScores}}">
                 <text class="td-sch-score-num {{item.score_a > item.score_b ? 'win' : ''}}">{{item.score_a}}</text>
@@ -109,10 +112,17 @@
               </block>
             </view>
 
+            <!-- 比赛时间 -->
             <view class="col-sch-time">
               <text class="td-sch-time-val">{{item.displayTime || item.start_time}}</text>
             </view>
 
+            <!-- 比赛场地 (不合并，逐行填充) -->
+            <view class="col-sch-venue">
+              <text class="td-sch-venue-val">{{item.venue || '—'}}</text>
+            </view>
+
+            <!-- 所有者修改按钮 -->
             <view class="col-sch-edit" wx:if="{{detail.can_manage}}">
               <view class="td-sch-edit-btn" data-match="{{item}}" bindtap="onEditMatchScore">✏️</view>
             </view>

@@ -327,68 +327,69 @@ page {
 /* ─────────────────────────────────────
    赛程表格专属列 (Schedule Table Columns)
 ───────────────────────────────────── */
-.col-sch-stage {
-  width: 140rpx;
+.col-sch-group {
+  width: 100rpx;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  text-align: left;
-  padding-left: 8rpx;
+  justify-content: center;
+  align-items: center;
 }
 
-.td-sch-stage-text {
-  font-size: 20rpx;
+.td-sch-group-tag {
+  font-size: 18rpx;
   font-weight: 700;
   color: #475569;
   background: #F1F5F9;
   padding: 2rpx 8rpx;
   border-radius: 6rpx;
+  max-width: 90rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.td-sch-venue-text {
-  font-size: 18rpx;
-  color: #2563EB;
-  margin-top: 4rpx;
-}
-
-.col-sch-vs {
+.col-sch-teams {
   flex: 1;
   min-width: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6rpx;
+  gap: 4rpx;
+  padding: 0 4rpx;
 }
 
 .td-sch-team {
-  font-size: 24rpx;
+  font-size: 22rpx;
   font-weight: 700;
   color: #0F172A;
-  max-width: 130rpx;
+  max-width: 110rpx;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.td-sch-team.home { text-align: right; }
+.td-sch-team.away { text-align: left; }
 
 .td-sch-team.win-team {
   color: #059669;
 }
 
 .td-sch-vs-sep {
-  font-size: 20rpx;
+  font-size: 18rpx;
   color: #94A3B8;
   font-weight: 400;
+  margin: 0 2rpx;
 }
 
 .col-sch-score {
-  width: 110rpx;
+  width: 90rpx;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
 .td-sch-score-num {
-  font-size: 28rpx;
+  font-size: 26rpx;
   font-weight: 900;
   color: #64748B;
 }
@@ -407,26 +408,46 @@ page {
   font-size: 18rpx;
   color: #64748B;
   background: #F1F5F9;
-  padding: 2rpx 10rpx;
+  padding: 2rpx 8rpx;
   border-radius: 6rpx;
   font-weight: 600;
 }
 
 .col-sch-time {
-  width: 110rpx;
+  width: 100rpx;
   font-size: 20rpx;
   color: #94A3B8;
+  text-align: center;
+}
+
+.col-sch-venue {
+  width: 120rpx;
+  font-size: 20rpx;
+  color: #2563EB;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.td-sch-venue-val {
+  max-width: 110rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
 }
 
 .col-sch-edit {
-  width: 50rpx;
+  width: 36rpx;
   display: flex;
   justify-content: center;
 }
 
 .td-sch-edit-btn {
-  font-size: 22rpx;
-  padding: 4rpx;
+  font-size: 20rpx;
+  padding: 2rpx;
 }
 
 /* ─────────────────────────────────────
