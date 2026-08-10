@@ -400,15 +400,17 @@ Page({
     this._filterStageData(stageId);
   },
 
-  // 展开修改比分 Modal (所有者权限)
+  // 展开修改对阵与比分 Modal (所有者权限)
   onEditMatchScore: function (e) {
     const match = e.currentTarget.dataset.match;
     if (!match) return;
     this.setData({
       showScoreModal: true,
       editingMatch: match,
-      scoreA: match.score_a !== null && match.score_a !== undefined ? String(match.score_a) : '',
-      scoreB: match.score_b !== null && match.score_b !== undefined ? String(match.score_b) : ''
+      editTeamA: match.team_a || '',
+      editTeamB: match.team_b || '',
+      scoreA: match.score_a !== null && match.score_a !== undefined && match.hasValidScores ? String(match.score_a) : '',
+      scoreB: match.score_b !== null && match.score_b !== undefined && match.hasValidScores ? String(match.score_b) : ''
     });
   },
 
@@ -416,9 +418,19 @@ Page({
     this.setData({
       showScoreModal: false,
       editingMatch: null,
+      editTeamA: '',
+      editTeamB: '',
       scoreA: '',
       scoreB: ''
     });
+  },
+
+  onEditTeamAInput: function (e) {
+    this.setData({ editTeamA: e.detail.value });
+  },
+
+  onEditTeamBInput: function (e) {
+    this.setData({ editTeamB: e.detail.value });
   },
 
   onScoreAInput: function (e) {
@@ -434,12 +446,29 @@ Page({
     const m = this.data.editingMatch;
     if (!m) return;
 
+    const tA = String(this.data.editTeamA || '').trim();
+    const tB = String(this.data.editTeamB || '').trim();
+
+    if (!tA || !tB) {
+      wx.showToast({ title: '主队与客队名称不能为空', icon: 'none' });
+      return;
+    }
+
     const sA = String(this.data.scoreA || '').trim();
     const sB = String(this.data.scoreB || '').trim();
 
-    if (sA === '' || sB === '' || isNaN(Number(sA)) || isNaN(Number(sB))) {
-      wx.showToast({ title: '请输入有效的数字比分', icon: 'none' });
-      return;
+    let scoreA = null;
+    let scoreB = null;
+    let isFinished = 0;
+
+    if (sA !== '' && sB !== '') {
+      if (isNaN(Number(sA)) || isNaN(Number(sB))) {
+        wx.showToast({ title: '请输入有效的数字比分', icon: 'none' });
+        return;
+      }
+      scoreA = Number(sA);
+      scoreB = Number(sB);
+      isFinished = 1;
     }
 
     this.setData({ submittingScore: true });
@@ -448,20 +477,20 @@ Page({
       data: {
         match_id: m.match_id,
         tournament_id: self.data.tournamentId,
-        team_a: m.team_a,
-        team_b: m.team_b,
+        team_a: tA,
+        team_b: tB,
         start_time: m.start_time,
         stage_id: m.stage_id || 'stage_default',
         venue: m.venue || '',
-        score_a: Number(sA),
-        score_b: Number(sB),
-        is_finished: 1
+        score_a: scoreA,
+        score_b: scoreB,
+        is_finished: isFinished
       }
     };
 
     oamUpsert(payload)
       .then(function () {
-        wx.showToast({ title: '比分更新成功', icon: 'success' });
+        wx.showToast({ title: '对阵与比分更新成功', icon: 'success' });
         self.onCloseScoreModal();
         self.loadDetail(self.data.tournamentId);
       })

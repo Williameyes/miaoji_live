@@ -161,30 +161,41 @@
     </view>
   </block>
 
-  <!-- 比分编辑 Modal (所有者) -->
+  <!-- 比赛对阵与比分编辑 Modal (所有者权限) -->
   <view class="td-modal-overlay" wx:if="{{showScoreModal}}">
     <view class="td-modal-card">
-      <view class="td-modal-title">录入/修改比赛结果</view>
-      <view class="td-modal-versus">
-        <text class="td-modal-team">{{editingMatch.team_a}}</text>
-        <text class="td-modal-vs">VS</text>
-        <text class="td-modal-team">{{editingMatch.team_b}}</text>
+      <view class="td-modal-title">编辑对阵队伍与比分结果</view>
+
+      <!-- 队伍名称编辑 (灵活适配交叉赛/淘汰赛对阵干预) -->
+      <view class="td-modal-section-title">对阵队伍 (支持修改交叉赛/淘汰赛队伍)</view>
+      <view class="td-modal-teams-edit">
+        <view class="td-team-input-box">
+          <text class="td-input-label">主队 (队伍A)</text>
+          <input class="td-team-name-input" value="{{editTeamA}}" bindinput="onEditTeamAInput" placeholder="主队名称" />
+        </view>
+        <text class="td-teams-vs-badge">VS</text>
+        <view class="td-team-input-box">
+          <text class="td-input-label">客队 (队伍B)</text>
+          <input class="td-team-name-input" value="{{editTeamB}}" bindinput="onEditTeamBInput" placeholder="客队名称" />
+        </view>
       </view>
 
+      <!-- 比分录入 -->
+      <view class="td-modal-section-title">比赛比分 (可留空，未开赛暂不录入)</view>
       <view class="td-modal-inputs">
         <view class="td-input-group">
-          <text class="td-input-label">{{editingMatch.team_a}} 比分</text>
-          <input class="td-modal-input" type="number" value="{{scoreA}}" bindinput="onScoreAInput" placeholder="得分" />
+          <text class="td-input-label">{{editTeamA || '主队'}} 得分</text>
+          <input class="td-modal-input" type="number" value="{{scoreA}}" bindinput="onScoreAInput" placeholder="未开赛" />
         </view>
         <view class="td-input-group">
-          <text class="td-input-label">{{editingMatch.team_b}} 比分</text>
-          <input class="td-modal-input" type="number" value="{{scoreB}}" bindinput="onScoreBInput" placeholder="得分" />
+          <text class="td-input-label">{{editTeamB || '客队'}} 得分</text>
+          <input class="td-modal-input" type="number" value="{{scoreB}}" bindinput="onScoreBInput" placeholder="未开赛" />
         </view>
       </view>
 
       <view class="td-modal-actions">
         <button class="td-btn td-btn-cancel" bindtap="onCloseScoreModal">取消</button>
-        <button class="td-btn td-btn-confirm" disabled="{{submittingScore}}" bindtap="onSaveScore">保存并更新积分榜</button>
+        <button class="td-btn td-btn-confirm" disabled="{{submittingScore}}" bindtap="onSaveScore">保存修改</button>
       </view>
     </view>
   </view>
