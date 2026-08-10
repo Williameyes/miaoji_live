@@ -4,3 +4,24 @@
   display: flex;
   align-items: center;
 }
+
+.switch-field {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16rpx 0;
+}
+
+.switch-label-wrap {
+  flex: 1;
+  padding-right: 20rpx;
+}
+
+.switch-sub {
+  display: block;
+  font-size: 22rpx;
+  color: #94a3b8;
+  margin-top: 4rpx;
+  line-height: 1.4;
+}

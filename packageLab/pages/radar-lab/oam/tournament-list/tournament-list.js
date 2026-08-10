@@ -63,6 +63,7 @@ Page({
                 : '—',
             scheduledCount: t.totalScheduledMatches || 0,
             monitoredCount: t.totalMonitoredMatches || 0,
+            isPublic: t.isPublic !== false,
             canManage: t.canManage !== false
           };
         });

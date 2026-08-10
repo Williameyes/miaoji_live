@@ -48,6 +48,13 @@
           <view class="rl-input rl-picker-display">{{formats[formatIndex].label}}</view>
         </picker>
       </view>
+      <view class="rl-field switch-field">
+        <view class="switch-label-wrap">
+          <text class="rl-label">公开至赛事大厅</text>
+          <text class="switch-sub">开启后将在前端「赛事资讯」列表中公开展示</text>
+        </view>
+        <switch checked="{{isPublic}}" color="#2563eb" bindchange="onIsPublicChange" />
+      </view>
       <button class="rl-btn rl-btn-primary" disabled="{{submitting}}" bindtap="onSave">保存赛事</button>
     </view>
   </view>

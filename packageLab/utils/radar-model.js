@@ -136,6 +136,7 @@ function normalizeTournament(raw) {
       Number(o.total_scheduled_matches ?? o.totalScheduledMatches ?? 0) || 0,
     totalMonitoredMatches:
       Number(o.total_monitored_matches ?? o.totalMonitoredMatches ?? 0) || 0,
+    isPublic: o.is_public !== false && o.isPublic !== false && o.is_public !== 0,
     canManage: o.can_manage !== false && o.canManage !== false
   };
 }

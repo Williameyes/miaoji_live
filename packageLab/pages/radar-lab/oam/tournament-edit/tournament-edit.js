@@ -26,6 +26,7 @@ Page({
       { key: 'CUP', label: '赛会制 (分组+淘汰赛)' }
     ],
     formatIndex: 0,
+    isPublic: true,
     submitting: false,
     loading: true
   },
@@ -75,6 +76,7 @@ Page({
     let endDate = now;
     let sportTypeIndex = 0;
     let formatIndex = 0;
+    let isPublic = true;
     if (!isNew && tournamentId) {
       pickerIndex = tournaments.findIndex(function (t) {
         return String(t.id) === tournamentId;
@@ -89,6 +91,7 @@ Page({
         if (item.sportType === 'soccer') sportTypeIndex = 1;
         else if (item.sportType === 'custom') sportTypeIndex = 2;
         if (item.format === 'CUP') formatIndex = 1;
+        if (item.isPublic !== undefined) isPublic = Boolean(item.isPublic);
       }
     }
     this.setData({
@@ -100,7 +103,8 @@ Page({
       startDate: startDate,
       endDate: endDate,
       sportTypeIndex: sportTypeIndex,
-      formatIndex: formatIndex
+      formatIndex: formatIndex,
+      isPublic: isPublic
     });
   },
 
@@ -128,7 +132,8 @@ Page({
       startDate: now,
       endDate: now,
       sportTypeIndex: 0,
-      formatIndex: 0
+      formatIndex: 0,
+      isPublic: true
     });
   },
 
@@ -164,6 +169,10 @@ Page({
     this.setData({ formatIndex: Number(e.detail.value) });
   },
 
+  onIsPublicChange: function (e) {
+    this.setData({ isPublic: e.detail.value });
+  },
+
   /**
    * @returns {void}
    */
@@ -185,7 +194,8 @@ Page({
         start_date: d.startDate,
         end_date: d.endDate,
         sport_type: selectedSport,
-        format: selectedFormat
+        format: selectedFormat,
+        is_public: d.isPublic ? 1 : 0
       }
     };
     if (d.tournamentId && !d.isCreatingNew) {

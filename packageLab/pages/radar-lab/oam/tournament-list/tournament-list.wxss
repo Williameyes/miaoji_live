@@ -38,6 +38,18 @@
   border-radius: 999rpx;
 }
 
+.tag-public {
+  background: rgba(16, 185, 129, 0.1);
+  color: #059669;
+  font-weight: 600;
+}
+
+.tag-hidden {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+  font-weight: 600;
+}
+
 .tour-edit-btn {
   margin: 0;
   padding: 0 22rpx;

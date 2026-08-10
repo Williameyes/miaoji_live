@@ -17,6 +17,7 @@
           <view class="rl-list-title">{{item.name}}</view>
           <view class="rl-list-desc">{{item.dateRange}}</view>
           <view class="tour-item-meta">
+            <text class="tour-meta-tag {{item.isPublic ? 'tag-public' : 'tag-hidden'}}">{{item.isPublic ? '🌐 公开' : '🔒 隐藏'}}</text>
             <text class="tour-meta-tag">排期 {{item.scheduledCount}} 场</text>
             <text class="tour-meta-tag">已监控 {{item.monitoredCount}} 场</text>
             <text class="tour-meta-tag" wx:if="{{item.influenceScore !== '—'}}">影响力 {{item.influenceScore}}</text>
