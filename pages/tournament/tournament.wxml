@@ -47,7 +47,7 @@
           style="animation-delay: {{index * 55}}ms"
         >
           <view class="tn-card-banner">
-            <view class="tn-banner-icon-box">🏆</view>
+            <view class="tn-pin-badge" wx:if="{{item.isPinned}}">📌 置顶</view>
             <view class="tn-badge {{item.statusClass}}">{{item.statusText}}</view>
           </view>
 

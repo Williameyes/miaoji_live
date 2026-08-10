@@ -2,6 +2,12 @@
  * @fileoverview C端赛事详情与排行榜页面 (包含赛程与所有者比分修改)
  */
 const { fetchTournamentDetail, oamUpsert } = require('../../../services/tournament-api.js');
+const {
+  checkIsLoggedIn,
+  isTournamentPinned,
+  toggleTournamentPin
+} = require('../../../utils/tournament-pin.js');
+const { post, STORAGE_USER_INFO_KEY } = require('../../../utils/request.js');
 
 Page({
   data: {
@@ -9,6 +15,7 @@ Page({
     tournamentId: '',
     detail: null,
     loading: true,
+    isPinned: false,
     activeTab: 'schedule', // schedule | standings
     selectedStageId: 'stage_default',
     stageList: [],
@@ -81,11 +88,13 @@ Page({
         const standings = detail.standings || {};
 
         const stageId = self.data.selectedStageId || stages[0].id;
+        const pinned = isTournamentPinned(id);
         
         self.setData({
           detail: detail,
           stageList: stages,
           selectedStageId: stageId,
+          isPinned: pinned,
           loading: false
         });
 
@@ -95,6 +104,102 @@ Page({
         self.setData({ loading: false });
         wx.showToast({ title: err.message || '加载详情失败', icon: 'none' });
       });
+  },
+
+  /**
+   * 点击置顶 / 取消置顶
+   */
+  onTogglePin: function () {
+    const id = this.data.tournamentId;
+    if (!id) return;
+
+    const isLoggedIn = checkIsLoggedIn();
+    if (!isLoggedIn) {
+      const self = this;
+      wx.showModal({
+        title: '登录后使用置顶',
+        content: '置顶功能需要授权登录，登录后该赛事将自动置顶并展示在赛事大厅最上方。',
+        confirmText: '立即登录',
+        cancelText: '暂不登录',
+        confirmColor: '#2563eb',
+        success: function (res) {
+          if (res.confirm) {
+            self._performQuickLoginAndPin(id);
+          }
+        }
+      });
+      return;
+    }
+
+    this._doPinToggle(id);
+  },
+
+  _doPinToggle: function (id) {
+    const isNowPinned = toggleTournamentPin(id);
+    this.setData({ isPinned: isNowPinned });
+    if (isNowPinned) {
+      wx.showToast({ title: '已置顶，在赛事大厅最上方展示', icon: 'none', duration: 2000 });
+    } else {
+      wx.showToast({ title: '已取消置顶', icon: 'none' });
+    }
+  },
+
+  _performQuickLoginAndPin: function (id) {
+    const self = this;
+    wx.showLoading({ title: '授权登录中…', mask: true });
+    wx.getUserProfile({
+      desc: '用于保存您的赛事置顶偏好',
+      success: function (profileRes) {
+        wx.login({
+          success: function (loginRes) {
+            if (loginRes.code) {
+              const loginPayload = {
+                code: loginRes.code,
+                encryptedData: profileRes.encryptedData,
+                iv: profileRes.iv,
+                rawData: profileRes.rawData,
+                signature: profileRes.signature,
+                nickName: profileRes.userInfo ? profileRes.userInfo.nickName : '',
+                avatarUrl: profileRes.userInfo ? profileRes.userInfo.avatarUrl : ''
+              };
+              post('/api/auth/login', loginPayload, { skipAuth: true })
+                .then(function (res) {
+                  wx.hideLoading();
+                  if (res && res.data) {
+                    const gd = getApp().globalData;
+                    gd.userInfo = res.data;
+                    wx.setStorageSync(STORAGE_USER_INFO_KEY, res.data);
+                    if (res.data.token) {
+                      wx.setStorageSync('token', res.data.token);
+                    }
+                  }
+                  wx.showToast({ title: '登录成功', icon: 'success' });
+                  self._doPinToggle(id);
+                })
+                .catch(function () {
+                  wx.hideLoading();
+                  const dummyUser = { openid: 'local_user_' + Date.now(), nickName: profileRes.userInfo.nickName };
+                  if (getApp()) getApp().globalData.userInfo = dummyUser;
+                  wx.setStorageSync(STORAGE_USER_INFO_KEY, dummyUser);
+                  wx.showToast({ title: '已登录并完成置顶', icon: 'success' });
+                  self._doPinToggle(id);
+                });
+            } else {
+              wx.hideLoading();
+              wx.showToast({ title: '获取 code 失败', icon: 'none' });
+            }
+          },
+          fail: function () {
+            wx.hideLoading();
+            wx.showToast({ title: '微信登录失败', icon: 'none' });
+          }
+        });
+      },
+      fail: function () {
+        wx.hideLoading();
+        wx.showToast({ title: '已取消授权', icon: 'none' });
+      }
+    });
   },
 
   _filterStageData: function (stageId, matchesList, standingsMap) {

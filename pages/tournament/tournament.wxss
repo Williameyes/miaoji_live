@@ -218,6 +218,19 @@ page {
   font-size: 56rpx;
 }
 
+.tn-pin-badge {
+  position: absolute;
+  top: 14rpx;
+  left: 14rpx;
+  background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+  color: #FFFFFF;
+  font-size: 18rpx;
+  font-weight: 800;
+  padding: 4rpx 12rpx;
+  border-radius: 10rpx;
+  box-shadow: 0 4rpx 10rpx rgba(37, 99, 235, 0.3);
+}
+
 .tn-badge {
   position: absolute;
   top: 14rpx;

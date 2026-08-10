@@ -26,7 +26,13 @@
           <text class="td-sport-icon">{{detail.sport_type === 'soccer' ? '⚽' : '🏀'}}</text>
           <text class="td-sport-label">{{detail.sport_type === 'soccer' ? '足球' : '篮球'}}</text>
         </view>
-        <view class="td-header-badge">{{detail.format === 'CUP' ? '赛会制 (分组+淘汰)' : '联赛制 (循环赛)'}}</view>
+        <view class="td-header-right-actions">
+          <view class="td-pin-btn {{isPinned ? 'pinned' : ''}}" bindtap="onTogglePin" hover-class="td-pin-btn-hover">
+            <text class="td-pin-icon">📌</text>
+            <text class="td-pin-text">{{isPinned ? '已置顶' : '置顶'}}</text>
+          </view>
+          <view class="td-header-badge">{{detail.format === 'CUP' ? '赛会制' : '联赛制'}}</view>
+        </view>
       </view>
       <text class="td-header-title">{{detail.tournament_name}}</text>
       <view class="td-header-meta">

@@ -2,10 +2,12 @@
  * @fileoverview 赛事资讯大厅页面（风格与主页保持一致）
  */
 const { fetchTournamentList } = require('../../services/tournament-api.js');
+const { sortTournamentsWithPins } = require('../../utils/tournament-pin.js');
 
 Page({
   data: {
     statusBarHeight: 20,
+    rawFormattedList: [],
     tournamentList: [],
     loading: true,
     filterTab: 'all' // all | active | ended
@@ -26,6 +28,11 @@ Page({
       this.getTabBar().setData({
         selected: 1
       });
+    }
+    // 每次从详情页返回时，按最新本地置顶状态重新排序
+    if (this.data.rawFormattedList && this.data.rawFormattedList.length) {
+      const sorted = sortTournamentsWithPins(this.data.rawFormattedList);
+      this.setData({ tournamentList: sorted });
     }
   },
 
@@ -75,8 +82,11 @@ Page({
             formatLabel: item.format === 'CUP' ? '赛会制' : '联赛制'
           };
         });
+
+        const sorted = sortTournamentsWithPins(formatted);
         self.setData({
-          tournamentList: formatted,
+          rawFormattedList: formatted,
+          tournamentList: sorted,
           loading: false
         });
       })
