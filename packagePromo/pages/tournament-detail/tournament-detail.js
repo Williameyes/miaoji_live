@@ -9,6 +9,93 @@ const {
 } = require('../../../utils/tournament-pin.js');
 const { post, STORAGE_USER_INFO_KEY } = require('../../../utils/request.js');
 
+/**
+ * 判断指定阶段名称是否属于淘汰赛 / 决胜排位赛（无循环赛积分属性）
+ */
+function isKnockoutStage(stageName) {
+  if (!stageName || typeof stageName !== 'string') return false;
+  const name = stageName.trim();
+  const pattern = /(四分之一|半决赛|决赛|淘汰|排位|名次|8强|4强|1\/4|3[、\-\_]4|5[、\-\_]8|5[、\-\_]6|KNOCKOUT|ELIMINATION|FINALS)/i;
+  return pattern.test(name);
+}
+
+/**
+ * 判断阶段在赛程列表中是否已解锁展示（级联推进显示）
+ */
+function isStageUnlockedForSchedule(stageName, matches) {
+  if (!stageName) return false;
+  // 小组赛默认解锁
+  if (!isKnockoutStage(stageName)) return true;
+
+  const stageMatches = (matches || []).filter(function (m) {
+    return m.stage_id === stageName;
+  });
+  if (!stageMatches.length) return false;
+
+  for (let i = 0; i < stageMatches.length; i += 1) {
+    const m = stageMatches[i];
+    if (m.hasValidScores || m.is_finished) return true;
+    const tA = m.team_a || '';
+    const tB = m.team_b || '';
+    const isPlaceholderA = /^\d+胜|^\d+负|待定|TBD/i.test(tA);
+    const isPlaceholderB = /^\d+胜|^\d+负|待定|TBD/i.test(tB);
+    if (!isPlaceholderA && !isPlaceholderB && tA && tB) {
+      return true; // 确定队伍对阵的淘汰赛解锁
+    }
+  }
+
+  return false;
+}
+
+/**
+ * 根据 activeTab (schedule 或 standings) 动态生成展示的 stageList 胶囊列表
+ */
+function resolveStageListForTab(activeTab, formattedMatches, rawStages) {
+  const matches = formattedMatches || [];
+  const stageSet = new Set();
+  matches.forEach(function (m) {
+    if (m.stage_id && m.stage_id !== 'stage_default') {
+      stageSet.add(m.stage_id);
+    }
+  });
+
+  const allStages = Array.from(stageSet);
+
+  if (activeTab === 'standings') {
+    // 🏆 积分排行榜 Tab：彻底过滤淘汰赛阶段，只保留小组赛
+    const groupStages = allStages.filter(function (name) {
+      return !isKnockoutStage(name);
+    });
+
+    const result = [];
+    if (groupStages.length > 0) {
+      result.push({ id: 'all', name: '全部小组' });
+      groupStages.forEach(function (s) {
+        result.push({ id: s, name: s, type: 'GROUP' });
+      });
+    } else {
+      result.push({ id: 'all', name: '全组排行榜', type: 'GROUP' });
+    }
+    return result;
+  } else {
+    // 📅 赛程 Tab：级联推进，仅解锁已产生对阵或完赛的阶段
+    const unlocked = allStages.filter(function (name) {
+      return isStageUnlockedForSchedule(name, matches);
+    });
+
+    const result = [];
+    if (unlocked.length > 0) {
+      result.push({ id: 'all', name: '全部已解锁赛程' });
+      unlocked.forEach(function (s) {
+        result.push({ id: s, name: s, type: 'STAGE' });
+      });
+    } else {
+      result.push({ id: 'all', name: '全阶段赛程', type: 'STAGE' });
+    }
+    return result;
+  }
+}
+
 Page({
   data: {
     statusBarHeight: 20,
@@ -17,8 +104,9 @@ Page({
     loading: true,
     isPinned: false,
     activeTab: 'schedule', // schedule | standings
-    selectedStageId: 'stage_default',
+    selectedStageId: 'all',
     stageList: [],
+    formattedMatches: [],
     currentMatches: [],
     currentStandings: [],
     
@@ -91,29 +179,13 @@ Page({
         });
 
         const rawStages = detail.stages || [];
-        const stageSet = new Set();
-        formattedMatches.forEach(function (m) {
-          if (m.stage_id && m.stage_id !== 'stage_default') {
-            stageSet.add(m.stage_id);
-          }
-        });
-
-        let stages = [];
-        if (stageSet.size > 0) {
-          stages.push({ id: 'all', name: '全部阶段/组别' });
-          stageSet.forEach(function (s) {
-            stages.push({ id: s, name: s, type: 'GROUP' });
-          });
-        } else if (rawStages.length > 0) {
-          stages = rawStages;
-        } else {
-          stages = [{ id: 'all', name: '全阶段赛程', type: 'GROUP' }];
-        }
-
         const standings = detail.standings || {};
-        const stageId = 'all';
         const pinned = isTournamentPinned(id);
         
+        const activeTab = self.data.activeTab || 'schedule';
+        const stages = resolveStageListForTab(activeTab, formattedMatches, rawStages);
+        const stageId = 'all';
+
         self.setData({
           detail: detail,
           stageList: stages,
@@ -230,21 +302,43 @@ Page({
   _filterStageData: function (stageId, matchesList, standingsMap) {
     const matches = matchesList || (this.data.formattedMatches || (this.data.detail ? this.data.detail.matches : []));
     const standings = standingsMap || (this.data.detail ? this.data.detail.standings : {});
+    const activeTab = this.data.activeTab || 'schedule';
 
     let filteredMatches = matches;
-    if (stageId && stageId !== 'all') {
-      filteredMatches = matches.filter(function (m) {
-        return (m.stage_id || 'stage_default') === stageId;
-      });
+    if (activeTab === 'schedule') {
+      if (stageId && stageId !== 'all') {
+        filteredMatches = matches.filter(function (m) {
+          return (m.stage_id || 'stage_default') === stageId;
+        });
+      } else {
+        // 赛程视图全选时，仅展示已解锁的比赛
+        filteredMatches = matches.filter(function (m) {
+          return isStageUnlockedForSchedule(m.stage_id, matches);
+        });
+      }
+    } else {
+      if (stageId && stageId !== 'all') {
+        filteredMatches = matches.filter(function (m) {
+          return (m.stage_id || 'stage_default') === stageId;
+        });
+      }
     }
 
     let filteredStandings = [];
     if (stageId && stageId !== 'all' && standings[stageId]) {
       filteredStandings = standings[stageId];
     } else {
-      const allLists = Object.values(standings);
-      if (allLists.length > 0) {
-        filteredStandings = allLists[0];
+      // 积分榜视图“全部”：仅取第一个非淘汰赛小组的积分表
+      const validGroupKeys = Object.keys(standings).filter(function (k) {
+        return !isKnockoutStage(k);
+      });
+      if (validGroupKeys.length > 0) {
+        filteredStandings = standings[validGroupKeys[0]] || [];
+      } else {
+        const allLists = Object.values(standings);
+        if (allLists.length > 0) {
+          filteredStandings = allLists[0];
+        }
       }
     }
 
@@ -282,7 +376,22 @@ Page({
 
   onTabSwitch: function (e) {
     const tab = e.currentTarget.dataset.tab;
-    this.setData({ activeTab: tab });
+    if (tab === this.data.activeTab) return;
+
+    const stages = resolveStageListForTab(
+      tab,
+      this.data.formattedMatches,
+      this.data.detail ? this.data.detail.stages : []
+    );
+    const defaultStageId = 'all';
+
+    this.setData({
+      activeTab: tab,
+      stageList: stages,
+      selectedStageId: defaultStageId
+    });
+
+    this._filterStageData(defaultStageId);
   },
 
   onStageSwitch: function (e) {
