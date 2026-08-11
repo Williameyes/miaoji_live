@@ -136,6 +136,13 @@ function resolveTeamPlaceholderName(rawTeamName, allMatches) {
     }
   }
 
+  if (/^\d+(胜|负)$/.test(str)) {
+    return '';
+  }
+
+  return str;
+}
+
 /**
  * 尝试将组别排名代号（如 A1, B2, 男子A1, 女子B2, 男子A组第1名）或场序胜负（39胜）自动转换为实际队伍名称
  */
