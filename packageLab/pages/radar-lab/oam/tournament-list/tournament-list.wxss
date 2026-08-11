@@ -100,3 +100,119 @@
   font-size: 32rpx;
   font-weight: 700;
 }
+
+.tour-item-actions {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12rpx;
+  flex-shrink: 0;
+}
+
+.tour-btn-initials {
+  margin: 0;
+  padding: 0 20rpx;
+  height: 60rpx;
+  line-height: 60rpx;
+  font-size: 22rpx;
+  font-weight: 700;
+  border-radius: 14rpx;
+  border: none;
+  background: rgba(37, 99, 235, 0.1);
+  color: #2563EB;
+}
+
+.tour-btn-initials::after {
+  border: none;
+}
+
+/* Modal 初始基准积分弹窗 */
+.tour-modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(8rpx);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.tour-modal-card {
+  width: 86%;
+  background: #FFFFFF;
+  border-radius: 32rpx;
+  padding: 40rpx;
+  box-shadow: 0 20rpx 60rpx rgba(15, 23, 42, 0.2);
+}
+
+.tour-modal-title {
+  font-size: 32rpx;
+  font-weight: 800;
+  color: #0F172A;
+  text-align: center;
+}
+
+.tour-modal-sub {
+  font-size: 22rpx;
+  color: #64748B;
+  text-align: center;
+  margin-top: 6rpx;
+  margin-bottom: 24rpx;
+}
+
+.tour-ai-action-bar {
+  margin-bottom: 24rpx;
+}
+
+.tour-ai-btn {
+  background: linear-gradient(135deg, #2563EB, #1D4ED8);
+  color: #FFFFFF;
+  font-size: 26rpx;
+  font-weight: 700;
+  border-radius: 18rpx;
+  height: 72rpx;
+  line-height: 72rpx;
+  box-shadow: 0 4rpx 16rpx rgba(37, 99, 235, 0.3);
+}
+
+.tour-ai-btn::after { border: none; }
+
+.tour-modal-section-title {
+  font-size: 22rpx;
+  font-weight: 700;
+  color: #2563EB;
+  margin-bottom: 12rpx;
+}
+
+.tour-csv-textarea {
+  width: 100%;
+  height: 220rpx;
+  background: #F8FAFC;
+  border: 2rpx solid #E2E8F0;
+  border-radius: 20rpx;
+  padding: 20rpx;
+  box-sizing: border-box;
+  font-size: 24rpx;
+  color: #0F172A;
+  margin-bottom: 30rpx;
+}
+
+.tour-modal-actions {
+  display: flex;
+  gap: 20rpx;
+}
+
+.tour-btn {
+  flex: 1;
+  height: 80rpx;
+  line-height: 80rpx;
+  font-size: 28rpx;
+  font-weight: 700;
+  border-radius: 20rpx;
+  border: none;
+}
+
+.tour-btn::after { border: none; }
+.tour-btn-cancel { background: #F1F5F9; color: #64748B; }
+.tour-btn-confirm { background: #2563EB; color: #FFFFFF; }

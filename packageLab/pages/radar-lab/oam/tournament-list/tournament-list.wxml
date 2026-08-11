@@ -23,12 +23,19 @@
             <text class="tour-meta-tag" wx:if="{{item.influenceScore !== '—'}}">影响力 {{item.influenceScore}}</text>
           </view>
         </view>
-        <button
-          wx:if="{{!adminViewAll || item.canManage}}"
-          class="tour-edit-btn"
-          bindtap="onEditTournament"
-          data-id="{{item.id}}"
-        >编辑</button>
+        <view class="tour-item-actions" wx:if="{{!adminViewAll || item.canManage}}">
+          <button
+            class="tour-btn-initials"
+            bindtap="onOpenInitialsModal"
+            data-id="{{item.id}}"
+            data-name="{{item.name}}"
+          >📊 基准积分</button>
+          <button
+            class="tour-edit-btn"
+            bindtap="onEditTournament"
+            data-id="{{item.id}}"
+          >编辑</button>
+        </view>
         <text wx:if="{{adminViewAll && !item.canManage}}" class="rl-list-desc">仅查看</text>
       </view>
     </block>
@@ -41,6 +48,31 @@
 
   <view class="tour-fab" bindtap="onNewTournament" hover-class="tour-fab-hover">
     <text class="tour-fab-text">新增赛事</text>
+  </view>
+
+  <!-- 📊 初始基准积分 AI 导入与维护 Modal -->
+  <view class="tour-modal-overlay" wx:if="{{showInitialsModal}}">
+    <view class="tour-modal-card">
+      <view class="tour-modal-title">📊 设置赛事初始基准积分</view>
+      <view class="tour-modal-sub">针对【{{targetTournamentName}}】中途接入修正</view>
+
+      <view class="tour-ai-action-bar">
+        <button class="tour-ai-btn" bindtap="onCopyAiPrompt">📋 复制 AI 整理基准积分提示词</button>
+      </view>
+
+      <view class="tour-modal-section-title">📝 粘贴 AI 生成的 CSV 批量导入基准积分</view>
+      <textarea 
+        class="tour-csv-textarea" 
+        value="{{pastedCsvText}}" 
+        bindinput="onCsvTextInput" 
+        placeholder="请将 AI 整理出的 CSV 格式粘贴在此处（支持一次性导入全组球队基准数据）" 
+      />
+
+      <view class="tour-modal-actions">
+        <button class="tour-btn tour-btn-cancel" bindtap="onCloseInitialsModal">取消</button>
+        <button class="tour-btn tour-btn-confirm" disabled="{{submittingInitials}}" bindtap="onSaveInitialsFromCsv">一键保存基准积分</button>
+      </view>
+    </view>
   </view>
 
 </view>

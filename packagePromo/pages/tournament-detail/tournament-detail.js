@@ -676,7 +676,9 @@ Page({
       });
   },
 
-  // 展开 / 关闭 初始基准积分修正 Modal
+  // ----------------------------------------------------
+  // 展开 / 关闭 初始基准积分修正 Modal 与 AI CSV 批量导入
+  // ----------------------------------------------------
   onOpenInitialsModal: function () {
     this.setData({
       showInitialsModal: true,
@@ -686,7 +688,8 @@ Page({
       initWon: '',
       initDraw: '',
       initLost: '',
-      initNetScore: ''
+      initNetScore: '',
+      pastedCsvText: ''
     });
   },
 
@@ -699,8 +702,120 @@ Page({
       initWon: '',
       initDraw: '',
       initLost: '',
-      initNetScore: ''
+      initNetScore: '',
+      pastedCsvText: ''
     });
+  },
+
+  onCsvTextInput: function (e) {
+    this.setData({ pastedCsvText: e.detail.value });
+  },
+
+  onCopyAiPrompt: function () {
+    const promptText = `请你作为赛事基准积分格式化助手。以下是我收集到的积分榜历史战绩数据（可能为图片文本、公众号表格或聊天记录）：
+
+请将所有球队的初始基准数据整理成符合以下标准的 CSV 格式，并用 \`\`\`csv 代码块包裹输出。请勿包含其他解释性文字。
+
+CSV 表头格式（第一行为表头）：
+阶段,球队,初始积分,初始已赛,初始胜,初始平,初始负,初始净胜分
+
+字段说明：
+- 阶段: 所在分组，如 "男子A组"、"女子B组" 或 "常规赛"（若无可填 "常规赛"）
+- 球队: 球队名称（必填，如 "切学乡"）
+- 初始积分: 中途接入小程序前已获得的总积分（必填，如 15）
+- 初始已赛: 中途接入前已打场次（如 5）
+- 初始胜: 中途接入前胜场数（如 4）
+- 初始平: 中途接入前平局数（如 0）
+- 初始负: 中途接入前负场数（如 1）
+- 初始净胜分: 中途接入前净胜分（如 32 或 -5）
+
+原始战绩数据如下：
+`;
+    wx.setClipboardData({
+      data: promptText,
+      success: function () {
+        wx.showModal({
+          title: '提示词已复制！',
+          content: '请将提示词粘贴发送给任意大模型（如 DeepSeek / Kimi / 豆包），并在文末附上您的积分榜截图文字或公告。\n\n大模型输出 CSV 后，复制并粘贴回本框，点击「一键批量保存 CSV 基准积分」即可！',
+          showCancel: false,
+          confirmText: '我知道了',
+          confirmColor: '#2563eb'
+        });
+      }
+    });
+  },
+
+  onSaveInitialsFromCsv: function () {
+    const self = this;
+    const text = String(this.data.pastedCsvText || '').trim();
+    if (!text) {
+      wx.showToast({ title: '请先粘贴 AI 生成的 CSV 文本', icon: 'none' });
+      return;
+    }
+
+    const clean = text.replace(/```csv/gi, '').replace(/```/g, '').trim();
+    const lines = clean.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    if (lines.length < 2) {
+      wx.showToast({ title: '无法解析有效 CSV 数据', icon: 'none' });
+      return;
+    }
+
+    const headers = lines[0].split(',').map(s => s.trim().toLowerCase());
+    let colStage = headers.findIndex(h => h.includes('阶段') || h.includes('分组') || h.includes('stage'));
+    let colTeam = headers.findIndex(h => h.includes('球队') || h.includes('队伍') || h.includes('team'));
+    let colPts = headers.findIndex(h => h.includes('积分') || h.includes('points') || h.includes('pts'));
+    let colPlayed = headers.findIndex(h => h.includes('已赛') || h.includes('场次') || h.includes('played'));
+    let colWon = headers.findIndex(h => h.includes('胜') && !h.includes('净') && !h.includes('失'));
+    let colDraw = headers.findIndex(h => h.includes('平'));
+    let colLost = headers.findIndex(h => h.includes('负') && !h.includes('净') && !h.includes('失'));
+    let colNet = headers.findIndex(h => h.includes('净胜'));
+
+    if (colTeam < 0) colTeam = 1;
+    if (colPts < 0) colPts = 2;
+
+    const currentInitials = Object.assign({}, self.data.detail ? self.data.detail.team_initials : {});
+
+    for (let i = 1; i < lines.length; i += 1) {
+      const parts = lines[i].split(',').map(s => s.trim());
+      if (parts.length <= colTeam) continue;
+
+      const stageId = (colStage >= 0 && parts[colStage]) ? parts[colStage] : (self.data.selectedStageId !== 'all' ? self.data.selectedStageId : 'stage_default');
+      const teamName = parts[colTeam];
+      if (!teamName) continue;
+
+      if (!currentInitials[stageId]) currentInitials[stageId] = {};
+
+      currentInitials[stageId][teamName] = {
+        points: colPts >= 0 && parts[colPts] !== undefined ? Number(parts[colPts]) || 0 : 0,
+        played: colPlayed >= 0 && parts[colPlayed] !== undefined ? Number(parts[colPlayed]) || 0 : 0,
+        won: colWon >= 0 && parts[colWon] !== undefined ? Number(parts[colWon]) || 0 : 0,
+        draw: colDraw >= 0 && parts[colDraw] !== undefined ? Number(parts[colDraw]) || 0 : 0,
+        lost: colLost >= 0 && parts[colLost] !== undefined ? Number(parts[colLost]) || 0 : 0,
+        net_score: colNet >= 0 && parts[colNet] !== undefined ? Number(parts[colNet]) || 0 : 0
+      };
+    }
+
+    this.setData({ submittingInitials: true });
+    const payload = {
+      action: 'upsert_team_initials',
+      data: {
+        tournament_id: self.data.tournamentId,
+        team_initials: currentInitials
+      }
+    };
+
+    oamUpsert(payload)
+      .then(function () {
+        wx.showToast({ title: '基准积分批量导入成功', icon: 'success' });
+        self.onCloseInitialsModal();
+        self.loadDetail(self.data.tournamentId);
+      })
+      .catch(function (err) {
+        wx.showToast({ title: err.message || '保存失败', icon: 'none' });
+      })
+      .finally(function () {
+        self.setData({ submittingInitials: false });
+      });
   },
 
   onInitTeamNameInput: function (e) {
