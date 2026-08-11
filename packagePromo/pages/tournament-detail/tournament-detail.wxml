@@ -254,6 +254,7 @@
       <textarea 
         class="td-csv-textarea" 
         value="{{pastedCsvText}}" 
+        maxlength="-1"
         bindinput="onCsvTextInput" 
         placeholder="将 AI 生成的 CSV 文本粘贴在此处（支持一次性导入多组球队）" 
       />

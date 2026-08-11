@@ -64,6 +64,7 @@
       <textarea 
         class="tour-csv-textarea" 
         value="{{pastedCsvText}}" 
+        maxlength="-1"
         bindinput="onCsvTextInput" 
         placeholder="请将 AI 整理出的 CSV 格式粘贴在此处（支持一次性导入全组球队基准数据）" 
       />
