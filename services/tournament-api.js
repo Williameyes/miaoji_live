@@ -9,6 +9,8 @@ function parseTournamentItem(raw) {
   const o = raw;
   const id = o.tournament_id || o.tournamentId || o.id;
   if (id == null || id === '') return null;
+  const rawFormat = o.format || o.tournament_format || o.tournamentFormat;
+  const rawSportType = o.sport_type || o.sportType;
   return {
     id: String(id),
     name: String(o.tournament_name || o.tournamentName || o.name || ''),
@@ -18,9 +20,41 @@ function parseTournamentItem(raw) {
     scheduledCount: Number(o.total_scheduled_matches ?? o.totalScheduledMatches ?? 0) || 0,
     monitoredCount: Number(o.total_monitored_matches ?? o.totalMonitoredMatches ?? 0) || 0,
     canManage: o.can_manage !== false && o.canManage !== false,
-    sportType: String(o.sport_type || o.sportType || 'basketball'),
-    format: String(o.format || 'LEAGUE')
+    sportType: String(rawSportType || 'basketball'),
+    format: String(rawFormat || 'LEAGUE')
   };
+}
+
+function parseTournamentDetail(raw) {
+  if (!raw || typeof raw !== 'object') return raw;
+  const base = parseTournamentItem(raw) || {};
+  const result = Object.assign({}, raw, base);
+  if (base.format) result.format = base.format;
+  if (base.sportType) {
+    result.sport_type = base.sportType;
+    result.sportType = base.sportType;
+  }
+  if (base.id) {
+    result.tournament_id = base.id;
+    result.id = base.id;
+  }
+  if (base.name) {
+    result.tournament_name = base.name;
+    result.name = base.name;
+  }
+  if (base.startDate) {
+    result.start_date = base.startDate;
+    result.startDate = base.startDate;
+  }
+  if (base.endDate) {
+    result.end_date = base.endDate;
+    result.endDate = base.endDate;
+  }
+  if (base.canManage !== undefined) {
+    result.can_manage = base.canManage;
+    result.canManage = base.canManage;
+  }
+  return result;
 }
 
 function parseTournamentList(body) {
@@ -63,6 +97,7 @@ function fetchTournamentList(query) {
 function fetchTournamentDetail(tournamentId) {
   return get('/api/app/tournament/detail', { tournament_id: tournamentId })
     .then(parseAppApiResponse)
+    .then(parseTournamentDetail)
     .catch(function (err) {
       throw normalizeAppApiError(err);
     });

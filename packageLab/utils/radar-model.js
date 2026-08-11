@@ -137,7 +137,9 @@ function normalizeTournament(raw) {
     totalMonitoredMatches:
       Number(o.total_monitored_matches ?? o.totalMonitoredMatches ?? 0) || 0,
     isPublic: o.is_public !== false && o.isPublic !== false && o.is_public !== 0,
-    canManage: o.can_manage !== false && o.canManage !== false
+    canManage: o.can_manage !== false && o.canManage !== false,
+    sportType: String(o.sport_type || o.sportType || 'basketball'),
+    format: String(o.format || o.tournament_format || o.tournamentFormat || 'LEAGUE')
   };
 }
 

@@ -47,7 +47,7 @@
     <!-- 主 Tab 切换 (赛程 | 排行榜) -->
     <view class="td-nav-tabs">
       <view class="td-nav-tab {{activeTab === 'schedule' ? 'active' : ''}}" data-tab="schedule" bindtap="onTabSwitch">
-        赛程列表
+        赛程表
       </view>
       <view class="td-nav-tab {{activeTab === 'standings' ? 'active' : ''}}" data-tab="standings" bindtap="onTabSwitch">
         🏆 积分排行榜
@@ -75,7 +75,6 @@
       </view>
 
       <view class="td-table-card" wx:else>
-        <view class="td-sched-hint" wx:if="{{detail.can_manage}}">💡 管理员提示：长按任意比赛行即可快捷修改比分</view>
         <!-- 赛程表格头 -->
         <view class="td-table-header td-sched-header">
           <text class="col-sch-group">组别</text>

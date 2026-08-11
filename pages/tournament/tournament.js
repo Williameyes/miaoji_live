@@ -1,7 +1,7 @@
 /**
  * @fileoverview 赛事资讯大厅页面（风格与主页保持一致）
  */
-const { fetchTournamentList } = require('../../services/tournament-api.js');
+const { fetchTournamentList, fetchTournamentDetail } = require('../../services/tournament-api.js');
 const { sortTournamentsWithPins } = require('../../utils/tournament-pin.js');
 
 Page({
@@ -52,7 +52,21 @@ Page({
     this.setData({ loading: true });
     return fetchTournamentList({ scope: 'public' })
       .then(function (list) {
-        const formatted = list.map(function (item) {
+        return Promise.all(list.map(function (item) {
+          return fetchTournamentDetail(item.id)
+            .then(function (detail) {
+              return Object.assign({}, item, {
+                sportType: detail && detail.sport_type ? detail.sport_type : item.sportType,
+                format: detail && detail.format ? detail.format : item.format
+              });
+            })
+            .catch(function () {
+              return item;
+            });
+        }));
+      })
+      .then(function (listWithDetail) {
+        const formatted = listWithDetail.map(function (item) {
           const now = Date.now();
           const startDateMs = item.startDate ? new Date(item.startDate).getTime() : 0;
           const endDateMs = item.endDate ? new Date(item.endDate).getTime() + 86400000 : 0;

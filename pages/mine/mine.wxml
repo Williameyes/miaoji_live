@@ -121,7 +121,7 @@
     </view>
     <view class="list-divider"></view>
     <view class="list-item" hover-class="list-item-hover" bindtap="onFeedbackTap">
-      <text class="list-label">使用反馈</text>
+      <text class="list-label">联系客服</text>
       <text class="list-arrow">›</text>
     </view>
   </view>
