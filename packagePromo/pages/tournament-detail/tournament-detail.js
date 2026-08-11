@@ -136,11 +136,56 @@ function resolveTeamPlaceholderName(rawTeamName, allMatches) {
     }
   }
 
-  if (/^\d+(胜|负)$/.test(str)) {
-    return '';
+/**
+ * 尝试将组别排名代号（如 A1, B2, 男子A1, 女子B2, 男子A组第1名）或场序胜负（39胜）自动转换为实际队伍名称
+ */
+function resolveTeamCodeToActualName(teamCode, standingsMap, allMatches) {
+  if (!teamCode || typeof teamCode !== 'string') return teamCode || '';
+  const code = teamCode.trim();
+
+  // 1. 先尝试解析 “39胜” / “39负”
+  const seqRes = resolveTeamPlaceholderName(code, allMatches);
+  if (seqRes && seqRes !== code && seqRes !== '') {
+    return seqRes;
   }
 
-  return str;
+  // 2. 解析小组排名代号：如 A1, B2, C1, C2, 男子A1, 女子B2, 男子A组1, 男子A组第1名
+  const rankPattern = /^(?:(男子|女子)\s*)?([A-Z])(?:组)?\s*(?:第)?(\d+)(?:名)?$/i;
+  const match = code.match(rankPattern);
+
+  if (match && standingsMap) {
+    const genderPrefix = match[1] || '';
+    const groupLetter = match[2].toUpperCase();
+    const rankNum = Number(match[3]);
+
+    const possibleKeys = Object.keys(standingsMap).filter(function (k) {
+      if (genderPrefix && !k.includes(genderPrefix)) return false;
+      return k.toUpperCase().includes(groupLetter);
+    });
+
+    for (let i = 0; i < possibleKeys.length; i += 1) {
+      const key = possibleKeys[i];
+      const list = standingsMap[key] || [];
+
+      // 检查该小组是否已全完赛
+      const groupMatches = (allMatches || []).filter(function (m) {
+        return m.stage_id === key;
+      });
+      const isGroupFinished = groupMatches.length > 0 && groupMatches.every(function (m) {
+        return m.hasValidScores || m.is_finished;
+      });
+
+      const teamItem = list.find(function (item) {
+        return Number(item.rank) === rankNum;
+      });
+
+      if (teamItem && teamItem.team_name && isGroupFinished) {
+        return teamItem.team_name;
+      }
+    }
+  }
+
+  return code;
 }
 
 Page({
@@ -157,6 +202,7 @@ Page({
     formattedMatches: [],
     currentMatches: [],
     currentStandings: [],
+    currentGroupedStandings: [], // 分组排行榜多表格堆叠数据
     
     // 比分修改 Modal
     showScoreModal: false,
@@ -231,20 +277,36 @@ Page({
         const rawStages = detail.stages || [];
         const standings = detail.standings || {};
         const pinned = isTournamentPinned(id);
+
+        // 为赛程添加 display_team_a 与 display_team_b 属性（自动推算完赛的小组排名与胜者代号）
+        const resolvedMatches = formattedMatches.map(function (m) {
+          const dispA = resolveTeamCodeToActualName(m.team_a, standings, formattedMatches);
+          const dispB = resolveTeamCodeToActualName(m.team_b, standings, formattedMatches);
+          return Object.assign({}, m, {
+            display_team_a: dispA,
+            display_team_b: dispB
+          });
+        });
         
         const teamSet = new Set();
-        formattedMatches.forEach(function (m) {
+        resolvedMatches.forEach(function (m) {
           if (m.team_a && !/^\d+胜|^\d+负|待定|TBD/i.test(m.team_a)) {
             teamSet.add(m.team_a);
           }
           if (m.team_b && !/^\d+胜|^\d+负|待定|TBD/i.test(m.team_b)) {
             teamSet.add(m.team_b);
           }
+          if (m.display_team_a && !/^\d+胜|^\d+负|待定|TBD/i.test(m.display_team_a)) {
+            teamSet.add(m.display_team_a);
+          }
+          if (m.display_team_b && !/^\d+胜|^\d+负|待定|TBD/i.test(m.display_team_b)) {
+            teamSet.add(m.display_team_b);
+          }
         });
         const allTeamList = Array.from(teamSet);
 
         const activeTab = self.data.activeTab || 'schedule';
-        const stages = resolveStageListForTab(activeTab, formattedMatches, rawStages);
+        const stages = resolveStageListForTab(activeTab, resolvedMatches, rawStages);
         const stageId = 'all';
 
         self.setData({
@@ -252,12 +314,12 @@ Page({
           stageList: stages,
           allTeamList: allTeamList,
           selectedStageId: stageId,
-          formattedMatches: formattedMatches,
+          formattedMatches: resolvedMatches,
           isPinned: pinned,
           loading: false
         });
 
-        self._filterStageData(stageId, formattedMatches, standings);
+        self._filterStageData(stageId, resolvedMatches, standings);
       })
       .catch(function (err) {
         self.setData({ loading: false });
@@ -387,26 +449,54 @@ Page({
     }
 
     let filteredStandings = [];
-    if (stageId && stageId !== 'all' && standings[stageId]) {
-      filteredStandings = standings[stageId];
+    let currentGroupedStandings = [];
+
+    if (stageId && stageId !== 'all') {
+      if (standings[stageId]) {
+        filteredStandings = standings[stageId];
+        currentGroupedStandings = [{
+          stage_id: stageId,
+          stage_name: stageId,
+          list: standings[stageId]
+        }];
+      }
     } else {
-      // 积分榜视图“全部”：仅取第一个非淘汰赛小组的积分表
+      // 积分榜视图“全部”：全量平铺堆叠展示所有非淘汰赛小组的积分表
       const validGroupKeys = Object.keys(standings).filter(function (k) {
         return !isKnockoutStage(k);
       });
       if (validGroupKeys.length > 0) {
+        validGroupKeys.forEach(function (k) {
+          if (Array.isArray(standings[k]) && standings[k].length > 0) {
+            currentGroupedStandings.push({
+              stage_id: k,
+              stage_name: k,
+              list: standings[k]
+            });
+          }
+        });
         filteredStandings = standings[validGroupKeys[0]] || [];
       } else {
-        const allLists = Object.values(standings);
-        if (allLists.length > 0) {
-          filteredStandings = allLists[0];
+        const allKeys = Object.keys(standings);
+        allKeys.forEach(function (k) {
+          if (Array.isArray(standings[k]) && standings[k].length > 0) {
+            currentGroupedStandings.push({
+              stage_id: k,
+              stage_name: k,
+              list: standings[k]
+            });
+          }
+        });
+        if (allKeys.length > 0) {
+          filteredStandings = standings[allKeys[0]] || [];
         }
       }
     }
 
     this.setData({
       currentMatches: filteredMatches,
-      currentStandings: filteredStandings
+      currentStandings: filteredStandings,
+      currentGroupedStandings: currentGroupedStandings
     });
   },
 
@@ -467,9 +557,13 @@ Page({
     const match = e.currentTarget.dataset.match;
     if (!match) return;
 
+    const standings = (this.data.detail ? this.data.detail.standings : {}) || {};
     const allMatches = this.data.formattedMatches || [];
-    const resolvedA = resolveTeamPlaceholderName(match.team_a, allMatches);
-    const resolvedB = resolveTeamPlaceholderName(match.team_b, allMatches);
+    const resolvedA = resolveTeamCodeToActualName(match.team_a, standings, allMatches);
+    const resolvedB = resolveTeamCodeToActualName(match.team_b, standings, allMatches);
+
+    const isPlaceholderA = /^\d+(胜|负)$|^[A-Z]\d+$/i.test(match.team_a);
+    const isPlaceholderB = /^\d+(胜|负)$|^[A-Z]\d+$/i.test(match.team_b);
 
     this.setData({
       showScoreModal: true,

@@ -94,11 +94,11 @@
               <text class="td-sch-group-tag">{{item.stage_id !== 'stage_default' ? item.stage_id : '常规赛'}}</text>
             </view>
 
-            <!-- 对阵球队 (队伍A vs 队伍B) -->
+            <!-- 对阵球队 (队伍A vs 队伍B，小组完赛后自动替换 A1/B2 组别代号) -->
             <view class="col-sch-teams">
-              <text class="td-sch-team home {{item.score_a > item.score_b ? 'win-team' : ''}}">{{item.team_a}}</text>
+              <text class="td-sch-team home {{item.score_a > item.score_b ? 'win-team' : ''}}">{{item.display_team_a || item.team_a}}</text>
               <text class="td-sch-vs-sep">-</text>
-              <text class="td-sch-team away {{item.score_b > item.score_a ? 'win-team' : ''}}">{{item.team_b}}</text>
+              <text class="td-sch-team away {{item.score_b > item.score_a ? 'win-team' : ''}}">{{item.display_team_b || item.team_b}}</text>
             </view>
 
             <!-- 比分 / 未开始 状态 -->
@@ -128,37 +128,47 @@
       </view>
     </view>
 
-    <!-- Tab 2: 排行榜页面 -->
+    <!-- Tab 2: 排行榜页面 (支持选择全部时平铺堆叠展示多小组积分榜) -->
     <view class="td-tab-content" wx:if="{{activeTab === 'standings'}}">
-      <view class="empty-state" wx:if="{{!currentStandings.length}}">
+      <view class="empty-state" wx:if="{{!currentGroupedStandings.length}}">
         <text class="empty-icon">🏆</text>
         <text class="empty-text">暂无排行榜数据</text>
         <text class="empty-hint">比赛录入比分完赛后将自动计算积分与排名</text>
       </view>
 
-      <view class="td-table-card" wx:else>
-        <view class="td-table-header">
-          <text class="col-rank">排名</text>
-          <text class="col-team">球队</text>
-          <text class="col-stat">已赛</text>
-          <text class="col-stat">胜/平/负</text>
-          <text class="col-stat">净胜</text>
-          <text class="col-pts">积分</text>
-        </view>
-
-        <block wx:for="{{currentStandings}}" wx:key="team_name">
-          <view class="td-table-row {{index < 3 ? 'top3' : ''}}">
-            <view class="col-rank">
-              <text class="td-rank-badge rank-{{item.rank}}">{{item.rank}}</text>
+      <block wx:else>
+        <block wx:for="{{currentGroupedStandings}}" wx:key="stage_id" wx:for-item="group">
+          <view class="td-table-card" style="margin-bottom: 24rpx;">
+            <!-- 小组积分榜卡片标题 -->
+            <view class="td-group-header-bar flex-between" wx:if="{{currentGroupedStandings.length > 1 || group.stage_name !== 'all'}}">
+              <text class="td-group-title-text">🏆 {{group.stage_name}} 积分榜</text>
+              <text class="td-group-sub-text">按积分 / 净胜分排序</text>
             </view>
-            <text class="col-team td-team-title">{{item.team_name}}</text>
-            <text class="col-stat">{{item.played}}</text>
-            <text class="col-stat">{{item.won}}/{{item.draw}}/{{item.lost}}</text>
-            <text class="col-stat">{{item.net_score > 0 ? '+' + item.net_score : item.net_score}}</text>
-            <text class="col-pts td-pts-highlight">{{item.points}}</text>
+
+            <view class="td-table-header">
+              <text class="col-rank">排名</text>
+              <text class="col-team">球队</text>
+              <text class="col-stat">已赛</text>
+              <text class="col-stat">胜/平/负</text>
+              <text class="col-stat">净胜</text>
+              <text class="col-pts">积分</text>
+            </view>
+
+            <block wx:for="{{group.list}}" wx:key="team_name">
+              <view class="td-table-row {{index < 3 ? 'top3' : ''}}">
+                <view class="col-rank">
+                  <text class="td-rank-badge rank-{{item.rank}}">{{item.rank}}</text>
+                </view>
+                <text class="col-team td-team-title">{{item.team_name}}</text>
+                <text class="col-stat">{{item.played}}</text>
+                <text class="col-stat">{{item.won}}/{{item.draw}}/{{item.lost}}</text>
+                <text class="col-stat">{{item.net_score > 0 ? '+' + item.net_score : item.net_score}}</text>
+                <text class="col-pts td-pts-highlight">{{item.points}}</text>
+              </view>
+            </block>
           </view>
         </block>
-      </view>
+      </block>
     </view>
   </block>
 

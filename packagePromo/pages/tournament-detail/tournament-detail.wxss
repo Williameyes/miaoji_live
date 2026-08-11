@@ -490,6 +490,22 @@ page {
   line-height: 1.25;
 }
 
+.td-group-header-bar {
+  padding: 24rpx 28rpx 16rpx;
+  border-bottom: 2rpx solid #F1F5F9;
+}
+
+.td-group-title-text {
+  font-size: 28rpx;
+  font-weight: 800;
+  color: #0F172A;
+}
+
+.td-group-sub-text {
+  font-size: 20rpx;
+  color: #94A3B8;
+}
+
 /* ─────────────────────────────────────
    排行榜表格列 (Standings Table Columns)
 ───────────────────────────────────── */
