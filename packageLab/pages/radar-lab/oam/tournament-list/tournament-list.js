@@ -38,6 +38,7 @@ function parseTeamInitialsCsvText(text) {
   };
 
   const result = {};
+  const stageCounters = {};
 
   for (let i = 1; i < lines.length; i += 1) {
     const parts = splitLine(lines[i]);
@@ -48,6 +49,9 @@ function parseTeamInitialsCsvText(text) {
     if (!teamName || teamName.startsWith('```')) continue;
 
     if (!result[stageId]) result[stageId] = {};
+    if (!stageCounters[stageId]) stageCounters[stageId] = 0;
+
+    stageCounters[stageId] += 1;
 
     result[stageId][teamName] = {
       points: colPts >= 0 ? parseNum(parts[colPts]) : 0,
@@ -55,7 +59,8 @@ function parseTeamInitialsCsvText(text) {
       won: colWon >= 0 ? parseNum(parts[colWon]) : 0,
       draw: colDraw >= 0 ? parseNum(parts[colDraw]) : 0,
       lost: colLost >= 0 ? parseNum(parts[colLost]) : 0,
-      net_score: colNet >= 0 ? parseNum(parts[colNet]) : 0
+      net_score: colNet >= 0 ? parseNum(parts[colNet]) : 0,
+      initial_rank: stageCounters[stageId]
     };
   }
 

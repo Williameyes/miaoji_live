@@ -130,12 +130,6 @@
 
     <!-- Tab 2: 排行榜页面 (支持选择全部时平铺堆叠展示多小组积分榜) -->
     <view class="td-tab-content" wx:if="{{activeTab === 'standings'}}">
-      <!-- 管理员初始基准积分修正入口 -->
-      <view class="td-admin-initials-bar flex-between" wx:if="{{detail && detail.can_manage}}">
-        <text class="td-initials-hint">💡 中途接入赛事？可为球队修正初始基准积分与胜负</text>
-        <button class="td-btn-initials" bindtap="onOpenInitialsModal">⚙️ 基准积分修正</button>
-      </view>
-
       <view class="empty-state" wx:if="{{!currentGroupedStandings.length}}">
         <text class="empty-icon">🏆</text>
         <text class="empty-text">暂无排行榜数据</text>
@@ -237,85 +231,6 @@
       <view class="td-modal-actions">
         <button class="td-btn td-btn-cancel" bindtap="onCloseScoreModal">取消</button>
         <button class="td-btn td-btn-confirm" disabled="{{submittingScore}}" bindtap="onSaveScore">保存修改</button>
-      </view>
-    </view>
-  </view>
-
-  <!-- ⚙️ 初始基准积分修正 Modal (所有者权限) -->
-  <view class="td-modal-overlay" wx:if="{{showInitialsModal}}">
-    <view class="td-modal-card">
-      <view class="td-modal-title">⚙️ 赛事初始基准积分修正</view>
-
-      <!-- 方式一：AI 批量导入 -->
-      <view class="td-modal-section-title">方式一：AI 文本 / CSV 批量导入 (推荐，10秒搞定全组)</view>
-      <view class="td-ai-action-bar" style="margin-bottom: 12rpx;">
-        <button class="td-btn-ai-prompt" bindtap="onCopyAiPrompt">📋 复制 AI 整理基准积分提示词</button>
-      </view>
-      <textarea 
-        class="td-csv-textarea" 
-        value="{{pastedCsvText}}" 
-        maxlength="-1"
-        bindinput="onCsvTextInput" 
-        placeholder="将 AI 生成的 CSV 文本粘贴在此处（支持一次性导入多组球队）" 
-      />
-      <button 
-        class="td-btn td-btn-confirm" 
-        style="margin-bottom: 24rpx; background: #2563EB;" 
-        disabled="{{submittingInitials}}" 
-        bindtap="onSaveInitialsFromCsv"
-      >
-        一键批量保存 CSV 基准积分
-      </button>
-
-      <view class="td-divider-line"></view>
-
-      <!-- 方式二：单队手动微调 -->
-      <view class="td-modal-section-title">方式二：单队手动微调</view>
-      <view class="td-team-input-box" style="margin-bottom: 16rpx;">
-        <input class="td-team-name-input" value="{{initTeamName}}" bindinput="onInitTeamNameInput" placeholder="点选或输入球队" />
-        <view class="td-quick-teams-bar" wx:if="{{allTeamList.length}}">
-          <block wx:for="{{allTeamList}}" wx:key="*this">
-            <view 
-              class="td-quick-team-pill {{initTeamName === item ? 'selected' : ''}}" 
-              data-team="{{item}}" 
-              bindtap="onSelectInitTeam"
-            >
-              {{item}}
-            </view>
-          </block>
-        </view>
-      </view>
-
-      <view class="td-modal-inputs" style="flex-wrap: wrap; gap: 12rpx; margin-bottom: 24rpx;">
-        <view class="td-input-group" style="min-width: 45%;">
-          <text class="td-input-label">初始积分</text>
-          <input class="td-modal-input" type="number" value="{{initPoints}}" bindinput="onInitPointsInput" placeholder="如 15" />
-        </view>
-        <view class="td-input-group" style="min-width: 45%;">
-          <text class="td-input-label">初始已赛</text>
-          <input class="td-modal-input" type="number" value="{{initPlayed}}" bindinput="onInitPlayedInput" placeholder="如 5" />
-        </view>
-        <view class="td-input-group" style="min-width: 45%;">
-          <text class="td-input-label">初始胜场</text>
-          <input class="td-modal-input" type="number" value="{{initWon}}" bindinput="onInitWonInput" placeholder="如 4" />
-        </view>
-        <view class="td-input-group" style="min-width: 45%;">
-          <text class="td-input-label">初始平局</text>
-          <input class="td-modal-input" type="number" value="{{initDraw}}" bindinput="onInitDrawInput" placeholder="如 0" />
-        </view>
-        <view class="td-input-group" style="min-width: 45%;">
-          <text class="td-input-label">初始负场</text>
-          <input class="td-modal-input" type="number" value="{{initLost}}" bindinput="onInitLostInput" placeholder="如 1" />
-        </view>
-        <view class="td-input-group" style="min-width: 45%;">
-          <text class="td-input-label">初始净胜分</text>
-          <input class="td-modal-input" type="number" value="{{initNetScore}}" bindinput="onInitNetScoreInput" placeholder="如 32" />
-        </view>
-      </view>
-
-      <view class="td-modal-actions">
-        <button class="td-btn td-btn-cancel" bindtap="onCloseInitialsModal">关闭弹窗</button>
-        <button class="td-btn td-btn-confirm" disabled="{{submittingInitials}}" bindtap="onSaveTeamInitialStats">保存单队微调</button>
       </view>
     </view>
   </view>
