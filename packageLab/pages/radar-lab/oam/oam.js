@@ -25,6 +25,36 @@ function formatCommercialText(m) {
   return poolText + ' · ' + settlementText + promoText;
 }
 
+/**
+ * 计算场次是否可被软删除及不可删除原因。
+ * @param {object} m
+ * @returns {{ isDeletable: boolean, disabledReason: string }}
+ */
+function computeDeletableState(m) {
+  const canManage = m.canManage !== false;
+  const isSettled = m.settlementStatus === 'settled';
+  const isMonitoring = m.matchStatus === 'monitoring';
+
+  let isDeletable = true;
+  let disabledReason = '';
+
+  if (!canManage) {
+    isDeletable = false;
+    disabledReason = '无权限';
+  } else if (isMonitoring) {
+    isDeletable = false;
+    disabledReason = '监控中';
+  } else if (isSettled) {
+    isDeletable = false;
+    disabledReason = '已清算';
+  }
+
+  return {
+    isDeletable: isDeletable,
+    disabledReason: disabledReason
+  };
+}
+
 Page({
   data: {
     filterOptions: [{ id: 'all', name: '全部赛事' }],
@@ -35,7 +65,14 @@ Page({
     loading: false,
     adminViewAll: false,
     showPasteModal: false,
-    pastedCsvText: ''
+    pastedCsvText: '',
+
+    // 批量选择与批量删除状态
+    isBatchMode: false,
+    selectedIdMap: {},
+    selectedCount: 0,
+    deletableCount: 0,
+    isAllSelected: false
   },
 
   /**
@@ -80,6 +117,7 @@ Page({
           scope: listScope
         }).then(function (matches) {
           const matchRows = matches.map(function (m) {
+            const delState = computeDeletableState(m);
             return {
               id: m.id,
               teamA: m.teamA,
@@ -89,7 +127,9 @@ Page({
               commercialText: formatCommercialText(m),
               canManage: m.canManage !== false,
               settlementStatus: m.settlementStatus || 'pending',
-              matchStatus: m.matchStatus || ''
+              matchStatus: m.matchStatus || '',
+              isDeletable: delState.isDeletable,
+              disabledReason: delState.disabledReason
             };
           });
           self.setData({
@@ -100,6 +140,7 @@ Page({
             loading: false,
             adminViewAll: listScope === 'all'
           });
+          self._updateBatchSelectionState(self.data.selectedIdMap);
           self._hydrateCommercialDetails(matchRows);
         });
       })
@@ -145,15 +186,184 @@ Page({
       });
       const nextRows = self.data.matchRows.map(function (row) {
         const item = detailMap[String(row.id)];
-        return item
-          ? Object.assign({}, row, {
-              commercialText: item.commercialText,
-              settlementStatus: item.settlementStatus,
-              matchStatus: item.matchStatus
-            })
-          : row;
+        if (!item) return row;
+        const merged = Object.assign({}, row, {
+          commercialText: item.commercialText,
+          settlementStatus: item.settlementStatus,
+          matchStatus: item.matchStatus
+        });
+        const delState = computeDeletableState(merged);
+        merged.isDeletable = delState.isDeletable;
+        merged.disabledReason = delState.disabledReason;
+        return merged;
       });
       self.setData({ matchRows: nextRows });
+      self._updateBatchSelectionState(self.data.selectedIdMap);
+    });
+  },
+
+  /**
+   * 切换/退出批量选择模式。
+   */
+  onToggleBatchMode: function () {
+    const nextMode = !this.data.isBatchMode;
+    this.setData({
+      isBatchMode: nextMode,
+      selectedIdMap: {},
+      selectedCount: 0,
+      isAllSelected: false
+    });
+    if (nextMode) {
+      this._updateBatchSelectionState({});
+    }
+  },
+
+  /**
+   * 内部计算与更新批量勾选状态。
+   * @param {Record<string|number, boolean>} nextMap
+   */
+  _updateBatchSelectionState: function (nextMap) {
+    const map = nextMap || {};
+    const rows = this.data.matchRows || [];
+    const deletableRows = rows.filter(function (r) {
+      return r.isDeletable;
+    });
+    let selectedCount = 0;
+    deletableRows.forEach(function (r) {
+      if (map[r.id]) {
+        selectedCount++;
+      }
+    });
+    const deletableCount = deletableRows.length;
+    const isAllSelected = deletableCount > 0 && selectedCount === deletableCount;
+
+    this.setData({
+      selectedIdMap: map,
+      selectedCount: selectedCount,
+      deletableCount: deletableCount,
+      isAllSelected: isAllSelected
+    });
+  },
+
+  /**
+   * 批量模式下点击单项勾选框或卡片。
+   * @param {WechatMiniprogram.BaseEvent} e
+   */
+  onToggleItemSelect: function (e) {
+    const id = e.currentTarget.dataset.id;
+    if (!id) return;
+    const row = this.data.matchRows.find(function (r) {
+      return String(r.id) === String(id);
+    });
+    if (!row) return;
+    if (!row.isDeletable) {
+      wx.showToast({
+        title: row.disabledReason ? '无法选择：' + row.disabledReason : '该场次不可删除',
+        icon: 'none'
+      });
+      return;
+    }
+    const nextMap = Object.assign({}, this.data.selectedIdMap);
+    if (nextMap[id]) {
+      delete nextMap[id];
+    } else {
+      nextMap[id] = true;
+    }
+    this._updateBatchSelectionState(nextMap);
+  },
+
+  /**
+   * 切换全选/取消全选。
+   */
+  onToggleSelectAll: function () {
+    const rows = this.data.matchRows || [];
+    const deletableRows = rows.filter(function (r) {
+      return r.isDeletable;
+    });
+    if (!deletableRows.length) {
+      wx.showToast({ title: '当前无符合可删除条件的场次', icon: 'none' });
+      return;
+    }
+
+    const isAllSelected = this.data.isAllSelected;
+    const nextMap = {};
+    if (!isAllSelected) {
+      deletableRows.forEach(function (r) {
+        nextMap[r.id] = true;
+      });
+    }
+    this._updateBatchSelectionState(nextMap);
+  },
+
+  /**
+   * 执行批量删除操作。
+   */
+  onBatchDelete: function () {
+    const self = this;
+    const selectedMap = this.data.selectedIdMap || {};
+    const selectedIds = Object.keys(selectedMap).filter(function (id) {
+      return selectedMap[id];
+    });
+
+    if (!selectedIds.length) {
+      wx.showToast({ title: '请先选择要删除的场次', icon: 'none' });
+      return;
+    }
+
+    wx.showModal({
+      title: '确认批量删除',
+      content: '确定要删除已选择的 ' + selectedIds.length + ' 场比赛吗？删除后不可恢复。',
+      confirmText: '批量删除',
+      confirmColor: '#ef4444',
+      success: function (res) {
+        if (!res.confirm) return;
+
+        self.setData({ submitting: true });
+        wx.showLoading({ title: '正在删除 (0/' + selectedIds.length + ')…', mask: true });
+
+        let successCount = 0;
+        let failCount = 0;
+        let processed = 0;
+
+        const tasks = selectedIds.map(function (id) {
+          return deleteMatch(id)
+            .then(function () {
+              successCount++;
+            })
+            .catch(function () {
+              failCount++;
+            })
+            .finally(function () {
+              processed++;
+              wx.showLoading({
+                title: '正在删除 (' + processed + '/' + selectedIds.length + ')…',
+                mask: true
+              });
+            });
+        });
+
+        Promise.all(tasks).then(function () {
+          wx.hideLoading();
+          self.setData({ submitting: false });
+
+          if (failCount === 0) {
+            wx.showToast({ title: '已成功删除 ' + successCount + ' 场', icon: 'success' });
+          } else {
+            wx.showModal({
+              title: '批量删除结果',
+              content: '成功删除 ' + successCount + ' 场，失败 ' + failCount + ' 场。',
+              showCancel: false
+            });
+          }
+
+          self.setData({
+            selectedIdMap: {},
+            selectedCount: 0,
+            isAllSelected: false
+          });
+          self._reloadList(true);
+        });
+      }
     });
   },
 
@@ -165,7 +375,13 @@ Page({
     const idx = Number(e.detail.value);
     const opt = this.data.filterOptions[idx];
     if (!opt) return;
-    this.setData({ filterIndex: idx, selectedTournamentId: opt.id });
+    this.setData({
+      filterIndex: idx,
+      selectedTournamentId: opt.id,
+      selectedIdMap: {},
+      selectedCount: 0,
+      isAllSelected: false
+    });
     this._reloadList();
   },
 
