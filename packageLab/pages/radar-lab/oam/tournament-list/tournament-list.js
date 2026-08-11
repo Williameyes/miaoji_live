@@ -11,7 +11,12 @@ function parseTeamInitialsCsvText(text) {
   const lines = clean.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
   if (lines.length < 2) return {};
 
-  const headers = lines[0].split(',').map(s => s.trim().toLowerCase());
+  function splitLine(lineStr) {
+    const s = lineStr.replace(/，/g, ',').replace(/\t/g, ',');
+    return s.split(',').map(item => item.trim());
+  }
+
+  const headers = splitLine(lines[0]).map(h => h.toLowerCase());
   
   let colStage = headers.findIndex(h => h.includes('阶段') || h.includes('分组') || h.includes('stage'));
   let colTeam = headers.findIndex(h => h.includes('球队') || h.includes('队伍') || h.includes('team'));
@@ -25,25 +30,32 @@ function parseTeamInitialsCsvText(text) {
   if (colTeam < 0) colTeam = 1;
   if (colPts < 0) colPts = 2;
 
+  const parseNum = (val) => {
+    if (val === undefined || val === null || val === '') return 0;
+    const cleanVal = String(val).trim().replace(/−/g, '-');
+    const num = Number(cleanVal);
+    return isNaN(num) ? 0 : num;
+  };
+
   const result = {};
 
   for (let i = 1; i < lines.length; i += 1) {
-    const parts = lines[i].split(',').map(s => s.trim());
+    const parts = splitLine(lines[i]);
     if (parts.length <= colTeam) continue;
 
     const stageId = (colStage >= 0 && parts[colStage]) ? parts[colStage] : 'stage_default';
     const teamName = parts[colTeam];
-    if (!teamName) continue;
+    if (!teamName || teamName.startsWith('```')) continue;
 
     if (!result[stageId]) result[stageId] = {};
 
     result[stageId][teamName] = {
-      points: colPts >= 0 && parts[colPts] !== undefined ? Number(parts[colPts]) || 0 : 0,
-      played: colPlayed >= 0 && parts[colPlayed] !== undefined ? Number(parts[colPlayed]) || 0 : 0,
-      won: colWon >= 0 && parts[colWon] !== undefined ? Number(parts[colWon]) || 0 : 0,
-      draw: colDraw >= 0 && parts[colDraw] !== undefined ? Number(parts[colDraw]) || 0 : 0,
-      lost: colLost >= 0 && parts[colLost] !== undefined ? Number(parts[colLost]) || 0 : 0,
-      net_score: colNet >= 0 && parts[colNet] !== undefined ? Number(parts[colNet]) || 0 : 0
+      points: colPts >= 0 ? parseNum(parts[colPts]) : 0,
+      played: colPlayed >= 0 ? parseNum(parts[colPlayed]) : 0,
+      won: colWon >= 0 ? parseNum(parts[colWon]) : 0,
+      draw: colDraw >= 0 ? parseNum(parts[colDraw]) : 0,
+      lost: colLost >= 0 ? parseNum(parts[colLost]) : 0,
+      net_score: colNet >= 0 ? parseNum(parts[colNet]) : 0
     };
   }
 
