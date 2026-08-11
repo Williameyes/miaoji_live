@@ -1,3 +1,6 @@
+const { ensureRadarLabAccess } = require('../../../../utils/radar-access.js');
+const { fetchTournamentList } = require('../../../../services/radar-api.js');
+const { getRadarListScope } = require('../../../../utils/radar-list-scope.js');
 const { oamUpsert } = require('../../../../services/tournament-api.js');
 
 /**
