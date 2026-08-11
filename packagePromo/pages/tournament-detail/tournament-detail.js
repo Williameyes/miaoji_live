@@ -78,15 +78,11 @@ function resolveStageListForTab(activeTab, formattedMatches, rawStages) {
     }
     return result;
   } else {
-    // 📅 赛程 Tab：级联推进，仅解锁已产生对阵或完赛的阶段
-    const unlocked = allStages.filter(function (name) {
-      return isStageUnlockedForSchedule(name, matches);
-    });
-
+    // 📅 赛程 Tab：全量展示所有赛程阶段（不隐藏未开打阶段，避免用户误解）
     const result = [];
-    if (unlocked.length > 0) {
-      result.push({ id: 'all', name: '全部已解锁赛程' });
-      unlocked.forEach(function (s) {
+    if (allStages.length > 0) {
+      result.push({ id: 'all', name: '全部赛程' });
+      allStages.forEach(function (s) {
         result.push({ id: s, name: s, type: 'STAGE' });
       });
     } else {
@@ -436,23 +432,10 @@ Page({
     const activeTab = this.data.activeTab || 'schedule';
 
     let filteredMatches = matches;
-    if (activeTab === 'schedule') {
-      if (stageId && stageId !== 'all') {
-        filteredMatches = matches.filter(function (m) {
-          return (m.stage_id || 'stage_default') === stageId;
-        });
-      } else {
-        // 赛程视图全选时，仅展示已解锁的比赛
-        filteredMatches = matches.filter(function (m) {
-          return isStageUnlockedForSchedule(m.stage_id, matches);
-        });
-      }
-    } else {
-      if (stageId && stageId !== 'all') {
-        filteredMatches = matches.filter(function (m) {
-          return (m.stage_id || 'stage_default') === stageId;
-        });
-      }
+    if (stageId && stageId !== 'all') {
+      filteredMatches = matches.filter(function (m) {
+        return (m.stage_id || 'stage_default') === stageId;
+      });
     }
 
     let filteredStandings = [];
