@@ -214,7 +214,18 @@ Page({
     editTeamB: '',
     scoreA: '',
     scoreB: '',
-    submittingScore: false
+    submittingScore: false,
+
+    // 初始基准积分 Modal
+    showInitialsModal: false,
+    initTeamName: '',
+    initPoints: '',
+    initPlayed: '',
+    initWon: '',
+    initDraw: '',
+    initLost: '',
+    initNetScore: '',
+    submittingInitials: false
   },
 
   onLoad: function (query) {
@@ -662,6 +673,116 @@ Page({
       })
       .finally(function () {
         self.setData({ submittingScore: false });
+      });
+  },
+
+  // 展开 / 关闭 初始基准积分修正 Modal
+  onOpenInitialsModal: function () {
+    this.setData({
+      showInitialsModal: true,
+      initTeamName: '',
+      initPoints: '',
+      initPlayed: '',
+      initWon: '',
+      initDraw: '',
+      initLost: '',
+      initNetScore: ''
+    });
+  },
+
+  onCloseInitialsModal: function () {
+    this.setData({
+      showInitialsModal: false,
+      initTeamName: '',
+      initPoints: '',
+      initPlayed: '',
+      initWon: '',
+      initDraw: '',
+      initLost: '',
+      initNetScore: ''
+    });
+  },
+
+  onInitTeamNameInput: function (e) {
+    const val = e.detail.value;
+    this.setData({ initTeamName: val });
+    this._loadExistingTeamInitials(val);
+  },
+
+  onSelectInitTeam: function (e) {
+    const team = e.currentTarget.dataset.team;
+    if (!team) return;
+    this.setData({ initTeamName: team });
+    this._loadExistingTeamInitials(team);
+  },
+
+  _loadExistingTeamInitials: function (teamName) {
+    if (!teamName || !this.data.detail || !this.data.detail.team_initials) return;
+    const stageId = this.data.selectedStageId !== 'all' ? this.data.selectedStageId : 'stage_default';
+    const stageMap = this.data.detail.team_initials[stageId] || this.data.detail.team_initials['stage_default'] || {};
+    const teamInit = stageMap[teamName];
+    if (teamInit) {
+      this.setData({
+        initPoints: teamInit.points !== undefined ? String(teamInit.points) : '',
+        initPlayed: teamInit.played !== undefined ? String(teamInit.played) : '',
+        initWon: teamInit.won !== undefined ? String(teamInit.won) : '',
+        initDraw: teamInit.draw !== undefined ? String(teamInit.draw) : '',
+        initLost: teamInit.lost !== undefined ? String(teamInit.lost) : '',
+        initNetScore: teamInit.net_score !== undefined ? String(teamInit.net_score) : ''
+      });
+    }
+  },
+
+  onInitPointsInput: function (e) { this.setData({ initPoints: e.detail.value }); },
+  onInitPlayedInput: function (e) { this.setData({ initPlayed: e.detail.value }); },
+  onInitWonInput: function (e) { this.setData({ initWon: e.detail.value }); },
+  onInitDrawInput: function (e) { this.setData({ initDraw: e.detail.value }); },
+  onInitLostInput: function (e) { this.setData({ initLost: e.detail.value }); },
+  onInitNetScoreInput: function (e) { this.setData({ initNetScore: e.detail.value }); },
+
+  onSaveTeamInitialStats: function () {
+    const self = this;
+    const teamName = String(this.data.initTeamName || '').trim();
+    if (!teamName) {
+      wx.showToast({ title: '请选择或输入球队名称', icon: 'none' });
+      return;
+    }
+
+    const stageId = this.data.selectedStageId !== 'all' ? this.data.selectedStageId : 'stage_default';
+    const currentInitials = Object.assign({}, self.data.detail ? self.data.detail.team_initials : {});
+    if (!currentInitials[stageId]) {
+      currentInitials[stageId] = {};
+    }
+
+    currentInitials[stageId][teamName] = {
+      points: Number(this.data.initPoints || 0),
+      played: Number(this.data.initPlayed || 0),
+      won: Number(this.data.initWon || 0),
+      draw: Number(this.data.initDraw || 0),
+      lost: Number(this.data.initLost || 0),
+      net_score: Number(this.data.initNetScore || 0)
+    };
+
+    this.setData({ submittingInitials: true });
+    const payload = {
+      action: 'upsert_team_initials',
+      data: {
+        tournament_id: self.data.tournamentId,
+        team_initials: currentInitials
+      }
+    };
+
+    oamUpsert(payload)
+      .then(function () {
+        wx.showToast({ title: '球队基准分更新成功', icon: 'success' });
+        self.onCloseInitialsModal();
+        self.loadDetail(self.data.tournamentId);
+      })
+      .catch(function (err) {
+        wx.showToast({ title: err.message || '保存基准分失败', icon: 'none' });
+      })
+      .finally(function () {
+        self.setData({ submittingInitials: false });
       });
   }
 });
