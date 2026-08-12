@@ -256,15 +256,15 @@ const RECORDING_MODE_OPTIONS = [{
   id: RecordingMode.REMOTE,
   label: '副机录制',
   recommended: true,
-  hint: '直播机不录·副机进行录制·本机可控制副机启停（需联系客服开通）'
+  hint: '本机不录·副机录制·本机可控制副机启停（需联系客服开通副机）'
 }, {
   id: RecordingMode.DUAL,
   label: '双机录制',
-  hint: '设备要求高·双录发热最高·非旗舰机型勿选'
+  hint: '设备要求高·双录发热最高·非旗舰机型勿选（需联系客服开通副机）'
 }, {
   id: RecordingMode.OFF,
   label: '不录制',
-  hint: '画面卡顿时请选·优先保直播画面质量·老旧机型建议不录制'
+  hint: '直播卡顿时请选该选项·优先保直播·老旧机型建议不录制'
 }];
 /**
  * 本地存储键：是否已展示「超频模式无机位切换」提示（仅首次）。
@@ -13740,9 +13740,18 @@ pauseRollingForReplay: function (onPaused) {
     }
     const replaySource = this._resolveHighlightReplaySource(item);
     if (!replaySource.target) return;
-    if (!this._isHighlightItemPlayable(item)) {
-      this._rejectHighlightReplayMissingFiles(item);
-      return;
+    if (!this._continuousHighlightList || !Array.isArray(this._continuousHighlightList) || !this._continuousHighlightList[this._continuousHighlightIndex] || String(this._continuousHighlightList[this._continuousHighlightIndex].id) !== String(item && item.id)) {
+      const currentMatchId = wx.getStorageSync('currentMatchId') || app.globalData.currentMatchId || '';
+      const rawList = this.getHighlightList(currentMatchId) || [];
+      const list = rawList.filter(x => x && this._isHighlightItemPlayable(x));
+      const idx = list.findIndex(x => String(x.id) === String(item && item.id));
+      if (idx !== -1) {
+        this._continuousHighlightList = list;
+        this._continuousHighlightIndex = idx;
+      } else {
+        this._continuousHighlightList = item ? [item] : [];
+        this._continuousHighlightIndex = 0;
+      }
     }
     this.pauseRollingForReplay(() => {
       this.startReplayContinue(item);
@@ -14029,6 +14038,8 @@ pauseRollingForReplay: function (onPaused) {
    * @param {boolean} stopPlayer 是否立即停止 video（点击中断时为 true）
    */
   finishReplayToLive: function (stopPlayer) {
+    this._continuousHighlightList = null;
+    this._continuousHighlightIndex = -1;
     this._restoreReplayRecordingCfrThrottle();
     if (this._replayActiveItem) {
       if ((this._replayActiveItem.viewCount || 0) >= 2) {
@@ -14130,6 +14141,38 @@ pauseRollingForReplay: function (onPaused) {
     }, outroMs);
   },
   /**
+   * 自动向后连续播放高光列表中下一片段；若后续无高光则返回 false。
+   * @returns {boolean}
+   */
+  _advanceContinuousReplay: function () {
+    if (this._continuousHighlightList && Array.isArray(this._continuousHighlightList) && typeof this._continuousHighlightIndex === 'number') {
+      const nextIdx = this._continuousHighlightIndex + 1;
+      if (nextIdx < this._continuousHighlightList.length) {
+        const nextItem = this._continuousHighlightList[nextIdx];
+        if (nextItem && this._isHighlightItemPlayable(nextItem)) {
+          this._continuousHighlightIndex = nextIdx;
+          this.appendHealthLog('replay_continuous_advance', {
+            nextIdx,
+            id: String(nextItem.id)
+          });
+          this.startReplay(nextItem);
+          return true;
+        }
+      }
+    }
+    return false;
+  },
+  /**
+   * 高光自然播放结束时的统一处理：优先连续播放下一段，若无则退出回放。
+   * @returns {void}
+   */
+  _onReplayNaturalEnd: function () {
+    if (this._advanceContinuousReplay()) {
+      return;
+    }
+    this.finishReplayToLive(false);
+  },
+  /**
    * 活跃 slot 播放结束：链式时切换到预加载好的另一 slot，无需重新加载。
    * 仅在活跃 slot 的 bindended 中调用（通过 data-slot 区分）。
    * @param {number} slotIdx 触发事件的 slot（0=A, 1=B）
@@ -14138,7 +14181,7 @@ pauseRollingForReplay: function (onPaused) {
     if (slotIdx !== this.data.replayActiveSlot) return;
     // 双保险：VK 模式下视频自然结束（ended）也必须触发回到直播，弥补 timeupdate 可能的不及时
     if (this._isVkTimeshift || !this.data.replayHighlightChain) {
-      this.finishReplayToLive(false);
+      this._onReplayNaturalEnd();
       return;
     }
     const paths = this.data.replayHighlightPaths || [];
@@ -14149,7 +14192,7 @@ pauseRollingForReplay: function (onPaused) {
       this.setData({
         replayHighlightChain: false
       });
-      this.finishReplayToLive(false);
+      this._onReplayNaturalEnd();
       return;
     }
     /** 切换 slot：另一个 slot 已在 src 写入阶段完成预加载，直接翻到最前 */
@@ -14381,7 +14424,7 @@ pauseRollingForReplay: function (onPaused) {
             currentTime: t,
             stopAtSec: lim
           });
-          this.finishReplayToLive(false);
+          this._onReplayNaturalEnd();
         } else {
           this.appendHealthLog('replay_chain_plan_advance', {
             idx,
@@ -14407,13 +14450,13 @@ pauseRollingForReplay: function (onPaused) {
         }
         // ✅ 提前 250ms 结束（iOS 适配极限优化），给解码与 UI 切换预留更充裕 buffer，确保完全无缝
         if (typeof this._replayStopAtMediaSec === 'number' && this._replayStopAtMediaSec > 0 && t >= this._replayStopAtMediaSec - 0.25) {
-          this.finishReplayToLive(false);
+          this._onReplayNaturalEnd();
         }
         return;
       }
       const lim = this._replayStopAtMediaSec;
       if (typeof lim === 'number' && lim > 0.04 && t >= lim - 0.12) {
-        this.finishReplayToLive(false);
+        this._onReplayNaturalEnd();
       }
     }
   },

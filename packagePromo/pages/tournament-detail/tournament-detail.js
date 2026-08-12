@@ -10,6 +10,36 @@ const {
 const { post, STORAGE_USER_INFO_KEY } = require('../../../utils/request.js');
 
 /**
+  * Canvas 2D 辅助绘制圆角矩形
+  */
+function drawRoundedRect(ctx, x, y, width, height, radius, fillStyle) {
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + width, y, x + width, y + height, radius);
+  ctx.arcTo(x + width, y + height, x, y + height, radius);
+  ctx.arcTo(x, y + height, x, y, radius);
+  ctx.arcTo(x, y, x + width, y, radius);
+  ctx.closePath();
+  if (fillStyle) {
+    ctx.fillStyle = fillStyle;
+    ctx.fill();
+  }
+}
+
+/**
+  * Canvas 2D 辅助文本自动截断加省略号
+  */
+function truncateText(ctx, text, maxWidth) {
+  if (!text) return '';
+  let str = String(text);
+  if (ctx.measureText(str).width <= maxWidth) return str;
+  while (str.length > 0 && ctx.measureText(str + '…').width > maxWidth) {
+    str = str.slice(0, -1);
+  }
+  return str + '…';
+}
+
+/**
  * 判断指定阶段名称是否属于淘汰赛 / 决胜排位赛（无循环赛积分属性）
  */
 function isKnockoutStage(stageName) {
@@ -225,9 +255,24 @@ Page({
       // fallback
     }
 
+    // 开启微信原生发送给好友与分享到朋友圈 (shareTimeline)
+    if (wx.showShareMenu) {
+      wx.showShareMenu({
+        withShareTicket: true,
+        menus: ['shareAppMessage', 'shareTimeline']
+      });
+    }
+
     const id = query && query.id ? String(query.id) : '';
+    const initialTab = (query && query.tab === 'standings') ? 'standings' : 'schedule';
+    const initialStage = query && query.stage ? query.stage : 'all';
+
     if (id) {
-      this.setData({ tournamentId: id });
+      this.setData({
+        tournamentId: id,
+        activeTab: initialTab,
+        selectedStageId: initialStage
+      });
       this.loadDetail(id);
     }
   },
@@ -310,7 +355,9 @@ Page({
 
         const activeTab = self.data.activeTab || 'schedule';
         const stages = resolveStageListForTab(activeTab, resolvedMatches, rawStages);
-        const stageId = 'all';
+        let stageId = self.data.selectedStageId || 'all';
+        const exists = stages.some(function (s) { return s.id === stageId; });
+        if (!exists) stageId = 'all';
 
         self.setData({
           detail: detail,
@@ -663,5 +710,531 @@ Page({
       .finally(function () {
         self.setData({ submittingScore: false });
       });
+  },
+
+  // ─────────────────────────────────────
+  // 微信原生分享转发支持
+  // ─────────────────────────────────────
+  onShareAppMessage: function () {
+    const detail = this.data.detail || {};
+    const name = detail.tournament_name || '赛事详情';
+    const activeTab = this.data.activeTab;
+    const stageItem = (this.data.stageList || []).find(function (s) { return s.id === this.data.selectedStageId; }, this);
+    const stageName = stageItem ? stageItem.name : '全部数据';
+    const tabName = activeTab === 'schedule' ? '赛程表' : '积分排行榜';
+
+    return {
+      title: `【${name}】${stageName} · ${tabName}`,
+      path: `/packagePromo/pages/tournament-detail/tournament-detail?id=${encodeURIComponent(this.data.tournamentId)}&tab=${activeTab}&stage=${encodeURIComponent(this.data.selectedStageId)}`,
+      imageUrl: this.data.posterImgUrl || ''
+    };
+  },
+
+  onShareTimeline: function () {
+    const detail = this.data.detail || {};
+    const name = detail.tournament_name || '赛事详情';
+    const activeTab = this.data.activeTab;
+    const stageItem = (this.data.stageList || []).find(function (s) { return s.id === this.data.selectedStageId; }, this);
+    const stageName = stageItem ? stageItem.name : '全部数据';
+    const tabName = activeTab === 'schedule' ? '赛程表' : '积分排行榜';
+
+    return {
+      title: `【${name}】${stageName} · ${tabName}`,
+      query: `id=${encodeURIComponent(this.data.tournamentId)}&tab=${activeTab}&stage=${encodeURIComponent(this.data.selectedStageId)}`,
+      imageUrl: this.data.posterImgUrl || ''
+    };
+  },
+
+  // ─────────────────────────────────────
+  // Canvas 2D 离屏精美海报生成逻辑
+  // ─────────────────────────────────────
+  onGeneratePoster: function () {
+    const self = this;
+    const activeTab = this.data.activeTab;
+    const stageId = this.data.selectedStageId;
+    const stageItem = (this.data.stageList || []).find(function (s) { return s.id === stageId; });
+    const stageName = stageItem ? stageItem.name : '全部数据';
+
+    this.setData({ selectedStageName: stageName });
+    wx.showLoading({ title: '正在绘制精美海报…', mask: true });
+
+    const canvasWidth = 720;
+    let contentHeight = 0;
+
+    if (activeTab === 'schedule') {
+      const matches = this.data.currentMatches || [];
+      const matchCount = Math.max(1, matches.length);
+      contentHeight = 220 + 50 + 50 + (matchCount * 54) + 120;
+    } else {
+      const groups = this.data.currentGroupedStandings || [];
+      let totalRows = 0;
+      groups.forEach(function (g) {
+        totalRows += (g.list ? g.list.length : 0);
+      });
+      const groupCount = Math.max(1, groups.length);
+      contentHeight = 220 + 50 + (groupCount * 46) + (groupCount * 40) + (totalRows * 50) + 120;
+    }
+
+    const canvasHeight = Math.max(760, contentHeight);
+
+    this.setData({
+      posterCanvasWidth: canvasWidth,
+      posterCanvasHeight: canvasHeight
+    });
+
+    setTimeout(function () {
+      self._drawCanvas2DPoster(canvasWidth, canvasHeight);
+    }, 120);
+  },
+
+  _drawCanvas2DPoster: function (width, height) {
+    const self = this;
+    const query = wx.createSelectorQuery().in(this);
+    query.select('#posterCanvas')
+      .fields({ node: true, size: true })
+      .exec(function (res) {
+        if (!res || !res[0] || !res[0].node) {
+          wx.hideLoading();
+          wx.showToast({ title: '创建 Canvas 失败', icon: 'none' });
+          return;
+        }
+
+        const canvas = res[0].node;
+        const ctx = canvas.getContext('2d');
+
+        const sys = wx.getSystemInfoSync ? wx.getSystemInfoSync() : {};
+        const dpr = sys.pixelRatio || 2;
+
+        canvas.width = width * dpr;
+        canvas.height = height * dpr;
+        ctx.scale(dpr, dpr);
+
+        // 1. 全局背景：高质感轻柔倾斜渐变
+        const bgGrad = ctx.createLinearGradient(0, 0, width, height);
+        bgGrad.addColorStop(0, '#EEF6FF');
+        bgGrad.addColorStop(0.5, '#E8F8F2');
+        bgGrad.addColorStop(1, '#EFF6FF');
+        ctx.fillStyle = bgGrad;
+        ctx.fillRect(0, 0, width, height);
+
+        // 2. Header 顶部 Card：极简大气风格（只保留赛事名和视图徽章）
+        const headerH = 150;
+        const margin = 28;
+        const headerW = width - margin * 2;
+
+        ctx.save();
+        ctx.shadowColor = 'rgba(37, 99, 235, 0.28)';
+        ctx.shadowBlur = 24;
+        ctx.shadowOffsetY = 10;
+
+        const headerGrad = ctx.createLinearGradient(margin, 28, margin + headerW, 28 + headerH);
+        headerGrad.addColorStop(0, '#1E40AF');
+        headerGrad.addColorStop(0.5, '#2563EB');
+        headerGrad.addColorStop(1, '#3B82F6');
+
+        drawRoundedRect(ctx, margin, 28, headerW, headerH, 24, headerGrad);
+        ctx.restore();
+
+        // 装饰光晕点阵
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
+        for (let i = 0; i < 5; i++) {
+          ctx.beginPath();
+          ctx.arc(margin + headerW - 50 + (i * 10), 28 + 26, 3.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Header 视图徽章（胶囊标）
+        const detail = self.data.detail || {};
+        const tournamentName = detail.tournament_name || '赛事详情';
+        const activeTab = self.data.activeTab;
+        const stageName = self.data.selectedStageName || '全部数据';
+
+        const badgeText = (activeTab === 'schedule' ? '📅 赛程表' : '🏆 积分排行榜') + ' · ' + stageName;
+        ctx.font = 'bold 22px -apple-system, sans-serif';
+        const badgeW = ctx.measureText(badgeText).width + 28;
+        drawRoundedRect(ctx, margin + 24, 48, badgeW, 36, 12, 'rgba(255, 255, 255, 0.22)');
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillText(badgeText, margin + 38, 73);
+
+        // Header 赛事名称 (加大加粗)
+        ctx.font = 'bold 32px -apple-system, sans-serif';
+        ctx.fillStyle = '#FFFFFF';
+        const truncTitle = truncateText(ctx, tournamentName, headerW - 48);
+        ctx.fillText(truncTitle, margin + 24, 130);
+
+        // 3. 辅助 Meta 栏（项目 Icon、赛制、日期范围）：在 Header 下方以浅色清晰展现
+        let curY = 28 + headerH + 24;
+        ctx.font = '500 20px -apple-system, sans-serif';
+        ctx.fillStyle = '#64748B';
+        const sportLabel = detail.sport_type === 'soccer' ? '⚽ 足球' : '🏀 篮球';
+        const formatLabel = detail.format === 'CUP' ? '赛会制' : '联赛制';
+        const dateRange = (detail.start_date && detail.end_date) ? `📅 ${detail.start_date} ~ ${detail.end_date}` : '';
+        const metaText = `${sportLabel}  |  ${formatLabel}  ${dateRange ? ' |  ' + dateRange : ''}`;
+        ctx.fillText(metaText, margin + 6, curY);
+
+        curY += 24;
+
+        // 4. 绘制主体表格内容
+        if (activeTab === 'schedule') {
+          curY = self._drawScheduleTableOnCanvas(ctx, margin, curY, headerW);
+        } else {
+          curY = self._drawStandingsTableOnCanvas(ctx, margin, curY, headerW);
+        }
+
+        // 5. Footer 落款水印
+        curY += 20;
+        ctx.strokeStyle = '#CBD5E1';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(margin, curY);
+        ctx.lineTo(margin + headerW, curY);
+        ctx.stroke();
+
+        curY += 34;
+        ctx.font = 'bold 22px -apple-system, sans-serif';
+        ctx.fillStyle = '#0F172A';
+        ctx.fillText('高光记分 MATCH CENTER', margin + 6, curY);
+
+        ctx.font = '500 18px -apple-system, sans-serif';
+        ctx.fillStyle = '#94A3B8';
+        ctx.fillText('长按或保存图片扫码查看实时赛况', margin + 6, curY + 26);
+
+        // 6. 导出图片并展开 Modal 预览
+        setTimeout(function () {
+          wx.canvasToTempFilePath({
+            canvas: canvas,
+            destWidth: width * dpr,
+            destHeight: height * dpr,
+            fileType: 'png',
+            quality: 1,
+            success: function (r) {
+              wx.hideLoading();
+              self.setData({
+                posterImgUrl: r.tempFilePath,
+                showPosterModal: true
+              });
+            },
+            fail: function (err) {
+              wx.hideLoading();
+              wx.showToast({ title: '导出图片失败', icon: 'none' });
+            }
+          }, self);
+        }, 120);
+      });
+  },
+
+  _drawScheduleTableOnCanvas: function (ctx, x, startY, width) {
+    const matches = this.data.currentMatches || [];
+    let curY = startY;
+
+    if (!matches.length) {
+      ctx.font = 'bold 22px -apple-system, sans-serif';
+      ctx.fillStyle = '#94A3B8';
+      ctx.fillText('暂无赛程安排', x + 16, curY + 40);
+      return curY + 80;
+    }
+
+    const rowH = 50;
+    const tableHeaderH = 42;
+    const totalH = tableHeaderH + matches.length * rowH;
+
+    ctx.save();
+    ctx.shadowColor = 'rgba(15, 23, 42, 0.05)';
+    ctx.shadowBlur = 16;
+    ctx.shadowOffsetY = 4;
+    drawRoundedRect(ctx, x, curY, width, totalH, 20, '#FFFFFF');
+    ctx.restore();
+
+    // 表头
+    drawRoundedRect(ctx, x, curY, width, tableHeaderH, 20, '#F1F5F9');
+    ctx.font = 'bold 19px -apple-system, sans-serif';
+    ctx.fillStyle = '#64748B';
+
+    const colGroupX = x + 16;
+    const colTeamsX = x + 100;
+    const colScoreX = x + width - 250;
+    const colTimeX = x + width - 145;
+    const colVenueX = x + width - 65;
+
+    ctx.fillText('组别', colGroupX, curY + 27);
+    ctx.fillText('比赛队 (对阵)', colTeamsX, curY + 27);
+    ctx.fillText('比分/状态', colScoreX, curY + 27);
+    ctx.fillText('时间', colTimeX, curY + 27);
+    ctx.fillText('场地', colVenueX, curY + 27);
+
+    curY += tableHeaderH;
+
+    for (let i = 0; i < matches.length; i++) {
+      const m = matches[i];
+      const rowY = curY;
+
+      if (i % 2 === 1) {
+        ctx.fillStyle = '#F8FAFC';
+        ctx.fillRect(x + 2, rowY, width - 4, rowH);
+      }
+
+      if (i < matches.length - 1) {
+        ctx.strokeStyle = '#F1F5F9';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x + 12, rowY + rowH);
+        ctx.lineTo(x + width - 12, rowY + rowH);
+        ctx.stroke();
+      }
+
+      // 组别
+      ctx.font = 'bold 17px -apple-system, sans-serif';
+      ctx.fillStyle = '#2563EB';
+      const gTag = (m.stage_id && m.stage_id !== 'stage_default') ? m.stage_id : '常规赛';
+      ctx.fillText(truncateText(ctx, gTag, 70), colGroupX, rowY + 31);
+
+      // 对阵
+      const teamA = m.display_team_a || m.team_a || '主队';
+      const teamB = m.display_team_b || m.team_b || '客队';
+      const winA = m.hasValidScores && m.score_a > m.score_b;
+      const winB = m.hasValidScores && m.score_b > m.score_a;
+
+      ctx.font = winA ? 'bold 19px -apple-system, sans-serif' : '500 19px -apple-system, sans-serif';
+      ctx.fillStyle = winA ? '#059669' : '#0F172A';
+      const truncA = truncateText(ctx, teamA, 105);
+      ctx.fillText(truncA, colTeamsX, rowY + 31);
+
+      const wA = ctx.measureText(truncA).width;
+      ctx.font = '400 17px -apple-system, sans-serif';
+      ctx.fillStyle = '#94A3B8';
+      ctx.fillText(' vs ', colTeamsX + wA, rowY + 31);
+      const wVs = ctx.measureText(' vs ').width;
+
+      ctx.font = winB ? 'bold 19px -apple-system, sans-serif' : '500 19px -apple-system, sans-serif';
+      ctx.fillStyle = winB ? '#059669' : '#0F172A';
+      const truncB = truncateText(ctx, teamB, 105);
+      ctx.fillText(truncB, colTeamsX + wA + wVs, rowY + 31);
+
+      // 比分 / 未开始
+      if (m.hasValidScores) {
+        ctx.font = 'bold 20px -apple-system, sans-serif';
+        ctx.fillStyle = '#0F172A';
+        ctx.fillText(`${m.score_a} : ${m.score_b}`, colScoreX, rowY + 31);
+      } else {
+        ctx.font = '600 17px -apple-system, sans-serif';
+        ctx.fillStyle = '#94A3B8';
+        ctx.fillText('未开始', colScoreX, rowY + 31);
+      }
+
+      // 时间
+      ctx.font = '500 17px -apple-system, sans-serif';
+      ctx.fillStyle = '#64748B';
+      const timeStr = `${m.datePart || ''} ${m.timePart || ''}`.trim() || '—';
+      ctx.fillText(truncateText(ctx, timeStr, 75), colTimeX, rowY + 31);
+
+      // 场地
+      ctx.font = '500 17px -apple-system, sans-serif';
+      ctx.fillStyle = '#64748B';
+      ctx.fillText(truncateText(ctx, m.venue || '—', 60), colVenueX, rowY + 31);
+
+      curY += rowH;
+    }
+
+    return curY;
+  },
+
+  _drawStandingsTableOnCanvas: function (ctx, x, startY, width) {
+    const groups = this.data.currentGroupedStandings || [];
+    let curY = startY;
+
+    if (!groups.length) {
+      ctx.font = 'bold 22px -apple-system, sans-serif';
+      ctx.fillStyle = '#94A3B8';
+      ctx.fillText('暂无排行榜数据', x + 16, curY + 40);
+      return curY + 80;
+    }
+
+    for (let gIdx = 0; gIdx < groups.length; gIdx++) {
+      const g = groups[gIdx];
+      const list = g.list || [];
+      const rowH = 46;
+      const titleH = 38;
+      const headerH = 38;
+      const totalH = titleH + headerH + list.length * rowH;
+
+      ctx.save();
+      ctx.shadowColor = 'rgba(15, 23, 42, 0.05)';
+      ctx.shadowBlur = 16;
+      ctx.shadowOffsetY = 4;
+      drawRoundedRect(ctx, x, curY, width, totalH, 20, '#FFFFFF');
+      ctx.restore();
+
+      // 小组卡片头
+      drawRoundedRect(ctx, x, curY, width, titleH, 20, '#EFF6FF');
+      ctx.font = 'bold 20px -apple-system, sans-serif';
+      ctx.fillStyle = '#1D4ED8';
+      const gTitle = `🏆 ${g.stage_name === 'all' ? '全组' : g.stage_name} 积分榜`;
+      ctx.fillText(gTitle, x + 18, curY + 25);
+
+      curY += titleH;
+
+      // 表头
+      ctx.fillStyle = '#F8FAFC';
+      ctx.fillRect(x + 2, curY, width - 4, headerH);
+      ctx.font = 'bold 19px -apple-system, sans-serif';
+      ctx.fillStyle = '#64748B';
+
+      const colRankX = x + 18;
+      const colTeamX = x + 85;
+      const colPlayedX = x + width - 260;
+      const colWdlX = x + width - 185;
+      const colNetX = x + width - 100;
+      const colPtsX = x + width - 45;
+
+      ctx.fillText('排名', colRankX, curY + 25);
+      ctx.fillText('球队', colTeamX, curY + 25);
+      ctx.fillText('已赛', colPlayedX, curY + 25);
+      ctx.fillText('胜/平/负', colWdlX, curY + 25);
+      ctx.fillText('净胜', colNetX, curY + 25);
+      ctx.fillText('积分', colPtsX, curY + 25);
+
+      curY += headerH;
+
+      for (let rIdx = 0; rIdx < list.length; rIdx++) {
+        const item = list[rIdx];
+        const rowY = curY;
+
+        if (rIdx % 2 === 1) {
+          ctx.fillStyle = '#F8FAFC';
+          ctx.fillRect(x + 2, rowY, width - 4, rowH);
+        }
+
+        if (rIdx < list.length - 1) {
+          ctx.strokeStyle = '#F1F5F9';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(x + 12, rowY + rowH);
+          ctx.lineTo(x + width - 12, rowY + rowH);
+          ctx.stroke();
+        }
+
+        // 排名 Badge
+        const rank = item.rank || (rIdx + 1);
+        if (rank === 1) {
+          ctx.font = 'bold 19px -apple-system, sans-serif';
+          ctx.fillStyle = '#D97706';
+          ctx.fillText('🥇 1', colRankX - 4, rowY + 28);
+        } else if (rank === 2) {
+          ctx.font = 'bold 19px -apple-system, sans-serif';
+          ctx.fillStyle = '#64748B';
+          ctx.fillText('🥈 2', colRankX - 4, rowY + 28);
+        } else if (rank === 3) {
+          ctx.font = 'bold 19px -apple-system, sans-serif';
+          ctx.fillStyle = '#B45309';
+          ctx.fillText('🥉 3', colRankX - 4, rowY + 28);
+        } else {
+          ctx.font = '600 19px -apple-system, sans-serif';
+          ctx.fillStyle = '#64748B';
+          ctx.fillText(String(rank), colRankX + 4, rowY + 28);
+        }
+
+        // 球队
+        ctx.font = 'bold 19px -apple-system, sans-serif';
+        ctx.fillStyle = '#0F172A';
+        ctx.fillText(truncateText(ctx, item.team_name || '', 160), colTeamX, rowY + 28);
+
+        // 已赛
+        ctx.font = '500 19px -apple-system, sans-serif';
+        ctx.fillStyle = '#475569';
+        ctx.fillText(String(item.played || 0), colPlayedX + 4, rowY + 28);
+
+        // 胜/平/负
+        const wdlStr = `${item.won || 0}/${item.draw || 0}/${item.lost || 0}`;
+        ctx.fillText(wdlStr, colWdlX, rowY + 28);
+
+        // 净胜分
+        const net = Number(item.net_score || 0);
+        const netStr = net > 0 ? `+${net}` : String(net);
+        ctx.fillStyle = net > 0 ? '#059669' : (net < 0 ? '#DC2626' : '#475569');
+        ctx.fillText(netStr, colNetX, rowY + 28);
+
+        // 积分
+        ctx.font = 'bold 22px -apple-system, sans-serif';
+        ctx.fillStyle = '#2563EB';
+        ctx.fillText(String(item.points || 0), colPtsX, rowY + 28);
+
+        curY += rowH;
+      }
+
+      curY += 20;
+    }
+
+    return curY;
+  },
+
+  onClosePosterModal: function () {
+    this.setData({ showPosterModal: false });
+  },
+
+  onSavePosterToAlbum: function () {
+    const self = this;
+    if (!this.data.posterImgUrl) {
+      wx.showToast({ title: '海报图片未就绪', icon: 'none' });
+      return;
+    }
+
+    wx.saveImageToPhotosAlbum({
+      filePath: self.data.posterImgUrl,
+      success: function () {
+        wx.showToast({ title: '已保存至手机相册', icon: 'success' });
+      },
+      fail: function (err) {
+        if (err.errMsg && err.errMsg.includes('auth deny')) {
+          wx.showModal({
+            title: '授权提示',
+            content: '需要保存图片到相册的权限，请在设置中开启',
+            confirmText: '去开启',
+            success: function (res) {
+              if (res.confirm) {
+                wx.openSetting();
+              }
+            }
+          });
+        } else {
+          wx.showToast({ title: '保存失败', icon: 'none' });
+        }
+      }
+    });
+  },
+
+  /**
+   * 调起微信原生分享/相册保存发朋友圈接口 (wx.showShareImageMenu)
+   */
+  onShareToTimelineDirect: function () {
+    const filePath = this.data.posterImgUrl;
+    if (!filePath) {
+      wx.showToast({ title: '海报图片未就绪', icon: 'none' });
+      return;
+    }
+
+    if (wx.showShareImageMenu) {
+      wx.showShareImageMenu({
+        path: filePath,
+        success: function () {
+          wx.showToast({ title: '已打开分享', icon: 'success' });
+        },
+        fail: function (err) {
+          if (err && err.errMsg && err.errMsg.indexOf('cancel') >= 0) return;
+          wx.saveImageToPhotosAlbum({
+            filePath: filePath,
+            success: function () {
+              wx.showToast({ title: '海报已存入相册，可直接发布朋友圈', icon: 'none', duration: 2500 });
+            }
+          });
+        }
+      });
+    } else {
+      wx.saveImageToPhotosAlbum({
+        filePath: filePath,
+        success: function () {
+          wx.showToast({ title: '海报已存入相册，可直接发布朋友圈', icon: 'none', duration: 2500 });
+        }
+      });
+    }
   }
 });

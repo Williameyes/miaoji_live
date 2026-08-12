@@ -32,15 +32,26 @@
           </view>
         </view>
 
-        <!-- 极简精美置顶按钮 -->
-        <view class="td-pin-btn {{isPinned ? 'pinned' : ''}}" bindtap="onTogglePin" hover-class="td-pin-btn-hover">
-          <text class="td-pin-icon">📌</text>
-          <text class="td-pin-text">{{isPinned ? '已置顶' : '置顶'}}</text>
+        <!-- 置顶按钮：独立置于右上角，精致微标 -->
+        <view class="td-pin-badge-btn {{isPinned ? 'pinned' : ''}}" bindtap="onTogglePin" hover-class="td-badge-hover">
+          <text class="td-pin-badge-icon">📌</text>
+          <text class="td-pin-badge-text">{{isPinned ? '已置顶' : '置顶'}}</text>
         </view>
       </view>
+
+      <!-- 赛事大标题 -->
       <text class="td-header-title">{{detail.tournament_name}}</text>
-      <view class="td-header-meta">
-        <text class="td-meta-item">📅 {{detail.start_date}} ~ {{detail.end_date}}</text>
+
+      <!-- 底部行：左侧日期 + 右侧单独醒目的“分享转发”胶囊按钮 -->
+      <view class="td-header-bottom-row">
+        <view class="td-header-meta">
+          <text class="td-meta-item">📅 {{detail.start_date}} ~ {{detail.end_date}}</text>
+        </view>
+
+        <view class="td-share-standalone-btn" bindtap="onGeneratePoster" hover-class="td-share-btn-hover">
+          <text class="td-share-icon">✨</text>
+          <text class="td-share-text">分享转发</text>
+        </view>
       </view>
     </view>
 
@@ -230,6 +241,45 @@
       <view class="td-modal-actions">
         <button class="td-btn td-btn-cancel" bindtap="onCloseScoreModal">取消</button>
         <button class="td-btn td-btn-confirm" disabled="{{submittingScore}}" bindtap="onSaveScore">保存修改</button>
+      </view>
+    </view>
+  </view>
+
+  <!-- ===== 离屏 Canvas 2D 绘图容器 (按需动态宽高) ===== -->
+  <view class="canvas-offscreen-wrap">
+    <canvas type="2d" id="posterCanvas" style="width: {{posterCanvasWidth || 750}}px; height: {{posterCanvasHeight || 1200}}px;"></canvas>
+  </view>
+
+  <!-- ===== 精美海报预览与分享 Modal 弹窗 ===== -->
+  <view class="poster-modal-overlay" wx:if="{{showPosterModal}}">
+    <view class="poster-modal-card">
+      <view class="poster-modal-header">
+        <view class="poster-modal-title-wrap">
+          <text class="poster-modal-title">✨ 分享转发 · {{activeTab === 'schedule' ? '赛程表' : '积分排行榜'}}</text>
+          <text class="poster-modal-sub">{{selectedStageName || '全部数据'}}</text>
+        </view>
+        <view class="poster-close-btn" bindtap="onClosePosterModal" hover-class="poster-close-hover">✕</view>
+      </view>
+
+      <!-- 海报高清预览区域 -->
+      <view class="poster-preview-body">
+        <image class="poster-preview-img" mode="widthFix" src="{{posterImgUrl}}" show-menu-by-longpress></image>
+      </view>
+
+      <!-- 操作按钮：分享至：微信好友 | 朋友圈 | 关闭 -->
+      <view class="poster-modal-footer">
+        <view class="poster-share-label">分享至：</view>
+        <view class="poster-modal-actions">
+          <button class="poster-btn poster-btn-friend" open-type="share" hover-class="poster-btn-hover">
+            <text class="poster-btn-icon">💬</text> 微信好友
+          </button>
+          <button class="poster-btn poster-btn-timeline" bindtap="onShareToTimelineDirect" hover-class="poster-btn-hover">
+            <text class="poster-btn-icon">🌐</text> 朋友圈
+          </button>
+        </view>
+        <view class="poster-close-text-btn" bindtap="onClosePosterModal" hover-class="poster-close-text-hover">
+          <text>关闭</text>
+        </view>
       </view>
     </view>
   </view>

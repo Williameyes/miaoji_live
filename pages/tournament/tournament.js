@@ -4,6 +4,43 @@
 const { fetchTournamentList, fetchTournamentDetail } = require('../../services/tournament-api.js');
 const { sortTournamentsWithPins } = require('../../utils/tournament-pin.js');
 
+const CARD_THEME_PALETTE = [
+  'theme-royal-blue',
+  'theme-sky-cyan',
+  'theme-deep-blue',
+  'theme-teal-mint'
+];
+const STORAGE_KEY = 'TN_CARD_THEME_MAP_V3';
+
+function getOrAssignCardTheme(tournamentId, usedThemes) {
+  if (!tournamentId) return CARD_THEME_PALETTE[0];
+  let themeMap = {};
+  try {
+    themeMap = wx.getStorageSync(STORAGE_KEY) || {};
+  } catch (e) {
+    themeMap = {};
+  }
+
+  if (themeMap[tournamentId] && CARD_THEME_PALETTE.indexOf(themeMap[tournamentId]) !== -1) {
+    if (usedThemes) usedThemes.push(themeMap[tournamentId]);
+    return themeMap[tournamentId];
+  }
+
+  const lastUsed = usedThemes && usedThemes.length > 0 ? usedThemes[usedThemes.length - 1] : null;
+  const candidates = CARD_THEME_PALETTE.filter(function (t) { return t !== lastUsed; });
+  const randomIndex = Math.floor(Math.random() * candidates.length);
+  const selectedTheme = candidates[randomIndex] || CARD_THEME_PALETTE[0];
+
+  themeMap[tournamentId] = selectedTheme;
+  if (usedThemes) usedThemes.push(selectedTheme);
+  try {
+    wx.setStorageSync(STORAGE_KEY, themeMap);
+  } catch (e) {
+    // ignore
+  }
+  return selectedTheme;
+}
+
 Page({
   data: {
     statusBarHeight: 20,
@@ -66,6 +103,7 @@ Page({
         }));
       })
       .then(function (listWithDetail) {
+        const usedThemes = [];
         const formatted = listWithDetail.map(function (item) {
           const now = Date.now();
           const startDateMs = item.startDate ? new Date(item.startDate).getTime() : 0;
@@ -82,6 +120,8 @@ Page({
           }
 
           const isSoccer = item.sportType === 'soccer';
+          const sportType = item.sportType || (isSoccer ? 'soccer' : 'basketball');
+          const themeClass = getOrAssignCardTheme(item.id, usedThemes);
 
           return {
             id: item.id,
@@ -91,8 +131,11 @@ Page({
             statusText: statusText,
             statusClass: statusClass,
             isEnded: statusText === '已完赛',
-            sportLabel: isSoccer ? '足球' : '篮球',
-            sportIcon: isSoccer ? '⚽' : '🏀',
+            sportType: sportType,
+            themeClass: themeClass,
+            coverUrl: item.coverUrl || item.cover || '',
+            sportLabel: isSoccer ? '足球' : (sportType === 'badminton' ? '羽毛球' : '篮球'),
+            sportIcon: isSoccer ? '⚽' : (sportType === 'badminton' ? '🏸' : '🏀'),
             formatLabel: item.format === 'CUP' ? '赛会制' : '联赛制'
           };
         });

@@ -2167,48 +2167,125 @@ button.live-ble-btn::after {
   100% { transform: translateX(200%); }
 }
 
-/* 专业摄影机取景框角标 (Viewfinder Brackets) */
+/* 专业广播级/摄影机取景框角标 (Broadcast Viewfinder Brackets) */
 .replay-viewfinder-brackets {
   position: absolute;
-  top: 16rpx;
-  left: 16rpx;
-  right: 16rpx;
-  bottom: 16rpx;
+  top: 14rpx;
+  left: 14rpx;
+  right: 14rpx;
+  bottom: 14rpx;
   pointer-events: none;
   z-index: 101;
+  border: 1rpx solid rgba(0, 240, 255, 0.16);
+  border-radius: 12rpx;
+  box-shadow: inset 0 0 24rpx rgba(0, 240, 255, 0.06), 0 0 12rpx rgba(0, 240, 255, 0.15);
 }
 
 .replay-bracket {
   position: absolute;
-  width: 28rpx;
-  height: 28rpx;
-  border-color: rgba(0, 240, 255, 0.6);
+  width: 32rpx;
+  height: 32rpx;
+  border-color: #00F0FF;
   border-style: solid;
-  box-shadow: 0 0 6rpx rgba(0, 240, 255, 0.3);
+  filter: drop-shadow(0 0 8rpx rgba(0, 240, 255, 0.7));
+}
+
+.replay-bracket__dot {
+  position: absolute;
+  width: 6rpx;
+  height: 6rpx;
+  background-color: #00F0FF;
+  border-radius: 50%;
+  box-shadow: 0 0 10rpx #00F0FF;
+  animation: bracketDotPulse 2s infinite ease-in-out;
+}
+
+@keyframes bracketDotPulse {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.3); }
 }
 
 .replay-bracket--tl {
-  top: 0;
-  left: 0;
+  top: -2rpx;
+  left: -2rpx;
   border-width: 4rpx 0 0 4rpx;
+  border-top-left-radius: 10rpx;
+}
+.replay-bracket--tl .replay-bracket__dot {
+  top: 2rpx;
+  left: 2rpx;
 }
 
 .replay-bracket--tr {
-  top: 0;
-  right: 0;
+  top: -2rpx;
+  right: -2rpx;
   border-width: 4rpx 4rpx 0 0;
+  border-top-right-radius: 10rpx;
+}
+.replay-bracket--tr .replay-bracket__dot {
+  top: 2rpx;
+  right: 2rpx;
 }
 
 .replay-bracket--bl {
-  bottom: 0;
-  left: 0;
+  bottom: -2rpx;
+  left: -2rpx;
   border-width: 0 0 4rpx 4rpx;
+  border-bottom-left-radius: 10rpx;
+}
+.replay-bracket--bl .replay-bracket__dot {
+  bottom: 2rpx;
+  left: 2rpx;
 }
 
 .replay-bracket--br {
-  bottom: 0;
-  right: 0;
+  bottom: -2rpx;
+  right: -2rpx;
   border-width: 0 4rpx 4rpx 0;
+  border-bottom-right-radius: 10rpx;
+}
+.replay-bracket--br .replay-bracket__dot {
+  bottom: 2rpx;
+  right: 2rpx;
+}
+
+/* 广播级中点科技刻度指示器 */
+.replay-viewfinder-tick {
+  position: absolute;
+  background: rgba(0, 240, 255, 0.45);
+  box-shadow: 0 0 8rpx rgba(0, 240, 255, 0.5);
+}
+.replay-viewfinder-tick--top {
+  top: -1rpx;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 28rpx;
+  height: 3rpx;
+  border-radius: 2rpx;
+}
+.replay-viewfinder-tick--bottom {
+  bottom: -1rpx;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 28rpx;
+  height: 3rpx;
+  border-radius: 2rpx;
+}
+.replay-viewfinder-tick--left {
+  top: 50%;
+  left: -1rpx;
+  transform: translateY(-50%);
+  width: 3rpx;
+  height: 28rpx;
+  border-radius: 2rpx;
+}
+.replay-viewfinder-tick--right {
+  top: 50%;
+  right: -1rpx;
+  transform: translateY(-50%);
+  width: 3rpx;
+  height: 28rpx;
+  border-radius: 2rpx;
 }
 
 .drawer-backdrop {

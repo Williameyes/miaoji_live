@@ -46,9 +46,25 @@
           bindtap="onTournamentTap"
           style="animation-delay: {{index * 55}}ms"
         >
-          <view class="tn-card-banner">
-            <view class="tn-pin-badge" wx:if="{{item.isPinned}}">📌 置顶</view>
-            <view class="tn-badge {{item.statusClass}}">{{item.statusText}}</view>
+          <view class="tn-card-banner {{item.themeClass || ('tn-banner--' + item.sportType)}}">
+            <!-- 封面图（若存在） -->
+            <image wx:if="{{item.coverUrl}}" class="tn-banner-cover" mode="aspectFill" src="{{item.coverUrl}}"></image>
+            
+            <!-- 无封面图时展示：运动巨型 3D 水印浮雕与几何纹理 -->
+            <block wx:else>
+              <view class="tn-banner-mesh"></view>
+              <view class="tn-banner-glow"></view>
+              <view class="tn-banner-watermark">{{item.sportIcon}}</view>
+            </block>
+
+            <!-- 顶部置顶与状态胶囊 -->
+            <view class="tn-pin-badge" wx:if="{{item.isPinned}}">
+              <text class="tn-pin-icon">📌</text> 置顶
+            </view>
+            <view class="tn-badge {{item.statusClass}}">
+              <text class="tn-status-dot" wx:if="{{item.statusClass === 'status-active'}}"></text>
+              <text class="tn-status-text">{{item.statusText}}</text>
+            </view>
           </view>
 
           <view class="tn-card-content">

@@ -793,12 +793,24 @@
   <view class="replay-overlay" wx:if="{{isReplaying}}">
     <!-- 与直播 live-stage 同尺寸的 16:9 内接区域，仅承载视频与手势；控件在 replay-chrome 全屏层 -->
     <view class="replay-stage" style="{{liveStageInlineStyle}}">
-      <!-- 专业摄影机取景框角标 -->
+      <!-- 专业广播级/摄影机取景框角标 -->
       <view class="replay-viewfinder-brackets">
-        <view class="replay-bracket replay-bracket--tl"></view>
-        <view class="replay-bracket replay-bracket--tr"></view>
-        <view class="replay-bracket replay-bracket--bl"></view>
-        <view class="replay-bracket replay-bracket--br"></view>
+        <view class="replay-bracket replay-bracket--tl">
+          <view class="replay-bracket__dot"></view>
+        </view>
+        <view class="replay-bracket replay-bracket--tr">
+          <view class="replay-bracket__dot"></view>
+        </view>
+        <view class="replay-bracket replay-bracket--bl">
+          <view class="replay-bracket__dot"></view>
+        </view>
+        <view class="replay-bracket replay-bracket--br">
+          <view class="replay-bracket__dot"></view>
+        </view>
+        <view class="replay-viewfinder-tick replay-viewfinder-tick--top"></view>
+        <view class="replay-viewfinder-tick replay-viewfinder-tick--bottom"></view>
+        <view class="replay-viewfinder-tick replay-viewfinder-tick--left"></view>
+        <view class="replay-viewfinder-tick replay-viewfinder-tick--right"></view>
       </view>
     <movable-area class="replay-movable-area">
       <movable-view
