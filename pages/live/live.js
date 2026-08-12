@@ -7163,6 +7163,9 @@ onShareAppMessage: function () {
   },
   onUnload: function () {
     try {
+      this._removeKeyControlListeners();
+    } catch (eKeyRem) {}
+    try {
       this._liveWsFlushScorePersist();
     } catch (eWsU0) {}
     try {
@@ -16070,6 +16073,45 @@ onLoad: function (options) {
       });
     } catch (e) {}
     this._initLocalAds();
+    this._initKeyControlListeners();
+  },
+  _initKeyControlListeners: function () {
+    if (typeof wx === 'undefined' || typeof wx.onKeyDown !== 'function') return;
+    const self = this;
+    this._onKeyDownCallback = function (res) {
+      if (!self.data.cameraMounted || !self.data.liveStreamAllowed || self.data.isReplaying) return;
+      const code = (res && (res.code || res.key) ? String(res.code || res.key) : '').toLowerCase();
+      const keyCode = res && typeof res.keyCode === 'number' ? res.keyCode : 0;
+      if (code === 'volumeup' || code === 'pageup' || code === 'arrowup' || code === 'equal' || code === 'add' || code === 'numpadadd' || keyCode === 175 || keyCode === 33 || keyCode === 38 || keyCode === 187) {
+        const curZoom = self.data.zoom || 1;
+        self.updateZoom(curZoom + 0.2);
+        wx.showToast({ title: `变焦 ${(curZoom + 0.2).toFixed(1)}x`, icon: 'none', duration: 800 });
+      } else if (code === 'volumedown' || code === 'pagedown' || code === 'arrowdown' || code === 'minus' || code === 'subtract' || code === 'numpadsubtract' || keyCode === 174 || keyCode === 34 || keyCode === 40 || keyCode === 189) {
+        const curZoom = self.data.zoom || 1;
+        self.updateZoom(curZoom - 0.2);
+        wx.showToast({ title: `变焦 ${(curZoom - 0.2).toFixed(1)}x`, icon: 'none', duration: 800 });
+      } else if (code === 'digit1' || code === 'numpad1' || keyCode === 49 || keyCode === 97) {
+        self.updateZoom(1.0);
+        wx.showToast({ title: '机位 1.0x', icon: 'none', duration: 800 });
+      } else if (code === 'digit2' || code === 'numpad2' || keyCode === 50 || keyCode === 98) {
+        self.updateZoom(2.0);
+        wx.showToast({ title: '机位 2.0x', icon: 'none', duration: 800 });
+      } else if (code === 'digit3' || code === 'numpad3' || keyCode === 51 || keyCode === 99) {
+        self.updateZoom(3.0);
+        wx.showToast({ title: '机位 3.0x', icon: 'none', duration: 800 });
+      }
+    };
+    try {
+      wx.onKeyDown(this._onKeyDownCallback);
+    } catch (e) {}
+  },
+  _removeKeyControlListeners: function () {
+    if (this._onKeyDownCallback && typeof wx !== 'undefined' && typeof wx.offKeyDown === 'function') {
+      try {
+        wx.offKeyDown(this._onKeyDownCallback);
+      } catch (e) {}
+      this._onKeyDownCallback = null;
+    }
   },
   _initLiveCoreState: function (options) {
     const replayBufferMod = require('../../utils/replay-buffer/index.js');
