@@ -7,7 +7,8 @@ const {
   isTournamentPinned,
   toggleTournamentPin
 } = require('../../../utils/tournament-pin.js');
-const { post, STORAGE_USER_INFO_KEY } = require('../../../utils/request.js');
+const { post, STORAGE_TOKEN_KEY, STORAGE_USER_INFO_KEY } = require('../../../utils/request.js');
+const { checkSyncLabWhitelist } = require('../../../utils/sync-lab-whitelist.js');
 
 /**
   * Canvas 2D 辅助绘制圆角矩形
@@ -415,50 +416,86 @@ Page({
     }
   },
 
-  _performQuickLoginAndPin: function (id) {
-    const self = this;
+  _performQuickLogin: function (descText, onSuccess) {
     wx.showLoading({ title: '授权登录中…', mask: true });
     wx.getUserProfile({
-      desc: '用于保存您的赛事置顶偏好',
+      desc: descText || '用于授权登录及保存您的偏好',
       success: function (profileRes) {
         wx.login({
           success: function (loginRes) {
-            if (loginRes.code) {
-              const loginPayload = {
-                code: loginRes.code,
-                encryptedData: profileRes.encryptedData,
-                iv: profileRes.iv,
-                rawData: profileRes.rawData,
-                signature: profileRes.signature,
-                nickName: profileRes.userInfo ? profileRes.userInfo.nickName : '',
-                avatarUrl: profileRes.userInfo ? profileRes.userInfo.avatarUrl : ''
-              };
-              post('/api/auth/login', loginPayload, { skipAuth: true })
-                .then(function (res) {
-                  wx.hideLoading();
-                  if (res && res.data) {
-                    const gd = getApp().globalData;
-                    gd.userInfo = res.data;
-                    wx.setStorageSync(STORAGE_USER_INFO_KEY, res.data);
-                    if (res.data.token) {
-                      wx.setStorageSync('token', res.data.token);
-                    }
-                  }
-                  wx.showToast({ title: '登录成功', icon: 'success' });
-                  self._doPinToggle(id);
-                })
-                .catch(function () {
-                  wx.hideLoading();
-                  const dummyUser = { openid: 'local_user_' + Date.now(), nickName: profileRes.userInfo.nickName };
-                  if (getApp()) getApp().globalData.userInfo = dummyUser;
-                  wx.setStorageSync(STORAGE_USER_INFO_KEY, dummyUser);
-                  wx.showToast({ title: '已登录并完成置顶', icon: 'success' });
-                  self._doPinToggle(id);
-                });
-            } else {
+            if (!loginRes.code) {
               wx.hideLoading();
-              wx.showToast({ title: '获取 code 失败', icon: 'none' });
+              wx.showToast({ title: '获取登录凭证失败', icon: 'none' });
+              return;
             }
+
+            const rawData = profileRes.rawData || '';
+            const signature = profileRes.signature || '';
+            const encryptedData = profileRes.encryptedData || '';
+            const iv = profileRes.iv || '';
+            const ui = profileRes.userInfo || {};
+            const nickName = (ui.nickName || '').trim();
+            const avatarUrl = (ui.avatarUrl || '').trim();
+
+            const loginPayload = {
+              code: loginRes.code,
+              rawData: rawData,
+              signature: signature,
+              encryptedData: encryptedData,
+              iv: iv
+            };
+            if (nickName && nickName !== '微信用户') {
+              loginPayload.nickName = nickName;
+            }
+            if (avatarUrl) {
+              loginPayload.avatarUrl = avatarUrl;
+            }
+
+            post('/api/auth/login', loginPayload, { skipAuth: true })
+              .then(function (body) {
+                wx.hideLoading();
+                const res = body || {};
+                const data = res.data;
+
+                if (res.code === 0 && data && typeof data === 'object') {
+                  const token = data.token;
+                  const userInfoRaw = data.userInfo;
+
+                  if (token) {
+                    wx.setStorageSync(STORAGE_TOKEN_KEY, token);
+                  }
+
+                  if (userInfoRaw && typeof userInfoRaw === 'object') {
+                    const mergedUser = Object.assign({}, userInfoRaw);
+                    if (ui.avatarUrl && !mergedUser.avatarUrl && !mergedUser.avatar_url) {
+                      mergedUser.avatarUrl = ui.avatarUrl;
+                    }
+
+                    const app = getApp();
+                    if (app) {
+                      app.globalData.userInfo = mergedUser;
+                    }
+                    wx.setStorageSync(STORAGE_USER_INFO_KEY, mergedUser);
+
+                    // 管理员与实验功能白名单检查 (对轨 mine.js)
+                    const inWhitelist = checkSyncLabWhitelist();
+                    console.log('[QuickLogin] 登录成功, OpenID:', mergedUser.openid, 'isAdmin:', !!mergedUser.isAdmin, 'inWhitelist:', inWhitelist);
+                  }
+
+                  wx.showToast({ title: '登录成功', icon: 'success' });
+                  if (typeof onSuccess === 'function') {
+                    onSuccess();
+                  }
+                } else {
+                  const msg = res.message || '登录失败';
+                  wx.showToast({ title: msg, icon: 'none' });
+                }
+              })
+              .catch(function (err) {
+                wx.hideLoading();
+                const msg = (err && err.message) || '网络连接失败';
+                wx.showToast({ title: msg.length > 20 ? '登录失败' : msg, icon: 'none' });
+              });
           },
           fail: function () {
             wx.hideLoading();
@@ -470,6 +507,13 @@ Page({
         wx.hideLoading();
         wx.showToast({ title: '已取消授权', icon: 'none' });
       }
+    });
+  },
+
+  _performQuickLoginAndPin: function (id) {
+    const self = this;
+    this._performQuickLogin('用于保存您的赛事置顶偏好', function () {
+      self._doPinToggle(id);
     });
   },
 
@@ -746,9 +790,38 @@ Page({
   },
 
   // ─────────────────────────────────────
-  // Canvas 2D 离屏精美海报生成逻辑
+  // Canvas 2D 离屏精美海报生成逻辑 (带登录拦截检查)
   // ─────────────────────────────────────
   onGeneratePoster: function () {
+    const isLoggedIn = checkIsLoggedIn();
+    if (!isLoggedIn) {
+      const self = this;
+      wx.showModal({
+        title: '登录后使用分享转发',
+        content: '分享转发功能需要授权登录，登录后即可生成精美海报与分享赛况。',
+        confirmText: '立即登录',
+        cancelText: '暂不登录',
+        confirmColor: '#2563eb',
+        success: function (res) {
+          if (res.confirm) {
+            self._performQuickLoginAndPoster();
+          }
+        }
+      });
+      return;
+    }
+
+    this._doGeneratePoster();
+  },
+
+  _performQuickLoginAndPoster: function () {
+    const self = this;
+    this._performQuickLogin('用于生成与分享您的赛事战报', function () {
+      self._doGeneratePoster();
+    });
+  },
+
+  _doGeneratePoster: function () {
     const self = this;
     const activeTab = this.data.activeTab;
     const stageId = this.data.selectedStageId;
