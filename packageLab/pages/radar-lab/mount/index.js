@@ -11,8 +11,10 @@ Page({
         activeMatches: [],
         loading: false,
         matchId: '',
+        roomId: '',
         rawText: '',
         enable_ad_verify: false,
+        enable_live_boost: true,
         enable_score_ocr: false,
         enable_audio_record: false,
         enable_video_record: false,
@@ -67,6 +69,7 @@ Page({
     savePreferences: function () {
         const prefs = {
             enable_ad_verify: this.data.enable_ad_verify,
+            enable_live_boost: this.data.enable_live_boost,
             enable_score_ocr: this.data.enable_score_ocr,
             enable_audio_record: this.data.enable_audio_record,
             enable_video_record: this.data.enable_video_record,
@@ -87,6 +90,15 @@ Page({
     onMatchIdInput: function (e) {
         this.setData({
             matchId: e.detail.value
+        });
+    },
+    /**
+     * 直播房间号改变事件。
+     */
+    onRoomIdInput: function (e) {
+        const val = String((e.detail && e.detail.value) || '').replace(/\D/g, '').slice(0, 6);
+        this.setData({
+            roomId: val
         });
     },
     /**
@@ -128,6 +140,11 @@ Page({
     /**
      * 广告物料核销开关改变。
      */
+        onLiveBoostChange: function (e) {
+        this.setData({
+            enable_live_boost: e.detail.value
+        });
+    },
     onAdVerifyChange: function (e) {
         this.setData({
             enable_ad_verify: e.detail.value
@@ -210,11 +227,16 @@ Page({
             raw_text: rawText,
             capabilities: {
                 enable_ad_verify: this.data.enable_ad_verify,
+            enable_live_boost: this.data.enable_live_boost,
                 enable_score_ocr: this.data.enable_score_ocr,
                 enable_audio_record: this.data.enable_audio_record,
                 enable_video_record: this.data.enable_video_record
             }
         };
+        const roomId = (this.data.roomId || '').replace(/\D/g, '').slice(0, 6);
+        if (roomId.length === 6) {
+            params.room_id = roomId;
+        }
         if (this.data.enable_score_ocr) {
             params.score_ocr = {
                 sport_type: this.data.sportTypeValues[this.data.sportTypeIndex],

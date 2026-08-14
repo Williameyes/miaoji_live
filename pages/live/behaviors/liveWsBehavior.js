@@ -32,7 +32,21 @@ wxsClockShotSec: 24,
     /** 24 秒 ≤5 时高亮警示 */
 wxsClockShotWarn: false,
     /** 采集端是否同步比分（sync_score=1）；false 时自动模式下仍可手动改分 */
-liveWsScoreSyncEnabled: false
+liveWsScoreSyncEnabled: false,
+    /** 直播送礼实时打出卡片数据 */
+    liveBoostItem: null,
+    /** 控制打出卡片 CSS 硬件加速显隐动画 */
+    liveBoostVisible: false,
+    /** 雷达送礼特效 6 位直播房间号 */
+    radarBoostRoomId: '',
+    /** 雷达送礼特效接入面板显隐 */
+    radarBoostPanelOpen: false,
+    /** 雷达送礼特效房间连接状态 */
+    radarBoostConnected: false,
+    /** 雷达送礼特效房间连接过渡状态 */
+    radarBoostBusy: false,
+    /** 雷达送礼特效房间状态文案 */
+    radarBoostStatusText: ''
   },
   methods: {
     // 已合并至文件后部 onUnload：此处不再重复定义，避免后项覆盖导致事件未解绑。
@@ -332,7 +346,12 @@ _liveWsOnSocketMessage: function (raw) {
       this._liveWsTeardownForManualMode();
       return;
     }
-    if (msg.type === 'DATA_BROADCAST') {
+    if (msg.type === 'DATA_BROADCAST' || msg.type === 'LIVE_BOOST' || msg.type === 'LIVE_BOOST_REALTIME' || msg.type === 'LIVE_BOOST_TARGETED') {
+      var nAct = (msg.payload && msg.payload.act) || msg.act || '';
+      if (nAct === 'LIVE_BOOST' || nAct === 'LIVE_BOOST_REALTIME' || nAct === 'LIVE_BOOST_TARGETED') {
+        this._consumeLiveBoost(msg.payload || msg);
+        return;
+      }
       var nested = msg.payload && typeof msg.payload === 'object' ? msg.payload : msg;
       if (!nested || typeof nested.act !== 'string' || typeof nested.seq !== 'number') {
         var nowIgnored = Date.now();
@@ -390,6 +409,10 @@ _liveWsApplyDisconnectedUiPatch: function () {
     liveWsQuickBusy: false,
     liveWsStatusText: '',
     liveWsScoreSyncEnabled: false,
+    /** 直播送礼实时打出卡片数据 */
+    liveBoostItem: null,
+    /** 控制打出卡片 CSS 硬件加速显隐动画 */
+    liveBoostVisible: false,
     wxsClockBundle: null,
     wxsClockMainText: '00:00',
     wxsClockShotSec: 24,
@@ -744,6 +767,131 @@ _liveWsFlushScorePersist: function () {
         }
       });
     }
+  },
+  /**
+   * 消费直播送礼 / 互动打出消息，渲染滑出特效卡片。
+   * @param {object} payload
+   */
+  _consumeLiveBoost: function (payload) {
+    if (!payload) return;
+    var self = this;
+    var isTargeted = payload.act === 'LIVE_BOOST_TARGETED' || !!payload.is_targeted || !!payload.comment;
+    var item = {
+      nickname: payload.nickname || payload.user_name || '热心观众',
+      avatar: payload.avatar || payload.avatar_url || '',
+      gift_name: payload.gift_name || payload.gift || '礼物',
+      comment: payload.comment || '',
+      boost_type: payload.boost_type || (isTargeted ? '互动应援' : '送礼打出'),
+      target_name: payload.target_name || payload.target_player || '',
+      target_color: payload.target_color || '',
+      is_targeted: isTargeted
+    };
+    if (this._liveBoostTimer) {
+      clearTimeout(this._liveBoostTimer);
+      this._liveBoostTimer = null;
+    }
+    this.setData({
+      liveBoostItem: item,
+      liveBoostVisible: true
+    });
+    this._liveBoostTimer = setTimeout(function () {
+      self.setData({
+        liveBoostVisible: false
+      });
+      setTimeout(function () {
+        self.setData({
+          liveBoostItem: null
+        });
+      }, 400);
+    }, 4000);
+  },
+
+  /**
+   * 展开/收起雷达送礼特效接入面板。
+   */
+  onRadarBoostPanelToggle: function () {
+    if (!this.data.autoSyncWhitelisted) return;
+    var lastRoomId = '';
+    try {
+      lastRoomId = String(wx.getStorageSync('radar_boost_room_id') || '');
+    } catch (e) {}
+    this.setData({
+      radarBoostPanelOpen: !this.data.radarBoostPanelOpen,
+      radarBoostRoomId: lastRoomId || this.data.radarBoostRoomId || ''
+    });
+  },
+
+  /**
+   * 关闭雷达送礼特效接入面板。
+   */
+  onRadarBoostPanelClose: function () {
+    this.setData({
+      radarBoostPanelOpen: false
+    });
+  },
+
+  /**
+   * 雷达 6 位直播房间号输入绑定。
+   */
+  onRadarBoostRoomIdInput: function (e) {
+    var val = String((e.detail && e.detail.value) || '').replace(/\D/g, '').slice(0, 6);
+    this.setData({
+      radarBoostRoomId: val
+    });
+  },
+
+  /**
+   * 执行连入雷达送礼特效房间。
+   */
+  onRadarBoostConnectRun: function () {
+    if (!this.data.autoSyncWhitelisted || this.data.radarBoostBusy) return;
+    var roomId = String(this.data.radarBoostRoomId || '').replace(/\D/g, '').slice(0, 6);
+    if (roomId.length !== 6) {
+      wx.showToast({
+        title: '请输入 6 位房间号',
+        icon: 'none'
+      });
+      return;
+    }
+    var self = this;
+    this._liveWsEnsureClient();
+    this.setData({
+      radarBoostBusy: true,
+      radarBoostStatusText: '连接中…'
+    });
+    try {
+      wx.setStorageSync('radar_boost_room_id', roomId);
+    } catch (e) {}
+    this._liveWsClient.connect(roomId);
+    this.setData({
+      radarBoostConnected: true,
+      radarBoostBusy: false,
+      radarBoostStatusText: '已连接',
+      radarBoostPanelOpen: false
+    });
+    wx.showToast({
+      title: '已连入雷达房间',
+      icon: 'success'
+    });
+  },
+
+  /**
+   * 断开雷达送礼特效房间。
+   */
+  onRadarBoostDisconnectTap: function () {
+    if (!this.data.autoSyncWhitelisted) return;
+    if (this._liveWsClient) {
+      this._liveWsClient.disconnect(true);
+    }
+    this.setData({
+      radarBoostConnected: false,
+      radarBoostBusy: false,
+      radarBoostStatusText: '已断开'
+    });
+    wx.showToast({
+      title: '已断开雷达房间',
+      icon: 'none'
+    });
   }
 }
 });

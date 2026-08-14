@@ -4702,3 +4702,107 @@ button.live-ble-btn::after {
   color: #FFFFFF;
   font-weight: bold;
 }
+
+
+/* ==========================================================================
+   直播送礼/互动实时打出卡片 (CSS3 硬件加速)
+   ========================================================================== */
+.live-boost-overlay {
+  position: fixed;
+  top: 15%;
+  left: 24rpx;
+  z-index: 999;
+  pointer-events: none;
+  transform: translate3d(-120%, 0, 0);
+  transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.4s ease;
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+.live-boost-overlay.slide-in {
+  transform: translate3d(0, 0, 0);
+  opacity: 1;
+}
+
+.live-boost-overlay.slide-out {
+  transform: translate3d(-120%, 0, 0);
+  opacity: 0;
+}
+
+.boost-card {
+  display: flex;
+  align-items: center;
+  padding: 12rpx 20rpx;
+  background: rgba(15, 23, 42, 0.88);
+  backdrop-filter: blur(10px);
+  border-radius: 40rpx;
+  border-left: 8rpx solid #3b82f6;
+  box-shadow: 0 10rpx 25rpx rgba(0, 0, 0, 0.35);
+  max-width: 520rpx;
+}
+
+.boost-card--targeted {
+  border-left-color: #ef4444;
+  background: rgba(30, 27, 75, 0.92);
+  box-shadow: 0 0 20rpx rgba(239, 68, 68, 0.3);
+}
+
+.boost-avatar {
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 50%;
+  border: 2rpx solid rgba(255, 255, 255, 0.8);
+  margin-right: 16rpx;
+  flex-shrink: 0;
+}
+
+.boost-info {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.boost-header {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+}
+
+.boost-nickname {
+  font-size: 24rpx;
+  font-weight: 600;
+  color: #ffffff;
+  max-width: 220rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.boost-type-badge {
+  font-size: 18rpx;
+  font-weight: bold;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.2);
+  padding: 2rpx 10rpx;
+  border-radius: 12rpx;
+  border: 1rpx solid rgba(251, 191, 36, 0.4);
+}
+
+.boost-body {
+  margin-top: 4rpx;
+}
+
+.boost-gift {
+  font-size: 22rpx;
+  color: #93c5fd;
+}
+
+.boost-comment {
+  font-size: 22rpx;
+  font-weight: 500;
+  color: #fca5a5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

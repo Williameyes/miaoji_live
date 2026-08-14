@@ -18,8 +18,13 @@ function addMatchRadarTask(params) {
         match_id: Number(params.match_id),
         raw_text: String(params.raw_text).trim()
     };
+    if (params.room_id) {
+        payload.room_id = String(params.room_id).trim();
+    }
     if (params.capabilities) {
         payload.capabilities = params.capabilities;
+    } else {
+        payload.capabilities = { enable_live_boost: true };
     }
     if (params.score_ocr) {
         payload.score_ocr = params.score_ocr;
