@@ -5,7 +5,7 @@
       wx:if="{{cameraReady}}"
       device-position="back"
       flash="off"
-      resolution="high"
+      resolution="{{cameraResolution}}"
       frame-size="{{cameraFrameSize}}"
       zoom="{{zoom}}"
       class="preview-camera"
@@ -154,6 +154,29 @@
                 bindtap="onQualityToggle"
               >1080p</view>
             </view>
+            <text class="quality-hint">录像文件画质</text>
+          </view>
+
+          <view class="quality-row">
+            <text class="quality-label">预览画质</text>
+            <view class="quality-switch">
+              <view
+                class="quality-pill {{previewResolution === 'low' ? 'quality-pill--active' : ''}}"
+                data-res="low"
+                bindtap="onPreviewResolutionToggle"
+              >480p</view>
+              <view
+                class="quality-pill {{previewResolution === 'medium' ? 'quality-pill--active' : ''}}"
+                data-res="medium"
+                bindtap="onPreviewResolutionToggle"
+              >720p</view>
+              <view
+                class="quality-pill {{previewResolution === 'high' ? 'quality-pill--active' : ''}}"
+                data-res="high"
+                bindtap="onPreviewResolutionToggle"
+              >1080p</view>
+            </view>
+            <text class="quality-hint">{{previewResolution === 'high' ? '高发热' : (previewResolution === 'low' ? '极省电' : '推荐')}}</text>
           </view>
 
           <view class="quality-row">

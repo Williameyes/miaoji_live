@@ -49,6 +49,18 @@ function isXiaomiAndroid() {
 }
 
 /**
+ * 规范化预览分辨率。
+ *
+ * @param {string|undefined} res
+ * @returns {'low'|'medium'|'high'}
+ */
+function normalizePreviewResolution(res) {
+  if (res === 'low') return 'low';
+  if (res === 'high') return 'high';
+  return 'medium';
+}
+
+/**
  * 规范化画幅模式。
  *
  * @param {string|undefined} mode
@@ -107,7 +119,7 @@ function computeContentLeadInSkipMs(warmupFrames, fps) {
 /**
  * 获取素材机录制/预览档位。
  *
- * @param {{ use1080p?: boolean, actionMode?: boolean, aspectMode?: string, recMode?: string }} [options]
+ * @param {{ use1080p?: boolean, actionMode?: boolean, aspectMode?: string, recMode?: string, previewResolution?: string }} [options]
  * @returns {Object}
  */
 function getHighlightRecProfile(options) {
@@ -119,10 +131,12 @@ function getHighlightRecProfile(options) {
   var actionMode = !lowEnd && !!opts.actionMode;
   var aspectMode = normalizeAspectMode(opts.aspectMode);
   var recMode = normalizeRecMode(opts.recMode);
+  var previewResolution = normalizePreviewResolution(opts.previewResolution || (lowEnd ? 'low' : 'medium'));
   var cacheKey = recMode
     + '_' + (lowEnd ? '480' : (use1080p ? '1080' : '720'))
     + (actionMode ? '_action' : '')
-    + '_' + aspectMode;
+    + '_' + aspectMode
+    + '_prev_' + previewResolution;
 
   if (cachedProfile && cachedKey === cacheKey) {
     return cachedProfile;
@@ -150,8 +164,9 @@ function getHighlightRecProfile(options) {
     aspectLabel: canvas.aspectLabel,
     lockCenterFocus: true, // 锁定中心焦点（关闭追拍频繁转镜头时的 AF 自动对焦寻焦，大幅降低 CPU/GPU 负载与发热）
     exposureCompensationEv: actionMode ? -0.7 : 0,
-    // 预览分辨率（控制屏幕取景框）：追拍或 720p 下采用 medium/low 降频预览，极大地释放 GPU/CPU 算力，不影响 MP4 文件的 1080p/720p 画质
-    cameraResolution: 'high',
+    // 预览分辨率（控制屏幕取景框）：默认采用 medium (720p) 或 low (480p) 降低预览渲染负载，完全不影响 MP4 文件的 1080p/720p 画质
+    cameraResolution: previewResolution,
+    previewResolution: previewResolution,
     cameraFrameSize: 'medium',
     chunkDurationMs: 50000,
     staggerMs: 8000,
@@ -205,5 +220,6 @@ module.exports = {
   isXiaomiAndroid: isXiaomiAndroid,
   normalizeAspectMode: normalizeAspectMode,
   normalizeRecMode: normalizeRecMode,
+  normalizePreviewResolution: normalizePreviewResolution,
   resetHighlightRecProfileCache: resetHighlightRecProfileCache
 };

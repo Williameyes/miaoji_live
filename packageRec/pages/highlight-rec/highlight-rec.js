@@ -18,6 +18,8 @@ var STORAGE_KEY_ASPECT_MODE = 'highlight_rec_aspect_mode_v1';
 var STORAGE_KEY_REC_MODE = 'highlight_rec_mode_v1';
 /** 本地存储：能耗/发热降级保护开关 */
 var STORAGE_KEY_THERMAL_PROTECT = 'highlight_rec_thermal_protect_v1';
+/** 本地存储：屏幕取景预览分辨率 low | medium | high */
+var STORAGE_KEY_PREVIEW_RESOLUTION = 'highlight_rec_preview_resolution_v1';
 
 /**
  * 窗口内最大内接预览区（按画幅宽高比）。
@@ -130,6 +132,9 @@ Page({
     var recModeStored = highlightRecProfile.normalizeRecMode(
       wx.getStorageSync(STORAGE_KEY_REC_MODE)
     );
+    var previewResStored = highlightRecProfile.normalizePreviewResolution(
+      wx.getStorageSync(STORAGE_KEY_PREVIEW_RESOLUTION)
+    );
     var thermalProtectStored = wx.getStorageSync(STORAGE_KEY_THERMAL_PROTECT);
     var enableThermalProtect = thermalProtectStored === '' || thermalProtectStored === undefined ? true : !!thermalProtectStored;
 
@@ -138,7 +143,8 @@ Page({
       use1080p: use1080pStored,
       actionMode: actionModeStored,
       aspectMode: aspectModeStored,
-      recMode: recModeStored
+      recMode: recModeStored,
+      previewResolution: previewResStored
     });
     var canUse1080p = perf.tier !== '480p';
     var use1080p = canUse1080p && use1080pStored;
@@ -148,11 +154,12 @@ Page({
     }
     this._recPerfProfile = perf;
     this._highlightPipeline = createHighlightRecPipeline(this, perf);
-    this._dlog('INIT', 'Page loaded', { recMode: perf.recMode, aspectMode: perf.aspectMode, use1080p: use1080p, actionMode: actionMode, enableThermalProtect: enableThermalProtect });
+    this._dlog('INIT', 'Page loaded', { recMode: perf.recMode, aspectMode: perf.aspectMode, use1080p: use1080p, actionMode: actionMode, previewResolution: perf.previewResolution, enableThermalProtect: enableThermalProtect });
     this.setData({
       statusBarHeight: sys.statusBarHeight || 20,
       roomId: wx.getStorageSync('rec_sync_room_id') || '',
       cameraResolution: perf.cameraResolution,
+      previewResolution: perf.previewResolution || previewResStored,
       cameraFrameSize: perf.cameraFrameSize,
       recMode: perf.recMode,
       use1080p: use1080p,
@@ -1166,7 +1173,8 @@ Page({
         use1080p: want1080,
         actionMode: self.data.actionMode,
         aspectMode: self.data.aspectMode,
-        recMode: self.data.recMode
+        recMode: self.data.recMode,
+        previewResolution: self.data.previewResolution
       });
     }, function (perf) {
       self.setData({
@@ -1177,6 +1185,43 @@ Page({
       });
       wx.showToast({
         title: want1080 ? '已切换 1080p 高清' : '已切换 720p 均衡',
+        icon: 'none'
+      });
+    });
+  },
+
+  /**
+   * 切换屏幕取景预览分辨率（不影响 MP4 视频文件录制画质）。
+   *
+   * @param {Object} e
+   * @returns {void}
+   */
+  onPreviewResolutionToggle: function (e) {
+    var wantRes = e && e.currentTarget && e.currentTarget.dataset ? e.currentTarget.dataset.res : 'medium';
+    var targetRes = highlightRecProfile.normalizePreviewResolution(wantRes);
+    if (targetRes === this.data.previewResolution) return;
+
+    var self = this;
+    this._switchProfileWithRestart(function () {
+      wx.setStorageSync(STORAGE_KEY_PREVIEW_RESOLUTION, targetRes);
+      highlightRecProfile.resetHighlightRecProfileCache();
+      return highlightRecProfile.getHighlightRecProfile({
+        use1080p: self.data.use1080p,
+        actionMode: self.data.actionMode,
+        aspectMode: self.data.aspectMode,
+        recMode: self.data.recMode,
+        previewResolution: targetRes
+      });
+    }, function (perf) {
+      self.setData({
+        previewResolution: targetRes,
+        cameraResolution: perf.cameraResolution,
+        perfTierLabel: self._buildPerfTierLabel(perf),
+        compactStatusLabel: self._buildCompactStatusLabel(perf)
+      });
+      var labelMap = { low: '480p (极省电)', medium: '720p (推荐)', high: '1080p (高发热)' };
+      wx.showToast({
+        title: '预览画质已切至 ' + (labelMap[targetRes] || targetRes),
         icon: 'none'
       });
     });
@@ -1200,7 +1245,8 @@ Page({
         use1080p: self.data.use1080p,
         actionMode: wantAction,
         aspectMode: self.data.aspectMode,
-        recMode: self.data.recMode
+        recMode: self.data.recMode,
+        previewResolution: self.data.previewResolution
       });
     }, function (perf) {
       self.setData({
@@ -1257,7 +1303,8 @@ Page({
         use1080p: self.data.use1080p,
         actionMode: self.data.actionMode,
         aspectMode: nextMode,
-        recMode: self.data.recMode
+        recMode: self.data.recMode,
+        previewResolution: self.data.previewResolution
       });
     }, function (perf) {
       self._applyPageOrientation(perf.aspectMode);
