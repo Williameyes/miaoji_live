@@ -5036,12 +5036,13 @@ onCameraInit: function (e) {
   _syncQuickZoomActiveByZoom: function (zoomVal, opts) {
     if (!this.data.quickZoomEnabled) return;
     var options = opts || {};
-    var clearTemp = options.clearTemp !== false;
+    var clearTemp = options.clearTemp === true;
     var stops = this.data.quickZoomStops;
     if (!stops || stops.length !== 3) return;
     var z = Number(zoomVal);
     if (!isFinite(z)) return;
     var activeIdx = this._findQuickZoomStopIndexByBand(z);
+    var prevActiveIdx = stops.findIndex(function (s) { return s.isActive; });
     var changed = false;
     var newStops = stops.map(function (s, idx) {
       var nextActive = idx === activeIdx;
@@ -5051,11 +5052,29 @@ onCameraInit: function (e) {
       });
     });
     var patch = {};
-    if (changed) patch.quickZoomStops = newStops;
-    if (clearTemp && (this.data.quickZoomTempZoom !== null || this.data.quickZoomTempDisplay)) {
-      patch.quickZoomTempZoom = null;
-      patch.quickZoomTempDisplay = '';
+    if (changed) {
+      patch.quickZoomStops = newStops;
+      if (clearTemp || activeIdx !== prevActiveIdx) {
+        patch.quickZoomTempZoom = null;
+        patch.quickZoomTempDisplay = '';
+      }
+    } else if (activeIdx >= 0 && activeIdx === prevActiveIdx) {
+      // 在当前档位内微调：实时更新微调数值（quickZoomTempZoom），让绿色按钮动态展示当前调到的 zoom（如 2.2x）
+      var savedZoom = stops[activeIdx].zoom;
+      var rounded = Math.round(z * 10) / 10;
+      var isDifferent = Math.abs(z - savedZoom) > 0.05;
+      if (isDifferent && !clearTemp) {
+        var tempDisp = this._formatQuickZoomDisplay(rounded);
+        if (this.data.quickZoomTempZoom !== rounded || this.data.quickZoomTempDisplay !== tempDisp) {
+          patch.quickZoomTempZoom = rounded;
+          patch.quickZoomTempDisplay = tempDisp;
+        }
+      } else if (clearTemp && (this.data.quickZoomTempZoom !== null || this.data.quickZoomTempDisplay)) {
+        patch.quickZoomTempZoom = null;
+        patch.quickZoomTempDisplay = '';
+      }
     }
+
     if (Object.keys(patch).length > 0) {
       patch.quickZoomMainDisplay = this._getQuickZoomMainDisplayText({
         quickZoomStops: patch.quickZoomStops || stops,
@@ -5072,6 +5091,7 @@ onCameraInit: function (e) {
   },
   /**
    * 按 zoom 同步抽屉机位药丸高亮（与快捷档点击联动）。
+   * 增加临界区防抖/滞后（Hysteresis），避免在 1.9x/2.0x 边缘微调时频繁引发模式切换。
    * @param {number} zoomVal
    * @returns {void}
    */
@@ -5079,6 +5099,7 @@ onCameraInit: function (e) {
     var stops = this.data.cameraViewModeStops || [];
     var z = Number(zoomVal);
     if (!isFinite(z) || stops.length === 0) return;
+    var currentMode = this.data.cameraViewMode;
     var best = null;
     var bestDist = Infinity;
     var i;
@@ -5089,7 +5110,8 @@ onCameraInit: function (e) {
         best = stops[i];
       }
     }
-    if (best && bestDist <= 0.25 && best.mode !== this.data.cameraViewMode) {
+    // 缩小触发门槛为 0.12，避免在 1.75x~1.85x 等过渡带按键微调时反复触发 mode 切换与镜头动画
+    if (best && bestDist <= 0.12 && best.mode !== currentMode) {
       this.setData({
         cameraViewMode: best.mode
       });
@@ -16078,27 +16100,53 @@ onLoad: function (options) {
   _initKeyControlListeners: function () {
     if (typeof wx === 'undefined' || typeof wx.onKeyDown !== 'function') return;
     const self = this;
+    this._lastBleKeyZoomMs = 0;
     this._onKeyDownCallback = function (res) {
       if (!self.data.cameraMounted || !self.data.liveStreamAllowed || self.data.isReplaying) return;
+      const now = Date.now();
       const code = (res && (res.code || res.key) ? String(res.code || res.key) : '').toLowerCase();
       const keyCode = res && typeof res.keyCode === 'number' ? res.keyCode : 0;
-      if (code === 'volumeup' || code === 'pageup' || code === 'arrowup' || code === 'equal' || code === 'add' || code === 'numpadadd' || keyCode === 175 || keyCode === 33 || keyCode === 38 || keyCode === 187) {
+
+      // 变焦按键（放大：VolumeUp, PageUp, ArrowUp... / 缩小：VolumeDown, PageDown, ArrowDown...）
+      let step = 0;
+      if (code === 'volumeup' || code === 'pageup' || code === 'arrowup' || code === 'equal' || code === 'add' || code === 'numpadadd' || keyCode === 175 || keyCode === 24 || keyCode === 33 || keyCode === 38 || keyCode === 187) {
+        step = 0.1;
+      } else if (code === 'volumedown' || code === 'pagedown' || code === 'arrowdown' || code === 'minus' || code === 'subtract' || code === 'numpadsubtract' || keyCode === 174 || keyCode === 25 || keyCode === 34 || keyCode === 40 || keyCode === 189) {
+        const curZ = self.data.zoom || 1;
+        step = curZ > 2.0 ? -0.2 : -0.15;
+      }
+
+      if (step !== 0) {
+        // 严格 35ms 节流，防止高频连按/旋钮拖慢 JS 线程或引发设备发热
+        if (now - (self._lastBleKeyZoomMs || 0) < 35) return;
+        self._lastBleKeyZoomMs = now;
+
         const curZoom = self.data.zoom || 1;
-        self.updateZoom(curZoom + 0.2);
-        wx.showToast({ title: `变焦 ${(curZoom + 0.2).toFixed(1)}x`, icon: 'none', duration: 800 });
-      } else if (code === 'volumedown' || code === 'pagedown' || code === 'arrowdown' || code === 'minus' || code === 'subtract' || code === 'numpadsubtract' || keyCode === 174 || keyCode === 34 || keyCode === 40 || keyCode === 189) {
-        const curZoom = self.data.zoom || 1;
-        self.updateZoom(curZoom - 0.2);
-        wx.showToast({ title: `变焦 ${(curZoom - 0.2).toFixed(1)}x`, icon: 'none', duration: 800 });
-      } else if (code === 'digit1' || code === 'numpad1' || keyCode === 49 || keyCode === 97) {
+        const range = typeof self._getQuickZoomClampRange === 'function'
+          ? self._getQuickZoomClampRange()
+          : { minZ: 0.5, maxZ: self.data.maxZoom || 10 };
+        const rawTarget = curZoom + step;
+        const targetZoom = Math.round(Math.max(range.minZ, Math.min(range.maxZ, rawTarget)) * 10) / 10;
+
+        if (Math.abs(curZoom - targetZoom) >= 0.04) {
+          self.updateZoom(targetZoom);
+          self._syncQuickZoomActiveByZoom(targetZoom, { clearTemp: false });
+          self._syncCameraViewModeFromZoom(targetZoom);
+        }
+      }
+      // 数字键 1/2/3 切机位
+      else if (code === 'digit1' || code === 'numpad1' || keyCode === 49 || keyCode === 97) {
         self.updateZoom(1.0);
-        wx.showToast({ title: '机位 1.0x', icon: 'none', duration: 800 });
+        self._syncQuickZoomActiveByZoom(1.0, { clearTemp: true });
+        self._syncCameraViewModeFromZoom(1.0);
       } else if (code === 'digit2' || code === 'numpad2' || keyCode === 50 || keyCode === 98) {
         self.updateZoom(2.0);
-        wx.showToast({ title: '机位 2.0x', icon: 'none', duration: 800 });
+        self._syncQuickZoomActiveByZoom(2.0, { clearTemp: true });
+        self._syncCameraViewModeFromZoom(2.0);
       } else if (code === 'digit3' || code === 'numpad3' || keyCode === 51 || keyCode === 99) {
         self.updateZoom(3.0);
-        wx.showToast({ title: '机位 3.0x', icon: 'none', duration: 800 });
+        self._syncQuickZoomActiveByZoom(3.0, { clearTemp: true });
+        self._syncCameraViewModeFromZoom(3.0);
       }
     };
     try {
