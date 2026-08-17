@@ -542,17 +542,9 @@
 
     <view wx:if="{{autoSyncWhitelisted && liveWsPanelOpen}}" class="live-ble-panel-backdrop" catchtap="onLiveWsPanelBackdropTap">
       <view class="live-ble-panel live-ble-panel--compact" catchtap="noopCatchTap">
-        <view class="live-time-sync-mode-bar" style="display: flex; background: rgba(0,0,0,0.2); border-radius: 6px; padding: 2px; margin-bottom: 8px;">
-          <view
-            style="flex: 1; text-align: center; padding: 4px 0; font-size: 12px; border-radius: 4px; color: {{timeSyncMode !== 'crop_image' ? '#fff' : '#aaa'}}; background: {{timeSyncMode !== 'crop_image' ? '#2563eb' : 'transparent'}};"
-            catchtap="onTimeSyncModeSelect"
-            data-mode="ocr"
-          >指令记分 (OCR)</view>
-          <view
-            style="flex: 1; text-align: center; padding: 4px 0; font-size: 12px; border-radius: 4px; color: {{timeSyncMode === 'crop_image' ? '#fff' : '#aaa'}}; background: {{timeSyncMode === 'crop_image' ? '#2563eb' : 'transparent'}};"
-            catchtap="onTimeSyncModeSelect"
-            data-mode="crop_image"
-          >画面实时裁剪 (切图)</view>
+        <!-- [OCR功能已注释/移除] 专用于画面实时裁剪时间同步 -->
+        <view class="live-time-sync-mode-bar" style="display: flex; background: rgba(0,0,0,0.3); border-radius: 6px; padding: 6px 8px; margin-bottom: 8px; justify-content: center; align-items: center;">
+          <text style="font-size: 12px; color: #4ade80; font-weight: bold;">画面实时裁剪时间同步</text>
         </view>
         <view wx:if="{{liveWsQuickBusy || (liveWsConnected && liveWsStatusText)}}" class="live-ble-busy-row">
           <text class="live-ble-busy-text">{{liveWsStatusText}}</text>
@@ -741,14 +733,11 @@
             </view>
           </view>
 
-          <view class="period-center-outer {{isAutoMode ? 'period-center-outer--auto' : ''}}" bindtap="onPeriodTap" bindlongpress="{{autoSyncWhitelisted ? 'onPeriodLongPress' : ''}}">
+          <view class="period-center-outer" bindtap="onPeriodTap" bindlongpress="{{autoSyncWhitelisted ? 'onPeriodLongPress' : ''}}">
             <view class="period-strip"></view>
             <view class="period-container">
-              <view class="period-text {{isAutoMode ? 'period-text--auto' : ''}}" style="color: {{periodFlash ? '#000000' : '#fff'}}">
+              <view class="period-text" style="color: {{periodFlash ? '#000000' : '#fff'}}">
                 {{periods[matchConfig.period]}}
-              </view>
-              <view wx:if="{{isAutoMode && showMainClock && timeSyncMode !== 'crop_image'}}" class="period-time" style="color: {{periodFlash ? '#000000' : '#fff'}}">
-                {{wxsClockMainText}}
               </view>
             </view>
           </view>

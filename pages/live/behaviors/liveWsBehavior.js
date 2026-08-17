@@ -821,53 +821,8 @@ _liveWsFlushScorePersist: function () {
         heartbeat: payload.heartbeat ? 1 : 0
       });
     }
-    if (this.data.isAutoMode && this.data.autoSyncWhitelisted) {
-      var isCropMode = this.data.timeSyncMode === 'crop_image';
-      var syncScoreRaw = payload.sync_score;
-      var scoreSyncEnabled = isCropMode ? false : (syncScoreRaw === undefined || syncScoreRaw === null
-        ? true
-        : (Number(syncScoreRaw) === 1));
-      if (this.data.liveWsScoreSyncEnabled !== scoreSyncEnabled) {
-        patch.liveWsScoreSyncEnabled = scoreSyncEnabled;
-      }
-      if (scoreSyncEnabled) {
-        var mc = this.data.matchConfig || {};
-        var changed = false;
-        var scoreA = Math.max(0, Math.floor(Number(payload.a) || 0));
-        var scoreB = Math.max(0, Math.floor(Number(payload.b) || 0));
-        var nextTeamA = mc.teamA || {
-          name: '队 A',
-          bgColor: '#E64340',
-          textColor: '#FFFFFF',
-          score: 0
-        };
-        var nextTeamB = mc.teamB || {
-          name: '队 B',
-          bgColor: '#10AEFF',
-          textColor: '#FFFFFF',
-          score: 0
-        };
-        if (Number(nextTeamA.score) !== scoreA) {
-          nextTeamA = Object.assign({}, nextTeamA, {
-            score: scoreA
-          });
-          changed = true;
-        }
-        if (Number(nextTeamB.score) !== scoreB) {
-          nextTeamB = Object.assign({}, nextTeamB, {
-            score: scoreB
-          });
-          changed = true;
-        }
-        if (changed) {
-          patch.matchConfig = Object.assign({}, mc, {
-            teamA: nextTeamA,
-            teamB: nextTeamB
-          });
-          this._liveWsScheduleScorePersist();
-        }
-      }
-    }
+    /* [OCR功能已注释/移除] 仅保留切图同步方案；比分同步统一由直播端手动加减分控制 */
+    patch.liveWsScoreSyncEnabled = false;
     if (Object.keys(patch).length) {
       var selfTick = this;
       this.setData(patch, function () {

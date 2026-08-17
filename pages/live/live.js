@@ -1133,8 +1133,8 @@ Page({
     enhanceFpsText: '— fps',
     // --- 自动模式相关（V2 WebSocket 云端同步） ---
     isAutoMode: false,
-    /** 时间同步模式：ocr (指令记分) | crop_image (画面实时裁剪) */
-    timeSyncMode: 'ocr',
+    /** 时间同步模式：crop_image (画面实时裁剪) */
+    timeSyncMode: 'crop_image',
     hasCropFrameImage: false,
     cropFrameBase64: '',
     /** 采集端 sync_score=1 时自动跟分；false 时自动模式下仍可手动改分 */
@@ -6445,7 +6445,7 @@ onCameraInit: function (e) {
     const enhanceBetaWhitelisted = false;
     const autoSyncWhitelisted = checkSyncLabWhitelist();
     const enhanceVkSupported = false;
-    const currentSyncMode = wx.getStorageSync('HOOPS_TIME_SYNC_MODE') || 'ocr';
+    const currentSyncMode = wx.getStorageSync('HOOPS_TIME_SYNC_MODE') || 'crop_image';
     if (this.data.enhanceBetaWhitelisted !== enhanceBetaWhitelisted || this.data.enhanceVkSupported !== enhanceVkSupported || this.data.autoSyncWhitelisted !== autoSyncWhitelisted || this.data.timeSyncMode !== currentSyncMode) {
       const patch = {
         enhanceBetaWhitelisted: enhanceBetaWhitelisted,

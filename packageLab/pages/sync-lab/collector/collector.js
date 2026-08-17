@@ -2742,6 +2742,9 @@ Page({
     _cameraContext = wx.createCameraContext(this);
     _cameraReadyAt = Date.now();
     console.log('[Collector][OCR] camera init, context refreshed');
+    if (this.data.wsState === 'connected') {
+      this._startCropFramePump();
+    }
     // 相机重建后硬件倍数常回弹 1.0x，同步 UI 以点亮「恢复倍数」
     if (this.data.lastCameraZoom > 1.05 && this.data.cameraZoom > 1.05) {
       var self = this;
@@ -3499,16 +3502,8 @@ Page({
   },
 
   _startOcr: function () {
-    if (!this.data.ocrEnableTime && !this.data.ocrEnableScore) {
-      wx.showToast({ title: '请先开启时间或比分识别', icon: 'none', duration: 1200 });
-      return;
-    }
-    var token = ++_ocrSessionToken;
-    this._clearOcrBootTimers();
-    this._stopOcrSession();
-    // 每次启动 OCR 前，彻底清空遗留脏数据，实现完全重新采集（不影响 WebSocket、不覆盖人工维护的 period / shotClock）。
-    this._wipeOcrDirtyState();
-    this._prepareCameraForOcrBoot(token, 'start');
+    /* [OCR功能已注释/禁用] 已统一为切图时间同步方案，无需运行 OCR 识别引擎 */
+    console.log('[Collector] OCR features disabled, running cut-frame sync mode');
   },
 
   _flushPendingWsStartAfterOcr: function () {
@@ -6594,12 +6589,7 @@ Page({
 
   onStartTap: function () {
     if (_wsConnecting || this.data.wsState !== 'idle') return;
-    if (this.data.ocrTransitioning) {
-      this._pendingWsStartAfterOcr = true;
-      this.setData({ wsStateText: '等待 OCR 启动…' });
-      wx.showToast({ title: 'OCR 启动中，稍后自动同步', icon: 'none', duration: 1200 });
-      return;
-    }
+    /* [OCR功能已注释/禁用] 专用于切图时间同步方案 */
     this._pendingWsStartAfterOcr = false;
     this._beginWsSyncNow();
   },
@@ -7180,19 +7170,21 @@ Page({
       });
       return;
     }
-    if (!_cropCameraFrameListener) {
-      try {
-        _cropCameraFrameListener = _cameraContext.onCameraFrame(function (frame) {
-          if (!_latestCameraCropFrame) {
-            console.log('[Collector][TimeCrop] first camera frame received! size=%sx%s', frame.width, frame.height);
-          }
-          _latestCameraCropFrame = frame;
-        });
-        _cropCameraFrameListener.start();
-        console.log('[Collector][TimeCrop] onCameraFrame listener started successfully');
-      } catch (eStart) {
-        console.error('[Collector][TimeCrop] start crop onCameraFrame fail', eStart);
-      }
+    if (_cropCameraFrameListener) {
+      try { _cropCameraFrameListener.stop(); } catch (eStop) { }
+      _cropCameraFrameListener = null;
+    }
+    try {
+      _cropCameraFrameListener = _cameraContext.onCameraFrame(function (frame) {
+        if (!_latestCameraCropFrame) {
+          console.log('[Collector][TimeCrop] first camera frame received! size=%sx%s', frame.width, frame.height);
+        }
+        _latestCameraCropFrame = frame;
+      });
+      _cropCameraFrameListener.start();
+      console.log('[Collector][TimeCrop] onCameraFrame listener started successfully');
+    } catch (eStart) {
+      console.error('[Collector][TimeCrop] start crop onCameraFrame fail', eStart);
     }
     this._cropFrameTimer = setInterval(function () {
       var syncMode = self.data.mode || self.data.syncLabMode || 'crop_image';

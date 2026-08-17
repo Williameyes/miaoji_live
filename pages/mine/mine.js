@@ -692,8 +692,8 @@ Page({
       wx.showToast({ title: '暂无使用权限', icon: 'none' });
       return;
     }
-    wx.setStorageSync('HOOPS_TIME_SYNC_MODE', 'ocr');
-    wx.navigateTo({ url: '/packageLab/pages/sync-lab/collector/collector?mode=ocr' });
+    wx.setStorageSync('HOOPS_TIME_SYNC_MODE', 'crop_image');
+    wx.navigateTo({ url: '/packageLab/pages/sync-lab/collector/collector?mode=crop_image' });
   },
 
   /**
