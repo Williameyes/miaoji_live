@@ -213,7 +213,7 @@ var WS_NETWORK_CHANGE_OPEN_GRACE_MS = 8000;
 /** open 成功后稳定多久才清零 reconnectAttempt（避免短命连接掩盖退避计数）。 */
 var WS_ATTEMPT_CLEAR_AFTER_MS = 8000;
 /** token_fail 时的最小退避（毫秒）。 */
-var WS_TOKEN_FAIL_MIN_DELAY_MS = 5000;
+var WS_TOKEN_FAIL_MIN_DELAY_MS = 2000;
 /** OCR/VK 重启期间保护 WS 的最长窗口，避免 native 重载造成一次心跳误杀长连接。 */
 var OCR_WS_RESTART_GUARD_MS = 12000;
 
@@ -2696,7 +2696,9 @@ Page({
     /** 记忆倍数展示文案（一位小数） */
     lastCameraZoomDisplay: '1.0',
     /** 当前可一键恢复记忆倍数（相机回弹 1.0x 且记忆值 > 1） */
-    canRestoreLastZoom: false
+    canRestoreLastZoom: false,
+    /** 切图模式画面倾斜角度微调（-15° ~ +15°） */
+    cropRotationDeg: 0
   },
 
   // ─── 生命周期 ────────────────────────────────────────
@@ -2709,11 +2711,13 @@ Page({
     var camH = sys.windowHeight || 375;
     _previewW = camW;
     _previewH = camH;
+    var savedRot = Number(wx.getStorageSync('HOOPS_CROP_ROTATION_DEG') || 0);
     this.setData({
       timeSyncMode: mode,
       statusBarHeight: sys.statusBarHeight || 0,
       previewPxW: camW,
-      previewPxH: camH
+      previewPxH: camH,
+      cropRotationDeg: isNaN(savedRot) ? 0 : savedRot
     });
     _cameraContext = wx.createCameraContext(this);
     _cameraReadyAt = Date.now();
@@ -2843,6 +2847,44 @@ Page({
       self._syncZoomRestoreUi();
     });
     this._applyHardwareCameraZoom(targetZoom);
+  },
+
+  /**
+   * 画面倾斜微调：单击步进按键（-1.0°, -0.5°, +0.5°, +1.0°）
+   */
+  onCropRotationStep: function (e) {
+    var step = parseFloat(e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.step) || 0;
+    var cur = Number(this.data.cropRotationDeg || 0);
+    var next = Math.min(15, Math.max(-15, Math.round((cur + step) * 10) / 10));
+    this.setData({ cropRotationDeg: next });
+    try { wx.setStorageSync('HOOPS_CROP_ROTATION_DEG', next); } catch (err) {}
+  },
+
+  /**
+   * 画面倾斜微调：0° 一键复位
+   */
+  onCropRotationReset: function () {
+    this.setData({ cropRotationDeg: 0 });
+    try { wx.setStorageSync('HOOPS_CROP_ROTATION_DEG', 0); } catch (err) {}
+  },
+
+  /**
+   * 画面倾斜微调：滑动条拖动完成
+   */
+  onCropRotationChange: function (e) {
+    var val = parseFloat(e && e.detail && e.detail.value) || 0;
+    var next = Math.min(15, Math.max(-15, Math.round(val * 10) / 10));
+    this.setData({ cropRotationDeg: next });
+    try { wx.setStorageSync('HOOPS_CROP_ROTATION_DEG', next); } catch (err) {}
+  },
+
+  /**
+   * 画面倾斜微调：滑动条拖动中（实时驱动框线倾斜）
+   */
+  onCropRotationChanging: function (e) {
+    var val = parseFloat(e && e.detail && e.detail.value) || 0;
+    var next = Math.min(15, Math.max(-15, Math.round(val * 10) / 10));
+    this.setData({ cropRotationDeg: next });
   },
 
   onUnload: function () {
@@ -7218,17 +7260,39 @@ Page({
     var xRatio = cropW / dstW;
     var yRatio = cropH / dstH;
 
+    var deg = Number(this.data.cropRotationDeg || 0);
+    var hasRot = Math.abs(deg) > 0.01;
+    var rad = (deg * Math.PI) / 180;
+    var cosVal = Math.cos(rad);
+    var sinVal = Math.sin(rad);
+
+    var dstCenterX = (dstW - 1) / 2;
+    var dstCenterY = (dstH - 1) / 2;
+    var srcCenterX = cropX + cropW / 2;
+    var srcCenterY = cropY + cropH / 2;
+
     for (var dy = 0; dy < dstH; dy++) {
-      var sy = Math.floor(cropY + dy * yRatio);
-      if (sy >= srcH) sy = srcH - 1;
-      var srcRowOffset = sy * srcW * 4;
       var dstRowOffset = dy * dstW * 4;
+      var relY = (dy - dstCenterY) * yRatio;
 
       for (var dx = 0; dx < dstW; dx++) {
-        var sx = Math.floor(cropX + dx * xRatio);
-        if (sx >= srcW) sx = srcW - 1;
+        var relX = (dx - dstCenterX) * xRatio;
 
-        var srcIdx = srcRowOffset + sx * 4;
+        var sx, sy;
+        if (hasRot) {
+          sx = Math.round(srcCenterX + relX * cosVal - relY * sinVal);
+          sy = Math.round(srcCenterY + relX * sinVal + relY * cosVal);
+        } else {
+          sx = Math.floor(cropX + dx * xRatio);
+          sy = Math.floor(cropY + dy * yRatio);
+        }
+
+        if (sx < 0) sx = 0;
+        if (sx >= srcW) sx = srcW - 1;
+        if (sy < 0) sy = 0;
+        if (sy >= srcH) sy = srcH - 1;
+
+        var srcIdx = sy * srcW * 4 + sx * 4;
         var dstIdx = dstRowOffset + dx * 4;
 
         var r = srcData[srcIdx];

@@ -678,23 +678,6 @@ Page({
     wx.navigateTo({ url: '/pages/help/help' });
   },
 
-  /**
-   * 实验功能「自动同步」入口：仅白名单用户可进入采集端。
-   * 非白名单用户收到模糊提示，不暴露功能细节。
-   * @returns {void}
-   */
-  onSyncLabTap: function () {
-    if (!this.data.loggedIn) {
-      wx.showToast({ title: '请先登录', icon: 'none' });
-      return;
-    }
-    if (!checkSyncLabWhitelist()) {
-      wx.showToast({ title: '暂无使用权限', icon: 'none' });
-      return;
-    }
-    wx.setStorageSync('HOOPS_TIME_SYNC_MODE', 'crop_image');
-    wx.navigateTo({ url: '/packageLab/pages/sync-lab/collector/collector?mode=crop_image' });
-  },
 
   /**
    * 实验功能「时间同步」入口：直接进入画面实时裁剪模式的拍摄采集页面。

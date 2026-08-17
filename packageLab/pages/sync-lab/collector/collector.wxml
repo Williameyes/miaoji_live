@@ -40,7 +40,7 @@
         wx:key="label"
         wx:if="{{timeSyncMode !== 'crop_image' || item.label === '时间'}}"
         class="col-roi-box{{selectedRoiIdx === index ? ' col-roi-box--sel' : ''}}"
-        style="position:absolute;{{item.pctStyle}}"
+        style="position:absolute;{{item.pctStyle}};{{(timeSyncMode === 'crop_image' && item.label === '时间' && cropRotationDeg) ? ('transform: rotate(' + cropRotationDeg + 'deg); transform-origin: center center;') : ''}}"
         data-idx="{{index}}"
         catchtouchstart="onRoiBodyTouchStart"
         catchtouchmove="onRoiBodyTouchMove"
@@ -101,6 +101,36 @@
             activeColor="#facc15"
             block-size="20"
           />
+        </view>
+      </view>
+
+      <!-- 切图同步模式专用：画面精细倾斜矫正控制面板 -->
+      <view class="col-rotation-section" wx:if="{{timeSyncMode === 'crop_image'}}">
+        <view class="col-rotation-header">
+          <text class="col-rotation-title">📷 画面倾斜微调</text>
+          <text class="col-rotation-val">{{cropRotationDeg > 0 ? '+' : ''}}{{cropRotationDeg}}°</text>
+        </view>
+        <view class="col-rotation-slider-row">
+          <slider
+            class="col-rotation-slider"
+            min="-15"
+            max="15"
+            step="0.5"
+            value="{{cropRotationDeg}}"
+            bindchange="onCropRotationChange"
+            bindchanging="onCropRotationChanging"
+            show-value="{{false}}"
+            backgroundColor="#2b2b2b"
+            activeColor="#10b981"
+            block-size="20"
+          />
+        </view>
+        <view class="col-rotation-btn-row">
+          <view class="col-rot-btn" catchtap="onCropRotationStep" data-step="-1.0">-1.0°</view>
+          <view class="col-rot-btn" catchtap="onCropRotationStep" data-step="-0.5">-0.5°</view>
+          <view class="col-rot-btn col-rot-btn--reset" catchtap="onCropRotationReset">0° 复位</view>
+          <view class="col-rot-btn" catchtap="onCropRotationStep" data-step="0.5">+0.5°</view>
+          <view class="col-rot-btn" catchtap="onCropRotationStep" data-step="1.0">+1.0°</view>
         </view>
       </view>
 

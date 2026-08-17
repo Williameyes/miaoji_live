@@ -31,36 +31,52 @@ function fetchWsToken(roomId, channel) {
   }
 
   return new Promise(function (resolve, reject) {
-    wx.request({
-      url: url,
-      method: 'POST',
-      timeout: WS_TOKEN_TIMEOUT_MS,
-      header: {
-        'Content-Type': 'application/json'
-      },
-      dataType: 'json',
-      success: function (res) {
-        if (!res || res.statusCode !== 200) {
-          var errMsg = 'get_token HTTP_' + (res && res.statusCode ? res.statusCode : 'unknown');
-          if (typeof res.data === 'string' && res.data.indexOf('<html') >= 0) {
-            errMsg = 'get_token 网关未转发（Nginx 403，请确认 /api/get_token 已 proxy_pass 到 Node）';
-          } else if (res && res.data && typeof res.data === 'object' && res.data.error) {
-            errMsg = String(res.data.error);
+    var attempts = 0;
+    var maxAttempts = 2;
+
+    function tryRequest() {
+      attempts += 1;
+      wx.request({
+        url: url,
+        method: 'POST',
+        timeout: WS_TOKEN_TIMEOUT_MS,
+        header: {
+          'Content-Type': 'application/json'
+        },
+        dataType: 'json',
+        success: function (res) {
+          if (!res || res.statusCode !== 200) {
+            var errMsg = 'get_token HTTP_' + (res && res.statusCode ? res.statusCode : 'unknown');
+            if (typeof res.data === 'string' && res.data.indexOf('<html') >= 0) {
+              errMsg = 'get_token 网关未转发（Nginx 403，请确认 /api/get_token 已 proxy_pass 到 Node）';
+            } else if (res && res.data && typeof res.data === 'object' && res.data.error) {
+              errMsg = String(res.data.error);
+            }
+            if (attempts < maxAttempts && (!res || res.statusCode >= 500 || res.statusCode === 0)) {
+              setTimeout(tryRequest, 300);
+              return;
+            }
+            reject(new Error(errMsg));
+            return;
           }
-          reject(new Error(errMsg));
-          return;
+          var body = res.data;
+          if (!body || typeof body !== 'object' || !body.token) {
+            reject(new Error('token missing'));
+            return;
+          }
+          resolve(String(body.token));
+        },
+        fail: function (err) {
+          if (attempts < maxAttempts) {
+            setTimeout(tryRequest, 300);
+            return;
+          }
+          reject(err || new Error('get_token fail'));
         }
-        var body = res.data;
-        if (!body || typeof body !== 'object' || !body.token) {
-          reject(new Error('token missing'));
-          return;
-        }
-        resolve(String(body.token));
-      },
-      fail: function (err) {
-        reject(err || new Error('get_token fail'));
-      }
-    });
+      });
+    }
+
+    tryRequest();
   });
 }
 

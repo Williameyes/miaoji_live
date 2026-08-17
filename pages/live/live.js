@@ -2371,7 +2371,7 @@ buildVipGateStateFromCheckStatus: function (body) {
     if (!this.data.autoSyncWhitelisted) {
       return;
     }
-    const items = this.data.isAutoMode ? ['恢复手动记分'] : ['切换至自动记分'];
+    const items = this.data.isAutoMode ? ['断开时间设备'] : ['连接时间设备'];
     wx.showActionSheet({
       itemList: items,
       itemColor: this.data.isAutoMode ? '#FF4D4F' : '#4ADE80',

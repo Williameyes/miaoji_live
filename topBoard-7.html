@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>高光计分 - 篮板端 4 节连续压测模拟</title>
+    <style>
+        /* 引入 7 段数码管字体 */
+        @import url('https://fonts.cdnfonts.com/css/ds-digital');
+
+        :root {
+            --led-orange: #ff9d00;
+            --led-red: #ff2a2a;
+            --led-green: #2aff3d;
+            --bg-color: #050505;
+            --panel-bg: #0a0a0a;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: #fff;
+            font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+
+        /* 计时器外壳 */
+        .hardware-panel {
+            background: var(--panel-bg);
+            border: 8px solid #1a1a1a;
+            border-radius: 8px;
+            padding: 40px 60px;
+            box-shadow: 0 0 50px rgba(0, 0, 0, 0.9), inset 0 0 30px rgba(0, 0, 0, 0.8);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+            position: relative;
+        }
+
+        /* 模拟 LED 矩阵的暗纹网格背景 */
+        .hardware-panel::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            background:
+                linear-gradient(rgba(0, 0, 0, 0.7) 2px, transparent 2px),
+                linear-gradient(90deg, rgba(0, 0, 0, 0.7) 2px, transparent 2px);
+            background-size: 6px 6px;
+            z-index: 2;
+        }
+
+        /* 数字通用样式 */
+        .digit {
+            font-family: 'DS-Digital', monospace;
+            font-style: normal;
+            line-height: 1;
+            position: relative;
+            z-index: 1;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: 4px;
+        }
+
+        /* 节数指示器 */
+        .period-indicator {
+            position: absolute;
+            top: 20px;
+            left: 30px;
+            color: var(--led-green);
+            font-size: 2rem;
+            z-index: 5;
+            text-shadow: 0 0 10px var(--led-green);
+        }
+
+        /* 比赛时间（大表 - 橙黄色） */
+        .game-clock {
+            font-size: clamp(6rem, 15vw, 10rem);
+            color: var(--led-orange);
+            text-shadow:
+                0 0 10px var(--led-orange),
+                0 0 20px rgba(255, 157, 0, 0.5);
+        }
+
+        /* 24秒（小表 - 红色，字体更大） */
+        .shot-clock {
+            font-size: clamp(10rem, 25vw, 18rem);
+            color: var(--led-red);
+            text-shadow:
+                0 0 15px var(--led-red),
+                0 0 30px rgba(255, 42, 42, 0.6);
+            margin-top: -10px;
+        }
+
+        /* 状态播报栏 */
+        .status-bar {
+            margin-top: 20px;
+            background: #111;
+            padding: 10px 20px;
+            border-radius: 6px;
+            border-left: 3px solid var(--led-orange);
+            font-size: 0.9rem;
+            color: #aaa;
+            width: 100%;
+            max-width: 600px;
+            text-align: center;
+        }
+
+        /* 控制台样式 */
+        .controls {
+            margin-top: 20px;
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            justify-content: center;
+            z-index: 5;
+        }
+
+        button {
+            background: #1a1a1a;
+            color: #eee;
+            border: 1px solid #333;
+            padding: 12px 24px;
+            font-size: 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            background: #2a2a2a;
+            border-color: #555;
+        }
+
+        .btn-primary {
+            border-color: var(--led-orange);
+            color: var(--led-orange);
+            font-weight: bold;
+        }
+
+        .btn-danger {
+            border-color: var(--led-red);
+            color: var(--led-red);
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="hardware-panel">
+        <div id="periodLabel" class="digit period-indicator">Q1</div>
+        <!-- 比赛大表 (顶部) -->
+        <div id="gameTime" class="digit game-clock">10:00</div>
+        <!-- 24秒投篮计时器 (底部) -->
+        <div id="shotTime" class="digit shot-clock">24</div>
+    </div>
+
+    <div id="statusText" class="status-bar">就绪：点击“开始 4 节自动压测”运行自动化流</div>
+
+    <!-- 测试控制面板 -->
+    <div class="controls">
+        <button class="btn-primary" onclick="startAutoTest()">开始 4 节自动压测</button>
+        <button onclick="pauseTimer()">人工暂停</button>
+        <button onclick="resumeTimer()">继续模拟</button>
+        <button class="btn-danger" onclick="resetAll()">终止测试 / 重置</button>
+    </div>
+
+    <script>
+        // 比赛核心参数
+        const TOTAL_PERIODS = 4;
+        const PERIOD_SECONDS = 10 * 60; // 每节 10 分钟 (600秒)
+        const BREAK_SECONDS = 5;        // 为了测试效率，节间休息设定为 5 秒自动跳过 (可按需修改)
+        const TICK_MS = 100;            // 0.1秒刷新率
+
+        // 状态机
+        let state = {
+            period: 1,
+            gameSeconds: PERIOD_SECONDS,
+            shotSeconds: 24.0,
+            isRunning: false,
+            isBreak: false,     // 是否处于节间休息
+            breakCountdown: 0   // 休息倒计时
+        };
+
+        let timerInterval = null;
+
+        const gameTimeEl = document.getElementById('gameTime');
+        const shotTimeEl = document.getElementById('shotTime');
+        const periodEl = document.getElementById('periodLabel');
+        const statusEl = document.getElementById('statusText');
+
+        // 格式化比赛大表 (MM:SS)
+        function formatGameTime(totalSeconds) {
+            if (totalSeconds <= 0) return "00:00";
+            const m = Math.floor(totalSeconds / 60);
+            const s = Math.floor(totalSeconds % 60);
+            return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+        }
+
+        // 格式化投篮计时器 (最后5秒显示一位小数)
+        function formatShotTime(seconds) {
+            if (seconds <= 0) return "0.0";
+            if (seconds < 5.0) {
+                return seconds.toFixed(1);
+            }
+            return Math.ceil(seconds).toString();
+        }
+
+        function updateDisplay() {
+            periodEl.innerText = 'Q' + state.period;
+            gameTimeEl.innerText = formatGameTime(state.gameSeconds);
+            shotTimeEl.innerText = formatShotTime(state.shotSeconds);
+        }
+
+        // 核心定时器逻辑
+        function tick() {
+            if (!state.isRunning) return;
+
+            // 处理节间休息逻辑
+            if (state.isBreak) {
+                state.breakCountdown -= 0.1;
+                if (state.breakCountdown <= 0) {
+                    startNextPeriod();
+                }
+                return;
+            }
+
+            // 正常比赛时间递减
+            state.gameSeconds -= 0.1;
+            state.shotSeconds -= 0.1;
+
+            // 修正浮点数精度
+            state.gameSeconds = Math.round(state.gameSeconds * 10) / 10;
+            state.shotSeconds = Math.round(state.shotSeconds * 10) / 10;
+
+            // --- 模拟比赛随机事件 ---
+            // 每次 tick (0.1秒)，大概率继续，小概率模拟球权转换/违例重新洗表
+            if (state.shotSeconds <= 0 || Math.random() > 0.995) {
+                // 如果并非比赛结束，复位 24 秒 (根据实际规则也可能是 14 秒，这里统一测 24s 循环)
+                if (state.gameSeconds > 24) {
+                    state.shotSeconds = 24.0;
+                    statusEl.innerText = `[Q${state.period}] 触发事件：投篮或球权转换，24秒复位`;
+                }
+            }
+
+            // 处理单节结束
+            if (state.gameSeconds <= 0) {
+                state.gameSeconds = 0;
+                state.shotSeconds = 0;
+                handlePeriodEnd();
+            }
+
+            updateDisplay();
+        }
+
+        // 单节结束处理
+        function handlePeriodEnd() {
+            if (state.period < TOTAL_PERIODS) {
+                state.isBreak = true;
+                state.breakCountdown = BREAK_SECONDS; // 进入休息倒计时
+                statusEl.innerText = `第 ${state.period} 节结束。进入节间休息 (${BREAK_SECONDS}秒后自动开始下一节)...`;
+            } else {
+                state.isRunning = false;
+                clearInterval(timerInterval);
+                statusEl.innerText = "全场比赛结束！连续压测完成，未见异常。";
+            }
+        }
+
+        // 开始下一节
+        function startNextPeriod() {
+            state.period += 1;
+            state.gameSeconds = PERIOD_SECONDS;
+            state.shotSeconds = 24.0;
+            state.isBreak = false;
+            statusEl.innerText = `第 ${state.period} 节自动开表...`;
+            updateDisplay();
+        }
+
+        // 控制函数
+        function startAutoTest() {
+            resetAll(); // 确保从头开始
+            state.isRunning = true;
+            statusEl.innerText = "开始 4 节连续自动测试，监控内存及画面稳定性...";
+            timerInterval = setInterval(tick, TICK_MS);
+        }
+
+        function pauseTimer() {
+            if (!state.isRunning) return;
+            state.isRunning = false;
+            statusEl.innerText = "自动化流已人工暂停。";
+            clearInterval(timerInterval);
+        }
+
+        function resumeTimer() {
+            if (state.isRunning || state.gameSeconds <= 0) return;
+            state.isRunning = true;
+            statusEl.innerText = "自动化流恢复运行...";
+            timerInterval = setInterval(tick, TICK_MS);
+        }
+
+        function resetAll() {
+            state.isRunning = false;
+            clearInterval(timerInterval);
+            state = {
+                period: 1,
+                gameSeconds: PERIOD_SECONDS,
+                shotSeconds: 24.0,
+                isRunning: false,
+                isBreak: false,
+                breakCountdown: 0
+            };
+            statusEl.innerText = "测试已中止，状态全量重置。";
+            updateDisplay();
+        }
+
+        // 初始化显示
+        updateDisplay();
+    </script>
+</body>
+
+</html>

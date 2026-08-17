@@ -542,9 +542,9 @@
 
     <view wx:if="{{autoSyncWhitelisted && liveWsPanelOpen}}" class="live-ble-panel-backdrop" catchtap="onLiveWsPanelBackdropTap">
       <view class="live-ble-panel live-ble-panel--compact" catchtap="noopCatchTap">
-        <!-- [OCR功能已注释/移除] 专用于画面实时裁剪时间同步 -->
+        <!-- [OCR功能已注释/移除] 专用于实践裁切 -->
         <view class="live-time-sync-mode-bar" style="display: flex; background: rgba(0,0,0,0.3); border-radius: 6px; padding: 6px 8px; margin-bottom: 8px; justify-content: center; align-items: center;">
-          <text style="font-size: 12px; color: #4ade80; font-weight: bold;">画面实时裁剪时间同步</text>
+          <text style="font-size: 12px; color: #4ade80; font-weight: bold;">输入设备连接码</text>
         </view>
         <view wx:if="{{liveWsQuickBusy || (liveWsConnected && liveWsStatusText)}}" class="live-ble-busy-row">
           <text class="live-ble-busy-text">{{liveWsStatusText}}</text>
@@ -699,86 +699,88 @@
       <!-- 篮球：原布局 -->
       <block wx:if="{{sportType === 'basketball'}}">
         <view class="main-score-bar">
-          <view
-            class="team-group team-a-group"
-            style="width: {{teamGroupWidthPxA}}px; max-width: {{teamGroupWidthPxA}}px;"
-          >
+          <view class="score-bar-core">
             <view
-              class="team-group-bg team-group-bg--left"
-              style="background-color: {{matchConfig.teamA.rgbaBg || 'rgba(230, 67, 64, 0.7)'}}"
-            ></view>
-            <view class="team-group-row">
+              class="team-group team-a-group"
+              style="width: {{teamGroupWidthPxA}}px; max-width: {{teamGroupWidthPxA}}px;"
+            >
               <view
-                class="team-name team-name--a"
-                catchtap="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTap'}}"
-                bindlongpress="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreLongPress'}}"
-                bindtouchend="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTouchEnd'}}"
-                data-team="teamA"
-                data-type="plus"
-                style="color: {{matchConfig.teamA.textColor}};"
-              >
-                <text class="team-name-inner">{{c.limitTeamName(matchConfig.teamA.name || '队A')}}</text>
-              </view>
-              <view
-                class="score-value"
-                catchtap="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTap'}}"
-                bindlongpress="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreLongPress'}}"
-                bindtouchend="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTouchEnd'}}"
-                data-team="teamA"
-                data-type="minus"
-                style="color: {{matchConfig.teamA.textColor}};"
-              >
-                {{matchConfig.teamA.score}}
+                class="team-group-bg team-group-bg--left"
+                style="background-color: {{matchConfig.teamA.rgbaBg || 'rgba(230, 67, 64, 0.7)'}}"
+              ></view>
+              <view class="team-group-row">
+                <view
+                  class="team-name team-name--a"
+                  catchtap="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTap'}}"
+                  bindlongpress="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreLongPress'}}"
+                  bindtouchend="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTouchEnd'}}"
+                  data-team="teamA"
+                  data-type="plus"
+                  style="color: {{matchConfig.teamA.textColor}};"
+                >
+                  <text class="team-name-inner">{{c.limitTeamName(matchConfig.teamA.name || '队A')}}</text>
+                </view>
+                <view
+                  class="score-value"
+                  catchtap="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTap'}}"
+                  bindlongpress="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreLongPress'}}"
+                  bindtouchend="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTouchEnd'}}"
+                  data-team="teamA"
+                  data-type="minus"
+                  style="color: {{matchConfig.teamA.textColor}};"
+                >
+                  {{matchConfig.teamA.score}}
+                </view>
               </view>
             </view>
-          </view>
 
-          <view class="period-center-outer" bindtap="onPeriodTap" bindlongpress="{{autoSyncWhitelisted ? 'onPeriodLongPress' : ''}}">
-            <view class="period-strip"></view>
-            <view class="period-container">
-              <view class="period-text" style="color: {{periodFlash ? '#000000' : '#fff'}}">
-                {{periods[matchConfig.period]}}
+            <view class="period-center-outer" bindtap="onPeriodTap" bindlongpress="{{autoSyncWhitelisted ? 'onPeriodLongPress' : ''}}">
+              <view class="period-strip"></view>
+              <view class="period-container">
+                <view class="period-text" style="color: {{periodFlash ? '#000000' : '#fff'}}">
+                  {{periods[matchConfig.period]}}
+                </view>
               </view>
             </view>
-          </view>
 
-          <view
-            class="team-group team-b-group"
-            style="width: {{teamGroupWidthPxB}}px; max-width: {{teamGroupWidthPxB}}px;"
-          >
             <view
-              class="team-group-bg team-group-bg--right"
-              style="background-color: {{matchConfig.teamB.rgbaBg || 'rgba(16, 174, 255, 0.7)'}}"
-            ></view>
-            <view class="team-group-row">
+              class="team-group team-b-group"
+              style="width: {{teamGroupWidthPxB}}px; max-width: {{teamGroupWidthPxB}}px;"
+            >
               <view
-                class="score-value"
-                catchtap="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTap'}}"
-                bindlongpress="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreLongPress'}}"
-                bindtouchend="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTouchEnd'}}"
-                data-team="teamB"
-                data-type="minus"
-                style="color: {{matchConfig.teamB.textColor}};"
-              >
-                {{matchConfig.teamB.score}}
-              </view>
-              <view
-                class="team-name team-name--b"
-                catchtap="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTap'}}"
-                bindlongpress="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreLongPress'}}"
-                bindtouchend="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTouchEnd'}}"
-                data-team="teamB"
-                data-type="plus"
-                style="color: {{matchConfig.teamB.textColor}};"
-              >
-                <text class="team-name-inner">{{c.limitTeamName(matchConfig.teamB.name || '队B')}}</text>
+                class="team-group-bg team-group-bg--right"
+                style="background-color: {{matchConfig.teamB.rgbaBg || 'rgba(16, 174, 255, 0.7)'}}"
+              ></view>
+              <view class="team-group-row">
+                <view
+                  class="score-value"
+                  catchtap="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTap'}}"
+                  bindlongpress="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreLongPress'}}"
+                  bindtouchend="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTouchEnd'}}"
+                  data-team="teamB"
+                  data-type="minus"
+                  style="color: {{matchConfig.teamB.textColor}};"
+                >
+                  {{matchConfig.teamB.score}}
+                </view>
+                <view
+                  class="team-name team-name--b"
+                  catchtap="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTap'}}"
+                  bindlongpress="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreLongPress'}}"
+                  bindtouchend="{{(isAutoMode && liveWsScoreSyncEnabled) ? '' : 'onScoreTouchEnd'}}"
+                  data-team="teamB"
+                  data-type="plus"
+                  style="color: {{matchConfig.teamB.textColor}};"
+                >
+                  <text class="team-name-inner">{{c.limitTeamName(matchConfig.teamB.name || '队B')}}</text>
+                </view>
               </view>
             </view>
-          </view>
 
-          <!-- 画面实时裁剪同步：4:3 独立黑底电子数码计时容器 (Canvas 2D 零 GC 纹理渲染，常驻 DOM 规避 0 尺寸竞态) -->
-          <view class="crop-time-box {{(isAutoMode && timeSyncMode === 'crop_image' && hasCropFrameImage) ? '' : 'crop-time-box--hidden'}}">
-            <canvas type="2d" id="liveTimeCropCanvas" class="crop-time-canvas"></canvas>
+            <!-- 画面实时裁剪同步：4:3 独立切图时间容器 (绝对定位在 score-bar-core 右侧，不打乱主记分栏居中) -->
+            <view class="crop-time-box {{(isAutoMode && timeSyncMode === 'crop_image' && hasCropFrameImage) ? '' : 'crop-time-box--hidden'}}">
+              <canvas type="2d" id="liveTimeCropCanvas" class="crop-time-canvas"></canvas>
+            </view>
           </view>
         </view>
 

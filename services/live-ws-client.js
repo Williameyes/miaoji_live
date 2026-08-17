@@ -63,7 +63,7 @@ const WS_NETWORK_CHANGE_OPEN_GRACE_MS = 8000;
 /** @type {number} open 后稳定多久才清零 reconnectAttempt，避免短命连接掩盖退避。 */
 const WS_ATTEMPT_CLEAR_AFTER_MS = 8000;
 /** @type {number} token 失败时的最小退避。 */
-const WS_TOKEN_FAIL_MIN_DELAY_MS = 5000;
+const WS_TOKEN_FAIL_MIN_DELAY_MS = 2000;
 
 /**
  * @type {number} 视为「下行链路可疑（假死）」的看门狗阈值；超过即强制 close + 自动重连。
