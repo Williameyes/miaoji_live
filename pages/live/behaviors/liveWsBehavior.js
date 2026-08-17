@@ -402,11 +402,21 @@ _liveWsOnSocketMessage: function (raw) {
       }
       return;
     }
-    this.appendHealthLog('ws_crop_frame_recv', {
-      seq: payload.seq || 0,
-      session: String(payload.session_id || '').slice(0, 20),
-      size_kb: (payload.time_img.length / 1024).toFixed(1)
-    });
+    var seq = payload.seq || 0;
+    var prevSeq = this._lastCropSeq || 0;
+    var isSeqGap = prevSeq > 0 && seq > prevSeq + 1;
+    this._lastCropSeq = seq;
+
+    // 弱化高频切图日志：抽样每 30 帧（约 30 秒）记录一次，或出现跳包丢帧时记录，避免刷屏挤掉直播诊断日志
+    if (seq % 30 === 0 || isSeqGap) {
+      this.appendHealthLog('ws_crop_frame_recv', {
+        seq: seq,
+        session: String(payload.session_id || '').slice(0, 20),
+        size_kb: (payload.time_img.length / 1024).toFixed(1),
+        delay_ms: payload.ts ? Math.max(0, Date.now() - payload.ts) : 0,
+        seq_gap: isSeqGap ? (seq - prevSeq - 1) : 0
+      });
+    }
     var self = this;
     var sd = {};
     if (!this.data.hasCropFrameImage) {
@@ -812,14 +822,21 @@ _liveWsFlushScorePersist: function () {
       patch.wxsClockShotSec = clockDisplayPatch.wxsClockShotSec;
       patch.wxsClockShotWarn = clockDisplayPatch.wxsClockShotWarn;
       console.log('[Live][WS] clock act=%s seq=%s t=%s running=%s text=%s', payload.act, payload.seq, rawSeconds, mainRunning, patch.wxsClockMainText);
-      this.appendHealthLog('ws_clock_act', {
-        act: String(payload.act || ''),
-        seq: payload.seq,
-        t: rawSeconds,
-        running: !!mainRunning,
-        text: patch.wxsClockMainText,
-        heartbeat: payload.heartbeat ? 1 : 0
-      });
+      var isClockStateChange = !this._lastClockAct || this._lastClockAct !== payload.act || this._lastClockText !== patch.wxsClockMainText || !!mainRunning !== this._lastClockRunning;
+      this._lastClockAct = payload.act;
+      this._lastClockText = patch.wxsClockMainText;
+      this._lastClockRunning = !!mainRunning;
+
+      if (isClockStateChange || (payload.seq % 30 === 0)) {
+        this.appendHealthLog('ws_clock_act', {
+          act: String(payload.act || ''),
+          seq: payload.seq,
+          t: rawSeconds,
+          running: !!mainRunning,
+          text: patch.wxsClockMainText,
+          heartbeat: payload.heartbeat ? 1 : 0
+        });
+      }
     }
     /* [OCR功能已注释/移除] 仅保留切图同步方案；比分同步统一由直播端手动加减分控制 */
     patch.liveWsScoreSyncEnabled = false;
