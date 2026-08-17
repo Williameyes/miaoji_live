@@ -2,6 +2,7 @@
 <!-- 登录 + 白名单双重门控：未授权用户页面内容完全不渲染 -->
 <view class="col-root">
   <canvas type="webgl" id="ocrVkCanvas" class="col-ocr-vk-canvas"></canvas>
+  <canvas type="2d" id="cropProcessorCanvas" style="position: fixed; left: -9999px; top: -9999px; width: 240px; height: 80px;"></canvas>
 
   <view class="col-locked" wx:if="{{!isLogin || !isInWhitelist}}">
     <view class="col-locked-icon">LOCK</view>
@@ -24,8 +25,8 @@
         bindinitdone="onCameraInit"
       ></camera>
 
-      <view class="col-ocr-hint" wx:if="{{ocrEnabled || ocrTransitioning}}">
-        OCR 调试中
+      <view class="col-ocr-hint" style="background: {{timeSyncMode === 'crop_image' ? 'rgba(16, 185, 129, 0.9)' : 'rgba(37, 99, 235, 0.85)'}}; font-weight: bold;">
+        {{timeSyncMode === 'crop_image' ? '📷 实时切图模式：拖动黄色 [时间] 框对准计分牌倒计时' : (ocrEnabled ? 'OCR 实时识别中' : 'OCR 待开启')}}
       </view>
 
       <view class="col-debug-panel" wx:if="{{debugMode && debugText}}">
@@ -37,6 +38,7 @@
       <view
         wx:for="{{rois}}"
         wx:key="label"
+        wx:if="{{timeSyncMode !== 'crop_image' || item.label === '时间'}}"
         class="col-roi-box{{selectedRoiIdx === index ? ' col-roi-box--sel' : ''}}"
         style="position:absolute;{{item.pctStyle}}"
         data-idx="{{index}}"
@@ -68,8 +70,11 @@
         <view class="col-status-left">
           <view class="col-status-dot{{wsState === 'connected' ? ' col-status-dot--ok' : ' col-status-dot--bad'}}"></view>
           <text class="col-status-text">{{wsStateText}}</text>
-          <text class="col-status-ocr" wx:if="{{ocrTransitioning}}">OCR 切换中</text>
-          <text class="col-status-ocr" wx:elif="{{ocrEnabled}}">OCR 实时</text>
+          <view
+            class="col-status-ocr"
+            style="background: {{timeSyncMode === 'crop_image' ? '#10b981' : '#2563eb'}}; color: #fff; margin-left: 6px; padding: 2px 6px; border-radius: 4px;"
+            catchtap="onTimeSyncModeSwitch"
+          >{{timeSyncMode === 'crop_image' ? '切图同步' : 'OCR模式'}} ↺</view>
         </view>
         <view class="col-status-right">
           <text class="col-status-code" wx:if="{{matchCode}}">房间码：{{matchCode}}</text>
@@ -104,10 +109,10 @@
         bindlongpress="onToggleDebug"
         show-menu-by-longpress="{{false}}"
       >
-        <text class="col-monitor-text">{{ocrDisplayProfileLabel}} | 主: {{ homeScore }} | 客: {{ awayScore }} | 倒计时: {{ minutes }}:{{ seconds < 10 ? '0' + seconds : seconds }}</text>
+        <text class="col-monitor-text">{{timeSyncMode === 'crop_image' ? ('时间切图模式 | 房间: ' + (matchCode || '未连房')) : (ocrDisplayProfileLabel + ' | 主: ' + homeScore + ' | 客: ' + awayScore + ' | 倒计时: ' + minutes + ':' + (seconds < 10 ? '0' + seconds : seconds))}}</text>
       </view>
 
-      <view class="col-profile-row">
+      <view class="col-profile-row" wx:if="{{timeSyncMode !== 'crop_image'}}">
         <view
           class="col-profile-btn{{ocrDisplayProfile === 'led' ? ' col-profile-btn--active' : ''}}"
           data-profile="led"
@@ -120,7 +125,7 @@
         >7段数码管</view>
       </view>
 
-      <view class="col-ocr-toggles">
+      <view class="col-ocr-toggles" wx:if="{{timeSyncMode !== 'crop_image'}}">
         <view
           class="col-ocr-toggle{{ocrEnableTime ? ' col-ocr-toggle--on' : ''}}"
           catchtap="onToggleOcrEnableTime"
@@ -137,50 +142,94 @@
         </view>
       </view>
 
-      <view class="col-action-grid">
-        <view
-          class="col-console-btn col-console-btn--ocr{{ocrEnabled ? ' col-console-btn--danger' : ' col-console-btn--success'}}"
-          hover-class="col-console-btn--pressed"
-          hover-stay-time="80"
-          catchtap="onToggleOcr"
-        >{{ocrTransitioning ? 'OCR 切换中' : (ocrEnabled ? '关闭 OCR' : '开启 OCR')}}</view>
+      <block wx:if="{{timeSyncMode === 'crop_image'}}">
+        <view class="col-action-grid">
+          <view
+            wx:if="{{wsState === 'connected'}}"
+            class="col-console-btn col-console-btn--sync col-console-btn--warning"
+            style="grid-column: 1 / -1;"
+            hover-class="col-console-btn--pressed"
+            hover-stay-time="80"
+            catchtap="onStopTap"
+          >停止切图同步</view>
+          <view
+            wx:else
+            class="col-console-btn col-console-btn--sync col-console-btn--primary"
+            style="grid-column: 1 / -1;"
+            hover-class="col-console-btn--pressed"
+            hover-stay-time="80"
+            catchtap="onStartTap"
+          >开启切图同步</view>
 
-        <view
-          class="col-console-btn col-console-btn--preset-save"
-          hover-class="col-console-btn--pressed"
-          hover-stay-time="80"
-          catchtap="onSavePreset"
-        >保存预设</view>
+          <view
+            class="col-console-btn col-console-btn--preset-save"
+            hover-class="col-console-btn--pressed"
+            hover-stay-time="80"
+            catchtap="onSavePreset"
+          >保存预设</view>
 
-        <view
-          wx:if="{{wsState === 'connected'}}"
-          class="col-console-btn col-console-btn--sync col-console-btn--warning"
-          hover-class="col-console-btn--pressed"
-          hover-stay-time="80"
-          catchtap="onStopTap"
-        >停止同步</view>
-        <view
-          wx:else
-          class="col-console-btn col-console-btn--sync col-console-btn--primary"
-          hover-class="col-console-btn--pressed"
-          hover-stay-time="80"
-          catchtap="onStartTap"
-        >开启同步</view>
+          <view
+            class="col-console-btn col-console-btn--preset-load"
+            hover-class="col-console-btn--pressed"
+            hover-stay-time="80"
+            catchtap="onLoadPreset"
+          >恢复预设</view>
 
-        <view
-          class="col-console-btn col-console-btn--preset-load"
-          hover-class="col-console-btn--pressed"
-          hover-stay-time="80"
-          catchtap="onLoadPreset"
-        >恢复预设</view>
+          <view
+            class="col-console-btn col-console-btn--audit-export"
+            hover-class="col-console-btn--pressed"
+            hover-stay-time="80"
+            catchtap="onExportCollectorAuditFile"
+          >导出审计</view>
+        </view>
+      </block>
 
-        <view
-          class="col-console-btn col-console-btn--audit-export"
-          hover-class="col-console-btn--pressed"
-          hover-stay-time="80"
-          catchtap="onExportCollectorAuditFile"
-        >导出审计</view>
-      </view>
+      <block wx:else>
+        <view class="col-action-grid">
+          <view
+            class="col-console-btn col-console-btn--ocr{{ocrEnabled ? ' col-console-btn--danger' : ' col-console-btn--success'}}"
+            hover-class="col-console-btn--pressed"
+            hover-stay-time="80"
+            catchtap="onToggleOcr"
+          >{{ocrTransitioning ? 'OCR 切换中' : (ocrEnabled ? '关闭 OCR' : '开启 OCR')}}</view>
+
+          <view
+            class="col-console-btn col-console-btn--preset-save"
+            hover-class="col-console-btn--pressed"
+            hover-stay-time="80"
+            catchtap="onSavePreset"
+          >保存预设</view>
+
+          <view
+            wx:if="{{wsState === 'connected'}}"
+            class="col-console-btn col-console-btn--sync col-console-btn--warning"
+            hover-class="col-console-btn--pressed"
+            hover-stay-time="80"
+            catchtap="onStopTap"
+          >停止同步</view>
+          <view
+            wx:else
+            class="col-console-btn col-console-btn--sync col-console-btn--primary"
+            hover-class="col-console-btn--pressed"
+            hover-stay-time="80"
+            catchtap="onStartTap"
+          >开启同步</view>
+
+          <view
+            class="col-console-btn col-console-btn--preset-load"
+            hover-class="col-console-btn--pressed"
+            hover-stay-time="80"
+            catchtap="onLoadPreset"
+          >恢复预设</view>
+
+          <view
+            class="col-console-btn col-console-btn--audit-export"
+            hover-class="col-console-btn--pressed"
+            hover-stay-time="80"
+            catchtap="onExportCollectorAuditFile"
+          >导出审计</view>
+        </view>
+      </block>
     </view>
   </view>
 </view>

@@ -1133,6 +1133,10 @@ Page({
     enhanceFpsText: '— fps',
     // --- 自动模式相关（V2 WebSocket 云端同步） ---
     isAutoMode: false,
+    /** 时间同步模式：ocr (指令记分) | crop_image (画面实时裁剪) */
+    timeSyncMode: 'ocr',
+    hasCropFrameImage: false,
+    cropFrameBase64: '',
     /** 采集端 sync_score=1 时自动跟分；false 时自动模式下仍可手动改分 */
     liveWsScoreSyncEnabled: false,
     /** 云端 WSS 已连接（角标） */
@@ -6441,11 +6445,13 @@ onCameraInit: function (e) {
     const enhanceBetaWhitelisted = false;
     const autoSyncWhitelisted = checkSyncLabWhitelist();
     const enhanceVkSupported = false;
-    if (this.data.enhanceBetaWhitelisted !== enhanceBetaWhitelisted || this.data.enhanceVkSupported !== enhanceVkSupported || this.data.autoSyncWhitelisted !== autoSyncWhitelisted) {
+    const currentSyncMode = wx.getStorageSync('HOOPS_TIME_SYNC_MODE') || 'ocr';
+    if (this.data.enhanceBetaWhitelisted !== enhanceBetaWhitelisted || this.data.enhanceVkSupported !== enhanceVkSupported || this.data.autoSyncWhitelisted !== autoSyncWhitelisted || this.data.timeSyncMode !== currentSyncMode) {
       const patch = {
         enhanceBetaWhitelisted: enhanceBetaWhitelisted,
         enhanceVkSupported: enhanceVkSupported,
-        autoSyncWhitelisted: autoSyncWhitelisted
+        autoSyncWhitelisted: autoSyncWhitelisted,
+        timeSyncMode: currentSyncMode
       };
       if (!autoSyncWhitelisted && this.data.isAutoMode) {
         patch.isAutoMode = false;

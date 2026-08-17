@@ -346,6 +346,10 @@ _liveWsOnSocketMessage: function (raw) {
       this._liveWsTeardownForManualMode();
       return;
     }
+    if (msg.type === 'CROP_FRAME_SYNC' || msg.type === 'DATA_CROP_FRAME') {
+      this._consumeCropFrameSync(msg.payload || msg);
+      return;
+    }
     if (msg.type === 'DATA_BROADCAST' || msg.type === 'LIVE_BOOST' || msg.type === 'LIVE_BOOST_REALTIME' || msg.type === 'LIVE_BOOST_TARGETED') {
       var nAct = (msg.payload && msg.payload.act) || msg.act || '';
       if (nAct === 'LIVE_BOOST' || nAct === 'LIVE_BOOST_REALTIME' || nAct === 'LIVE_BOOST_TARGETED') {
@@ -373,6 +377,97 @@ _liveWsOnSocketMessage: function (raw) {
     console.warn('[Live][WS] message parse fail', eParse);
   }
 },
+
+  onTimeSyncModeSelect: function (e) {
+    var mode = (e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.mode) || 'ocr';
+    try {
+      wx.setStorageSync('HOOPS_TIME_SYNC_MODE', mode);
+    } catch (err) { /* ignore */ }
+    this.setData({
+      timeSyncMode: mode
+    });
+    wx.showToast({
+      title: mode === 'crop_image' ? '已切为: 切图同步' : '已切为: OCR记分',
+      icon: 'none'
+    });
+  },
+
+  _consumeCropFrameSync: function (payload) {
+    if (!payload || !payload.time_img || payload.act === 'CLEAR') {
+      this.setData({ hasCropFrameImage: false });
+      if (this._timeCropCanvasContext && this._timeCropCanvas) {
+        try {
+          this._timeCropCanvasContext.clearRect(0, 0, this._timeCropCanvas.width, this._timeCropCanvas.height);
+        } catch (eClear) { }
+      }
+      return;
+    }
+    this.appendHealthLog('ws_crop_frame_recv', {
+      seq: payload.seq || 0,
+      session: String(payload.session_id || '').slice(0, 20),
+      size_kb: (payload.time_img.length / 1024).toFixed(1)
+    });
+    var self = this;
+    var sd = {};
+    if (!this.data.hasCropFrameImage) {
+      sd.hasCropFrameImage = true;
+    }
+    if (this.data.timeSyncMode !== 'crop_image') {
+      sd.timeSyncMode = 'crop_image';
+    }
+    if (this.data.liveWsScoreSyncEnabled !== false) {
+      sd.liveWsScoreSyncEnabled = false;
+    }
+    if (Object.keys(sd).length > 0) {
+      this.setData(sd, function () {
+        self._renderCropFrameToCanvas(payload.time_img);
+      });
+    } else {
+      this._renderCropFrameToCanvas(payload.time_img);
+    }
+  },
+
+  _renderCropFrameToCanvas: function (base64Img) {
+    var self = this;
+    if (this._timeCropCanvasContext && this._timeCropCanvas && this._timeCropCanvasLogicalW > 0) {
+      var img = this._timeCropCanvas.createImage();
+      img.onload = function () {
+        var renderW = self._timeCropCanvasLogicalW || 40;
+        var renderH = self._timeCropCanvasLogicalH || 30;
+        self._timeCropCanvasContext.clearRect(0, 0, self._timeCropCanvas.width, self._timeCropCanvas.height);
+        self._timeCropCanvasContext.drawImage(img, 0, 0, renderW, renderH);
+      };
+      img.src = base64Img;
+      return;
+    }
+    var query = wx.createSelectorQuery().in(this);
+    query.select('#liveTimeCropCanvas')
+      .fields({ node: true, size: true })
+      .exec(function (res) {
+        if (res && res[0] && res[0].node) {
+          var canvas = res[0].node;
+          var ctx = canvas.getContext('2d');
+          var dpr = (wx.getSystemInfoSync && wx.getSystemInfoSync().pixelRatio) || 2;
+          var nodeW = res[0].width || 40;
+          var nodeH = res[0].height || 30;
+          if (nodeW <= 0) nodeW = 40;
+          if (nodeH <= 0) nodeH = 30;
+          canvas.width = nodeW * dpr;
+          canvas.height = nodeH * dpr;
+          ctx.scale(dpr, dpr);
+          self._timeCropCanvas = canvas;
+          self._timeCropCanvasContext = ctx;
+          self._timeCropCanvasLogicalW = nodeW;
+          self._timeCropCanvasLogicalH = nodeH;
+          var img = canvas.createImage();
+          img.onload = function () {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0, nodeW, nodeH);
+          };
+          img.src = base64Img;
+        }
+      });
+  },
     /**
  * 采集端暂不可用：保留房间号与自动模式，退避重连（服务端宽限期内可恢复）。
  * @param {'offline' | 'not_found'} reason 触发原因
@@ -428,6 +523,15 @@ _liveWsApplyDisconnectedUiPatch: function () {
  */
 _liveWsTeardownForManualMode: function () {
   this._liveWsManualTeardown = true;
+  this.setData({
+    hasCropFrameImage: false,
+    cropFrameBase64: ''
+  });
+  if (this._timeCropCanvasContext && this._timeCropCanvas) {
+    try {
+      this._timeCropCanvasContext.clearRect(0, 0, this._timeCropCanvas.width, this._timeCropCanvas.height);
+    } catch (eClear) { }
+  }
   try {
     this._liveWsFlushScorePersist();
   } catch (eF) {/* ignore */}
@@ -514,6 +618,7 @@ onLiveWsPanelBackdropTap: function () {
     liveWsStatusText: ''
   });
 },
+noopCatchTap: function () {},
     /**
  * roomId 输入框变更。
  * @param {object} e 微信 input 事件
@@ -629,6 +734,12 @@ _liveWsFlushScorePersist: function () {
       console.log('[Live][WS] collector session changed %s -> %s, reset seq', this._liveWsSessionId || 'none', payload.session_id);
       this._liveWsSessionId = payload.session_id;
       this._liveWsCurrentSeq = 0;
+      this.setData({ hasCropFrameImage: false });
+      if (this._timeCropCanvasContext && this._timeCropCanvas) {
+        try {
+          this._timeCropCanvasContext.clearRect(0, 0, this._timeCropCanvas.width, this._timeCropCanvas.height);
+        } catch (eClear) { }
+      }
       this.appendHealthLog('ws_collector_session_changed', {
         session: String(payload.session_id || '').slice(0, 40)
       });
@@ -711,10 +822,11 @@ _liveWsFlushScorePersist: function () {
       });
     }
     if (this.data.isAutoMode && this.data.autoSyncWhitelisted) {
+      var isCropMode = this.data.timeSyncMode === 'crop_image';
       var syncScoreRaw = payload.sync_score;
-      var scoreSyncEnabled = syncScoreRaw === undefined || syncScoreRaw === null
+      var scoreSyncEnabled = isCropMode ? false : (syncScoreRaw === undefined || syncScoreRaw === null
         ? true
-        : (Number(syncScoreRaw) === 1);
+        : (Number(syncScoreRaw) === 1));
       if (this.data.liveWsScoreSyncEnabled !== scoreSyncEnabled) {
         patch.liveWsScoreSyncEnabled = scoreSyncEnabled;
       }

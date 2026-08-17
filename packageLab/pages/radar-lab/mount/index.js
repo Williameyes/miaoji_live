@@ -14,7 +14,7 @@ Page({
         roomId: '',
         rawText: '',
         enable_ad_verify: false,
-        enable_live_boost: true,
+        enable_live_boost: false,
         enable_score_ocr: false,
         enable_audio_record: false,
         enable_video_record: false,
@@ -50,6 +50,7 @@ Page({
             if (prefs && typeof prefs === 'object') {
                 this.setData({
                     enable_ad_verify: !!prefs.enable_ad_verify,
+                    enable_live_boost: prefs.enable_live_boost != null ? !!prefs.enable_live_boost : false,
                     enable_score_ocr: !!prefs.enable_score_ocr,
                     enable_audio_record: !!prefs.enable_audio_record,
                     enable_video_record: !!prefs.enable_video_record,

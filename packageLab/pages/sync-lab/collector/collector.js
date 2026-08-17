@@ -366,7 +366,7 @@ var ROI_MIN_SIZE = 0.05; // 归一化最小宽/高，防止缩至 0
 var DEFAULT_ROIS = [
   { x: 0.05, y: 0.15, w: 0.25, h: 0.20, label: '主队分', rawText: '' },
   { x: 0.70, y: 0.15, w: 0.25, h: 0.20, label: '客队分', rawText: '' },
-  { x: 0.30, y: 0.35, w: 0.40, h: 0.18, label: '时间', rawText: '' }
+  { x: 0.30, y: 0.35, w: 0.40, h: 0.30, label: '时间', rawText: '' }
 ];
 
 /** @type {WechatMiniprogram.SocketTask | null} */
@@ -518,6 +518,10 @@ var _procState = {
 };
 var _cameraContext = null;
 var _cameraFrameListener = null;
+var _cropCameraFrameListener = null;
+var _latestCameraCropFrame = null;
+var _cropSentCount = 0;
+var _cropCollectorSessionId = '';
 var _ocrVkCanvas = null;
 var _ocrVkGl = null;
 
@@ -2651,6 +2655,8 @@ Page({
     /** 登录 + 白名单双重门控 */
     isLogin: false,
     isInWhitelist: false,
+    /** 时间同步模式：ocr (指令记分) | crop_image (画面实时裁剪) */
+    timeSyncMode: 'ocr',
     // WebSocket 连接状态
     wsState: 'idle',
     wsStateText: '未连接',
@@ -2695,13 +2701,16 @@ Page({
 
   // ─── 生命周期 ────────────────────────────────────────
 
-  onLoad: function () {
+  onLoad: function (options) {
+    var mode = (options && options.mode) || wx.getStorageSync('HOOPS_TIME_SYNC_MODE') || 'ocr';
+    wx.setStorageSync('HOOPS_TIME_SYNC_MODE', mode);
     var sys = wx.getSystemInfoSync();
     var camW = sys.windowWidth || 667;
     var camH = sys.windowHeight || 375;
     _previewW = camW;
     _previewH = camH;
     this.setData({
+      timeSyncMode: mode,
       statusBarHeight: sys.statusBarHeight || 0,
       previewPxW: camW,
       previewPxH: camH
@@ -2858,6 +2867,8 @@ Page({
    * 回到前台：恢复 OCR 帧泵 + WS 健康自检（前台后链路常因 NAT/系统挂起而假死）。
    */
   onShow: function () {
+    var mode = wx.getStorageSync('HOOPS_TIME_SYNC_MODE') || 'ocr';
+    this.setData({ timeSyncMode: mode });
     appendCollectorHealthLog('page_show', { ws: getCollectorWsDiagnosticSnapshot() });
     /* WS 健康自检：曾经连过 + 当前不在 connected 状态 → 立即调度一次重连 */
     if (_wsRoomId && !_wsManualClose && this.data.wsState !== 'connected' && this.data.wsState !== 'connecting') {
@@ -2872,6 +2883,17 @@ Page({
     var token = _ocrSessionToken;
     console.log('[Collector][OCR] resume frame pump after foreground token=%s', token);
     this._startOcrFramePump(session, token);
+  },
+
+  onTimeSyncModeSwitch: function () {
+    var currentMode = this.data.timeSyncMode || 'ocr';
+    var nextMode = currentMode === 'crop_image' ? 'ocr' : 'crop_image';
+    wx.setStorageSync('HOOPS_TIME_SYNC_MODE', nextMode);
+    this.setData({ timeSyncMode: nextMode });
+    wx.showToast({
+      title: nextMode === 'crop_image' ? '已切为: 画面实时裁剪' : '已切为: OCR指令模式',
+      icon: 'none'
+    });
   },
 
   // ─── 屏幕翻转与尺寸变化监听 ─────────────────────────
@@ -3176,6 +3198,20 @@ Page({
         _dragging.origH + (_rafTouchY - _dragging.startY) / ph));
       if (isNaN(newW) || isNaN(newH)) return;
       var curr = self.data.rois[idx];
+
+      // 时间框只允许固定 4:3 比例 (Width:Height = 4:3)，支持用户放缩，但比例不变
+      if (idx === 2 || (self.data.timeSyncMode === 'crop_image' && curr && curr.label === '时间')) {
+        var desiredAspect = 4 / 3;
+        var pixelW = newW * pw;
+        var pixelH = pixelW / desiredAspect;
+        newH = pixelH / ph;
+        if (newH > 1 - _dragging.origY) {
+          newH = 1 - _dragging.origY;
+          pixelH = newH * ph;
+          pixelW = pixelH * desiredAspect;
+          newW = pixelW / pw;
+        }
+      }
       if (curr && curr.w === newW && curr.h === newH) return;
       var update = {};
       update['rois[' + idx + '].w'] = newW;
@@ -6549,6 +6585,9 @@ Page({
       savePersistedRoomId(roomId);
     }
     _wsRoomId = roomId;
+    _cropCollectorSessionId = Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    _latestCameraCropFrame = null;
+    _cropSentCount = 0;
     this.setData({ matchCode: roomId, wsStateText: '正在连接…' });
     this._connectWebSocket(roomId);
   },
@@ -6611,6 +6650,12 @@ Page({
    */
   onStopTap: function () {
     this._pendingWsStartAfterOcr = false;
+    _latestCameraCropFrame = null;
+    _cropSentCount = 0;
+    try {
+      this._emitCropFramePacket('');
+    } catch (eClear) { }
+    _cropCollectorSessionId = '';
     this._stopOcr(false);
     this._disconnectWebSocket(true);
     var savedCode = loadPersistedRoomId();
@@ -6714,6 +6759,7 @@ Page({
           shortlived_streak: _wsShortLivedStreak
         });
         self.setData({ wsState: 'connected', wsStateText: '云端已连接 ✓' });
+        self._startCropFramePump();
         wx.vibrateShort({ type: 'medium' });
         /* 稳定 WS_ATTEMPT_CLEAR_AFTER_MS 后才认为连接「真活了」，再清零退避计数；
            这样 25s 被 1006 关闭这类短命场景也能正确推进退避 */
@@ -6744,6 +6790,11 @@ Page({
             logCollectorWs('collector_exist', {});
             wx.showToast({ title: '房间已有采集端', icon: 'none' });
             self._disconnectWebSocket(true);
+          }
+          if (payload && (payload.type === 'BROADCAST_JOINED_TRIGGER' || payload.type === 'REQUEST_CROP_FRAME')) {
+            if (_latestCameraCropFrame) {
+              self._processFrameAndEmitCrop(_latestCameraCropFrame);
+            }
           }
         } catch (eParse) {
           /* 收到无法解析的下行（含未来可能的 PONG 等）：保持静默，仅刷新 lastRecvAt 即可 */
@@ -7076,6 +7127,227 @@ Page({
       syncClockStateFromMode();
       this._clearClockPredictTimer();
     }
+  },
+
+  _emitCropFramePacket: function (timeBase64Img) {
+    if (!_socketTask || this.data.wsState !== 'connected') return;
+    _globalSeq += 1;
+    if (!_cropCollectorSessionId) {
+      _cropCollectorSessionId = Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    }
+    var isClear = !timeBase64Img;
+    var packet = {
+      type: 'CROP_FRAME_SYNC',
+      act: isClear ? 'CLEAR' : 'FRAME_UPDATE',
+      session_id: _cropCollectorSessionId,
+      seq: _globalSeq,
+      ts: Date.now(),
+      time_img: timeBase64Img,
+      match_id: 'M_' + (_wsRoomId || this.data.matchCode || '')
+    };
+    var self = this;
+    try {
+      _socketTask.send({
+        data: JSON.stringify(packet),
+        success: function () {
+          _wsLastSendOkAt = Date.now();
+        },
+        fail: function (errSend) {
+          logCollectorWs('send_crop_fail', {
+            msg: errSend && errSend.errMsg ? String(errSend.errMsg).slice(0, 120) : 'fail'
+          });
+        }
+      });
+    } catch (eSend) {
+      logCollectorWs('send_crop_throw', {
+        msg: eSend && eSend.message ? String(eSend.message).slice(0, 120) : 'throw'
+      });
+    }
+  },
+
+  _startCropFramePump: function () {
+    var self = this;
+    console.log('[Collector][TimeCrop] _startCropFramePump init, cameraMounted=%s, wsState=%s', this.data.cameraMounted, this.data.wsState);
+    if (this._cropFrameTimer) {
+      clearInterval(this._cropFrameTimer);
+      this._cropFrameTimer = null;
+    }
+    if (!_cameraContext || typeof _cameraContext.onCameraFrame !== 'function') {
+      console.error('[Collector][TimeCrop] cameraContext.onCameraFrame is NOT available');
+      self.setData({
+        debugMode: true,
+        debugText: '【错误】当前机型不支持 onCameraFrame 视频抽帧'
+      });
+      return;
+    }
+    if (!_cropCameraFrameListener) {
+      try {
+        _cropCameraFrameListener = _cameraContext.onCameraFrame(function (frame) {
+          if (!_latestCameraCropFrame) {
+            console.log('[Collector][TimeCrop] first camera frame received! size=%sx%s', frame.width, frame.height);
+          }
+          _latestCameraCropFrame = frame;
+        });
+        _cropCameraFrameListener.start();
+        console.log('[Collector][TimeCrop] onCameraFrame listener started successfully');
+      } catch (eStart) {
+        console.error('[Collector][TimeCrop] start crop onCameraFrame fail', eStart);
+      }
+    }
+    this._cropFrameTimer = setInterval(function () {
+      var syncMode = self.data.mode || self.data.syncLabMode || 'crop_image';
+      if (syncMode !== 'crop_image') return;
+
+      if (self.data.wsState !== 'connected') {
+        var waitMsg = '【切图模式】等待 WebSocket 云端连接… (房间码: ' + (self.data.matchCode || '未生成') + ')';
+        console.log('[Collector][TimeCrop] ' + waitMsg);
+        self.setData({
+          debugMode: true,
+          debugText: waitMsg
+        });
+        return;
+      }
+
+      if (_latestCameraCropFrame) {
+        self._processFrameAndEmitCrop(_latestCameraCropFrame);
+      } else {
+        var waitFrameMsg = '【切图模式】等待相机视频帧送达…';
+        console.log('[Collector][TimeCrop] ' + waitFrameMsg);
+        self.setData({
+          debugMode: true,
+          debugText: waitFrameMsg
+        });
+      }
+    }, 1000);
+  },
+
+  _cropAndScaleFrameBuffer: function (srcData, srcW, srcH, cropX, cropY, cropW, cropH, dstW, dstH) {
+    var dstData = new Uint8ClampedArray(dstW * dstH * 4);
+    var xRatio = cropW / dstW;
+    var yRatio = cropH / dstH;
+
+    for (var dy = 0; dy < dstH; dy++) {
+      var sy = Math.floor(cropY + dy * yRatio);
+      if (sy >= srcH) sy = srcH - 1;
+      var srcRowOffset = sy * srcW * 4;
+      var dstRowOffset = dy * dstW * 4;
+
+      for (var dx = 0; dx < dstW; dx++) {
+        var sx = Math.floor(cropX + dx * xRatio);
+        if (sx >= srcW) sx = srcW - 1;
+
+        var srcIdx = srcRowOffset + sx * 4;
+        var dstIdx = dstRowOffset + dx * 4;
+
+        var r = srcData[srcIdx];
+        var g = srcData[srcIdx + 1];
+        var b = srcData[srcIdx + 2];
+
+        var isBrightLed = (r > 100 && r > b * 1.15) ||
+                          (g > 100 && g > b * 1.15) ||
+                          (r > 120 && g > 120);
+
+        if (isBrightLed) {
+          dstData[dstIdx] = r;
+          dstData[dstIdx + 1] = g;
+          dstData[dstIdx + 2] = b;
+          dstData[dstIdx + 3] = 255;
+        } else {
+          dstData[dstIdx] = 0;
+          dstData[dstIdx + 1] = 0;
+          dstData[dstIdx + 2] = 0;
+          dstData[dstIdx + 3] = 255;
+        }
+      }
+    }
+    return dstData;
+  },
+
+  _processFrameAndEmitCrop: function (frame) {
+    var self = this;
+    if (!frame || !frame.data || !frame.width || !frame.height) {
+      console.warn('[Collector][TimeCrop] empty frame buffer ignored');
+      return;
+    }
+    var query = wx.createSelectorQuery().in(this);
+    query.select('#cropProcessorCanvas')
+      .fields({ node: true, size: true })
+      .exec(function (res) {
+        if (!res || !res[0] || !res[0].node) {
+          console.warn('[Collector][TimeCrop] #cropProcessorCanvas node query empty');
+          return;
+        }
+        var canvas = res[0].node;
+        var ctx = canvas.getContext('2d');
+        if (!ctx) {
+          console.warn('[Collector][TimeCrop] #cropProcessorCanvas getContext 2d return null');
+          return;
+        }
+        try {
+          var timeRoi = (self.data.rois && self.data.rois[2]) || { x: 0.30, y: 0.35, w: 0.40, h: 0.18 };
+          var srcW = frame.width;
+          var srcH = frame.height;
+          var cropX = Math.floor(timeRoi.x * srcW);
+          var cropY = Math.floor(timeRoi.y * srcH);
+          var cropW = Math.floor(timeRoi.w * srcW);
+          var cropH = Math.floor(timeRoi.h * srcH);
+          if (cropW <= 0 || cropH <= 0) return;
+
+          canvas.width = srcW;
+          canvas.height = srcH;
+
+          var fullImgData = ctx.createImageData(srcW, srcH);
+          fullImgData.data.set(new Uint8ClampedArray(frame.data));
+          ctx.putImageData(fullImgData, 0, 0);
+
+          var croppedData = ctx.getImageData(cropX, cropY, cropW, cropH);
+          var data = croppedData.data;
+
+          for (var i = 0; i < data.length; i += 4) {
+            var r = data[i];
+            var g = data[i + 1];
+            var b = data[i + 2];
+            var isBrightLed = (r > 110 && r > b * 1.2) ||
+                              (g > 110 && g > b * 1.2) ||
+                              (r > 130 && g > 130);
+            if (!isBrightLed) {
+              data[i] = 0;
+              data[i + 1] = 0;
+              data[i + 2] = 0;
+            }
+          }
+
+          var dstW = 120;
+          var dstH = 90;
+
+          var srcBuffer = new Uint8ClampedArray(frame.data);
+          var scaledData = self._cropAndScaleFrameBuffer(srcBuffer, srcW, srcH, cropX, cropY, cropW, cropH, dstW, dstH);
+
+          canvas.width = dstW;
+          canvas.height = dstH;
+          var imgData = ctx.createImageData(dstW, dstH);
+          imgData.data.set(scaledData);
+          ctx.putImageData(imgData, 0, 0);
+
+          var base64 = canvas.toDataURL('image/jpeg', 0.45);
+          if (base64) {
+            _cropSentCount += 1;
+            var sizeKb = (base64.length / 1024).toFixed(1);
+            self._emitCropFramePacket(base64);
+            console.log('[Collector][TimeCrop] frame sent ok! seq=%s, size=%sKB, scaled=120x90', _cropSentCount, sizeKb);
+            self.setData({
+              debugMode: true,
+              debugText: '【切图已发送 ✓】第 ' + _cropSentCount + ' 帧 | 内存预缩放:120x90 | 体积:' + sizeKb + 'KB'
+            });
+          }
+        } catch (eProc) {
+          console.error('[Collector][TimeCrop] processing fail', eProc);
+          self.setData({
+            debugMode: true,
+            debugText: '【切图处理异常】' + (eProc && eProc.message ? eProc.message : String(eProc))
+          });
+        }
+      });
   },
 
   /**

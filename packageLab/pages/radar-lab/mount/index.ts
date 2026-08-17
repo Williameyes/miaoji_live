@@ -18,6 +18,7 @@ interface AddMatchTaskRequest {
     enable_score_ocr: boolean;
     enable_audio_record: boolean;
     enable_video_record: boolean;
+    enable_live_boost?: boolean;
   };
   score_ocr?: {
     sport_type: 'basketball' | 'badminton' | 'generic';
@@ -36,8 +37,10 @@ interface PageData {
   activeMatches: any[];
   loading: boolean;
   matchId: string;
+  roomId: string;
   rawText: string;
   enable_ad_verify: boolean;
+  enable_live_boost: boolean;
   enable_score_ocr: boolean;
   enable_audio_record: boolean;
   enable_video_record: boolean;
@@ -59,8 +62,10 @@ Page({
     activeMatches: [],
     loading: false,
     matchId: '',
+    roomId: '',
     rawText: '',
     enable_ad_verify: false,
+    enable_live_boost: false,
     enable_score_ocr: false,
     enable_audio_record: false,
     enable_video_record: false,
@@ -98,6 +103,7 @@ Page({
       if (prefs && typeof prefs === 'object') {
         this.setData({
           enable_ad_verify: !!prefs.enable_ad_verify,
+          enable_live_boost: prefs.enable_live_boost != null ? !!prefs.enable_live_boost : false,
           enable_score_ocr: !!prefs.enable_score_ocr,
           enable_audio_record: !!prefs.enable_audio_record,
           enable_video_record: !!prefs.enable_video_record,
@@ -117,6 +123,7 @@ Page({
   savePreferences: function () {
     const prefs = {
       enable_ad_verify: this.data.enable_ad_verify,
+      enable_live_boost: this.data.enable_live_boost,
       enable_score_ocr: this.data.enable_score_ocr,
       enable_audio_record: this.data.enable_audio_record,
       enable_video_record: this.data.enable_video_record,

@@ -66,15 +66,13 @@ const WS_ATTEMPT_CLEAR_AFTER_MS = 8000;
 const WS_TOKEN_FAIL_MIN_DELAY_MS = 5000;
 
 /**
- * @type {number} 视为「下行链路可疑」的阈值；超过即强制 close + reconnect。
+ * @type {number} 视为「下行链路可疑（假死）」的看门狗阈值；超过即强制 close + 自动重连。
  *
- * 设计权衡：篮球比赛节间休息常 90-120 秒无业务包；
- * - 当前服务端不主动 PONG，所以 lastRecvAt 在静默期会持续推进。
- * - 阈值设为 90 秒：宁可在长暂停后多 reconnect 一次（reconnect 后服务端会下发 lastSnapshot），
- *   也不容忍真正的「假死」拖到 5+ 分钟用户感知到。
- * - reconnect 用户感知极小（< 2s 内重新拿快照渲染）。
+ * 保活升级：服务端针对 BROADCAST_HEARTBEAT 会每 12s 回复 BROADCAST_PONG 刷新 lastRecvAt。
+ * 针对切图模式（1Hz 下行）或 PONG 回波，下行静默超过 20 秒必为底层 TCP 静默假死（如 WiFi 切 5G 导致），
+ * 缩短至 20 秒可确保假死后 20 秒内自动 Kick 重连，无需等待 90 秒卡死！
  */
-const WS_RECV_STALE_MS = 90000;
+const WS_RECV_STALE_MS = 20000;
 
 /** @type {string} 上次成功连入的房间号 Storage 键 */
 const STORAGE_LAST_ROOM_ID = 'live_ws_last_room_id';
@@ -458,16 +456,6 @@ function createLiveWsClient(handlers) {
         (recvAge >= 0 && recvAge <= WS_NETWORK_CHANGE_FRESH_RECV_MS) ||
         (sendAge >= 0 && sendAge <= WS_NETWORK_CHANGE_FRESH_SEND_MS) ||
         (openAge >= 0 && openAge <= WS_NETWORK_CHANGE_OPEN_GRACE_MS);
-
-      if (socketTask && linkFresh) {
-        safeLog(logger, 'network_change_skip_fresh', {
-          net_type: nextType,
-          recv_age_ms: recvAge,
-          send_age_ms: sendAge,
-          open_age_ms: openAge
-        });
-        return;
-      }
 
       if (socketTask) {
         safeLog(logger, 'network_change_probe', {
