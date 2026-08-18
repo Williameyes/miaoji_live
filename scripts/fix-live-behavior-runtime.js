@@ -6,7 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const LIVE_DIR = path.join(__dirname, '../pages/live');
+const LIVE_DIR = path.join(__dirname, '../packageLive/pages/live');
 const LIFECYCLE_FILE = path.join(LIVE_DIR, 'behaviors/live-lifecycle-behavior.js');
 const STATE_FILE = path.join(LIVE_DIR, 'behaviors/live-state-behavior.js');
 const LIVE_FILE = path.join(LIVE_DIR, 'live.js');

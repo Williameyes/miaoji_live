@@ -19,7 +19,7 @@
     "checkInvalidKey": true,
     "checkSiteMap": true,
     "uploadWithSourceMap": true,
-    "compileHotRebuild": false,
+    "compileHotRebuild": true,
     "lazyloadPlaceholderEnable": false,
     "useMultiFrameRuntime": true,
     "useApiHook": false,
@@ -43,13 +43,27 @@
     "condition": false,
     "compileWorklet": false,
     "localPlugins": false,
-    "swc": true,
-    "disableSWC": false
+    "swc": false,
+    "disableSWC": true
   },
   "compileType": "miniprogram",
   "libVersion": "3.3.4",
   "packOptions": {
-    "ignore": [],
+    "ignore": [
+      { "type": "file", "value": "test-canvas.js" },
+      { "type": "file", "value": "yolov8n.pt" },
+      { "type": "file", "value": "testBoard-7.html" },
+      { "type": "file", "value": "testBoard.html" },
+      { "type": "file", "value": "testClock.html" },
+      { "type": "file", "value": "testHoopClock.html" },
+      { "type": "file", "value": "topBoard-7.html" },
+      { "type": "file", "value": "packageLive/pages/live/test-behaviors.js" },
+      { "type": "file", "value": "utils/live-ble-quick-connect.js" },
+      { "type": "file", "value": "services/bleManager.js" },
+      { "type": "file", "value": "utils/ble-protocol.js" },
+      { "type": "folder", "value": "docs" },
+      { "type": "folder", "value": "scripts" }
+    ],
     "include": []
   },
   "editorSetting": {

@@ -3,7 +3,7 @@
  * 竖持 9:16 / 横置 16:9（横置须物理旋转手机，与直播页一致）。
  */
 
-const deviceRecordProfile = require('../../utils/device-record-profile.js');
+const deviceRecordProfile = require('../../packageLive/utils/device-record-profile.js');
 
 /** @type {'native'|'preview_record'} */
 var REC_MODE_NATIVE = 'native';

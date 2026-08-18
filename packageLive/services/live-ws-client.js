@@ -11,7 +11,7 @@
  *   5. logger 注入：所有关键事件（连接 / 断开 / 心跳 / 看门狗）回调到上层 appendHealthLog。
  */
 
-const API = require('../config/api.js');
+const API = require('../../config/api.js');
 const { fetchWsToken } = require('../utils/ws-token-request.js');
 
 /** @type {string} WSS 网关根地址（由 HTTPS BaseURL 推导） */

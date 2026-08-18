@@ -71,12 +71,12 @@
       <view class="help-dy-step">
         <text class="help-dy-step__label">a. 设置入口</text>
         <text class="help-dy-step__path">开直播 → 手游 → 画面比例</text>
-        <image class="help-dy-shot" src="/pages/live/images/rate1.png" mode="widthFix" />
+        <image class="help-dy-shot" src="/packageLive/pages/live/images/rate1.png" mode="widthFix" />
       </view>
       <view class="help-dy-step help-dy-step--last">
         <text class="help-dy-step__label">b. 选择比例</text>
         <text class="help-dy-step__path">请选择「16:9」</text>
-        <image class="help-dy-shot" src="/pages/live/images/rate2.png" mode="widthFix" />
+        <image class="help-dy-shot" src="/packageLive/pages/live/images/rate2.png" mode="widthFix" />
       </view>
     </view>
 

@@ -5,7 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const LIVE_DIR = path.join(__dirname, '../pages/live');
+const LIVE_DIR = path.join(__dirname, '../packageLive/pages/live');
 const SRC = path.join(LIVE_DIR, 'live.js');
 const BACKUP = path.join(LIVE_DIR, 'live.js.bak');
 

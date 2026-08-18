@@ -6,6 +6,7 @@ const fsReady = require('./fs-ready.js');
 const { PingPongRecorder } = require('./ping-pong-recorder.js');
 const { createPreviewRecordPipeline } = require('./preview-record-pipeline.js');
 const mediaContainerTrim = require('./media-container-trim.js');
+const mediaContainerMerge = require('./media-container-merge.js');
 const { formatWxErr } = require('./wx-err.js');
 
 module.exports = {
@@ -19,5 +20,6 @@ module.exports = {
   PingPongRecorder,
   createPreviewRecordPipeline,
   mediaContainerTrim,
+  mediaContainerMerge,
   formatWxErr
 };

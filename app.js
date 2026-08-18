@@ -31,60 +31,65 @@ App({
       persistPromoSquareMatchIdFromQuery(q);
     }
 
-    // 初始化文件系统
-    const fs = wx.getFileSystemManager();
-    const highlightDir = `${wx.env.USER_DATA_PATH}/highlights`;
-    
-    fs.access({
-      path: highlightDir,
-      fail: () => {
-        fs.mkdir({
-          dirPath: highlightDir,
-          recursive: true,
-          success: () => console.log('Highlight directory created'),
-          fail: (err) => console.error('Failed to create highlight directory', err)
+    // 延迟初始化次要任务，避免阻塞首屏渲染
+    const initSubTasks = () => {
+      // 初始化文件系统
+      try {
+        const fs = wx.getFileSystemManager();
+        const highlightDir = `${wx.env.USER_DATA_PATH}/highlights`;
+        fs.access({
+          path: highlightDir,
+          fail: () => {
+            fs.mkdir({
+              dirPath: highlightDir,
+              recursive: true,
+              success: () => console.log('Highlight directory created'),
+              fail: (err) => console.error('Failed to create highlight directory', err)
+            });
+          }
         });
-      }
-    });
+      } catch (eFs) {}
 
-    /**
-     * 冷启动机型能力评估：按白名单（iPhone 12+ / Android benchmark>=25 且 OS>=10）决定
-     * 是否默认开启增强渲染。结果写入 globalData，供 live 页 _maybeBootEnhanceRender 读取。
-     * 线上紧急熔断走 globalData.enhanceRenderForceOff（发布即可关停，无需改判定逻辑）。
-     */
-    try {
-      const decision = evaluateEnhanceRenderWhitelist();
-      if (this.globalData.enhanceRenderForceOff === true) {
+      /**
+       * 冷启动机型能力评估：决定是否默认开启增强渲染
+       */
+      try {
+        const decision = evaluateEnhanceRenderWhitelist();
+        if (this.globalData.enhanceRenderForceOff === true) {
+          this.globalData.enableEnhanceRender = false;
+          this.globalData.enhanceWhitelistReason = 'force_off:' + decision.reason;
+        } else {
+          this.globalData.enableEnhanceRender = !!decision.enabled;
+          this.globalData.enhanceInitialMode = decision.initialMode || 'standard';
+          this.globalData.enhanceWhitelistReason = decision.reason;
+        }
+        this.globalData.enhanceDeviceTag = decision.deviceTag;
+      } catch (eEval) {
         this.globalData.enableEnhanceRender = false;
-        this.globalData.enhanceWhitelistReason = 'force_off:' + decision.reason;
-      } else {
-        this.globalData.enableEnhanceRender = !!decision.enabled;
-        this.globalData.enhanceInitialMode = decision.initialMode || 'standard';
-        this.globalData.enhanceWhitelistReason = decision.reason;
+        this.globalData.enhanceWhitelistReason = 'eval_exception';
       }
-      this.globalData.enhanceDeviceTag = decision.deviceTag;
-    } catch (eEval) {
-      // 评估异常 → 保守关闭，保持原链路
-      this.globalData.enableEnhanceRender = false;
-      this.globalData.enhanceWhitelistReason = 'eval_exception';
+
+      /**
+       * 独立 VK 模式支持判定（带 Storage 缓存）
+       */
+      try {
+        const vk = evaluateVkSupportCached();
+        this.globalData.vkModeSupported = !!vk.supported;
+        this.globalData.vkModeReason = vk.reason;
+      } catch (eVk) {
+        this.globalData.vkModeSupported = false;
+        this.globalData.vkModeReason = 'eval_exception';
+      }
+    };
+
+    if (typeof wx.nextTick === 'function') {
+      wx.nextTick(initSubTasks);
+    } else {
+      setTimeout(initSubTasks, 200);
     }
 
     /**
-     * 独立 VK 模式支持判定（带 Storage 缓存）：比常规增强白名单更严格，
-     * 仅高端机开放，且结果写入 Storage 7 天，避免每次冷启动重复 getSystemInfoSync。
-     */
-    try {
-      const vk = evaluateVkSupportCached();
-      this.globalData.vkModeSupported = !!vk.supported;
-      this.globalData.vkModeReason = vk.reason;
-    } catch (eVk) {
-      this.globalData.vkModeSupported = false;
-      this.globalData.vkModeReason = 'eval_exception';
-    }
-
-    /**
-     * 发热 / 内存告警桥接：转发给顶层页面的增强渲染管线，用于提前降级
-     * 避免等到系统温度告警再崩。未启用增强渲染时此处无副作用。
+     * 发热 / 内存告警桥接
      */
     if (typeof wx.onMemoryWarning === 'function') {
       wx.onMemoryWarning((res) => {
@@ -95,9 +100,7 @@ App({
             const severity = (res && typeof res.level === 'number' && res.level >= 15) ? 'severe' : 'warn';
             top._renderPipeline.hintThermalPressure(severity);
           }
-        } catch (e) {
-          // 不阻塞其它监听者
-        }
+        } catch (e) {}
       });
     }
   },

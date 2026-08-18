@@ -4,16 +4,16 @@ const {
   getToken,
   post,
   STORAGE_USER_INFO_KEY
-} = require('../../utils/request.js');
+} = require('../../../utils/request.js');
 const {
   API_PATH_CLIENT_DIAGNOSTIC_LOG
-} = require('../../config/api.js');
+} = require('../../../config/api.js');
 const {
   parseExpireAtToMs
-} = require('../../utils/referral.js');
-const storageEst = require('../../utils/file-storage-estimate.js');
-const clipsStorage = require('../../utils/miaoxie-clips-storage.js');
-const replayBufferMod = require('../../utils/replay-buffer/index.js');
+} = require('../../../utils/referral.js');
+const storageEst = require('../../../utils/file-storage-estimate.js');
+const clipsStorage = require('../../../utils/miaoxie-clips-storage.js');
+const replayBufferMod = require('../../../utils/replay-buffer/index.js');
 const deviceRecordProfile = require('../../utils/device-record-profile.js');
 /** 页面创建前锁定录制档位与 frame-size，避免 onLoad 再改 camera 属性导致黑屏。 */
 const INITIAL_RECORD_PROFILE = deviceRecordProfile.getDeviceRecordProfile();
@@ -22,17 +22,17 @@ const INITIAL_RECORD_FRAME_SIZE = INITIAL_RECORD_PROFILE.recordFrameSize || 'med
 const LIVE_AUDIT = require('./audit.js');
 const footballClockBehavior = require('./behaviors/footballClockBehavior.js');
 const liveWsBehavior = require('./behaviors/liveWsBehavior.js');
-const highlightFilenameHelper = require('../../utils/highlight-filename-helper.js');
+const highlightFilenameHelper = require('../../../utils/highlight-filename-helper.js');
 
 /** 视录分离重构后保留空壳，避免遗留 VK/增强引用导致运行时错误。 */
 
 const {
   checkSyncLabWhitelist
-} = require('../../utils/sync-lab-whitelist.js');
+} = require('../../../utils/sync-lab-whitelist.js');
 const liveWsClientMod = require('../../services/live-ws-client.js');
 const {
   loadPromoAds
-} = require('../../services/promo-live.service.js');
+} = require('../../../services/promo-live.service.js');
 const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
 /**
  * @ai-live-index Live 页单文件分区速查（AI 开发必读）
@@ -12969,7 +12969,7 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
     try {
       const {
         estimateClipSegmentsBytesFromStorage
-      } = require('../../utils/file-storage-estimate.js');
+      } = require('../../../utils/file-storage-estimate.js');
       estimateClipSegmentsBytesFromStorage().then(bytes => {
         if (!this.data.showColorModal) return;
         const mb = Math.max(0, Math.round(bytes / (1024 * 1024) * 10) / 10);
@@ -13032,7 +13032,7 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
           estimateClipSegmentsBytesFromStorage,
           estimateUserDataPathUsageBytes,
           getClipStorageHealthHint
-        } = require('../../utils/file-storage-estimate.js');
+        } = require('../../../utils/file-storage-estimate.js');
         Promise.all([estimateClipSegmentsBytesFromStorage(), estimateUserDataPathUsageBytes()]).then(([b, userB]) => {
           const mb = Math.max(0, Math.round(b / (1024 * 1024) * 10) / 10);
           const empty = mb < 0.05;
@@ -13074,7 +13074,7 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
               estimateClipSegmentsBytesFromStorage,
               estimateUserDataPathUsageBytes,
               getClipStorageHealthHint
-            } = require('../../utils/file-storage-estimate.js');
+            } = require('../../../utils/file-storage-estimate.js');
             Promise.all([estimateUserDataPathUsageBytes(), estimateClipSegmentsBytesFromStorage()]).then(([userB, clipB]) => {
               const mb = Math.max(0, Math.round(clipB / (1024 * 1024) * 10) / 10);
               let levelNow = 'severe';
@@ -15350,7 +15350,7 @@ pauseRollingForReplay: function (onPaused) {
     };
     return this.ensureHighlightDir().then(copyAllSerial).then(saved => {
       const savedPaths = saved.filter(Boolean);
-      const matchId = require('../../utils/miaoxie-clips-storage.js').normalizeMatchIdKey(task.matchId);
+      const matchId = require('../../../utils/miaoxie-clips-storage.js').normalizeMatchIdKey(task.matchId);
       if (!matchId) return;
       if (savedPaths.length === segments.length && coverTempPath) {
         const coverDest = `${dir}/${task.id}_cover.jpg`;
@@ -15447,7 +15447,7 @@ pauseRollingForReplay: function (onPaused) {
   },
   _materializeCopyOneSegment: function (task, dir, srcPath, idx) {
     const fs = wx.getFileSystemManager();
-    const replayBufferMod = require('../../utils/replay-buffer/index.js');
+    const replayBufferMod = require('../../../utils/replay-buffer/index.js');
     return new Promise(resolve => {
       const nameBase = typeof task.exportFileName === 'string' && task.exportFileName
         ? task.exportFileName.replace(/\.mp4$/i, '')
@@ -15951,8 +15951,8 @@ pauseRollingForReplay: function (onPaused) {
     });
   },
   _applyHighlightClipUpdate: function (task, savedPaths, segments, coverDest, matchId, dir) {
-    const clipsStorage = require('../../utils/miaoxie-clips-storage.js');
-    const replayBufferMod = require('../../utils/replay-buffer/index.js');
+    const clipsStorage = require('../../../utils/miaoxie-clips-storage.js');
+    const replayBufferMod = require('../../../utils/replay-buffer/index.js');
     const clipsMap = clipsStorage.readClipsMapSafe();
     if (!clipsMap) {
       this.appendHealthLog('highlight_materialize_clips_read_fail', {
@@ -16168,7 +16168,7 @@ onLoad: function (options) {
     }
   },
   _initLiveCoreState: function (options) {
-    const replayBufferMod = require('../../utils/replay-buffer/index.js');
+    const replayBufferMod = require('../../../utils/replay-buffer/index.js');
     this._applyDeviceRecordProfile();
     this._routeSportType = normalizeSportType ? normalizeSportType(options && options.sportType) : '';
     this._proScoreboardUserMoved = false;

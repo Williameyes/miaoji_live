@@ -15,7 +15,7 @@
     },
     {
       "action": "allow",
-      "page": "pages/live/live"
+      "page": "packageLive/pages/live/live"
     },
     {
       "action": "allow",

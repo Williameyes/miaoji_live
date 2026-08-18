@@ -124,6 +124,7 @@ function request(options) {
       url: fullUrl,
       method: upperMethod,
       header: mergedHeader,
+      timeout: typeof rest.timeout === 'number' ? rest.timeout : 8000,
       ...rest,
       success: (res) => {
         const { statusCode, data: body } = res;

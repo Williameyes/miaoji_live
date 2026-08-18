@@ -1088,13 +1088,13 @@
         <view class="guide-dy-step">
           <text class="guide-dy-step__label">a. 设置入口</text>
           <text class="guide-dy-step__path">开直播 → 手游 → 画面比例</text>
-          <image class="guide-dy-shot" src="/pages/live/images/rate1.png" mode="widthFix" />
+          <image class="guide-dy-shot" src="/packageLive/pages/live/images/rate1.png" mode="widthFix" />
         </view>
 
         <view class="guide-dy-step guide-dy-step--last">
           <text class="guide-dy-step__label">b. 选择比例</text>
           <text class="guide-dy-step__path">请选择「16:9」</text>
-          <image class="guide-dy-shot" src="/pages/live/images/rate2.png" mode="widthFix" />
+          <image class="guide-dy-shot" src="/packageLive/pages/live/images/rate2.png" mode="widthFix" />
         </view>
       </scroll-view>
     </view>

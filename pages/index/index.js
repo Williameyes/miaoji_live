@@ -15,11 +15,11 @@ const {
   pruneSandboxOrphanMediaSync
 } = require('../../utils/file-storage-estimate.js');
 const clipsStorage = require('../../utils/miaoxie-clips-storage.js');
-const mediaContainerTrim = require('../../utils/replay-buffer/media-container-trim.js');
+const { mediaContainerTrim, mediaContainerMerge } = require('../../utils/replay-buffer/index.js');
 const {
   MERGE_MAX_CLIPS,
   mergeClipsToSingleFile
-} = require('../../utils/replay-buffer/media-container-merge.js');
+} = mediaContainerMerge;
 const {
   appendMergeExportDiag,
   buildMergeExportDiagText
@@ -560,7 +560,12 @@ Page({
     }
     this.loadMatches();
     this.loadHighlights();
-    this.refreshFileStorageEstimate();
+    if (this._storageEstimateTimer) {
+      clearTimeout(this._storageEstimateTimer);
+    }
+    this._storageEstimateTimer = setTimeout(() => {
+      this.refreshFileStorageEstimate();
+    }, 2000);
   },
 
   /**
@@ -883,7 +888,7 @@ Page({
     wx.setStorageSync('matchConfig', match);
 
     wx.navigateTo({
-      url: '/pages/live/live?sportType=' + encodeURIComponent(normalizeSportType(match.sportType)) + '&matchId=' + encodeURIComponent(id)
+      url: '/packageLive/pages/live/live?sportType=' + encodeURIComponent(normalizeSportType(match.sportType)) + '&matchId=' + encodeURIComponent(id)
     });
   },
 

@@ -62,6 +62,35 @@ function parseAndroidMajor(system) {
   return parseInt(m[1], 10);
 }
 
+var _cachedSystemInfo = null;
+
+/**
+ * 安全获取系统/设备信息：优先使用 2.20.0+ 轻量化拆分 API，并在内存中缓存结果，避免冷启动多次调用 wx.getSystemInfoSync 阻塞主线程。
+ * @returns {Record<string, unknown>|null}
+ */
+function getSystemInfoSafe() {
+  if (_cachedSystemInfo) return _cachedSystemInfo;
+  try {
+    if (typeof wx.getDeviceInfo === 'function' && typeof wx.getAppBaseInfo === 'function') {
+      var dev = wx.getDeviceInfo() || {};
+      var base = wx.getAppBaseInfo() || {};
+      _cachedSystemInfo = {
+        platform: dev.platform || base.platform || '',
+        model: dev.model || '',
+        system: dev.system || '',
+        benchmarkLevel: typeof dev.benchmarkLevel === 'number' ? dev.benchmarkLevel : -1
+      };
+      return _cachedSystemInfo;
+    }
+  } catch (eDev) {}
+  try {
+    _cachedSystemInfo = wx.getSystemInfoSync();
+    return _cachedSystemInfo;
+  } catch (e) {
+    return null;
+  }
+}
+
 /**
  * 评估当前机型是否进入增强渲染白名单。
  * @returns {EnhanceWhitelistDecision}
@@ -73,13 +102,7 @@ function evaluateEnhanceRenderWhitelist() {
     reason: 'eval_init',
     deviceTag: 'unknown'
   };
-  var si = null;
-  try {
-    si = wx.getSystemInfoSync();
-  } catch (e) {
-    fallback.reason = 'systeminfo_fail';
-    return fallback;
-  }
+  var si = getSystemInfoSafe();
   if (!si || typeof si !== 'object') {
     fallback.reason = 'systeminfo_empty';
     return fallback;
@@ -173,8 +196,7 @@ function evaluateVkSupport() {
     return fallback;
   }
 
-  var si = null;
-  try { si = wx.getSystemInfoSync(); } catch (e) { fallback.reason = 'systeminfo_fail'; return fallback; }
+  var si = getSystemInfoSafe();
   if (!si) { fallback.reason = 'systeminfo_empty'; return fallback; }
 
   var platform = (si.platform || '').toLowerCase();

@@ -2,7 +2,7 @@
  * @fileoverview rec 通道 WebSocket 客户端（高光素材同步，与记分 score 通道隔离）
  */
 
-const API = require('../config/api.js');
+const API = require('../../config/api.js');
 const { fetchWsToken } = require('../utils/ws-token-request.js');
 
 /** @type {string} WSS 网关根地址（由 HTTPS BaseURL 推导） */

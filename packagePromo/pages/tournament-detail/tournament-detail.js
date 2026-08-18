@@ -250,11 +250,14 @@ Page({
 
   onLoad: function (query) {
     try {
-      const sys = wx.getSystemInfoSync ? wx.getSystemInfoSync() : {};
-      this.setData({ statusBarHeight: sys.statusBarHeight || 20 });
-    } catch (e) {
-      // fallback
-    }
+      let statusBarHeight = 20;
+      if (typeof wx.getWindowInfo === 'function') {
+        statusBarHeight = wx.getWindowInfo().statusBarHeight || 20;
+      } else if (typeof wx.getSystemInfoSync === 'function') {
+        statusBarHeight = wx.getSystemInfoSync().statusBarHeight || 20;
+      }
+      this.setData({ statusBarHeight });
+    } catch (e) {}
 
     // 开启微信原生发送给好友与分享到朋友圈 (shareTimeline)
     if (wx.showShareMenu) {

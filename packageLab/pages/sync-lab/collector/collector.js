@@ -12,7 +12,7 @@
 
 var API = require('../../../../config/api.js');
 var REQ = require('../../../../utils/request.js');
-var wsTokenReq = require('../../../../utils/ws-token-request.js');
+var wsTokenReq = require('../../../../packageLive/utils/ws-token-request.js');
 var COLLECTOR_AUDIT = require('./audit.js');
 
 /**
