@@ -12,7 +12,7 @@
  */
 
 const API = require('../../config/api.js');
-const { fetchWsToken } = require('../utils/ws-token-request.js');
+const { fetchWsToken } = require('../../utils/ws-token-request.js');
 
 /** @type {string} WSS 网关根地址（由 HTTPS BaseURL 推导） */
 const WS_BASE_URL = String(API.API_BASE_URL || '').replace(/^http/i, 'ws');

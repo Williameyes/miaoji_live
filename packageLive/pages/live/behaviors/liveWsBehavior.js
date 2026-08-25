@@ -439,13 +439,35 @@ _liveWsOnSocketMessage: function (raw) {
 
   _renderCropFrameToCanvas: function (base64Img) {
     var self = this;
-    if (this._timeCropCanvasContext && this._timeCropCanvas && this._timeCropCanvasLogicalW > 0) {
+    if (!base64Img) return;
+    if (this._timeCropCanvasContext && this._timeCropCanvas) {
       var img = this._timeCropCanvas.createImage();
       img.onload = function () {
-        var renderW = self._timeCropCanvasLogicalW || 40;
-        var renderH = self._timeCropCanvasLogicalH || 30;
-        self._timeCropCanvasContext.clearRect(0, 0, self._timeCropCanvas.width, self._timeCropCanvas.height);
-        self._timeCropCanvasContext.drawImage(img, 0, 0, renderW, renderH);
+        var naturalW = img.width || 4;
+        var naturalH = img.height || 3;
+        var aspect = naturalW / naturalH;
+        if (isNaN(aspect) || aspect <= 0) aspect = 4 / 3;
+
+        // 根据自由切图宽高比计算容器的 rpx 宽度（固定高度 30rpx，宽度动态伸缩）
+        var targetRpxW = Math.max(24, Math.min(220, Math.round(30 * aspect)));
+        var targetStyle = 'width: ' + targetRpxW + 'rpx;';
+
+        if (self.data.cropTimeBoxStyle !== targetStyle) {
+          self.setData({ cropTimeBoxStyle: targetStyle });
+        }
+
+        var dpr = self._timeCropCanvasDpr || 2;
+        var baseH = self._timeCropCanvasLogicalH || 15;
+        var renderW = Math.round(baseH * aspect);
+
+        if (self._timeCropCanvas.width !== Math.round(renderW * dpr) || self._timeCropCanvas.height !== Math.round(baseH * dpr)) {
+          self._timeCropCanvas.width = Math.round(renderW * dpr);
+          self._timeCropCanvas.height = Math.round(baseH * dpr);
+          self._timeCropCanvasContext.scale(dpr, dpr);
+        }
+
+        self._timeCropCanvasContext.clearRect(0, 0, renderW, baseH);
+        self._timeCropCanvasContext.drawImage(img, 0, 0, renderW, baseH);
       };
       img.src = base64Img;
       return;
@@ -458,21 +480,35 @@ _liveWsOnSocketMessage: function (raw) {
           var canvas = res[0].node;
           var ctx = canvas.getContext('2d');
           var dpr = (wx.getSystemInfoSync && wx.getSystemInfoSync().pixelRatio) || 2;
-          var nodeW = res[0].width || 40;
-          var nodeH = res[0].height || 30;
-          if (nodeW <= 0) nodeW = 40;
-          if (nodeH <= 0) nodeH = 30;
-          canvas.width = nodeW * dpr;
-          canvas.height = nodeH * dpr;
-          ctx.scale(dpr, dpr);
+          var nodeH = res[0].height || 15;
+          if (nodeH <= 0) nodeH = 15;
+
           self._timeCropCanvas = canvas;
           self._timeCropCanvasContext = ctx;
-          self._timeCropCanvasLogicalW = nodeW;
+          self._timeCropCanvasDpr = dpr;
           self._timeCropCanvasLogicalH = nodeH;
+
           var img = canvas.createImage();
           img.onload = function () {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(img, 0, 0, nodeW, nodeH);
+            var naturalW = img.width || 4;
+            var naturalH = img.height || 3;
+            var aspect = naturalW / naturalH;
+            if (isNaN(aspect) || aspect <= 0) aspect = 4 / 3;
+
+            var targetRpxW = Math.max(24, Math.min(220, Math.round(30 * aspect)));
+            var targetStyle = 'width: ' + targetRpxW + 'rpx;';
+
+            if (self.data.cropTimeBoxStyle !== targetStyle) {
+              self.setData({ cropTimeBoxStyle: targetStyle });
+            }
+
+            var renderW = Math.round(nodeH * aspect);
+            canvas.width = Math.round(renderW * dpr);
+            canvas.height = Math.round(nodeH * dpr);
+            ctx.scale(dpr, dpr);
+
+            ctx.clearRect(0, 0, renderW, nodeH);
+            ctx.drawImage(img, 0, 0, renderW, nodeH);
           };
           img.src = base64Img;
         }

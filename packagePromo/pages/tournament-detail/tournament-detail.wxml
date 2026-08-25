@@ -86,13 +86,28 @@
       </view>
 
       <view class="td-table-card" wx:else>
-        <!-- 赛程表格头 -->
+        <!-- 赛程表格头 (支持表头点击排序) -->
         <view class="td-table-header td-sched-header">
-          <text class="col-sch-group">组别</text>
-          <text class="col-sch-teams">比赛队 (对阵)</text>
-          <text class="col-sch-score">比分/状态</text>
-          <text class="col-sch-time">时间</text>
-          <text class="col-sch-venue">场地</text>
+          <view class="col-sch-group td-sortable-col {{sortField === 'group' ? 'active' : ''}}" bindtap="onSortColumn" data-field="group" hover-class="td-col-hover" hover-stay-time="100">
+            <text>组别</text>
+            <text class="td-sort-icon">{{sortField === 'group' ? (sortOrder === 'asc' ? '▲' : '▼') : '↕'}}</text>
+          </view>
+          <view class="col-sch-teams td-sortable-col {{sortField === 'teams' ? 'active' : ''}}" bindtap="onSortColumn" data-field="teams" hover-class="td-col-hover" hover-stay-time="100">
+            <text>比赛队</text>
+            <text class="td-sort-icon">{{sortField === 'teams' ? (sortOrder === 'asc' ? '▲' : '▼') : '↕'}}</text>
+          </view>
+          <view class="col-sch-score td-sortable-col {{sortField === 'score' ? 'active' : ''}}" bindtap="onSortColumn" data-field="score" hover-class="td-col-hover" hover-stay-time="100">
+            <text>比分/状态</text>
+            <text class="td-sort-icon">{{sortField === 'score' ? (sortOrder === 'asc' ? '▲' : '▼') : '↕'}}</text>
+          </view>
+          <view class="col-sch-time td-sortable-col {{sortField === 'time' ? 'active' : ''}}" bindtap="onSortColumn" data-field="time" hover-class="td-col-hover" hover-stay-time="100">
+            <text>时间</text>
+            <text class="td-sort-icon">{{sortField === 'time' ? (sortOrder === 'asc' ? '▲' : '▼') : '↕'}}</text>
+          </view>
+          <view class="col-sch-venue td-sortable-col {{sortField === 'venue' ? 'active' : ''}}" bindtap="onSortColumn" data-field="venue" hover-class="td-sort-icon-hover" hover-stay-time="100">
+            <text>场地</text>
+            <text class="td-sort-icon">{{sortField === 'venue' ? (sortOrder === 'asc' ? '▲' : '▼') : '↕'}}</text>
+          </view>
         </view>
 
         <!-- 赛程表格行 -->

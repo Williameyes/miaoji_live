@@ -12,7 +12,7 @@
 
 var API = require('../../../../config/api.js');
 var REQ = require('../../../../utils/request.js');
-var wsTokenReq = require('../../../../packageLive/utils/ws-token-request.js');
+var wsTokenReq = require('../../../../utils/ws-token-request.js');
 var COLLECTOR_AUDIT = require('./audit.js');
 
 /**
@@ -2706,7 +2706,7 @@ Page({
   onLoad: function (options) {
     var mode = (options && options.mode) || wx.getStorageSync('HOOPS_TIME_SYNC_MODE') || 'ocr';
     wx.setStorageSync('HOOPS_TIME_SYNC_MODE', mode);
-    var sys = wx.getSystemInfoSync();
+    var sys = typeof wx.getWindowInfo === 'function' ? wx.getWindowInfo() : (wx.getSystemInfoSync ? wx.getSystemInfoSync() : {});
     var camW = sys.windowWidth || 667;
     var camH = sys.windowHeight || 375;
     _previewW = camW;
@@ -3244,19 +3244,7 @@ Page({
       if (isNaN(newW) || isNaN(newH)) return;
       var curr = self.data.rois[idx];
 
-      // 时间框只允许固定 4:3 比例 (Width:Height = 4:3)，支持用户放缩，但比例不变
-      if (idx === 2 || (self.data.timeSyncMode === 'crop_image' && curr && curr.label === '时间')) {
-        var desiredAspect = 4 / 3;
-        var pixelW = newW * pw;
-        var pixelH = pixelW / desiredAspect;
-        newH = pixelH / ph;
-        if (newH > 1 - _dragging.origY) {
-          newH = 1 - _dragging.origY;
-          pixelH = newH * ph;
-          pixelW = pixelH * desiredAspect;
-          newW = pixelW / pw;
-        }
-      }
+      // 选框支持自由拉伸调整宽高比例，不再硬性锁定 4:3，以适应现场各种形状（长条、方型等）记分牌
       if (curr && curr.w === newW && curr.h === newH) return;
       var update = {};
       update['rois[' + idx + '].w'] = newW;

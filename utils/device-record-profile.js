@@ -30,18 +30,35 @@ const LOW_END_ROLLING_FULL_COPY_CAP_BYTES = Math.floor(16 * 1024 * 1024);
 /** @type {typeof RECORD_PROFILE_720P|null} */
 let cachedProfile = null;
 
+let cachedSys = null;
+function getSysInfoCached() {
+  if (cachedSys) return cachedSys;
+  if (typeof wx === 'undefined') return {};
+  try {
+    if (typeof wx.getDeviceInfo === 'function' && typeof wx.getAppBaseInfo === 'function') {
+      const dev = wx.getDeviceInfo();
+      const app = wx.getAppBaseInfo();
+      cachedSys = Object.assign({}, dev, app, {
+        platform: app.platform || dev.platform,
+        system: dev.system || app.system
+      });
+    } else if (typeof wx.getSystemInfoSync === 'function') {
+      cachedSys = wx.getSystemInfoSync() || {};
+    } else {
+      cachedSys = {};
+    }
+  } catch (e) {
+    cachedSys = {};
+  }
+  return cachedSys;
+}
+
 /**
  * @returns {string}
  */
 function getHostPlatform() {
-  if (typeof wx === 'undefined' || typeof wx.getSystemInfoSync !== 'function') {
-    return '';
-  }
-  try {
-    return String(wx.getSystemInfoSync().platform || '').toLowerCase();
-  } catch (e) {
-    return '';
-  }
+  const sys = getSysInfoCached();
+  return String(sys.platform || '').toLowerCase();
 }
 
 /**
@@ -62,11 +79,8 @@ function parseAndroidMajorVersion(system) {
  */
 function isLowEndAndroidDevice() {
   if (getHostPlatform() !== 'android') return false;
-  if (typeof wx === 'undefined' || typeof wx.getSystemInfoSync !== 'function') {
-    return false;
-  }
   try {
-    const sys = wx.getSystemInfoSync();
+    const sys = getSysInfoCached();
     const androidMajor = parseAndroidMajorVersion(sys.system);
     if (androidMajor > 0 && androidMajor <= 12) return true;
     const benchmark = Number(sys.benchmarkLevel);

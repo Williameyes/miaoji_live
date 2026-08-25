@@ -19,6 +19,10 @@ const {
 /** 与首页、Live 一致的全局分享卡片（5:4 PNG） */
 const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
 
+const deviceRecordProfile = require('../../utils/device-record-profile.js');
+const recSyncWsClient = require('../../services/rec-sync-ws-client.js');
+const wsTokenReq = require('../../utils/ws-token-request.js');
+
 const {
   readPendingReferrer,
   clearPendingReferrer,

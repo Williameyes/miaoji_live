@@ -3,7 +3,7 @@
  * 竖持 9:16 / 横置 16:9（横置须物理旋转手机，与直播页一致）。
  */
 
-const deviceRecordProfile = require('../../packageLive/utils/device-record-profile.js');
+const deviceRecordProfile = require('../../utils/device-record-profile.js');
 
 /** @type {'native'|'preview_record'} */
 var REC_MODE_NATIVE = 'native';
@@ -36,14 +36,22 @@ function normalizeRecMode(mode) {
  * 是否为小米/Redmi 系 Android。
  * @returns {boolean}
  */
+var _cachedXiaomiBrand = null;
 function isXiaomiAndroid() {
-  if (typeof wx === 'undefined' || typeof wx.getSystemInfoSync !== 'function') return false;
+  if (_cachedXiaomiBrand !== null) return _cachedXiaomiBrand;
+  if (typeof wx === 'undefined') return false;
   try {
-    var sys = wx.getSystemInfoSync();
-    if (String(sys.platform || '').toLowerCase() !== 'android') return false;
+    var sys = typeof wx.getDeviceInfo === 'function' ? wx.getDeviceInfo() : (wx.getSystemInfoSync ? wx.getSystemInfoSync() : {});
+    var platform = String(sys.platform || '').toLowerCase();
+    if (platform !== 'android') {
+      _cachedXiaomiBrand = false;
+      return false;
+    }
     var brand = String(sys.brand || sys.manufacturer || '').toLowerCase();
-    return brand.indexOf('xiaomi') >= 0 || brand.indexOf('redmi') >= 0;
+    _cachedXiaomiBrand = brand.indexOf('xiaomi') >= 0 || brand.indexOf('redmi') >= 0;
+    return _cachedXiaomiBrand;
   } catch (e) {
+    _cachedXiaomiBrand = false;
     return false;
   }
 }

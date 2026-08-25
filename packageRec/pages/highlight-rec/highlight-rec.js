@@ -2,7 +2,7 @@
  * @fileoverview 高光素材机实验页面逻辑控制器。
  */
 
-const recSync = require('../../../packageLive/services/rec-sync-ws-client.js');
+const recSync = require('../../../services/rec-sync-ws-client.js');
 const { createHighlightRecPipeline } = require('../../utils/highlight-rec-pipeline.js');
 const highlightRecProfile = require('../../utils/highlight-rec-profile.js');
 const highlightRecStorageCleanup = require('../../utils/highlight-rec-storage-cleanup.js');
@@ -123,7 +123,7 @@ Page({
   onLoad: function (options) {
     this._unloaded = false;
     this._initHealthMonitor();
-    var sys = wx.getSystemInfoSync();
+    var sys = typeof wx.getWindowInfo === 'function' ? wx.getWindowInfo() : (wx.getSystemInfoSync ? wx.getSystemInfoSync() : {});
     var use1080pStored = !!wx.getStorageSync(STORAGE_KEY_USE_1080P);
     var actionModeStored = !!wx.getStorageSync(STORAGE_KEY_ACTION_MODE);
     var aspectModeStored = highlightRecProfile.normalizeAspectMode(

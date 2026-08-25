@@ -14,7 +14,7 @@ const {
 const storageEst = require('../../../utils/file-storage-estimate.js');
 const clipsStorage = require('../../../utils/miaoxie-clips-storage.js');
 const replayBufferMod = require('../../../utils/replay-buffer/index.js');
-const deviceRecordProfile = require('../../utils/device-record-profile.js');
+const deviceRecordProfile = require('../../../utils/device-record-profile.js');
 /** 页面创建前锁定录制档位与 frame-size，避免 onLoad 再改 camera 属性导致黑屏。 */
 const INITIAL_RECORD_PROFILE = deviceRecordProfile.getDeviceRecordProfile();
 /** Live 页 onCameraFrame 抽帧档位（与 resolution=high 预览独立，初始化后不可变）。 */
@@ -1137,6 +1137,7 @@ Page({
     timeSyncMode: 'crop_image',
     hasCropFrameImage: false,
     cropFrameBase64: '',
+    cropTimeBoxStyle: '',
     /** 采集端 sync_score=1 时自动跟分；false 时自动模式下仍可手动改分 */
     liveWsScoreSyncEnabled: false,
     /** 云端 WSS 已连接（角标） */
@@ -13974,8 +13975,9 @@ pauseRollingForReplay: function (onPaused) {
     this._replayPinchBaselineScale = 1;
     this._clearReplayPinchSnapTimer();
     this._resetReplayTransformCache();
+    const isAlreadyReplaying = !!this.data.isReplaying;
     this.setData({
-      showReplayMask: true,
+      showReplayMask: !isAlreadyReplaying,
       replayMaskText: 'REPLAY',
       replayMaskKind: 'replay',
       replayFastForwarding: showFastForwardMask,
@@ -14002,8 +14004,7 @@ pauseRollingForReplay: function (onPaused) {
       replaySlotBSrc: '',
       replaySlotBInitialTime: 0
     });
-    this._replayStartTimer = setTimeout(() => {
-      this._replayStartTimer = null;
+    const startPlay = () => {
       this.setData({
         isReplaying: true,
         replayHighlightChain: useChain,
@@ -14023,18 +14024,28 @@ pauseRollingForReplay: function (onPaused) {
           } catch (e) {}
         });
       });
-    }, peakMs);
-    this._replayMaskHideTimer = setTimeout(() => {
-      this._replayMaskHideTimer = null;
-      if (this._replayIntroGuardActive) {
-        this._replayMaskHideTimer = setTimeout(() => {
-          this._replayMaskHideTimer = null;
-          this._releaseReplayIntroMask('guard_timeout', -1);
-        }, 900);
-        return;
-      }
-      this._releaseReplayIntroMask('timer', -1);
-    }, introMs);
+    };
+    if (isAlreadyReplaying) {
+      // 连续回放时无需弹出转场过渡遮罩动画，直接切片播放
+      startPlay();
+    } else {
+      // 首次进入回放时显示转场动画遮罩
+      this._replayStartTimer = setTimeout(() => {
+        this._replayStartTimer = null;
+        startPlay();
+      }, peakMs);
+      this._replayMaskHideTimer = setTimeout(() => {
+        this._replayMaskHideTimer = null;
+        if (this._replayIntroGuardActive) {
+          this._replayMaskHideTimer = setTimeout(() => {
+            this._replayMaskHideTimer = null;
+            this._releaseReplayIntroMask('guard_timeout', -1);
+          }, 900);
+          return;
+        }
+        this._releaseReplayIntroMask('timer', -1);
+      }, introMs);
+    }
   },
   /**
    * 冷启动首段 initial-time seek 完成前保留 REPLAY 遮罩，避免用户看到起播跳动。
@@ -16561,7 +16572,7 @@ onLoad: function (options) {
       this._recSyncWs.destroy();
     }
     const self = this;
-    const client = require('../../services/rec-sync-ws-client.js');
+    const client = require('../../../services/rec-sync-ws-client.js');
     this._recSyncWs = client.createRecSyncWsClient({
       onOpen: function () {
         self.setData({ recSyncConnected: true });

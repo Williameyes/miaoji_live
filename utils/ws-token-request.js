@@ -7,7 +7,7 @@
  * - 不传 data（body 为空，文档：「无需传 JSON」）
  */
 
-const { API_BASE_URL } = require('../../config/api.js');
+const { API_BASE_URL } = require('../config/api.js');
 
 /** @type {string} */
 const WS_TOKEN_PATH = '/api/get_token';

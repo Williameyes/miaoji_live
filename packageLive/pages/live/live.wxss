@@ -929,7 +929,7 @@ button.live-ble-btn::after {
   gap: 1rpx;
 }
 
-/* 切图同步：专业转播级 4:3 独立黑晶计时模块 (绝对定位在 score-bar-core 右侧，零偏移主记分栏，不打乱居中，绝不重叠) */
+/* 切图同步：专业转播级自适应宽度黑晶计时模块 (绝对定位在 score-bar-core 右侧，零偏移主记分栏，不打乱居中) */
 .crop-time-box {
   position: absolute;
   left: calc(100% + 10rpx);
@@ -941,6 +941,7 @@ button.live-ble-btn::after {
   display: flex;
   align-items: center;
   justify-content: center;
+  min-width: 30rpx;
   width: 44rpx;
   height: 30rpx;
   padding: 2rpx;
@@ -951,6 +952,7 @@ button.live-ble-btn::after {
   box-shadow: 0 4rpx 12rpx rgba(0, 0, 0, 0.55), inset 0 1rpx 0 rgba(255, 255, 255, 0.25);
   box-sizing: border-box;
   overflow: hidden;
+  transition: width 0.2s ease-out;
 }
 
 .crop-time-box--hidden {
@@ -962,6 +964,8 @@ button.live-ble-btn::after {
   height: 100%;
   display: block;
   border-radius: 4rpx;
+  mix-blend-mode: screen;
+  filter: contrast(1.15) brightness(1.05);
 }
 
 .period-text--auto {

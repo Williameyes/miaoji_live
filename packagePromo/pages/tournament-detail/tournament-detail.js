@@ -238,6 +238,10 @@ Page({
     currentStandings: [],
     currentGroupedStandings: [], // 分组排行榜多表格堆叠数据
     
+    // 表头排序状态
+    sortField: '', // '' | 'group' | 'teams' | 'score' | 'time' | 'venue'
+    sortOrder: 'default', // 'default' | 'asc' | 'desc'
+    
     // 比分修改 Modal
     showScoreModal: false,
     editingMatch: null,
@@ -520,6 +524,91 @@ Page({
     });
   },
 
+  /**
+   * 根据 sortField 与 sortOrder 对赛程数据列表进行排序
+   */
+  _sortMatches: function (list, field, order) {
+    if (!Array.isArray(list) || list.length === 0) return [];
+    if (!field || order === 'default') {
+      return list;
+    }
+
+    const matchesCopy = list.slice();
+
+    matchesCopy.sort(function (a, b) {
+      if (field === 'time') {
+        const timeA = String(a.start_time || (a.datePart + ' ' + a.timePart) || '').trim();
+        const timeB = String(b.start_time || (b.datePart + ' ' + b.timePart) || '').trim();
+        const res = timeA.localeCompare(timeB);
+        return order === 'asc' ? res : -res;
+      } else if (field === 'group') {
+        const seqA = Number(a.match_seq || 0);
+        const seqB = Number(b.match_seq || 0);
+        if (seqA > 0 && seqB > 0 && seqA !== seqB) {
+          return order === 'asc' ? seqA - seqB : seqB - seqA;
+        }
+        const stageA = String(a.stage_id || '');
+        const stageB = String(b.stage_id || '');
+        const res = stageA.localeCompare(stageB, 'zh-Hans-CN');
+        return order === 'asc' ? res : -res;
+      } else if (field === 'teams') {
+        const nameA = String(a.display_team_a || a.team_a || '');
+        const nameB = String(b.display_team_a || b.team_a || '');
+        const res = nameA.localeCompare(nameB, 'zh-Hans-CN');
+        return order === 'asc' ? res : -res;
+      } else if (field === 'score') {
+        const validA = a.hasValidScores ? 1 : 0;
+        const validB = b.hasValidScores ? 1 : 0;
+        if (validA !== validB) {
+          return order === 'asc' ? validA - validB : validB - validA;
+        }
+        const scoreSumA = Number(a.score_a || 0) + Number(a.score_b || 0);
+        const scoreSumB = Number(b.score_a || 0) + Number(b.score_b || 0);
+        return order === 'asc' ? scoreSumA - scoreSumB : scoreSumB - scoreSumA;
+      } else if (field === 'venue') {
+        const venueA = String(a.venue || '');
+        const venueB = String(b.venue || '');
+        const res = venueA.localeCompare(venueB, 'zh-Hans-CN');
+        return order === 'asc' ? res : -res;
+      }
+      return 0;
+    });
+
+    return matchesCopy;
+  },
+
+  /**
+   * 表头列点击切换排序 (三态: 默认 -> 升序 ▲ -> 降序 ▼ -> 默认)
+   */
+  onSortColumn: function (e) {
+    const field = e.currentTarget.dataset.field;
+    if (!field) return;
+
+    let sortField = this.data.sortField;
+    let sortOrder = this.data.sortOrder;
+
+    if (sortField !== field) {
+      sortField = field;
+      sortOrder = 'asc';
+    } else {
+      if (sortOrder === 'asc') {
+        sortOrder = 'desc';
+      } else if (sortOrder === 'desc') {
+        sortField = '';
+        sortOrder = 'default';
+      } else {
+        sortOrder = 'asc';
+      }
+    }
+
+    this.setData({
+      sortField: sortField,
+      sortOrder: sortOrder
+    });
+
+    this._filterStageData(this.data.selectedStageId);
+  },
+
   _filterStageData: function (stageId, matchesList, standingsMap) {
     const matches = matchesList || (this.data.formattedMatches || (this.data.detail ? this.data.detail.matches : []));
     const standings = standingsMap || (this.data.detail ? this.data.detail.standings : {});
@@ -531,6 +620,8 @@ Page({
         return (m.stage_id || 'stage_default') === stageId;
       });
     }
+
+    const sortedMatches = this._sortMatches(filteredMatches, this.data.sortField, this.data.sortOrder);
 
     let filteredStandings = [];
     let currentGroupedStandings = [];
@@ -578,7 +669,7 @@ Page({
     }
 
     this.setData({
-      currentMatches: filteredMatches,
+      currentMatches: sortedMatches,
       currentStandings: filteredStandings,
       currentGroupedStandings: currentGroupedStandings
     });
