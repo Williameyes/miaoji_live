@@ -480,6 +480,12 @@ page {
   white-space: normal;
 }
 
+.td-sch-pending-tag.is-overdue {
+  color: #D97706;
+  background: #FFF7ED;
+  border: 1rpx solid #FDE68A;
+}
+
 .col-sch-time {
   width: 95rpx;
   display: flex;
@@ -953,4 +959,29 @@ page {
 .poster-btn-hover {
   opacity: 0.9;
   transform: translateY(2rpx);
+}
+
+/* 编辑 Modal 中的时间拨盘与场地输入样式 */
+.td-picker-val {
+  background: #F8FAFC;
+  border: 2rpx solid #E2E8F0;
+  border-radius: 18rpx;
+  height: 76rpx;
+  line-height: 76rpx;
+  padding: 0 20rpx;
+  color: #0F172A;
+  font-size: 26rpx;
+  font-weight: 700;
+  text-align: center;
+}
+
+.td-venue-input {
+  background: #F8FAFC;
+  border: 2rpx solid #E2E8F0;
+  border-radius: 18rpx;
+  height: 76rpx;
+  padding: 0 24rpx;
+  color: #0F172A;
+  font-size: 26rpx;
+  font-weight: 600;
 }

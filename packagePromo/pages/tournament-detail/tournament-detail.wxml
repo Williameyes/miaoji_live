@@ -126,12 +126,15 @@
               <text class="td-sch-team away {{item.score_b > item.score_a ? 'win-team' : ''}}">{{item.display_team_b || item.team_b}}</text>
             </view>
 
-            <!-- 比分 / 未开始 状态 -->
+            <!-- 比分 / 待录入 / 未开始 状态 -->
             <view class="col-sch-score">
               <block wx:if="{{item.hasValidScores}}">
                 <text class="td-sch-score-num {{item.score_a > item.score_b ? 'win' : ''}}">{{item.score_a}}</text>
                 <text class="td-sch-score-sep">:</text>
                 <text class="td-sch-score-num {{item.score_b > item.score_a ? 'win' : ''}}">{{item.score_b}}</text>
+              </block>
+              <block wx:elif="{{item.isPendingScore}}">
+                <text class="td-sch-pending-tag is-overdue">待录入</text>
               </block>
               <block wx:else>
                 <text class="td-sch-pending-tag">未开始</text>
@@ -197,10 +200,10 @@
     </view>
   </block>
 
-  <!-- 比赛对阵与比分编辑 Modal (所有者权限) -->
+  <!-- 比赛信息编辑 Modal (所有者权限) -->
   <view class="td-modal-overlay" wx:if="{{showScoreModal}}">
     <view class="td-modal-card">
-      <view class="td-modal-title">编辑对阵队伍与比分结果</view>
+      <view class="td-modal-title">编辑比赛信息</view>
 
       <!-- 队伍名称编辑 (智能识别胜者 + 快捷点选队伍) -->
       <view class="td-modal-section-title">对阵队伍 (自动推算胜者，点击下方队伍快速填入)</view>
@@ -237,6 +240,29 @@
               </view>
             </block>
           </view>
+        </view>
+      </view>
+
+      <!-- 比赛场地与时间编辑 -->
+      <view class="td-modal-section-title">比赛时间与场地</view>
+      <view class="td-modal-datetime-venue">
+        <view class="td-modal-inputs" style="margin-bottom: 20rpx;">
+          <view class="td-input-group">
+            <text class="td-input-label">开赛日期</text>
+            <picker mode="date" value="{{editStartDate}}" bindchange="onEditDateChange">
+              <view class="td-picker-val">{{editStartDate || '选择日期'}}</view>
+            </picker>
+          </view>
+          <view class="td-input-group">
+            <text class="td-input-label">开赛时间</text>
+            <picker mode="time" value="{{editStartTime}}" bindchange="onEditTimeChange">
+              <view class="td-picker-val">{{editStartTime || '选择时间'}}</view>
+            </picker>
+          </view>
+        </view>
+        <view class="td-input-group" style="margin-bottom: 30rpx;">
+          <text class="td-input-label">比赛场地</text>
+          <input class="td-venue-input" value="{{editVenue}}" bindinput="onEditVenueInput" placeholder="请输入比赛场地 (例如：1号场地)" />
         </view>
       </view>
 

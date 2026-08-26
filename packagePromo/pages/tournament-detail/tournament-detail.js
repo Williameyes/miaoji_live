@@ -242,11 +242,14 @@ Page({
     sortField: '', // '' | 'group' | 'teams' | 'score' | 'time' | 'venue'
     sortOrder: 'default', // 'default' | 'asc' | 'desc'
     
-    // 比分修改 Modal
+    // 比分/比赛信息修改 Modal
     showScoreModal: false,
     editingMatch: null,
     editTeamA: '',
     editTeamB: '',
+    editVenue: '',
+    editStartDate: '',
+    editStartTime: '',
     scoreA: '',
     scoreB: '',
     submittingScore: false
@@ -301,10 +304,21 @@ Page({
     return fetchTournamentDetail(id)
       .then(function (detail) {
         const rawMatches = detail.matches || [];
+        const now = Date.now();
         const formattedMatches = rawMatches.map(function (m) {
           const rawTime = String(m.start_time || '').trim();
           let datePart = '';
           let timePart = '';
+          let matchTs = 0;
+
+          if (rawTime) {
+            const normTime = rawTime.replace(/-/g, '/').replace('T', ' ');
+            const ts = Date.parse(normTime);
+            if (!isNaN(ts)) {
+              matchTs = ts;
+            }
+          }
+
           const timeMatch = rawTime.match(/(\d{2}-\d{2})\s+(\d{2}:\d{2})/);
           if (timeMatch) {
             datePart = timeMatch[1];
@@ -318,6 +332,7 @@ Page({
           const hasScoreA = m.score_a !== null && m.score_a !== undefined && m.score_a !== 'null' && m.score_a !== '';
           const hasScoreB = m.score_b !== null && m.score_b !== undefined && m.score_b !== 'null' && m.score_b !== '';
           const hasValidScores = hasScoreA && hasScoreB;
+          const isPendingScore = !hasValidScores && matchTs > 0 && now >= matchTs;
 
           return Object.assign({}, m, {
             datePart: datePart || '—',
@@ -326,7 +341,8 @@ Page({
             team_b: String(m.team_b || '客队').replace(/null/g, ''),
             score_a: hasScoreA ? Number(m.score_a) : 0,
             score_b: hasScoreB ? Number(m.score_b) : 0,
-            hasValidScores: hasValidScores
+            hasValidScores: hasValidScores,
+            isPendingScore: isPendingScore
           });
         });
 
@@ -737,14 +753,39 @@ Page({
     const resolvedA = resolveTeamCodeToActualName(match.team_a, standings, allMatches);
     const resolvedB = resolveTeamCodeToActualName(match.team_b, standings, allMatches);
 
-    const isPlaceholderA = /^\d+(胜|负)$|^[A-Z]\d+$/i.test(match.team_a);
-    const isPlaceholderB = /^\d+(胜|负)$|^[A-Z]\d+$/i.test(match.team_b);
+    const rawTime = String(match.start_time || '').trim();
+    let startDate = '';
+    let startTime = '';
+    if (rawTime) {
+      const parts = rawTime.split(/[\sT]+/);
+      if (parts[0]) {
+        startDate = parts[0];
+      }
+      if (parts[1]) {
+        startTime = parts[1].slice(0, 5);
+      }
+    }
+
+    if (!startDate || !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, '0');
+      const d = String(now.getDate()).padStart(2, '0');
+      startDate = y + '-' + m + '-' + d;
+    }
+
+    if (!startTime || !/^\d{2}:\d{2}$/.test(startTime)) {
+      startTime = '00:00';
+    }
 
     this.setData({
       showScoreModal: true,
       editingMatch: match,
       editTeamA: resolvedA || (match.team_a && !/^\d+胜|^\d+负/.test(match.team_a) ? match.team_a : ''),
       editTeamB: resolvedB || (match.team_b && !/^\d+胜|^\d+负/.test(match.team_b) ? match.team_b : ''),
+      editVenue: match.venue || '',
+      editStartDate: startDate,
+      editStartTime: startTime,
       scoreA: match.score_a !== null && match.score_a !== undefined && match.hasValidScores ? String(match.score_a) : '',
       scoreB: match.score_b !== null && match.score_b !== undefined && match.hasValidScores ? String(match.score_b) : ''
     });
@@ -768,6 +809,9 @@ Page({
       editingMatch: null,
       editTeamA: '',
       editTeamB: '',
+      editVenue: '',
+      editStartDate: '',
+      editStartTime: '',
       scoreA: '',
       scoreB: ''
     });
@@ -779,6 +823,18 @@ Page({
 
   onEditTeamBInput: function (e) {
     this.setData({ editTeamB: e.detail.value });
+  },
+
+  onEditVenueInput: function (e) {
+    this.setData({ editVenue: e.detail.value });
+  },
+
+  onEditDateChange: function (e) {
+    this.setData({ editStartDate: e.detail.value });
+  },
+
+  onEditTimeChange: function (e) {
+    this.setData({ editStartTime: e.detail.value });
   },
 
   onScoreAInput: function (e) {
@@ -819,6 +875,12 @@ Page({
       isFinished = 1;
     }
 
+    const venue = String(this.data.editVenue || '').trim();
+    let startTimeStr = m.start_time || '';
+    if (this.data.editStartDate && this.data.editStartTime) {
+      startTimeStr = this.data.editStartDate + ' ' + this.data.editStartTime + ':00';
+    }
+
     this.setData({ submittingScore: true });
     const payload = {
       action: 'upsert_match',
@@ -827,9 +889,9 @@ Page({
         tournament_id: self.data.tournamentId,
         team_a: tA,
         team_b: tB,
-        start_time: m.start_time,
+        start_time: startTimeStr,
         stage_id: m.stage_id || 'stage_default',
-        venue: m.venue || '',
+        venue: venue,
         score_a: scoreA,
         score_b: scoreB,
         is_finished: isFinished
@@ -838,7 +900,7 @@ Page({
 
     oamUpsert(payload)
       .then(function () {
-        wx.showToast({ title: '对阵与比分更新成功', icon: 'success' });
+        wx.showToast({ title: '比赛信息更新成功', icon: 'success' });
         self.onCloseScoreModal();
         self.loadDetail(self.data.tournamentId);
       })
@@ -1177,11 +1239,15 @@ Page({
       const truncB = truncateText(ctx, teamB, 105);
       ctx.fillText(truncB, colTeamsX + wA + wVs, rowY + 31);
 
-      // 比分 / 未开始
+      // 比分 / 待录入 / 未开始
       if (m.hasValidScores) {
         ctx.font = 'bold 20px -apple-system, sans-serif';
         ctx.fillStyle = '#0F172A';
         ctx.fillText(`${m.score_a} : ${m.score_b}`, colScoreX, rowY + 31);
+      } else if (m.isPendingScore) {
+        ctx.font = 'bold 17px -apple-system, sans-serif';
+        ctx.fillStyle = '#D97706';
+        ctx.fillText('待录入', colScoreX, rowY + 31);
       } else {
         ctx.font = '600 17px -apple-system, sans-serif';
         ctx.fillStyle = '#94A3B8';
