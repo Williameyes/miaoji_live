@@ -62,7 +62,8 @@
       { "type": "file", "value": "services/bleManager.js" },
       { "type": "file", "value": "utils/ble-protocol.js" },
       { "type": "folder", "value": "docs" },
-      { "type": "folder", "value": "scripts" }
+      { "type": "folder", "value": "scripts" },
+      { "type": "folder", "value": "obs-overlay" }
     ],
     "include": []
   },

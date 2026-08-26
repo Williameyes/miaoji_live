@@ -75,6 +75,9 @@
         <view class="btn-card-delete" hover-class="btn-card-hover" bindtap="onDeleteMatch" data-id="{{item.id}}">
           <text>删除</text>
         </view>
+        <view class="btn-card-web" hover-class="btn-card-hover" bindtap="onGoToWebScore" data-id="{{item.id}}">
+          <text>🌐 网页记分</text>
+        </view>
         <view class="btn-card-live" hover-class="btn-card-live-hover" bindtap="onGoToLive" data-id="{{item.id}}">
           <text>▶ 进入记分</text>
         </view>

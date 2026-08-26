@@ -1,0 +1,8 @@
+{
+  "navigationBarTitleText": "网页记分 - OBS中控台",
+  "navigationBarBackgroundColor": "#0A0A0C",
+  "navigationBarTextStyle": "white",
+  "backgroundColor": "#0A0A0C",
+  "backgroundTextStyle": "dark",
+  "usingComponents": {}
+}

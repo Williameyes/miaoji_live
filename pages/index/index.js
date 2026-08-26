@@ -892,6 +892,28 @@ Page({
     });
   },
 
+  /**
+   * 网页记分：跳转到网页记分中控台页面
+   * @param {WechatMiniprogram.TouchEvent} e
+   */
+  onGoToWebScore(e) {
+    const { id } = e.currentTarget.dataset;
+    const match = this.data.matches.find((m) => m.id === id);
+    if (!match) return;
+
+    const rawRoomId = match.matchCode || match.id || '666888';
+    const digits = String(rawRoomId).replace(/\D/g, '');
+    const roomId = digits.length >= 6 ? digits.slice(0, 6) : (digits + '666888').slice(0, 6);
+    const teamA = encodeURIComponent((match.teamA && match.teamA.name) || '主队');
+    const teamB = encodeURIComponent((match.teamB && match.teamB.name) || '客队');
+    const colorA = ((match.teamA && match.teamA.bgColor) || 'FF2D55').replace('#', '');
+    const colorB = ((match.teamB && match.teamB.bgColor) || '007AFF').replace('#', '');
+
+    wx.navigateTo({
+      url: `/packageLive/pages/web-score-panel/web-score-panel?roomId=${roomId}&matchId=${id}&teamA=${teamA}&teamB=${teamB}&colorA=${colorA}&colorB=${colorB}`
+    });
+  },
+
   // ─────────────────────────────────────────────
   // 编辑浮层
   // ─────────────────────────────────────────────

@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>高光记分 - OBS 专业直播记分牌</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <!-- 网页端/OBS 实时连接状态标识栏 (极简微型提示) -->
+  <div class="ws-status-banner" id="ws-status-banner">
+    <span class="status-dot"></span>
+    <span class="status-text" id="ws-status-text">⏳ 正在连接中控台...</span>
+  </div>
+
+  <!-- 16:9 手机横屏紧凑型转播记分牌 (居中底部，比例精致适中) -->
+  <div class="obs-container" id="obs-container">
+    <div class="broadcast-scoreboard" id="scoreboard">
+      <!-- 顶部比赛名称 -->
+      <div class="match-title-row">
+        <span class="match-title-text" id="match-title">常规赛</span>
+      </div>
+
+      <!-- 核心水平一体化转播记分条 (精致手机宽度 350px，高度 32px) -->
+      <div class="score-ribbon-bar">
+        <!-- 主队板块 (左侧圆角 + 纯色背景 + 队名靠左 + 分数靠中，文字根据队服颜色自动高对比变色) -->
+        <div class="team-ribbon team-ribbon--home" id="home-ribbon" style="background-color: #E64340;">
+          <span class="team-name team-name--home" id="home-name">主队</span>
+          <span class="team-score team-score--home" id="home-score">0</span>
+        </div>
+
+        <!-- 中间节次立体胶囊 (与小程序 live 页 100% 一致：上红中蓝下深蓝立体渐变) -->
+        <div class="period-capsule-wrap">
+          <div class="period-capsule" id="period-capsule">
+            <span class="period-label" id="period-badge">第 1 节</span>
+          </div>
+        </div>
+
+        <!-- 客队板块 (右侧圆角 + 纯色背景 + 分数靠中 + 队名靠右，文字根据队服颜色自动高对比变色) -->
+        <div class="team-ribbon team-ribbon--away" id="away-ribbon" style="background-color: #10AEFF;">
+          <span class="team-score team-score--away" id="away-score">0</span>
+          <span class="team-name team-name--away" id="away-name">客队</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="./overlay.js"></script>
+</body>
+</html>

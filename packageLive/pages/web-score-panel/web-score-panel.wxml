@@ -1,0 +1,171 @@
+<view class="page-root" style="padding-top: {{statusBarHeight}}px;">
+  <!-- 顶栏导航 -->
+  <view class="header">
+    <view class="header-nav-row">
+      <view class="back-btn" bindtap="onGoBack" hover-class="back-btn-hover">
+        <text class="back-icon">‹</text>
+      </view>
+      <view class="logo-text">
+        网页<text class="italic-text">记</text>分中控台
+      </view>
+    </view>
+    <view class="ws-status-tag {{wsConnected ? 'connected' : ''}}" bindtap="onTapWsStatus">
+      <view class="status-dot"></view>
+      <text>{{wsStatusText}}</text>
+    </view>
+  </view>
+
+  <!-- 1. 场次直接切换选择器 -->
+  <view class="card match-selector-card">
+    <view class="card-header flex-between">
+      <view class="header-left">
+        <text class="card-icon">🏀</text>
+        <text class="card-title">当前记分场次</text>
+      </view>
+      <picker 
+        bindchange="onMatchPickerChange" 
+        value="{{selectedMatchIndex}}" 
+        range="{{matchList}}" 
+        range-key="displayTitle"
+      >
+        <view class="match-picker-btn" hover-class="btn-hover">
+          <text class="picker-label">切换场次</text>
+          <text class="picker-arrow">▾</text>
+        </view>
+      </picker>
+    </view>
+
+    <!-- 当前场次对阵卡片预览 -->
+    <view class="match-preview-box">
+      <text class="match-title-tag">{{matchTitle || '常规赛'}}</text>
+      <view class="teams-preview-row">
+        <view class="team-item left">
+          <view class="color-dot" style="background-color: {{teamA.color || '#FF2D55'}}"></view>
+          <text class="team-name">{{teamA.name || '主队'}}</text>
+        </view>
+        <text class="vs-badge">VS</text>
+        <view class="team-item right">
+          <text class="team-name">{{teamB.name || '客队'}}</text>
+          <view class="color-dot" style="background-color: {{teamB.color || '#007AFF'}}"></view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 2. 【核心】开始记分控制与同步开关 -->
+  <view class="card start-action-card">
+    <button 
+      class="start-score-btn {{isScoringStarted ? 'active' : ''}}" 
+      bindtap="onToggleStartScore"
+      hover-class="btn-hover"
+    >
+      <text class="start-btn-icon">{{isScoringStarted ? '🟢' : '▶'}}</text>
+      <text class="start-btn-text">{{isScoringStarted ? '记分同步中 (点击重发数据包)' : '开始记分并同步至网页'}}</text>
+    </button>
+    <text class="start-tip">
+      {{isScoringStarted ? '✅ 已连通网页记分牌，点击加分将实时联动直播画面' : '💡 点击【开始记分】将队伍名称、颜色与当前比分瞬间推送到 OBS 记分牌'}}
+    </text>
+  </view>
+
+  <!-- 3. OBS 专属主播固定房间链接卡片 -->
+  <view class="card obs-link-card">
+    <view class="card-header flex-between">
+      <view class="header-left">
+        <text class="card-icon">🌐</text>
+        <text class="card-title">主播固定 OBS 网页素材链接</text>
+      </view>
+      <text class="fixed-tag">固定不换链接</text>
+    </view>
+    <view class="room-id-row">
+      <text class="label">主播专属房间号：</text>
+      <text class="room-id-code">{{roomId || '666888'}}</text>
+    </view>
+    <view class="url-box">
+      <text class="url-text">{{obsUrl}}</text>
+    </view>
+    <button class="btn-primary copy-btn" bindtap="onCopyObsUrl" hover-class="btn-hover">
+      <text class="btn-icon">📋</text>
+      <text>一键复制 OBS 记分牌链接</text>
+    </button>
+    <text class="obs-tip">✨ 零切链接特性：OBS 只需挂载此固定链接，在小程序中直接【切换场次】，网页记分牌会自动平滑换场，无需修改 OBS 任何设置！</text>
+  </view>
+
+  <!-- 4. 主客队比分控板 -->
+  <view class="score-control-section">
+    <!-- 主队控板 -->
+    <view class="team-control-card home-card">
+      <view class="team-card-header">
+        <view class="color-bar" style="background-color: {{teamA.color || '#FF2D55'}}"></view>
+        <text class="team-title">{{teamA.name || '主队'}}</text>
+      </view>
+      <view class="score-display" style="color: {{teamA.color || '#FF2D55'}}">
+        {{teamA.score}}
+      </view>
+      <view class="score-btns-grid">
+        <button class="score-btn" bindtap="onScoreChange" data-target="teamA" data-delta="1" hover-class="btn-hover">+1</button>
+        <button class="score-btn" bindtap="onScoreChange" data-target="teamA" data-delta="2" hover-class="btn-hover">+2</button>
+        <button class="score-btn" bindtap="onScoreChange" data-target="teamA" data-delta="3" hover-class="btn-hover">+3</button>
+        <button class="score-btn btn-sub" bindtap="onScoreChange" data-target="teamA" data-delta="-1" hover-class="btn-hover">-1</button>
+      </view>
+    </view>
+
+    <!-- 客队控板 -->
+    <view class="team-control-card away-card">
+      <view class="team-card-header">
+        <text class="team-title">{{teamB.name || '客队'}}</text>
+        <view class="color-bar" style="background-color: {{teamB.color || '#007AFF'}}"></view>
+      </view>
+      <view class="score-display" style="color: {{teamB.color || '#007AFF'}}">
+        {{teamB.score}}
+      </view>
+      <view class="score-btns-grid">
+        <button class="score-btn" bindtap="onScoreChange" data-target="teamB" data-delta="1" hover-class="btn-hover">+1</button>
+        <button class="score-btn" bindtap="onScoreChange" data-target="teamB" data-delta="2" hover-class="btn-hover">+2</button>
+        <button class="score-btn" bindtap="onScoreChange" data-target="teamB" data-delta="3" hover-class="btn-hover">+3</button>
+        <button class="score-btn btn-sub" bindtap="onScoreChange" data-target="teamB" data-delta="-1" hover-class="btn-hover">-1</button>
+      </view>
+    </view>
+  </view>
+
+  <!-- 5. 节次控制面板 -->
+  <view class="card auxiliary-card">
+    <view class="card-header">
+      <text class="card-icon">⏱️</text>
+      <text class="card-title">节次控制</text>
+    </view>
+
+    <view class="period-pills-grid">
+      <view 
+        class="period-pill {{period === item.val ? 'active' : ''}} {{item.val === 6 ? 'finished-pill' : ''}}" 
+        wx:for="{{periodList}}" 
+        wx:key="val" 
+        bindtap="onSelectPeriod" 
+        data-val="{{item.val}}"
+      >
+        {{item.label}}
+      </view>
+    </view>
+  </view>
+
+  <!-- 6. 🛠️ 真机调试日志中控台 -->
+  <view class="card debug-card">
+    <view class="card-header flex-between">
+      <view class="header-left">
+        <text class="card-icon">🛠️</text>
+        <text class="card-title">真机实时调试日志</text>
+      </view>
+      <view class="debug-actions">
+        <button class="mini-btn" bindtap="onForceSync" hover-class="btn-hover">强制推送广播</button>
+        <button class="mini-btn btn-outline" bindtap="onClearLogs" hover-class="btn-hover">清空日志</button>
+      </view>
+    </view>
+    
+    <scroll-view scroll-y class="debug-logs-box">
+      <view class="log-line" wx:for="{{debugLogs}}" wx:key="index">
+        <text class="log-time">[{{item.time}}]</text>
+        <text class="log-msg {{item.type}}">{{item.msg}}</text>
+      </view>
+      <view class="log-empty" wx:if="{{debugLogs.length === 0}}">暂无调试日志，尝试操作加分看日志输出...</view>
+    </scroll-view>
+  </view>
+</view>

@@ -1,0 +1,476 @@
+/* 页面整体背景与基础样式 - 对齐 miaoji_live 原生设计语言 */
+.page-root {
+  min-height: 100vh;
+  background-color: #F8FAFC;
+  color: #0F172A;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+  padding-bottom: 60rpx;
+  box-sizing: border-box;
+}
+
+/* 顶栏栏目 */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24rpx 32rpx;
+  background: #FFFFFF;
+  border-bottom: 1rpx solid #E2E8F0;
+  box-shadow: 0 2rpx 10rpx rgba(0, 0, 0, 0.03);
+}
+
+.header-nav-row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.back-btn {
+  width: 60rpx;
+  height: 60rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #F1F5F9;
+}
+
+.back-icon {
+  font-size: 36rpx;
+  color: #334155;
+  line-height: 1;
+}
+
+.logo-text {
+  font-size: 32rpx;
+  font-weight: 800;
+  color: #0F172A;
+  letter-spacing: 1rpx;
+}
+
+.italic-text {
+  font-style: italic;
+  color: #2563EB;
+  margin: 0 2rpx;
+}
+
+.ws-status-tag {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  padding: 8rpx 18rpx;
+  background: #FEF2F2;
+  border: 1rpx solid #FCA5A5;
+  border-radius: 30rpx;
+  font-size: 22rpx;
+  color: #EF4444;
+  font-weight: 600;
+}
+
+.ws-status-tag.connected {
+  background: #F0FDF4;
+  border-color: #86EFAC;
+  color: #16A34A;
+}
+
+.status-dot {
+  width: 12rpx;
+  height: 12rpx;
+  border-radius: 50%;
+  background-color: currentColor;
+}
+
+/* 卡片通用基础 */
+.card {
+  margin: 24rpx 32rpx;
+  padding: 32rpx;
+  background: #FFFFFF;
+  border: 1rpx solid #E2E8F0;
+  border-radius: 24rpx;
+  box-shadow: 0 4rpx 16rpx rgba(15, 23, 42, 0.04);
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  margin-bottom: 24rpx;
+}
+
+.card-icon {
+  font-size: 32rpx;
+}
+
+.card-title {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #1E293B;
+}
+
+/* 1. 场次直接选择器卡片 */
+.flex-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.match-picker-btn {
+  display: flex;
+  align-items: center;
+  gap: 6rpx;
+  padding: 10rpx 20rpx;
+  background: #EFF6FF;
+  border: 1rpx solid #BFDBFE;
+  border-radius: 30rpx;
+  color: #2563EB;
+  font-size: 24rpx;
+  font-weight: 700;
+}
+
+.picker-arrow {
+  font-size: 20rpx;
+}
+
+.match-preview-box {
+  background: #F8FAFC;
+  border: 1rpx solid #F1F5F9;
+  padding: 24rpx;
+  border-radius: 16rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.match-title-tag {
+  font-size: 22rpx;
+  font-weight: 600;
+  color: #64748B;
+  background: #E2E8F0;
+  padding: 4rpx 16rpx;
+  border-radius: 20rpx;
+}
+
+.teams-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 24rpx;
+}
+
+.team-item {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.color-dot {
+  width: 20rpx;
+  height: 20rpx;
+  border-radius: 50%;
+}
+
+.team-name {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: #0F172A;
+}
+
+.vs-badge {
+  font-size: 24rpx;
+  font-weight: 900;
+  color: #94A3B8;
+  font-style: italic;
+}
+
+/* 2. OBS 链接卡片 */
+.room-id-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 16rpx;
+  font-size: 26rpx;
+}
+
+.room-id-row .label {
+  color: #64748B;
+}
+
+.room-id-code {
+  font-weight: 800;
+  color: #D97706;
+  font-family: monospace;
+  font-size: 30rpx;
+}
+
+.url-box {
+  background: #F1F5F9;
+  border: 1rpx solid #E2E8F0;
+  padding: 20rpx;
+  border-radius: 12rpx;
+  word-break: break-all;
+  margin-bottom: 24rpx;
+}
+
+.url-text {
+  font-size: 22rpx;
+  color: #0284C7;
+  font-family: monospace;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+  color: #FFFFFF;
+  border-radius: 16rpx;
+  font-size: 28rpx;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12rpx;
+  padding: 22rpx 0;
+  box-shadow: 0 4rpx 14rpx rgba(37, 99, 235, 0.25);
+}
+
+.obs-tip {
+  display: block;
+  margin-top: 16rpx;
+  font-size: 22rpx;
+  color: #94A3B8;
+  line-height: 1.4;
+}
+
+/* 1.5. 【开始记分卡片】样式 */
+.start-action-card {
+  background: #F8FAFC;
+  border: 2rpx dashed #CBD5E1;
+  padding: 24rpx 32rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.start-score-btn {
+  width: 100%;
+  background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%);
+  color: #FFFFFF;
+  border-radius: 20rpx;
+  font-size: 30rpx;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12rpx;
+  padding: 24rpx 0;
+  box-shadow: 0 6rpx 20rpx rgba(217, 119, 6, 0.3);
+  transition: all 0.3s ease;
+}
+
+.start-score-btn.active {
+  background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+  box-shadow: 0 6rpx 20rpx rgba(16, 185, 129, 0.3);
+}
+
+.start-btn-icon {
+  font-size: 32rpx;
+}
+
+.start-tip {
+  margin-top: 16rpx;
+  font-size: 22rpx;
+  color: #64748B;
+  text-align: center;
+  line-height: 1.4;
+}
+
+.fixed-tag {
+  font-size: 20rpx;
+  color: #10B981;
+  background: #ECFDF5;
+  border: 1rpx solid #A7F3D0;
+  padding: 4rpx 12rpx;
+  border-radius: 10rpx;
+  font-weight: 700;
+}
+
+/* 3. 比分控板网格 */
+.score-control-section {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24rpx;
+  margin: 24rpx 32rpx;
+}
+
+.team-control-card {
+  background: #FFFFFF;
+  border: 1rpx solid #E2E8F0;
+  border-radius: 24rpx;
+  padding: 24rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  box-shadow: 0 4rpx 16rpx rgba(15, 23, 42, 0.04);
+}
+
+.team-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  width: 100%;
+}
+
+.home-card .team-card-header {
+  justify-content: flex-start;
+}
+
+.away-card .team-card-header {
+  justify-content: flex-end;
+}
+
+.color-bar {
+  width: 8rpx;
+  height: 28rpx;
+  border-radius: 4rpx;
+}
+
+.team-title {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #1E293B;
+}
+
+.score-display {
+  font-size: 84rpx;
+  font-weight: 900;
+  font-family: "Impact", -apple-system, sans-serif;
+  margin: 16rpx 0;
+  text-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.1);
+}
+
+.score-btns-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12rpx;
+  width: 100%;
+}
+
+.score-btn {
+  margin: 0;
+  padding: 16rpx 0;
+  background: #F1F5F9;
+  border: 1rpx solid #E2E8F0;
+  color: #1E293B;
+  font-size: 32rpx;
+  font-weight: 700;
+  border-radius: 14rpx;
+}
+
+.score-btn.btn-sub {
+  background: #FEF2F2;
+  border-color: #FCA5A5;
+  color: #EF4444;
+}
+
+/* 4. 节次与按键区 */
+.period-pills-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12rpx;
+}
+
+.period-pill {
+  text-align: center;
+  padding: 18rpx 0;
+  background: #F8FAFC;
+  border: 1rpx solid #E2E8F0;
+  border-radius: 14rpx;
+  font-size: 24rpx;
+  color: #64748B;
+  font-weight: 600;
+}
+
+.period-pill.active {
+  background: #FEF3C7;
+  border-color: #F59E0B;
+  color: #D97706;
+  font-weight: 800;
+}
+
+.period-pill.finished-pill.active {
+  background: #F1F5F9;
+  border-color: #64748B;
+  color: #334155;
+  font-weight: 800;
+}
+
+.btn-hover {
+  opacity: 0.75;
+}
+
+/* 5. 真机调试面板样式 */
+.debug-actions {
+  display: flex;
+  gap: 12rpx;
+}
+
+.mini-btn {
+  margin: 0;
+  padding: 8rpx 16rpx;
+  font-size: 22rpx;
+  font-weight: 600;
+  border-radius: 12rpx;
+  background: #2563EB;
+  color: #FFFFFF;
+  line-height: 1.4;
+}
+
+.mini-btn.btn-outline {
+  background: #F1F5F9;
+  color: #64748B;
+  border: 1rpx solid #CBD5E1;
+}
+
+.debug-logs-box {
+  height: 240rpx;
+  background: #0F172A;
+  border-radius: 14rpx;
+  padding: 16rpx;
+  box-sizing: border-box;
+  font-family: monospace;
+}
+
+.log-line {
+  font-size: 20rpx;
+  line-height: 1.5;
+  display: flex;
+  gap: 12rpx;
+}
+
+.log-time {
+  color: #64748B;
+}
+
+.log-msg {
+  color: #38BDF8;
+  word-break: break-all;
+}
+
+.log-msg.error {
+  color: #F87171;
+}
+
+.log-msg.success {
+  color: #4ADE80;
+}
+
+.log-empty {
+  color: #475569;
+  font-size: 22rpx;
+  text-align: center;
+  margin-top: 80rpx;
+}

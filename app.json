@@ -11,7 +11,8 @@
       "root": "packageLive",
       "name": "packageLive",
       "pages": [
-        "pages/live/live"
+        "pages/live/live",
+        "pages/web-score-panel/web-score-panel"
       ]
     },
     {

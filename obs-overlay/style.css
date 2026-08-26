@@ -1,0 +1,228 @@
+* {
+  box-sizing: border-box;
+  user-select: none;
+}
+
+body, html {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background-color: transparent !important;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* 顶部状态提示微胶囊 */
+.ws-status-banner {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #FFFFFF;
+  background: rgba(255, 149, 0, 0.88);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  transition: opacity 0.6s ease, transform 0.3s ease;
+  z-index: 9999;
+  pointer-events: none;
+}
+
+.ws-status-banner.connected {
+  background: rgba(52, 199, 89, 0.88);
+}
+
+.ws-status-banner.error {
+  background: rgba(255, 59, 48, 0.88);
+}
+
+.ws-status-banner.fade-out {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-6px);
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #FFFFFF;
+  display: inline-block;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.8); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+/* ──────────────────────────────────────────────
+   16:9 全屏容器 (自适应 1920x1080 / 1280x720 满屏覆盖)
+────────────────────────────────────────────── */
+.obs-container {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end; /* 16:9 底部居中 */
+  padding-bottom: clamp(10px, 2.2vh, 28px);
+  box-sizing: border-box;
+}
+
+/* 可选：顶部居中布局模式 (通过 URL 参数 ?pos=top 开启) */
+.obs-container.pos-top {
+  align-items: flex-start;
+  padding-top: clamp(10px, 2.2vh, 28px);
+  padding-bottom: 0;
+}
+
+/* ──────────────────────────────────────────────
+   转播记分牌整体 (根据 16:9 视口自适应黄金比例)
+────────────────────────────────────────────── */
+.broadcast-scoreboard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: clamp(340px, 36vw, 480px);
+  filter: drop-shadow(0 3px 12px rgba(0, 0, 0, 0.65));
+  z-index: 100;
+  transition: transform 0.2s ease;
+}
+
+/* 顶部比赛标题 */
+.match-title-row {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 4px;
+  width: 100%;
+}
+
+.match-title-text {
+  color: #FFFFFF;
+  font-size: clamp(11px, 1.1vw, 13px);
+  font-weight: 700;
+  line-height: 1.2;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95), 0 2px 6px rgba(0, 0, 0, 0.8);
+  letter-spacing: 0.4px;
+  max-width: 90%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.95;
+}
+
+/* 核心一体化记分横条 */
+.score-ribbon-bar {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  border-radius: 6px;
+  overflow: visible;
+}
+
+/* 主/客队色带块 */
+.team-ribbon {
+  flex: 1 1 0;
+  height: clamp(32px, 3.5vw, 40px);
+  display: flex;
+  align-items: center;
+  padding: 0 clamp(8px, 1.2vw, 14px);
+  box-sizing: border-box;
+  position: relative;
+  transition: background-color 0.3s ease;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32);
+}
+
+.team-ribbon--home {
+  border-radius: 6px 0 0 6px;
+  justify-content: space-between;
+}
+
+.team-ribbon--away {
+  border-radius: 0 6px 6px 0;
+  justify-content: space-between;
+}
+
+/* 队伍名称 (自动高对比度) */
+.team-name {
+  font-size: clamp(12px, 1.25vw, 15px);
+  font-weight: 700;
+  color: #FFFFFF;
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0.2px;
+  transition: color 0.3s ease, text-shadow 0.3s ease;
+}
+
+/* 比分数字 (等宽数字、专业赛事字体、自动高对比度) */
+.team-score {
+  font-family: 'DIN Alternate', 'Impact', 'Chakra Petch', 'SF Pro Display', -apple-system, BlinkMacSystemFont, monospace, sans-serif;
+  font-size: clamp(19px, 2.1vw, 25px);
+  font-weight: 800;
+  color: #FFFFFF;
+  min-width: 26px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.5px;
+  transition: color 0.3s ease, text-shadow 0.3s ease;
+}
+
+/* ──────────────────────────────────────────────
+   中间节次立体高光胶囊
+   与小程序 live.wxss 100% 一致：上红中蓝下深蓝经典转播渐变
+────────────────────────────────────────────── */
+.period-capsule-wrap {
+  position: relative;
+  z-index: 5;
+  flex-shrink: 0;
+  margin: 0 -2px;
+}
+
+.period-capsule {
+  height: clamp(38px, 4.2vw, 48px);
+  min-width: clamp(56px, 6vw, 76px);
+  padding: 0 clamp(6px, 0.8vw, 10px);
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, rgba(239, 68, 68, 0.95) 0%, rgba(59, 130, 246, 0.95) 50%, rgba(29, 78, 216, 0.95) 100%) !important;
+  border-top: 1.2px solid rgba(255, 255, 255, 0.55);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+.period-label {
+  color: #FFFFFF;
+  font-size: clamp(11px, 1.15vw, 13.5px);
+  font-weight: 800;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+/* 比分变动微动画 */
+.bump {
+  animation: bumpAnim 0.22s ease-out;
+}
+
+@keyframes bumpAnim {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
