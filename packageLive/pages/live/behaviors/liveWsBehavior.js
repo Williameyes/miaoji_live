@@ -430,26 +430,42 @@ _liveWsOnSocketMessage: function (raw) {
     }
     if (Object.keys(sd).length > 0) {
       this.setData(sd, function () {
-        self._renderCropFrameToCanvas(payload.time_img);
+        self._renderCropFrameToCanvas(payload.time_img, payload);
       });
     } else {
-      this._renderCropFrameToCanvas(payload.time_img);
+      this._renderCropFrameToCanvas(payload.time_img, payload);
     }
   },
 
-  _renderCropFrameToCanvas: function (base64Img) {
+  _renderCropFrameToCanvas: function (base64Img, payload) {
     var self = this;
     if (!base64Img) return;
+
+    var explicitAspect = 0;
+    if (payload && typeof payload === 'object') {
+      if (typeof payload.aspect === 'number' && payload.aspect > 0) {
+        explicitAspect = payload.aspect;
+      } else if (typeof payload.img_w === 'number' && typeof payload.img_h === 'number' && payload.img_h > 0) {
+        explicitAspect = payload.img_w / payload.img_h;
+      }
+    }
+
     if (this._timeCropCanvasContext && this._timeCropCanvas) {
       var img = this._timeCropCanvas.createImage();
       img.onload = function () {
-        var naturalW = img.width || 4;
-        var naturalH = img.height || 3;
-        var aspect = naturalW / naturalH;
-        if (isNaN(aspect) || aspect <= 0) aspect = 4 / 3;
+        var naturalW = (img && img.width) || 0;
+        var naturalH = (img && img.height) || 0;
+        var aspect = explicitAspect;
+        if (!aspect || aspect <= 0) {
+          if (naturalW > 0 && naturalH > 0) {
+            aspect = naturalW / naturalH;
+          } else {
+            aspect = 3.0;
+          }
+        }
 
-        // 根据自由切图宽高比计算容器的 rpx 宽度（固定高度 30rpx，宽度动态伸缩）
-        var targetRpxW = Math.max(24, Math.min(220, Math.round(30 * aspect)));
+        // 根据自由切图宽高比计算容器的 rpx 宽度（固定高度 30rpx，宽度动态伸缩，零拉伸变形）
+        var targetRpxW = Math.max(24, Math.min(320, Math.round(30 * aspect)));
         var targetStyle = 'width: ' + targetRpxW + 'rpx;';
 
         if (self.data.cropTimeBoxStyle !== targetStyle) {
@@ -464,8 +480,10 @@ _liveWsOnSocketMessage: function (raw) {
           self._timeCropCanvas.width = Math.round(renderW * dpr);
           self._timeCropCanvas.height = Math.round(baseH * dpr);
           self._timeCropCanvasContext.scale(dpr, dpr);
+          self._timeCropCanvasContext.imageSmoothingEnabled = false;
         }
 
+        self._timeCropCanvasContext.imageSmoothingEnabled = false;
         self._timeCropCanvasContext.clearRect(0, 0, renderW, baseH);
         self._timeCropCanvasContext.drawImage(img, 0, 0, renderW, baseH);
       };
@@ -490,12 +508,18 @@ _liveWsOnSocketMessage: function (raw) {
 
           var img = canvas.createImage();
           img.onload = function () {
-            var naturalW = img.width || 4;
-            var naturalH = img.height || 3;
-            var aspect = naturalW / naturalH;
-            if (isNaN(aspect) || aspect <= 0) aspect = 4 / 3;
+            var naturalW = (img && img.width) || 0;
+            var naturalH = (img && img.height) || 0;
+            var aspect = explicitAspect;
+            if (!aspect || aspect <= 0) {
+              if (naturalW > 0 && naturalH > 0) {
+                aspect = naturalW / naturalH;
+              } else {
+                aspect = 3.0;
+              }
+            }
 
-            var targetRpxW = Math.max(24, Math.min(220, Math.round(30 * aspect)));
+            var targetRpxW = Math.max(24, Math.min(320, Math.round(30 * aspect)));
             var targetStyle = 'width: ' + targetRpxW + 'rpx;';
 
             if (self.data.cropTimeBoxStyle !== targetStyle) {
@@ -506,6 +530,7 @@ _liveWsOnSocketMessage: function (raw) {
             canvas.width = Math.round(renderW * dpr);
             canvas.height = Math.round(nodeH * dpr);
             ctx.scale(dpr, dpr);
+            ctx.imageSmoothingEnabled = false;
 
             ctx.clearRect(0, 0, renderW, nodeH);
             ctx.drawImage(img, 0, 0, renderW, nodeH);

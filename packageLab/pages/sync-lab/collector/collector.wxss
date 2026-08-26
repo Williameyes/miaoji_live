@@ -181,13 +181,21 @@ page {
   bottom: 0;
   left: 0;
   width: 100%;
-  height: 35vh;
+  max-height: 48vh;
+  height: 44vh;
   z-index: 10;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   background: #111111;
   border-top: 2rpx solid rgba(250, 204, 21, 0.22);
+  box-sizing: border-box;
+}
+
+.col-console-scroll {
+  flex: 1;
+  width: 100%;
+  height: 0;
   box-sizing: border-box;
 }
 
@@ -456,7 +464,7 @@ page {
 
 /* 切图同步模式专用：画面倾斜微调控制面板 */
 .col-rotation-section {
-  padding: 10rpx 20rpx 14rpx;
+  padding: 6rpx 20rpx 10rpx;
   background: #0f172a;
   border-bottom: 1rpx solid rgba(255, 255, 255, 0.12);
   box-sizing: border-box;
@@ -468,7 +476,7 @@ page {
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 4rpx;
+  margin-bottom: 2rpx;
 }
 
 .col-rotation-title {
@@ -490,7 +498,7 @@ page {
 
 .col-rotation-slider-row {
   width: 100%;
-  margin: 4rpx 0;
+  margin: 2rpx 0;
 }
 
 .col-rotation-slider {
@@ -504,13 +512,13 @@ page {
   align-items: center;
   justify-content: space-between;
   gap: 8rpx;
-  margin-top: 8rpx;
+  margin-top: 4rpx;
 }
 
 .col-rot-btn {
   flex: 1;
   text-align: center;
-  padding: 8rpx 0;
+  padding: 6rpx 0;
   font-size: 20rpx;
   font-weight: 700;
   font-family: ui-monospace, Menlo, Monaco, monospace;

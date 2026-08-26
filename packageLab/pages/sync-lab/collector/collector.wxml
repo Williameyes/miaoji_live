@@ -87,179 +87,210 @@
         </view>
       </view>
 
-      <view class="col-zoom-section">
-        <view class="col-zoom-slider-wrap">
-          <slider
-            class="col-zoom-slider"
-            min="1"
-            max="4"
-            step="0.1"
-            value="{{cameraZoom}}"
-            bindchange="onCameraZoomChange"
-            show-value="{{false}}"
-            backgroundColor="#2b2b2b"
-            activeColor="#facc15"
-            block-size="20"
-          />
+      <scroll-view class="col-console-scroll" scroll-y="true" enhanced="{{true}}" show-scrollbar="{{false}}">
+        <view class="col-zoom-section">
+          <view class="col-zoom-slider-wrap">
+            <slider
+              class="col-zoom-slider"
+              min="1"
+              max="4"
+              step="0.1"
+              value="{{cameraZoom}}"
+              bindchange="onCameraZoomChange"
+              show-value="{{false}}"
+              backgroundColor="#2b2b2b"
+              activeColor="#facc15"
+              block-size="20"
+            />
+          </view>
         </view>
-      </view>
 
-      <!-- 切图同步模式专用：画面精细倾斜矫正控制面板 -->
-      <view class="col-rotation-section" wx:if="{{timeSyncMode === 'crop_image'}}">
-        <view class="col-rotation-header">
-          <text class="col-rotation-title">📷 画面倾斜微调</text>
-          <text class="col-rotation-val">{{cropRotationDeg > 0 ? '+' : ''}}{{cropRotationDeg}}°</text>
+        <!-- 切图同步模式专用：画面精细倾斜矫正控制面板 -->
+        <view class="col-rotation-section" wx:if="{{timeSyncMode === 'crop_image'}}">
+          <view class="col-rotation-header">
+            <text class="col-rotation-title">📷 画面倾斜微调</text>
+            <text class="col-rotation-val">{{cropRotationDeg > 0 ? '+' : ''}}{{cropRotationDeg}}°</text>
+          </view>
+          <view class="col-rotation-slider-row">
+            <slider
+              class="col-rotation-slider"
+              min="-15"
+              max="15"
+              step="0.5"
+              value="{{cropRotationDeg}}"
+              bindchange="onCropRotationChange"
+              bindchanging="onCropRotationChanging"
+              show-value="{{false}}"
+              backgroundColor="#2b2b2b"
+              activeColor="#10b981"
+              block-size="20"
+            />
+          </view>
+          <view class="col-rotation-btn-row">
+            <view class="col-rot-btn" catchtap="onCropRotationStep" data-step="-1.0">-1.0°</view>
+            <view class="col-rot-btn" catchtap="onCropRotationStep" data-step="-0.5">-0.5°</view>
+            <view class="col-rot-btn col-rot-btn--reset" catchtap="onCropRotationReset">0° 复位</view>
+            <view class="col-rot-btn" catchtap="onCropRotationStep" data-step="0.5">+0.5°</view>
+            <view class="col-rot-btn" catchtap="onCropRotationStep" data-step="1.0">+1.0°</view>
+          </view>
         </view>
-        <view class="col-rotation-slider-row">
-          <slider
-            class="col-rotation-slider"
-            min="-15"
-            max="15"
-            step="0.5"
-            value="{{cropRotationDeg}}"
-            bindchange="onCropRotationChange"
-            bindchanging="onCropRotationChanging"
-            show-value="{{false}}"
-            backgroundColor="#2b2b2b"
-            activeColor="#10b981"
-            block-size="20"
-          />
-        </view>
-        <view class="col-rotation-btn-row">
-          <view class="col-rot-btn" catchtap="onCropRotationStep" data-step="-1.0">-1.0°</view>
-          <view class="col-rot-btn" catchtap="onCropRotationStep" data-step="-0.5">-0.5°</view>
-          <view class="col-rot-btn col-rot-btn--reset" catchtap="onCropRotationReset">0° 复位</view>
-          <view class="col-rot-btn" catchtap="onCropRotationStep" data-step="0.5">+0.5°</view>
-          <view class="col-rot-btn" catchtap="onCropRotationStep" data-step="1.0">+1.0°</view>
-        </view>
-      </view>
 
-      <view
-        class="col-monitor"
-        bindlongpress="onToggleDebug"
-        show-menu-by-longpress="{{false}}"
-      >
-        <text class="col-monitor-text">{{timeSyncMode === 'crop_image' ? ('时间切图模式 | 房间: ' + (matchCode || '未连房')) : (ocrDisplayProfileLabel + ' | 主: ' + homeScore + ' | 客: ' + awayScore + ' | 倒计时: ' + minutes + ':' + (seconds < 10 ? '0' + seconds : seconds))}}</text>
-      </view>
+        <!-- 切图同步模式专用：镜头曝光补偿控制面板（压低过曝与现场强光反射） -->
+        <view class="col-rotation-section" wx:if="{{timeSyncMode === 'crop_image'}}" style="border-top: 1rpx solid rgba(255, 255, 255, 0.08);">
+          <view class="col-rotation-header">
+            <text class="col-rotation-title" style="color: #facc15;">☀️ 镜头曝光补偿 (抑制反光/过曝)</text>
+            <text class="col-rotation-val" style="color: #facc15; border-color: rgba(250, 204, 21, 0.3);">{{cameraExposure > 0 ? '+' : ''}}{{cameraExposure}} EV</text>
+          </view>
+          <view class="col-rotation-slider-row">
+            <slider
+              class="col-rotation-slider"
+              min="-3"
+              max="1"
+              step="0.5"
+              value="{{cameraExposure}}"
+              bindchange="onCameraExposureChange"
+              bindchanging="onCameraExposureChanging"
+              show-value="{{false}}"
+              backgroundColor="#2b2b2b"
+              activeColor="#facc15"
+              block-size="20"
+            />
+          </view>
+          <view class="col-rotation-btn-row">
+            <view class="col-rot-btn" catchtap="onCameraExposureStep" data-val="-2.0">-2.0</view>
+            <view class="col-rot-btn" catchtap="onCameraExposureStep" data-val="-1.5">-1.5 (推荐)</view>
+            <view class="col-rot-btn" catchtap="onCameraExposureStep" data-val="-1.0">-1.0</view>
+            <view class="col-rot-btn col-rot-btn--reset" catchtap="onCameraExposureReset">0 EV 复位</view>
+          </view>
+        </view>
 
-      <view class="col-profile-row" wx:if="{{timeSyncMode !== 'crop_image'}}">
         <view
-          class="col-profile-btn{{ocrDisplayProfile === 'led' ? ' col-profile-btn--active' : ''}}"
-          data-profile="led"
-          catchtap="onSelectDisplayProfile"
-        >LED大屏</view>
-        <view
-          class="col-profile-btn{{ocrDisplayProfile === '7segment' ? ' col-profile-btn--active' : ''}}"
-          data-profile="7segment"
-          catchtap="onSelectDisplayProfile"
-        >7段数码管</view>
-      </view>
-
-      <view class="col-ocr-toggles" wx:if="{{timeSyncMode !== 'crop_image'}}">
-        <view
-          class="col-ocr-toggle{{ocrEnableTime ? ' col-ocr-toggle--on' : ''}}"
-          catchtap="onToggleOcrEnableTime"
+          class="col-monitor"
+          bindlongpress="onToggleDebug"
+          show-menu-by-longpress="{{false}}"
         >
-          <text class="col-ocr-toggle-label">剩余时间</text>
-          <text class="col-ocr-toggle-state">{{ocrEnableTime ? '开' : '关'}}</text>
+          <text class="col-monitor-text">{{timeSyncMode === 'crop_image' ? ('时间切图模式 | 房间: ' + (matchCode || '未连房')) : (ocrDisplayProfileLabel + ' | 主: ' + homeScore + ' | 客: ' + awayScore + ' | 倒计时: ' + minutes + ':' + (seconds < 10 ? '0' + seconds : seconds))}}</text>
         </view>
-        <view
-          class="col-ocr-toggle{{ocrEnableScore ? ' col-ocr-toggle--on' : ''}}"
-          catchtap="onToggleOcrEnableScore"
-        >
-          <text class="col-ocr-toggle-label">比分</text>
-          <text class="col-ocr-toggle-state">{{ocrEnableScore ? '开' : '关'}}</text>
+
+        <view class="col-profile-row" wx:if="{{timeSyncMode !== 'crop_image'}}">
+          <view
+            class="col-profile-btn{{ocrDisplayProfile === 'led' ? ' col-profile-btn--active' : ''}}"
+            data-profile="led"
+            catchtap="onSelectDisplayProfile"
+          >LED大屏</view>
+          <view
+            class="col-profile-btn{{ocrDisplayProfile === '7segment' ? ' col-profile-btn--active' : ''}}"
+            data-profile="7segment"
+            catchtap="onSelectDisplayProfile"
+          >7段数码管</view>
         </view>
-      </view>
 
-      <block wx:if="{{timeSyncMode === 'crop_image'}}">
-        <view class="col-action-grid">
+        <view class="col-ocr-toggles" wx:if="{{timeSyncMode !== 'crop_image'}}">
           <view
-            wx:if="{{wsState === 'connected'}}"
-            class="col-console-btn col-console-btn--sync col-console-btn--warning"
-            style="grid-column: 1 / -1;"
-            hover-class="col-console-btn--pressed"
-            hover-stay-time="80"
-            catchtap="onStopTap"
-          >停止切图同步</view>
+            class="col-ocr-toggle{{ocrEnableTime ? ' col-ocr-toggle--on' : ''}}"
+            catchtap="onToggleOcrEnableTime"
+          >
+            <text class="col-ocr-toggle-label">剩余时间</text>
+            <text class="col-ocr-toggle-state">{{ocrEnableTime ? '开' : '关'}}</text>
+          </view>
           <view
-            wx:else
-            class="col-console-btn col-console-btn--sync col-console-btn--primary"
-            style="grid-column: 1 / -1;"
-            hover-class="col-console-btn--pressed"
-            hover-stay-time="80"
-            catchtap="onStartTap"
-          >开启切图同步</view>
-
-          <view
-            class="col-console-btn col-console-btn--preset-save"
-            hover-class="col-console-btn--pressed"
-            hover-stay-time="80"
-            catchtap="onSavePreset"
-          >保存预设</view>
-
-          <view
-            class="col-console-btn col-console-btn--preset-load"
-            hover-class="col-console-btn--pressed"
-            hover-stay-time="80"
-            catchtap="onLoadPreset"
-          >恢复预设</view>
-
-          <view
-            class="col-console-btn col-console-btn--audit-export"
-            hover-class="col-console-btn--pressed"
-            hover-stay-time="80"
-            catchtap="onExportCollectorAuditFile"
-          >导出审计</view>
+            class="col-ocr-toggle{{ocrEnableScore ? ' col-ocr-toggle--on' : ''}}"
+            catchtap="onToggleOcrEnableScore"
+          >
+            <text class="col-ocr-toggle-label">比分</text>
+            <text class="col-ocr-toggle-state">{{ocrEnableScore ? '开' : '关'}}</text>
+          </view>
         </view>
-      </block>
 
-      <block wx:else>
-        <view class="col-action-grid">
-          <view
-            class="col-console-btn col-console-btn--ocr{{ocrEnabled ? ' col-console-btn--danger' : ' col-console-btn--success'}}"
-            hover-class="col-console-btn--pressed"
-            hover-stay-time="80"
-            catchtap="onToggleOcr"
-          >{{ocrTransitioning ? 'OCR 切换中' : (ocrEnabled ? '关闭 OCR' : '开启 OCR')}}</view>
+        <block wx:if="{{timeSyncMode === 'crop_image'}}">
+          <view class="col-action-grid">
+            <view
+              wx:if="{{wsState === 'connected'}}"
+              class="col-console-btn col-console-btn--sync col-console-btn--warning"
+              style="grid-column: 1 / -1;"
+              hover-class="col-console-btn--pressed"
+              hover-stay-time="80"
+              catchtap="onStopTap"
+            >停止切图同步</view>
+            <view
+              wx:else
+              class="col-console-btn col-console-btn--sync col-console-btn--primary"
+              style="grid-column: 1 / -1;"
+              hover-class="col-console-btn--pressed"
+              hover-stay-time="80"
+              catchtap="onStartTap"
+            >开启切图同步</view>
 
-          <view
-            class="col-console-btn col-console-btn--preset-save"
-            hover-class="col-console-btn--pressed"
-            hover-stay-time="80"
-            catchtap="onSavePreset"
-          >保存预设</view>
+            <view
+              class="col-console-btn col-console-btn--preset-save"
+              hover-class="col-console-btn--pressed"
+              hover-stay-time="80"
+              catchtap="onSavePreset"
+            >保存预设</view>
 
-          <view
-            wx:if="{{wsState === 'connected'}}"
-            class="col-console-btn col-console-btn--sync col-console-btn--warning"
-            hover-class="col-console-btn--pressed"
-            hover-stay-time="80"
-            catchtap="onStopTap"
-          >停止同步</view>
-          <view
-            wx:else
-            class="col-console-btn col-console-btn--sync col-console-btn--primary"
-            hover-class="col-console-btn--pressed"
-            hover-stay-time="80"
-            catchtap="onStartTap"
-          >开启同步</view>
+            <view
+              class="col-console-btn col-console-btn--preset-load"
+              hover-class="col-console-btn--pressed"
+              hover-stay-time="80"
+              catchtap="onLoadPreset"
+            >恢复预设</view>
 
-          <view
-            class="col-console-btn col-console-btn--preset-load"
-            hover-class="col-console-btn--pressed"
-            hover-stay-time="80"
-            catchtap="onLoadPreset"
-          >恢复预设</view>
+            <view
+              class="col-console-btn col-console-btn--audit-export"
+              hover-class="col-console-btn--pressed"
+              hover-stay-time="80"
+              catchtap="onExportCollectorAuditFile"
+            >导出审计</view>
+          </view>
+        </block>
 
-          <view
-            class="col-console-btn col-console-btn--audit-export"
-            hover-class="col-console-btn--pressed"
-            hover-stay-time="80"
-            catchtap="onExportCollectorAuditFile"
-          >导出审计</view>
-        </view>
-      </block>
+        <block wx:else>
+          <view class="col-action-grid">
+            <view
+              class="col-console-btn col-console-btn--ocr{{ocrEnabled ? ' col-console-btn--danger' : ' col-console-btn--success'}}"
+              hover-class="col-console-btn--pressed"
+              hover-stay-time="80"
+              catchtap="onToggleOcr"
+            >{{ocrTransitioning ? 'OCR 切换中' : (ocrEnabled ? '关闭 OCR' : '开启 OCR')}}</view>
+
+            <view
+              class="col-console-btn col-console-btn--preset-save"
+              hover-class="col-console-btn--pressed"
+              hover-stay-time="80"
+              catchtap="onSavePreset"
+            >保存预设</view>
+
+            <view
+              wx:if="{{wsState === 'connected'}}"
+              class="col-console-btn col-console-btn--sync col-console-btn--warning"
+              hover-class="col-console-btn--pressed"
+              hover-stay-time="80"
+              catchtap="onStopTap"
+            >停止同步</view>
+            <view
+              wx:else
+              class="col-console-btn col-console-btn--sync col-console-btn--primary"
+              hover-class="col-console-btn--pressed"
+              hover-stay-time="80"
+              catchtap="onStartTap"
+            >开启同步</view>
+
+            <view
+              class="col-console-btn col-console-btn--preset-load"
+              hover-class="col-console-btn--pressed"
+              hover-stay-time="80"
+              catchtap="onLoadPreset"
+            >恢复预设</view>
+
+            <view
+              class="col-console-btn col-console-btn--audit-export"
+              hover-class="col-console-btn--pressed"
+              hover-stay-time="80"
+              catchtap="onExportCollectorAuditFile"
+            >导出审计</view>
+          </view>
+        </block>
+      </scroll-view>
     </view>
   </view>
 </view>

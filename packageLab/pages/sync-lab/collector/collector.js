@@ -2698,7 +2698,9 @@ Page({
     /** 当前可一键恢复记忆倍数（相机回弹 1.0x 且记忆值 > 1） */
     canRestoreLastZoom: false,
     /** 切图模式画面倾斜角度微调（-15° ~ +15°） */
-    cropRotationDeg: 0
+    cropRotationDeg: 0,
+    /** 镜头曝光补偿 EV，默认 -1.5 (压低发光溢出与现场强光反射) */
+    cameraExposure: -1.5
   },
 
   // ─── 生命周期 ────────────────────────────────────────
@@ -2712,12 +2714,15 @@ Page({
     _previewW = camW;
     _previewH = camH;
     var savedRot = Number(wx.getStorageSync('HOOPS_CROP_ROTATION_DEG') || 0);
+    var savedExposure = Number(wx.getStorageSync('HOOPS_CROP_CAMERA_EXPOSURE') || -1.5);
+    if (isNaN(savedExposure)) savedExposure = -1.5;
     this.setData({
       timeSyncMode: mode,
       statusBarHeight: sys.statusBarHeight || 0,
       previewPxW: camW,
       previewPxH: camH,
-      cropRotationDeg: isNaN(savedRot) ? 0 : savedRot
+      cropRotationDeg: isNaN(savedRot) ? 0 : savedRot,
+      cameraExposure: savedExposure
     });
     _cameraContext = wx.createCameraContext(this);
     _cameraReadyAt = Date.now();
@@ -2746,6 +2751,7 @@ Page({
     _cameraContext = wx.createCameraContext(this);
     _cameraReadyAt = Date.now();
     console.log('[Collector][OCR] camera init, context refreshed');
+    this._applyCameraExposure(this.data.cameraExposure);
     if (this.data.wsState === 'connected') {
       this._startCropFramePump();
     }
@@ -2885,6 +2891,66 @@ Page({
     var val = parseFloat(e && e.detail && e.detail.value) || 0;
     var next = Math.min(15, Math.max(-15, Math.round(val * 10) / 10));
     this.setData({ cropRotationDeg: next });
+  },
+
+  /**
+   * 硬件镜头曝光补偿控制（降低曝光压除发光膨胀与现场玻璃强光反射）
+   */
+  _applyCameraExposure: function (evVal) {
+    var val = Number(evVal);
+    if (isNaN(val)) val = -1.5;
+    if (val < -3) val = -3;
+    if (val > 1) val = 1;
+    if (!_cameraContext) {
+      _cameraContext = wx.createCameraContext(this);
+    }
+    if (_cameraContext && typeof _cameraContext.setExposureCompensation === 'function') {
+      try {
+        _cameraContext.setExposureCompensation({
+          value: val,
+          success: function () {
+            console.log('[Collector] setExposureCompensation success: %s EV', val);
+          },
+          fail: function (err) {
+            console.warn('[Collector] setExposureCompensation fail:', err);
+          }
+        });
+      } catch (eExp) {
+        console.warn('[Collector] setExposureCompensation throw:', eExp);
+      }
+    }
+  },
+
+  onCameraExposureChange: function (e) {
+    var val = parseFloat(e && e.detail && e.detail.value);
+    if (isNaN(val)) val = -1.5;
+    var next = Math.min(1, Math.max(-3, Math.round(val * 10) / 10));
+    this.setData({ cameraExposure: next });
+    try { wx.setStorageSync('HOOPS_CROP_CAMERA_EXPOSURE', next); } catch (err) {}
+    this._applyCameraExposure(next);
+  },
+
+  onCameraExposureChanging: function (e) {
+    var val = parseFloat(e && e.detail && e.detail.value);
+    if (isNaN(val)) val = -1.5;
+    var next = Math.min(1, Math.max(-3, Math.round(val * 10) / 10));
+    this.setData({ cameraExposure: next });
+    this._applyCameraExposure(next);
+  },
+
+  onCameraExposureStep: function (e) {
+    var val = parseFloat(e && e.currentTarget && e.currentTarget.dataset && (e.currentTarget.dataset.val || e.currentTarget.dataset.step));
+    if (isNaN(val)) val = -1.5;
+    var next = Math.min(1, Math.max(-3, Math.round(val * 10) / 10));
+    this.setData({ cameraExposure: next });
+    try { wx.setStorageSync('HOOPS_CROP_CAMERA_EXPOSURE', next); } catch (err) {}
+    this._applyCameraExposure(next);
+  },
+
+  onCameraExposureReset: function () {
+    this.setData({ cameraExposure: 0 });
+    try { wx.setStorageSync('HOOPS_CROP_CAMERA_EXPOSURE', 0); } catch (err) {}
+    this._applyCameraExposure(0);
   },
 
   onUnload: function () {
@@ -3053,7 +3119,8 @@ Page({
       rois: this.data.rois.map(function (r) {
         return { x: r.x, y: r.y, w: r.w, h: r.h, label: r.label };
       }),
-      cameraZoom: this.data.cameraZoom
+      cameraZoom: this.data.cameraZoom,
+      cameraExposure: this.data.cameraExposure
     };
     wx.setStorageSync(getPresetStorageKey(profile), preset);
     wx.showToast({
@@ -3088,6 +3155,10 @@ Page({
     if (!isFinite(targetZoom) || targetZoom < 1) targetZoom = 1;
     if (targetZoom > 4) targetZoom = 4;
 
+    var targetExposure = Number(preset.cameraExposure !== undefined ? preset.cameraExposure : -1.5);
+    if (!isFinite(targetExposure) || targetExposure < -3) targetExposure = -1.5;
+    if (targetExposure > 1) targetExposure = 1;
+
     var shouldResumePump = !!this.data.ocrEnabled;
     if (shouldResumePump) {
       this._cancelOcrFramePump();
@@ -3099,11 +3170,13 @@ Page({
       cameraZoom: targetZoom,
       cameraZoomDisplay: targetZoom.toFixed(1),
       lastCameraZoom: targetZoom,
-      lastCameraZoomDisplay: targetZoom.toFixed(1)
+      lastCameraZoomDisplay: targetZoom.toFixed(1),
+      cameraExposure: targetExposure
     }, function () {
       self._syncZoomRestoreUi();
       self._saveRois();
       self._applyHardwareCameraZoom(targetZoom);
+      self._applyCameraExposure(targetExposure);
       if (shouldResumePump && _vkSession) {
         self._startOcrFramePump(_vkSession, _ocrSessionToken);
       }
@@ -7149,7 +7222,7 @@ Page({
     }
   },
 
-  _emitCropFramePacket: function (timeBase64Img) {
+  _emitCropFramePacket: function (timeBase64Img, roiAspect, dstW, dstH) {
     if (!_socketTask || this.data.wsState !== 'connected') return;
     _globalSeq += 1;
     if (!_cropCollectorSessionId) {
@@ -7163,6 +7236,9 @@ Page({
       seq: _globalSeq,
       ts: Date.now(),
       time_img: timeBase64Img,
+      aspect: Number((roiAspect || 0).toFixed(4)),
+      img_w: dstW || 0,
+      img_h: dstH || 0,
       match_id: 'M_' + (_wsRoomId || this.data.matchCode || '')
     };
     var self = this;
@@ -7243,6 +7319,23 @@ Page({
     }, 1000);
   },
 
+  _rgbToHsv: function (r, g, b) {
+    var rf = r / 255, gf = g / 255, bf = b / 255;
+    var max = Math.max(rf, gf, bf), min = Math.min(rf, gf, bf);
+    var h = 0, s = 0, v = max;
+    var d = max - min;
+    s = max === 0 ? 0 : d / max;
+    if (max !== min) {
+      switch (max) {
+        case rf: h = (gf - bf) / d + (gf < bf ? 6 : 0); break;
+        case gf: h = (bf - rf) / d + 2; break;
+        case bf: h = (rf - gf) / d + 4; break;
+      }
+      h /= 6;
+    }
+    return [h, s, v];
+  },
+
   _cropAndScaleFrameBuffer: function (srcData, srcW, srcH, cropX, cropY, cropW, cropH, dstW, dstH) {
     var dstData = new Uint8ClampedArray(dstW * dstH * 4);
     var xRatio = cropW / dstW;
@@ -7287,9 +7380,17 @@ Page({
         var g = srcData[srcIdx + 1];
         var b = srcData[srcIdx + 2];
 
-        var isBrightLed = (r > 100 && r > b * 1.15) ||
-                          (g > 100 && g > b * 1.15) ||
-                          (r > 120 && g > 120);
+        var hsv = this._rgbToHsv(r, g, b);
+        var s = hsv[1];
+        var v = hsv[2];
+
+        // 精准发光 LED 数字判定：
+        // 1. 有色 LED（红/绿/黄）：亮度 (v > 0.28) 且 具备色彩/对比度特征
+        // 2. 纯白/高亮 LED 数字：高亮度 (v > 0.85 且 R,G,B > 195) 防止误杀纯白 LED 笔画
+        // 3. 滤除微弱漫反射与白光反光
+        var isColorLed = (v > 0.28 && s > 0.14 && (r > b * 1.08 || g > b * 1.08 || r > 110 || g > 110));
+        var isSuperWhiteLed = (v > 0.85 && r > 195 && g > 195 && b > 195);
+        var isBrightLed = isColorLed || isSuperWhiteLed;
 
         if (isBrightLed) {
           dstData[dstIdx] = r;
@@ -7297,6 +7398,7 @@ Page({
           dstData[dstIdx + 2] = b;
           dstData[dstIdx + 3] = 255;
         } else {
+          // 非 LED 笔画强制置为纯黑 (0,0,0)，赋予 PNG 极高压缩率与绝对黑底
           dstData[dstIdx] = 0;
           dstData[dstIdx + 1] = 0;
           dstData[dstIdx + 2] = 0;
@@ -7328,7 +7430,16 @@ Page({
           return;
         }
         try {
-          var timeRoi = (self.data.rois && self.data.rois[2]) || { x: 0.30, y: 0.35, w: 0.40, h: 0.18 };
+          var rois = self.data.rois || [];
+          var timeRoi = null;
+          for (var rIdx = 0; rIdx < rois.length; rIdx++) {
+            if (rois[rIdx] && rois[rIdx].label === '时间') {
+              timeRoi = rois[rIdx];
+              break;
+            }
+          }
+          if (!timeRoi) timeRoi = rois[2] || { x: 0.30, y: 0.35, w: 0.40, h: 0.18 };
+
           var srcW = frame.width;
           var srcH = frame.height;
           var cropX = Math.floor(timeRoi.x * srcW);
@@ -7337,32 +7448,12 @@ Page({
           var cropH = Math.floor(timeRoi.h * srcH);
           if (cropW <= 0 || cropH <= 0) return;
 
-          canvas.width = srcW;
-          canvas.height = srcH;
+          // 根据实际划定的 ROI 框真实宽高比动态计算导出像素尺寸（保证 1:1 无几何拉伸形变）
+          var roiAspect = cropW / cropH;
+          if (isNaN(roiAspect) || roiAspect <= 0) roiAspect = 4 / 3;
 
-          var fullImgData = ctx.createImageData(srcW, srcH);
-          fullImgData.data.set(new Uint8ClampedArray(frame.data));
-          ctx.putImageData(fullImgData, 0, 0);
-
-          var croppedData = ctx.getImageData(cropX, cropY, cropW, cropH);
-          var data = croppedData.data;
-
-          for (var i = 0; i < data.length; i += 4) {
-            var r = data[i];
-            var g = data[i + 1];
-            var b = data[i + 2];
-            var isBrightLed = (r > 110 && r > b * 1.2) ||
-                              (g > 110 && g > b * 1.2) ||
-                              (r > 130 && g > 130);
-            if (!isBrightLed) {
-              data[i] = 0;
-              data[i + 1] = 0;
-              data[i + 2] = 0;
-            }
-          }
-
-          var dstW = 120;
-          var dstH = 90;
+          var dstH = 80;
+          var dstW = Math.max(30, Math.min(360, Math.round(dstH * roiAspect)));
 
           var srcBuffer = new Uint8ClampedArray(frame.data);
           var scaledData = self._cropAndScaleFrameBuffer(srcBuffer, srcW, srcH, cropX, cropY, cropW, cropH, dstW, dstH);
@@ -7373,15 +7464,16 @@ Page({
           imgData.data.set(scaledData);
           ctx.putImageData(imgData, 0, 0);
 
-          var base64 = canvas.toDataURL('image/jpeg', 0.45);
+          // 弃用 JPEG，使用 PNG 无损格式以消除高频数字边缘的包围式噪点毛刺
+          var base64 = canvas.toDataURL('image/png');
           if (base64) {
             _cropSentCount += 1;
             var sizeKb = (base64.length / 1024).toFixed(1);
-            self._emitCropFramePacket(base64);
-            console.log('[Collector][TimeCrop] frame sent ok! seq=%s, size=%sKB, scaled=120x90', _cropSentCount, sizeKb);
+            self._emitCropFramePacket(base64, roiAspect, dstW, dstH);
+            console.log('[Collector][TimeCrop] frame sent ok! seq=%s, size=%sKB, aspect=%s, scaled=%sx%s (PNG)', _cropSentCount, sizeKb, roiAspect.toFixed(2), dstW, dstH);
             self.setData({
               debugMode: true,
-              debugText: '【切图已发送 ✓】第 ' + _cropSentCount + ' 帧 | 内存预缩放:120x90 | 体积:' + sizeKb + 'KB'
+              debugText: '【切图已发送 ✓】第 ' + _cropSentCount + ' 帧 | 1:1无拉伸 ' + dstW + 'x' + dstH + ' | 体积:' + sizeKb + 'KB'
             });
           }
         } catch (eProc) {

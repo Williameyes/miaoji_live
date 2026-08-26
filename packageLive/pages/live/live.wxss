@@ -966,6 +966,8 @@ button.live-ble-btn::after {
   border-radius: 4rpx;
   mix-blend-mode: screen;
   filter: contrast(1.15) brightness(1.05);
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
 }
 
 .period-text--auto {
