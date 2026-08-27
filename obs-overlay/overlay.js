@@ -453,15 +453,25 @@
     }
   }
 
-  function stopHeartbeat() {
+  // ──────────────────────────────────────────────
+  // 2. 主记分 WebSocket 管理 (双向保活心跳 + 僵尸连接主动巡检 Watchdog)
+  // ──────────────────────────────────────────────
+  var mainWs = null;
+  var mainLastRecvAt = Date.now();
+  var mainReconnectTimer = null;
+  var mainWatchdogTimer = null;
+  var mainReconnectAttempt = 0;
+  var isMainConnecting = false;
+
+  function stopMainHeartbeat() {
     if (heartbeatTimer) {
       clearInterval(heartbeatTimer);
       heartbeatTimer = null;
     }
   }
 
-  function startHeartbeat(ws) {
-    stopHeartbeat();
+  function startMainHeartbeat(ws) {
+    stopMainHeartbeat();
     heartbeatTimer = setInterval(function () {
       if (ws && ws.readyState === WebSocket.OPEN) {
         try {
@@ -474,12 +484,120 @@
           }));
         } catch (e) {}
       }
-    }, 12000);
+    }, 8000);
+  }
+
+  function scheduleMainReconnect(delayMs) {
+    if (mainReconnectTimer) return;
+    var wait = (typeof delayMs === 'number') ? delayMs : Math.min(10000, 1500 * Math.pow(1.5, mainReconnectAttempt));
+    mainReconnectAttempt++;
+    console.log('[OBS Overlay] Scheduling main reconnect in', wait, 'ms, attempt:', mainReconnectAttempt);
+    showStatus('🔴 连接断开，正在自动重连...', 'error', false);
+    mainReconnectTimer = setTimeout(function () {
+      mainReconnectTimer = null;
+      initWebSocket();
+    }, wait);
+  }
+
+  function startMainWatchdog() {
+    if (mainWatchdogTimer) clearInterval(mainWatchdogTimer);
+    mainWatchdogTimer = setInterval(function () {
+      var now = Date.now();
+      if (!mainWs || mainWs.readyState === WebSocket.CLOSED || mainWs.readyState === WebSocket.CLOSING) {
+        if (!isMainConnecting && !mainReconnectTimer) {
+          console.warn('[OBS Overlay][Watchdog] Main WS closed or missing, reconnecting...');
+          scheduleMainReconnect(500);
+        }
+        return;
+      }
+      if (mainWs.readyState === WebSocket.OPEN) {
+        // 超过 24s 没有任何服务器信令/Pong，判定为静默断网/僵尸连接，主动踢掉重连
+        if (now - mainLastRecvAt > 24000) {
+          console.warn('[OBS Overlay][Watchdog] Main WS zombie silence detected (>24s), forcing reconnect!');
+          try {
+            mainWs.onopen = null;
+            mainWs.onmessage = null;
+            mainWs.onclose = null;
+            mainWs.onerror = null;
+            mainWs.close();
+          } catch (e) {}
+          mainWs = null;
+          scheduleMainReconnect(500);
+        }
+      }
+    }, 4000);
   }
 
   function initWebSocket() {
-    stopHeartbeat();
+    if (isMainConnecting) return;
+    isMainConnecting = true;
+    stopMainHeartbeat();
+
+    if (mainWs) {
+      try {
+        mainWs.onopen = null;
+        mainWs.onmessage = null;
+        mainWs.onclose = null;
+        mainWs.onerror = null;
+        mainWs.close();
+      } catch (e) {}
+      mainWs = null;
+    }
+
     showStatus('⏳ 正在连接中控台 (房间 ' + roomId + ')...', '', false);
+
+    function onTokenSuccess(token) {
+      var wsUrl = 'wss://api.mx.server.ndcoo.com/gaoguang-ws?roomId=' + roomId + '&token=' + encodeURIComponent(token);
+      var ws = new WebSocket(wsUrl);
+      mainWs = ws;
+
+      ws.onopen = function () {
+        if (mainWs !== ws) return;
+        isMainConnecting = false;
+        mainReconnectAttempt = 0;
+        mainLastRecvAt = Date.now();
+        console.log('[OBS Overlay] Scoreboard WebSocket Connected to room', roomId);
+        showStatus('🟢 已成功连接中控台 (房间 ' + roomId + ')', 'connected', true);
+
+        ws.send(JSON.stringify({
+          type: 'BROADCAST_JOIN',
+          roomId: roomId,
+          sys_t: Date.now()
+        }));
+
+        startMainHeartbeat(ws);
+      };
+
+      ws.onmessage = function (event) {
+        if (mainWs !== ws) return;
+        mainLastRecvAt = Date.now();
+        try {
+          var payload = JSON.parse(event.data);
+          updateMatchInfo(payload);
+        } catch (err) {
+          console.error('[OBS Overlay] Message Parse Error', err);
+        }
+      };
+
+      ws.onclose = function () {
+        if (mainWs !== ws) return;
+        isMainConnecting = false;
+        stopMainHeartbeat();
+        mainWs = null;
+        console.warn('[OBS Overlay] Main WebSocket Closed, auto reconnecting...');
+        scheduleMainReconnect();
+      };
+
+      ws.onerror = function (err) {
+        if (mainWs !== ws) return;
+        isMainConnecting = false;
+        stopMainHeartbeat();
+        try { ws.close(); } catch (e) {}
+        mainWs = null;
+        console.error('[OBS Overlay] Main WebSocket Error', err);
+        scheduleMainReconnect();
+      };
+    }
 
     fetch(apiBase + '/api/get_token?roomId=' + roomId, {
       method: 'POST',
@@ -487,73 +605,60 @@
     })
       .then(function (res) { return res.json(); })
       .then(function (data) {
-        if (!data || !data.token) {
-          showStatus('❌ 获取 Token 失败 (房间 ' + roomId + ')', 'error', false);
-          setTimeout(initWebSocket, 5000);
-          return;
+        if (data && data.token) {
+          onTokenSuccess(data.token);
+        } else {
+          fetch(apiBase + '/api/get_token?roomId=' + roomId)
+            .then(function (r2) { return r2.json(); })
+            .then(function (d2) {
+              if (d2 && d2.token) onTokenSuccess(d2.token);
+              else {
+                isMainConnecting = false;
+                scheduleMainReconnect(3000);
+              }
+            })
+            .catch(function () {
+              isMainConnecting = false;
+              scheduleMainReconnect(3000);
+            });
         }
-
-        var wsUrl = 'wss://api.mx.server.ndcoo.com/gaoguang-ws?roomId=' + roomId + '&token=' + encodeURIComponent(data.token);
-        var ws = new WebSocket(wsUrl);
-
-        ws.onopen = function () {
-          console.log('[OBS Overlay] Scoreboard WebSocket Connected to room', roomId);
-          showStatus('🟢 已成功连接中控台 (房间 ' + roomId + ')', 'connected', true);
-
-          ws.send(JSON.stringify({
-            type: 'BROADCAST_JOIN',
-            roomId: roomId,
-            sys_t: Date.now()
-          }));
-
-          startHeartbeat(ws);
-        };
-
-        ws.onmessage = function (event) {
-          try {
-            var payload = JSON.parse(event.data);
-            console.log('[OBS Overlay] Score Message:', payload);
-            updateMatchInfo(payload);
-          } catch (err) {
-            console.error('[OBS Overlay] Message Parse Error', err);
-          }
-        };
-
-        ws.onclose = function () {
-          console.warn('[OBS Overlay] WebSocket Closed, reconnecting...');
-          stopHeartbeat();
-          showStatus('🔴 中控台连接已断开，重新连接中...', 'error', false);
-          setTimeout(initWebSocket, 3000);
-        };
-
-        ws.onerror = function (err) {
-          console.error('[OBS Overlay] WebSocket Error', err);
-          stopHeartbeat();
-          showStatus('❌ 通信网络错误', 'error', false);
-          try { ws.close(); } catch (e) {}
-        };
       })
       .catch(function (err) {
         console.error('[OBS Overlay] Token Fetch Fail', err);
-        showStatus('❌ 无法连接服务器网关', 'error', false);
-        setTimeout(initWebSocket, 5000);
+        fetch(apiBase + '/api/get_token?roomId=' + roomId)
+          .then(function (r2) { return r2.json(); })
+          .then(function (d2) {
+            if (d2 && d2.token) onTokenSuccess(d2.token);
+            else {
+              isMainConnecting = false;
+              scheduleMainReconnect(3000);
+            }
+          })
+          .catch(function () {
+            isMainConnecting = false;
+            scheduleMainReconnect(3000);
+          });
       });
   }
 
   // ──────────────────────────────────────────────
-  // 3. 动态时间采集设备连接与切图渲染管理 (按需连入采集端房间)
+  // 3. 动态时间采集设备连接与切图渲染管理 (支持后台永久自动重连与切图看门狗)
   // ──────────────────────────────────────────────
   var timeWs = null;
   var currentTimeRoomId = '';
   var timeWsHeartbeatTimer = null;
-  var timeWatchdogTimer = null;
+  var timeFrameWatchdogTimer = null;
+  var timeDeviceWatchdogTimer = null;
+  var timeReconnectTimer = null;
+  var timeLastRecvAt = Date.now();
+  var isTimeConnecting = false;
   var timeImageObj = new Image();
   var lastTimeCropSeq = 0;
 
   function clearTimeCrop() {
-    if (timeWatchdogTimer) {
-      clearTimeout(timeWatchdogTimer);
-      timeWatchdogTimer = null;
+    if (timeFrameWatchdogTimer) {
+      clearTimeout(timeFrameWatchdogTimer);
+      timeFrameWatchdogTimer = null;
     }
     if (domTimeCropBox) {
       domTimeCropBox.classList.add('crop-time-box--hidden');
@@ -581,8 +686,11 @@
       lastTimeCropSeq = seq;
     }
 
-    if (timeWatchdogTimer) clearTimeout(timeWatchdogTimer);
-    timeWatchdogTimer = setTimeout(function () {
+    timeLastRecvAt = Date.now();
+
+    // 4.5 秒内无新帧自动隐藏黑晶容器
+    if (timeFrameWatchdogTimer) clearTimeout(timeFrameWatchdogTimer);
+    timeFrameWatchdogTimer = setTimeout(function () {
       clearTimeCrop();
     }, 4500);
 
@@ -601,7 +709,7 @@
         domTimeCropCanvas.width = nw;
         domTimeCropCanvas.height = nh;
       }
-      var targetBoxWidth = Math.max(66, Math.round(48 * aspect));
+      var targetBoxWidth = Math.max(74, Math.round(52 * aspect));
       if (domTimeCropBox) {
         domTimeCropBox.style.width = targetBoxWidth + 'px';
         domTimeCropBox.classList.remove('crop-time-box--hidden');
@@ -634,12 +742,58 @@
           }));
         } catch (e) {}
       }
-    }, 12000);
+    }, 8000);
+  }
+
+  function scheduleTimeReconnect(targetRoomId, delayMs) {
+    if (!targetRoomId || targetRoomId !== currentTimeRoomId) return;
+    if (timeReconnectTimer) return;
+    var wait = delayMs || 2500;
+    console.log('[OBS Overlay] Scheduling time device reconnect in', wait, 'ms for room', targetRoomId);
+    timeReconnectTimer = setTimeout(function () {
+      timeReconnectTimer = null;
+      if (currentTimeRoomId === targetRoomId) {
+        connectTimeDevice(targetRoomId, true);
+      }
+    }, wait);
+  }
+
+  function startTimeDeviceWatchdog() {
+    if (timeDeviceWatchdogTimer) clearInterval(timeDeviceWatchdogTimer);
+    timeDeviceWatchdogTimer = setInterval(function () {
+      if (!currentTimeRoomId) return;
+      var now = Date.now();
+      if (!timeWs || timeWs.readyState === WebSocket.CLOSED || timeWs.readyState === WebSocket.CLOSING) {
+        if (!isTimeConnecting && !timeReconnectTimer) {
+          console.warn('[OBS Overlay][TimeWatchdog] Time WS down, auto reconnecting...');
+          scheduleTimeReconnect(currentTimeRoomId, 500);
+        }
+        return;
+      }
+      if (timeWs.readyState === WebSocket.OPEN) {
+        if (now - timeLastRecvAt > 20000) {
+          console.warn('[OBS Overlay][TimeWatchdog] Time WS silence (>20s), proactive reconnecting...');
+          try {
+            timeWs.onopen = null;
+            timeWs.onmessage = null;
+            timeWs.onclose = null;
+            timeWs.onerror = null;
+            timeWs.close();
+          } catch (e) {}
+          timeWs = null;
+          scheduleTimeReconnect(currentTimeRoomId, 500);
+        }
+      }
+    }, 4000);
   }
 
   function disconnectTimeDevice() {
     stopTimeHeartbeat();
     currentTimeRoomId = '';
+    if (timeReconnectTimer) {
+      clearTimeout(timeReconnectTimer);
+      timeReconnectTimer = null;
+    }
     if (timeWs) {
       try {
         timeWs.onopen = null;
@@ -654,7 +808,7 @@
     console.log('[OBS Overlay] Time Device Disconnected, container cleared and closed');
   }
 
-  function connectTimeDevice(targetRoomId) {
+  function connectTimeDevice(targetRoomId, isSilentRetry) {
     var safeTargetId = String(targetRoomId || '').replace(/\D/g, '').slice(0, 6);
     if (!safeTargetId || safeTargetId.length !== 6) {
       console.warn('[OBS Overlay] Invalid target time room id:', targetRoomId);
@@ -662,22 +816,32 @@
     }
 
     if (timeWs && currentTimeRoomId === safeTargetId && timeWs.readyState === WebSocket.OPEN) {
-      console.log('[OBS Overlay] Already connected to target time room:', safeTargetId);
+      if (!isSilentRetry) {
+        console.log('[OBS Overlay] Already connected to target time room:', safeTargetId);
+      }
       return;
     }
 
-    disconnectTimeDevice();
+    if (!isSilentRetry) {
+      disconnectTimeDevice();
+    }
     currentTimeRoomId = safeTargetId;
+    isTimeConnecting = true;
     console.log('[OBS Overlay] Connecting to Time Device Room:', safeTargetId);
 
     function establishTimeWs(token) {
-      if (currentTimeRoomId !== safeTargetId) return;
+      if (currentTimeRoomId !== safeTargetId) {
+        isTimeConnecting = false;
+        return;
+      }
       var wsUrl = 'wss://api.mx.server.ndcoo.com/gaoguang-ws?roomId=' + safeTargetId + '&token=' + encodeURIComponent(token);
       var ws = new WebSocket(wsUrl);
       timeWs = ws;
 
       ws.onopen = function () {
         if (timeWs !== ws) return;
+        isTimeConnecting = false;
+        timeLastRecvAt = Date.now();
         console.log('[OBS Overlay] Time Device Connected to room', safeTargetId);
         ws.send(JSON.stringify({
           type: 'BROADCAST_JOIN',
@@ -689,9 +853,9 @@
 
       ws.onmessage = function (event) {
         if (timeWs !== ws) return;
+        timeLastRecvAt = Date.now();
         try {
           var raw = JSON.parse(event.data);
-          console.log('[OBS Overlay] Time Channel Message:', raw);
           var frameData = null;
           if (raw.type === 'CROP_FRAME_SYNC' || raw.type === 'DATA_CROP_FRAME') {
             frameData = raw.payload || raw;
@@ -713,15 +877,24 @@
 
       ws.onclose = function () {
         if (timeWs !== ws) return;
+        isTimeConnecting = false;
         stopTimeHeartbeat();
-        clearTimeCrop();
-        console.warn('[OBS Overlay] Time Device WebSocket Closed for room', safeTargetId);
+        timeWs = null;
+        console.warn('[OBS Overlay] Time Device WebSocket Closed, auto reconnecting for room', safeTargetId);
+        if (currentTimeRoomId === safeTargetId) {
+          scheduleTimeReconnect(safeTargetId, 2000);
+        }
       };
 
       ws.onerror = function (err) {
         if (timeWs !== ws) return;
+        isTimeConnecting = false;
         stopTimeHeartbeat();
         try { ws.close(); } catch (e) {}
+        timeWs = null;
+        if (currentTimeRoomId === safeTargetId) {
+          scheduleTimeReconnect(safeTargetId, 2500);
+        }
       };
     }
 
@@ -738,8 +911,15 @@
             .then(function (r2) { return r2.json(); })
             .then(function (d2) {
               if (d2 && d2.token) establishTimeWs(d2.token);
+              else {
+                isTimeConnecting = false;
+                scheduleTimeReconnect(safeTargetId, 3000);
+              }
             })
-            .catch(function (e2) {});
+            .catch(function () {
+              isTimeConnecting = false;
+              scheduleTimeReconnect(safeTargetId, 3000);
+            });
         }
       })
       .catch(function (err) {
@@ -748,8 +928,15 @@
           .then(function (r2) { return r2.json(); })
           .then(function (d2) {
             if (d2 && d2.token) establishTimeWs(d2.token);
+            else {
+              isTimeConnecting = false;
+              scheduleTimeReconnect(safeTargetId, 3000);
+            }
           })
-          .catch(function (e2) {});
+          .catch(function () {
+            isTimeConnecting = false;
+            scheduleTimeReconnect(safeTargetId, 3000);
+          });
       });
   }
 
@@ -757,8 +944,10 @@
   applyTeamContrastStyle(domHomeName, domHomeScore, currentHomeColor);
   applyTeamContrastStyle(domAwayName, domAwayScore, currentAwayColor);
 
-  // 初始化主记分 WebSocket
+  // 初始化主记分 WebSocket 与看门狗
   initWebSocket();
+  startMainWatchdog();
+  startTimeDeviceWatchdog();
 
   // 支持 URL 参数直连时间房间 (?timeRoom=xxxxxx)
   var initialTimeRoomParam = urlParams.get('timeRoom') || urlParams.get('timeRoomId') || urlParams.get('time_room');

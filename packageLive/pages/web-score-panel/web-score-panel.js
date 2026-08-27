@@ -208,6 +208,7 @@ Page({
   },
 
   onUnload: function () {
+    this._manualClosed = true;
     this._closeWs();
   },
 
@@ -268,9 +269,32 @@ Page({
   // 点击状态栏手动重连
   onTapWsStatus: function () {
     if (!this.data.wsConnected && !this._isConnecting) {
+      this._manualClosed = false;
+      this._reconnectAttempt = 0;
       this._addLog('👆 手动点击尝试重连...', '');
       this._connectWs(this.data.roomId);
     }
+  },
+
+  // 调度自动重连 (退避重试)
+  _scheduleWsReconnect: function () {
+    if (this._manualClosed) return;
+    if (this._reconnectTimer) return;
+
+    var attempt = this._reconnectAttempt || 0;
+    var wait = Math.min(12000, 1500 * Math.pow(1.5, attempt));
+    this._reconnectAttempt = attempt + 1;
+
+    var self = this;
+    console.log('[WebScorePanel] scheduleWsReconnect in', wait, 'ms, attempt:', this._reconnectAttempt);
+    this.setData({ wsConnected: false, wsStatusText: '重连中(' + Math.round(wait / 1000) + 's)...' });
+
+    this._reconnectTimer = setTimeout(function () {
+      self._reconnectTimer = null;
+      if (!self._manualClosed && !self.data.wsConnected) {
+        self._connectWs(self.data.roomId);
+      }
+    }, wait);
   },
 
   // 2. 建立 WebSocket 长连接 (带防重复并发锁与旧 Socket 强关)
@@ -284,6 +308,7 @@ Page({
 
     // 先强制关闭可能遗留的旧 Socket 任务，防止并发上限冲突
     this._closeWs();
+    this._manualClosed = false;
 
     this._isConnecting = true;
     this.setData({ wsStatusText: '连接中...', roomId: roomId, obsUrl: 'https://api.mx.server.ndcoo.com/obs-overlay/index.html?roomId=' + roomId });
@@ -295,6 +320,7 @@ Page({
           self._isConnecting = false;
           self.setData({ wsConnected: false, wsStatusText: 'Token无效' });
           self._addLog('❌ Token 异常', 'error');
+          self._scheduleWsReconnect();
           return;
         }
 
@@ -312,12 +338,18 @@ Page({
             var msg = err && err.errMsg ? err.errMsg : '连接失败';
             self.setData({ wsConnected: false, wsStatusText: msg });
             self._addLog('❌ connectSocket 失败: ' + msg, 'error');
+            self._scheduleWsReconnect();
           }
         });
 
         self._socketTask.onOpen(function () {
           console.log('[WebScorePanel] WebSocket onOpen!');
           self._isConnecting = false;
+          self._reconnectAttempt = 0;
+          if (self._reconnectTimer) {
+            clearTimeout(self._reconnectTimer);
+            self._reconnectTimer = null;
+          }
           self.setData({ wsConnected: true, wsStatusText: '已在线' });
           self._addLog('✅ WebSocket 成功建立! (房间:' + roomId + ')', 'success');
           self._startHeartbeat();
@@ -342,17 +374,20 @@ Page({
         self._socketTask.onClose(function (e) {
           console.log('[WebScorePanel] WebSocket onClose', e);
           self._isConnecting = false;
-          self.setData({ wsConnected: false, wsStatusText: '已断开(点击重连)' });
-          self._addLog('⚠️ WebSocket 断开', 'error');
           self._stopHeartbeat();
+          self.setData({ wsConnected: false, wsStatusText: '已断开(重连中...)' });
+          self._addLog('⚠️ WebSocket 断开，准备自动重连', 'error');
+          self._scheduleWsReconnect();
         });
 
         self._socketTask.onError(function (err) {
           console.error('[WebScorePanel] WebSocket onError', err);
           self._isConnecting = false;
+          self._stopHeartbeat();
           var errMsg = err && err.errMsg ? err.errMsg : '异常';
-          self.setData({ wsConnected: false, wsStatusText: '连接异常(点击重连)' });
-          self._addLog('❌ WebSocket 错误: ' + errMsg, 'error');
+          self.setData({ wsConnected: false, wsStatusText: '连接异常(重连中...)' });
+          self._addLog('❌ WebSocket 错误: ' + errMsg + '，准备自动重连', 'error');
+          self._scheduleWsReconnect();
         });
       })
       .catch(function (err) {
@@ -361,11 +396,16 @@ Page({
         var errDesc = err && err.message ? err.message : 'Token异常';
         self.setData({ wsConnected: false, wsStatusText: errDesc });
         self._addLog('❌ Token 请求失败: ' + errDesc, 'error');
+        self._scheduleWsReconnect();
       });
   },
 
   _closeWs: function () {
     this._stopHeartbeat();
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
     if (this._socketTask) {
       try {
         this._socketTask.close({});
@@ -389,7 +429,7 @@ Page({
           })
         });
       }
-    }, 12000);
+    }, 8000);
   },
 
   _stopHeartbeat: function () {
