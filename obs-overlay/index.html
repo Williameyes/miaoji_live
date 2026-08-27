@@ -14,8 +14,11 @@
     <span class="status-text" id="ws-status-text">⏳ 正在连接中控台...</span>
   </div>
 
-  <!-- 左侧灵动岛专业电视转播级「LIVE 现场直播」纵向遮罩角标 -->
+  <!-- 左侧灵动岛专业电视转播级「LIVE 现场直播」纵向遮罩角标 (贴边零边距，放大1倍，支持一键关闭) -->
   <div class="dynamic-island-badge" id="dynamic-island-badge" title="可拖动调整位置，滚轮可等比缩放大小">
+    <!-- 关闭按钮 -->
+    <div class="live-close-btn" id="live-close-btn" title="关闭直播标识">×</div>
+
     <div class="live-top-pill">
       <span class="live-pulse-dot"></span>
       <span class="live-en-text">LIVE</span>
@@ -34,12 +37,12 @@
   <div class="obs-container" id="obs-container">
     <div class="broadcast-scoreboard-wrapper" id="scoreboard-wrapper">
       <div class="broadcast-scoreboard" id="scoreboard">
-        <!-- 顶部比赛名称 (精致半透深色胶囊) -->
+        <!-- 顶部比赛名称 (纯透明背景，大字号高清投影) -->
         <div class="match-title-row">
           <span class="match-title-text" id="match-title">常规赛</span>
         </div>
 
-        <!-- 核心记分条主体 (与 live.wxml 中的 score-bar-core 结构完全一致) -->
+        <!-- 核心记分条主体 (与 live.wxml 中的 score-bar-core 结构完全一致，居中显示) -->
         <div class="score-bar-core" id="score-bar-core">
           <!-- 主队板块 (左侧圆角 + 纯色背景 + 队名居中 + 分数靠内) -->
           <div class="team-group team-a-group" id="home-group">
@@ -67,7 +70,7 @@
             </div>
           </div>
 
-          <!-- 画面实时裁剪同步：自适应动态宽度切图时间容器 (定位在 score-bar-core 右侧，零拉伸不变形，隐藏时不占位) -->
+          <!-- 画面实时裁剪同步：自适应动态宽度切图时间容器 (定位在 score-bar-core 右侧旁，不影响记分牌居中) -->
           <div class="crop-time-box crop-time-box--hidden" id="time-crop-box">
             <canvas id="time-crop-canvas" class="crop-time-canvas"></canvas>
           </div>

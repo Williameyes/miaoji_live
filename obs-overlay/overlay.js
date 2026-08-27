@@ -159,6 +159,14 @@
           saveState();
         }
       });
+
+      var domLiveCloseBtn = document.getElementById('live-close-btn');
+      if (domLiveCloseBtn && domDynamicIslandBadge) {
+        domLiveCloseBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          domDynamicIslandBadge.style.display = 'none';
+        });
+      }
     })();
   }
 

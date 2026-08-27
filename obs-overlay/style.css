@@ -69,13 +69,15 @@ body, html {
 }
 
 /* ──────────────────────────────────────────────
-   左侧灵动岛专业电视转播级「LIVE 现场直播」纵向遮罩角标
-   专为遮盖 iPhone 横屏时左侧中部的灵动岛黑胶囊及指示绿点
-   采用经典转播皇室蓝渐变 (#3B82F6 -> #2563EB -> #1D4ED8)
+   1. 左侧专业电视转播级「LIVE 现场直播」遮罩角标
+   - 尺寸放大1倍 (宽高均增加，更显眼大气)
+   - 贴左边显示，零左边距
+   - 提供关闭按钮，可点击关闭
 ────────────────────────────────────────────── */
 .dynamic-island-badge {
   position: absolute;
-  left: 0;
+  left: 0 !important;
+  margin-left: 0 !important;
   top: 50%;
   transform: translateY(-50%);
   z-index: 1000;
@@ -83,17 +85,17 @@ body, html {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  width: 36px;
-  height: 136px;
-  padding: 8px 3px;
+  gap: 8px;
+  width: 58px;
+  height: 230px;
+  padding: 16px 4px;
   background: linear-gradient(180deg, #3B82F6 0%, #2563EB 50%, #1D4ED8 100%);
-  border-top: 1.5px solid rgba(255, 255, 255, 0.7);
-  border-right: 1.2px solid rgba(255, 255, 255, 0.5);
-  border-bottom: 1.2px solid rgba(255, 255, 255, 0.3);
-  border-left: none;
-  border-radius: 0 18px 18px 0;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.55), 0 0 14px rgba(37, 99, 235, 0.45), inset 0 1.2px 0 rgba(255, 255, 255, 0.5);
+  border-top: 2px solid rgba(255, 255, 255, 0.75);
+  border-right: 1.8px solid rgba(255, 255, 255, 0.55);
+  border-bottom: 1.8px solid rgba(255, 255, 255, 0.35);
+  border-left: none !important;
+  border-radius: 0 24px 24px 0;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6), 0 0 16px rgba(37, 99, 235, 0.5), inset 0 1.5px 0 rgba(255, 255, 255, 0.55);
   backdrop-filter: blur(12px);
   transition: transform 0.2s ease, opacity 0.3s ease;
   user-select: none;
@@ -105,34 +107,62 @@ body, html {
   cursor: grabbing;
 }
 
+/* 关闭按钮 */
+.live-close-btn {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 22px;
+  height: 22px;
+  background: rgba(15, 23, 42, 0.88);
+  color: #FFFFFF;
+  border: 1.5px solid rgba(255, 255, 255, 0.75);
+  border-radius: 50%;
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 18px;
+  text-align: center;
+  cursor: pointer;
+  z-index: 1005;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
+  opacity: 0.8;
+  transition: all 0.2s ease;
+}
+
+.live-close-btn:hover {
+  background: #EF4444;
+  opacity: 1;
+  transform: scale(1.18);
+}
+
 .live-top-pill {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
+  gap: 4px;
   flex-shrink: 0;
 }
 
 .live-pulse-dot {
   position: relative;
-  width: 7px;
-  height: 7px;
+  width: 10px;
+  height: 10px;
   background-color: #FFFFFF;
   border-radius: 50%;
-  box-shadow: 0 0 8px #FFFFFF, 0 0 14px rgba(96, 165, 250, 0.9);
+  box-shadow: 0 0 10px #FFFFFF, 0 0 18px rgba(96, 165, 250, 0.95);
   flex-shrink: 0;
 }
 
 .live-pulse-dot::after {
   content: '';
   position: absolute;
-  top: -3.5px;
-  left: -3.5px;
-  width: 14px;
-  height: 14px;
+  top: -4px;
+  left: -4px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.55);
   animation: livePulseWave 1.8s infinite cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
@@ -143,20 +173,20 @@ body, html {
 
 .live-en-text {
   font-family: 'DIN Alternate', 'Impact', 'SF Pro Display', -apple-system, sans-serif;
-  font-size: 11px;
+  font-size: 15px;
   font-weight: 900;
   color: #FFFFFF;
-  letter-spacing: 0.8px;
+  letter-spacing: 1px;
   line-height: 1;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.65);
 }
 
 .live-v-divider {
-  width: 18px;
-  height: 1.2px;
-  background: rgba(255, 255, 255, 0.45);
+  width: 32px;
+  height: 1.8px;
+  background: rgba(255, 255, 255, 0.5);
   border-radius: 1px;
-  margin: 1px 0 2px;
+  margin: 3px 0 5px;
   flex-shrink: 0;
 }
 
@@ -165,17 +195,17 @@ body, html {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4.5px;
+  gap: 7px;
   flex-shrink: 0;
 }
 
 .live-vertical-title span {
-  font-size: 11.5px;
+  font-size: 16.5px;
   font-weight: 800;
   color: #FFFFFF;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.85);
   line-height: 1.1;
-  letter-spacing: 0.2px;
+  letter-spacing: 0.3px;
 }
 
 .island-resize-handle {
@@ -197,10 +227,10 @@ body.mode-live-only .dynamic-island-badge {
   top: 50% !important;
   transform: translate(-50%, -50%) !important;
   margin: 0 !important;
-  border-radius: 18px !important;
-  border-left: 1.2px solid rgba(255, 255, 255, 0.5) !important;
-  width: 36px !important;
-  height: 136px !important;
+  border-radius: 24px !important;
+  border-left: 1.8px solid rgba(255, 255, 255, 0.55) !important;
+  width: 58px !important;
+  height: 230px !important;
 }
 
 /* ──────────────────────────────────────────────
@@ -230,7 +260,7 @@ body.mode-live-only .dynamic-island-badge {
 }
 
 /* ──────────────────────────────────────────────
-   转播记分牌整体 (紧凑自适应结构，绝不撑出多余空白)
+   转播记分牌整体 (紧凑自适应结构，居中对齐)
 ────────────────────────────────────────────── */
 .broadcast-scoreboard {
   display: flex;
@@ -242,28 +272,29 @@ body.mode-live-only .dynamic-island-badge {
   transition: transform 0.2s ease;
 }
 
-/* 顶部比赛标题 (精致深色微透胶囊) */
+/* ──────────────────────────────────────────────
+   3. 顶部比赛名称：纯透明背景，大字号高清立体投影
+────────────────────────────────────────────── */
 .match-title-row {
   display: flex;
   justify-content: center;
   align-items: center;
-  margin-bottom: 5px;
+  margin-bottom: 6px;
   width: 100%;
 }
 
 .match-title-text {
   color: #FFFFFF;
-  font-size: clamp(13px, 1.25vw, 16px);
+  font-size: clamp(16px, 1.6vw, 22px);
   font-weight: 800;
   line-height: 1.2;
-  padding: 3px 14px;
-  background: rgba(15, 23, 42, 0.85);
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(6px);
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95);
-  letter-spacing: 0.5px;
+  padding: 2px 10px;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.95), 0 1px 3px rgba(0, 0, 0, 0.9);
+  letter-spacing: 0.8px;
   max-width: 90%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -271,7 +302,7 @@ body.mode-live-only .dynamic-island-badge {
 }
 
 /* ──────────────────────────────────────────────
-   核心一体化转播记分条 (与 live.wxss 的 score-bar-core 100% 对齐)
+   2. 核心一体化转播记分条：加宽比例对齐 live.wxss，完美居中
 ────────────────────────────────────────────── */
 .score-bar-core {
   position: relative;
@@ -284,14 +315,14 @@ body.mode-live-only .dynamic-island-badge {
   background: transparent;
 }
 
-/* 球队板块 (主队/客队) */
+/* 球队板块 (主队/客队)：加宽尺寸与 live.wxss 比例一致 */
 .team-group {
   position: relative;
   display: block;
   flex: 0 0 auto;
-  min-width: clamp(130px, 12vw, 190px);
-  max-width: 240px;
-  height: clamp(44px, 4.2vw, 54px);
+  min-width: clamp(200px, 19vw, 290px);
+  max-width: 340px;
+  height: clamp(52px, 5vw, 62px);
   box-sizing: border-box;
   overflow: visible;
 }
@@ -306,7 +337,7 @@ body.mode-live-only .dynamic-island-badge {
   z-index: 0;
   pointer-events: none;
   opacity: 0.92;
-  box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, 0.35), 0 3px 10px rgba(0, 0, 0, 0.4);
+  box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, 0.35), 0 4px 12px rgba(0, 0, 0, 0.45);
   transition: background-color 0.3s ease;
 }
 
@@ -328,21 +359,21 @@ body.mode-live-only .dynamic-island-badge {
   justify-content: space-between;
   width: 100%;
   height: 100%;
-  padding: 0 clamp(10px, 1.1vw, 16px);
-  gap: 8px;
+  padding: 0 clamp(14px, 1.4vw, 20px);
+  gap: 10px;
   box-sizing: border-box;
 }
 
-/* 队伍名称 */
+/* 队伍名称 (自适应大字号) */
 .team-name {
   flex: 1 1 0;
-  font-size: clamp(15px, 1.5vw, 20px);
+  font-size: clamp(17px, 1.7vw, 22px);
   font-weight: 800;
   color: #FFFFFF;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.4px;
   text-align: center;
   transition: color 0.3s ease, text-shadow 0.3s ease;
 }
@@ -350,10 +381,10 @@ body.mode-live-only .dynamic-island-badge {
 /* 比分数字 (DIN 等宽、加粗赛事级大字) */
 .score-value {
   font-family: 'DIN Alternate', 'Impact', 'Chakra Petch', 'SF Pro Display', -apple-system, BlinkMacSystemFont, monospace, sans-serif;
-  font-size: clamp(28px, 2.9vw, 38px);
+  font-size: clamp(34px, 3.4vw, 44px);
   font-weight: 900;
   color: #FFFFFF;
-  min-width: 40px;
+  min-width: 50px;
   text-align: center;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.5px;
@@ -362,7 +393,7 @@ body.mode-live-only .dynamic-island-badge {
 }
 
 /* ──────────────────────────────────────────────
-   中间节次立体高光胶囊 (与小程序 live.wxss 100% 一致)
+   中间节次立体高光胶囊 (上红中蓝下深蓝经典渐变)
 ────────────────────────────────────────────── */
 .period-center-outer {
   position: relative;
@@ -371,8 +402,8 @@ body.mode-live-only .dynamic-island-badge {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: clamp(80px, 7.2vw, 106px);
-  height: clamp(52px, 5vw, 64px);
+  min-width: clamp(96px, 8.8vw, 126px);
+  height: clamp(60px, 5.8vw, 72px);
   margin: 0 -2px;
 }
 
@@ -383,7 +414,7 @@ body.mode-live-only .dynamic-island-badge {
   top: 0;
   bottom: 0;
   background: linear-gradient(180deg, rgba(239, 68, 68, 0.98) 0%, rgba(59, 130, 246, 0.98) 50%, rgba(29, 78, 216, 0.98) 100%) !important;
-  border-radius: 8px;
+  border-radius: 9px;
   border-top: 1.5px solid rgba(255, 255, 255, 0.65);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55), inset 0 1.2px 0 rgba(255, 255, 255, 0.45);
 }
@@ -394,12 +425,12 @@ body.mode-live-only .dynamic-island-badge {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0 8px;
+  padding: 0 10px;
 }
 
 .period-text {
   color: #FFFFFF;
-  font-size: clamp(13.5px, 1.35vw, 17.5px);
+  font-size: clamp(15px, 1.5vw, 19px);
   font-weight: 900;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
   letter-spacing: 0.8px;
@@ -418,23 +449,22 @@ body.mode-live-only .dynamic-island-badge {
 }
 
 /* ──────────────────────────────────────────────
-   切图同步：自适应动态宽度黑晶计时模块 (与 live.wxss 完全一致)
-   绝对定位在 score-bar-core 右侧，零偏移主记分栏，不打乱居中
+   切图时间容器：定位在 score-bar-core 右侧旁 (绝对定位，不影响记分牌水平居中)
 ────────────────────────────────────────────── */
 .crop-time-box {
   position: absolute;
-  left: calc(100% + clamp(8px, 1vw, 14px));
+  left: calc(100% + clamp(12px, 1.4vw, 18px));
   top: 50%;
   transform: translateY(-50%);
   z-index: 10;
   display: flex;
   align-items: center;
   justify-content: center;
-  height: clamp(44px, 4.2vw, 54px);
-  min-width: clamp(66px, 5.5vw, 96px);
+  height: clamp(52px, 5vw, 62px);
+  min-width: clamp(74px, 6.8vw, 110px);
   padding: 2px 6px;
   background: linear-gradient(180deg, rgba(20, 26, 38, 0.95) 0%, rgba(10, 14, 23, 0.98) 100%);
-  border-radius: 7px;
+  border-radius: 8px;
   border: 1.2px solid rgba(255, 255, 255, 0.28);
   border-top: 1.5px solid rgba(255, 255, 255, 0.55);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6), inset 0 1.2px 0 rgba(255, 255, 255, 0.35);
