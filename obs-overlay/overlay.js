@@ -25,6 +25,10 @@
   var domMatchTitle = document.getElementById('match-title');
   var domPeriod = document.getElementById('period-badge');
 
+  var domTimeCropBox = document.getElementById('time-crop-box');
+  var domTimeCropCanvas = document.getElementById('time-crop-canvas');
+  var timeCropCanvasCtx = domTimeCropCanvas ? domTimeCropCanvas.getContext('2d') : null;
+
   var statusBanner = document.getElementById('ws-status-banner');
   var statusText = document.getElementById('ws-status-text');
 
@@ -56,7 +60,6 @@
   if (domDynamicIslandBadge && hideIsland) {
     domDynamicIslandBadge.style.display = 'none';
   } else if (domDynamicIslandBadge) {
-    // 自定义纵向文案 (?liveText=现场直播 或 ?islandText=高清直播)
     var liveTextParam = urlParams.get('liveText') || urlParams.get('islandText');
     if (domLiveTitle && liveTextParam) {
       domLiveTitle.innerHTML = '';
@@ -67,11 +70,9 @@
       }
     }
 
-    // 等比缩放参数 (?liveScale=1.2 或 ?islandScale=1.2) - 严格保持长宽比与字距，绝不拉伸变形
     var islandScale = parseFloat(urlParams.get('liveScale') || urlParams.get('islandScale') || urlParams.get('scaleIsland'));
     if (isNaN(islandScale) || islandScale <= 0.2) islandScale = 1.0;
 
-    // 位置自定义微调 (?liveTop=48% 或 ?liveY=400, ?liveLeft=0)
     var liveTop = urlParams.get('liveTop') || urlParams.get('liveY') || urlParams.get('islandTop');
     var liveLeft = urlParams.get('liveLeft') || urlParams.get('liveX') || urlParams.get('islandLeft');
 
@@ -93,13 +94,11 @@
 
     applyIslandTransform();
 
-    // 交互式鼠标拖拽与滚轮等比缩放支持 (带本地缓存自动记忆)
     (function enableIslandDragAndResize() {
       var isDragging = false;
       var startX = 0, startY = 0;
       var initLeft = 0, initTop = 0;
 
-      // 读取本地缓存位置与缩放
       try {
         var savedData = localStorage.getItem('obs_island_uniform_state');
         if (savedData && !liveTop && !liveLeft) {
@@ -121,7 +120,6 @@
         } catch (e) {}
       }
 
-      // 1. 鼠标拖动位置
       domDynamicIslandBadge.addEventListener('mousedown', function (e) {
         isDragging = true;
         startX = e.clientX;
@@ -134,7 +132,6 @@
         e.preventDefault();
       });
 
-      // 2. 滚轮自由等比缩放大小 (绝不拉伸变形)
       domDynamicIslandBadge.addEventListener('wheel', function (e) {
         e.preventDefault();
         var delta = e.deltaY < 0 ? 0.05 : -0.05;
@@ -173,9 +170,6 @@
   var currentHomeColor = '#E64340';
   var currentAwayColor = '#10AEFF';
 
-  // ──────────────────────────────────────────────
-  // 1. 队服颜色高对比度文字自适应计算
-  // ──────────────────────────────────────────────
   function getContrastTextColor(hexColor) {
     if (!hexColor) return '#FFFFFF';
     var hex = String(hexColor).replace('#', '').trim();
@@ -186,7 +180,6 @@
     var r = parseInt(hex.substr(0, 2), 16) || 0;
     var g = parseInt(hex.substr(2, 2), 16) || 0;
     var b = parseInt(hex.substr(4, 2), 16) || 0;
-    // YIQ 亮度感知公式
     var yiq = (r * 299 + g * 587 + b * 114) / 1000;
     return yiq >= 155 ? '#0F172A' : '#FFFFFF';
   }
@@ -205,9 +198,6 @@
     }
   }
 
-  // ──────────────────────────────────────────────
-  // 2. 记分牌数据解析与渲染
-  // ──────────────────────────────────────────────
   function showStatus(text, state, autoFade) {
     if (!statusBanner || !statusText) return;
     statusText.textContent = text;
@@ -260,7 +250,6 @@
     }
   }
 
-  // 核心：解码 match_id / session_id 中携带的全量比赛元数据
   function decodeMatchMeta(str) {
     if (!str || typeof str !== 'string') return null;
 
@@ -285,7 +274,8 @@
           teamB: obj.b || obj.teamB || '',
           colorA: obj.ca ? '#' + obj.ca.replace('#', '') : (obj.colorA || ''),
           colorB: obj.cb ? '#' + obj.cb.replace('#', '') : (obj.colorB || ''),
-          matchId: obj.id || obj.matchId || ''
+          matchId: obj.id || obj.matchId || '',
+          timeRoomId: obj.tr || ''
         };
       } catch (e) {
         console.warn('[OBS Overlay] decodeMatchMeta b64 error:', e);
@@ -323,7 +313,8 @@
           teamB: jsonObj.teamB || jsonObj.b || '',
           colorA: jsonObj.colorA || (jsonObj.ca ? '#' + jsonObj.ca.replace('#', '') : ''),
           colorB: jsonObj.colorB || (jsonObj.cb ? '#' + jsonObj.cb.replace('#', '') : ''),
-          matchId: jsonObj.id || jsonObj.matchId || ''
+          matchId: jsonObj.id || jsonObj.matchId || '',
+          timeRoomId: jsonObj.timeRoomId || jsonObj.tr || ''
         };
       } catch (e3) {}
     }
@@ -435,6 +426,23 @@
     if (periodVal !== undefined && domPeriod) {
       domPeriod.textContent = formatPeriod(periodVal);
     }
+
+    // 6. 赛场时间采集设备联动控制 (由中控台下发指令控制连接/断开)
+    var actType = d.act || '';
+    var targetTimeRoom = (d.timeRoomId || d.time_room_id || (d.time_device && d.time_device.roomId) || (meta && meta.timeRoomId) || (meta && meta.tr) || (decoded && decoded.timeRoomId));
+    var isTimeSyncOff = (actType === 'DISCONNECT_TIME_ROOM' || d.timeSyncEnabled === 0 || (d.time_device && d.time_device.enabled === false));
+    var isTimeSyncOn = (actType === 'CONNECT_TIME_ROOM' || d.timeSyncEnabled === 1 || d.timeSyncEnabled === true || (d.time_device && d.time_device.enabled === true) || (targetTimeRoom && !isTimeSyncOff));
+
+    if (actType === 'CONNECT_TIME_ROOM' && targetTimeRoom) {
+      console.log('[OBS Overlay] Received CONNECT_TIME_ROOM -> connecting time device:', targetTimeRoom);
+      connectTimeDevice(targetTimeRoom);
+    } else if (isTimeSyncOff) {
+      console.log('[OBS Overlay] Received DISCONNECT_TIME_ROOM -> disconnecting time device');
+      disconnectTimeDevice();
+    } else if (targetTimeRoom && isTimeSyncOn) {
+      console.log('[OBS Overlay] Snapshot has active time room -> connecting time device:', targetTimeRoom);
+      connectTimeDevice(targetTimeRoom);
+    }
   }
 
   function stopHeartbeat() {
@@ -481,7 +489,7 @@
         var ws = new WebSocket(wsUrl);
 
         ws.onopen = function () {
-          console.log('[OBS Overlay] WebSocket Connected to room', roomId);
+          console.log('[OBS Overlay] Scoreboard WebSocket Connected to room', roomId);
           showStatus('🟢 已成功连接中控台 (房间 ' + roomId + ')', 'connected', true);
 
           ws.send(JSON.stringify({
@@ -496,7 +504,7 @@
         ws.onmessage = function (event) {
           try {
             var payload = JSON.parse(event.data);
-            console.log('[OBS Overlay] Message:', payload);
+            console.log('[OBS Overlay] Score Message:', payload);
             updateMatchInfo(payload);
           } catch (err) {
             console.error('[OBS Overlay] Message Parse Error', err);
@@ -524,9 +532,229 @@
       });
   }
 
+  // ──────────────────────────────────────────────
+  // 3. 动态时间采集设备连接与切图渲染管理 (按需连入采集端房间)
+  // ──────────────────────────────────────────────
+  var timeWs = null;
+  var currentTimeRoomId = '';
+  var timeWsHeartbeatTimer = null;
+  var timeWatchdogTimer = null;
+  var timeImageObj = new Image();
+  var lastTimeCropSeq = 0;
+
+  function clearTimeCrop() {
+    if (timeWatchdogTimer) {
+      clearTimeout(timeWatchdogTimer);
+      timeWatchdogTimer = null;
+    }
+    if (domTimeCropBox) {
+      domTimeCropBox.classList.add('crop-time-box--hidden');
+    }
+    if (timeCropCanvasCtx && domTimeCropCanvas) {
+      try {
+        timeCropCanvasCtx.clearRect(0, 0, domTimeCropCanvas.width, domTimeCropCanvas.height);
+      } catch (eClear) {}
+    }
+  }
+
+  function renderTimeCropFrame(payload) {
+    if (!payload) return;
+    var imgStr = payload.time_img || payload.img || payload.image || (payload.data && (payload.data.time_img || payload.data.img));
+    if (!imgStr || payload.act === 'CLEAR') {
+      clearTimeCrop();
+      return;
+    }
+
+    var seq = typeof payload.seq === 'number' ? payload.seq : 0;
+    if (lastTimeCropSeq && seq > 0 && seq < lastTimeCropSeq) {
+      return;
+    }
+    if (seq > 0) {
+      lastTimeCropSeq = seq;
+    }
+
+    if (timeWatchdogTimer) clearTimeout(timeWatchdogTimer);
+    timeWatchdogTimer = setTimeout(function () {
+      clearTimeCrop();
+    }, 4500);
+
+    var src = String(imgStr);
+    if (src.indexOf('data:image') !== 0) {
+      src = 'data:image/png;base64,' + src;
+    }
+
+    timeImageObj.onload = function () {
+      if (!domTimeCropCanvas || !timeCropCanvasCtx) return;
+      var nw = timeImageObj.naturalWidth || timeImageObj.width || 120;
+      var nh = timeImageObj.naturalHeight || timeImageObj.height || 40;
+      var aspect = payload.aspect || (nw / nh);
+
+      if (domTimeCropCanvas.width !== nw || domTimeCropCanvas.height !== nh) {
+        domTimeCropCanvas.width = nw;
+        domTimeCropCanvas.height = nh;
+      }
+      var targetBoxWidth = Math.max(66, Math.round(48 * aspect));
+      if (domTimeCropBox) {
+        domTimeCropBox.style.width = targetBoxWidth + 'px';
+        domTimeCropBox.classList.remove('crop-time-box--hidden');
+      }
+
+      timeCropCanvasCtx.clearRect(0, 0, nw, nh);
+      timeCropCanvasCtx.drawImage(timeImageObj, 0, 0, nw, nh);
+    };
+    timeImageObj.src = src;
+  }
+
+  function stopTimeHeartbeat() {
+    if (timeWsHeartbeatTimer) {
+      clearInterval(timeWsHeartbeatTimer);
+      timeWsHeartbeatTimer = null;
+    }
+  }
+
+  function startTimeHeartbeat(ws, targetRoomId) {
+    stopTimeHeartbeat();
+    timeWsHeartbeatTimer = setInterval(function () {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({
+            type: 'BROADCAST_HEARTBEAT',
+            sys_t: Date.now(),
+            roomId: targetRoomId,
+            match_id: 'M_' + targetRoomId,
+            ping: 1
+          }));
+        } catch (e) {}
+      }
+    }, 12000);
+  }
+
+  function disconnectTimeDevice() {
+    stopTimeHeartbeat();
+    currentTimeRoomId = '';
+    if (timeWs) {
+      try {
+        timeWs.onopen = null;
+        timeWs.onmessage = null;
+        timeWs.onclose = null;
+        timeWs.onerror = null;
+        timeWs.close();
+      } catch (e) {}
+      timeWs = null;
+    }
+    clearTimeCrop();
+    console.log('[OBS Overlay] Time Device Disconnected, container cleared and closed');
+  }
+
+  function connectTimeDevice(targetRoomId) {
+    var safeTargetId = String(targetRoomId || '').replace(/\D/g, '').slice(0, 6);
+    if (!safeTargetId || safeTargetId.length !== 6) {
+      console.warn('[OBS Overlay] Invalid target time room id:', targetRoomId);
+      return;
+    }
+
+    if (timeWs && currentTimeRoomId === safeTargetId && timeWs.readyState === WebSocket.OPEN) {
+      console.log('[OBS Overlay] Already connected to target time room:', safeTargetId);
+      return;
+    }
+
+    disconnectTimeDevice();
+    currentTimeRoomId = safeTargetId;
+    console.log('[OBS Overlay] Connecting to Time Device Room:', safeTargetId);
+
+    function establishTimeWs(token) {
+      if (currentTimeRoomId !== safeTargetId) return;
+      var wsUrl = 'wss://api.mx.server.ndcoo.com/gaoguang-ws?roomId=' + safeTargetId + '&token=' + encodeURIComponent(token);
+      var ws = new WebSocket(wsUrl);
+      timeWs = ws;
+
+      ws.onopen = function () {
+        if (timeWs !== ws) return;
+        console.log('[OBS Overlay] Time Device Connected to room', safeTargetId);
+        ws.send(JSON.stringify({
+          type: 'BROADCAST_JOIN',
+          roomId: safeTargetId,
+          sys_t: Date.now()
+        }));
+        startTimeHeartbeat(ws, safeTargetId);
+      };
+
+      ws.onmessage = function (event) {
+        if (timeWs !== ws) return;
+        try {
+          var raw = JSON.parse(event.data);
+          console.log('[OBS Overlay] Time Channel Message:', raw);
+          var frameData = null;
+          if (raw.type === 'CROP_FRAME_SYNC' || raw.type === 'DATA_CROP_FRAME') {
+            frameData = raw.payload || raw;
+          } else if (raw.time_img || (raw.payload && raw.payload.time_img) || (raw.data && raw.data.time_img)) {
+            frameData = (raw.payload && raw.payload.time_img) ? raw.payload : ((raw.data && raw.data.time_img) ? raw.data : raw);
+          } else if (raw.type === 'DATA_BROADCAST' && raw.payload && (raw.payload.time_img || raw.payload.type === 'CROP_FRAME_SYNC')) {
+            frameData = raw.payload;
+          }
+
+          if (frameData && (frameData.time_img || frameData.img)) {
+            renderTimeCropFrame(frameData);
+          } else if (raw.act === 'CLEAR' || (raw.payload && raw.payload.act === 'CLEAR') || raw.type === 'DEVICE_OFFLINE') {
+            clearTimeCrop();
+          }
+        } catch (err) {
+          console.error('[OBS Overlay] Time Message Parse Error', err);
+        }
+      };
+
+      ws.onclose = function () {
+        if (timeWs !== ws) return;
+        stopTimeHeartbeat();
+        clearTimeCrop();
+        console.warn('[OBS Overlay] Time Device WebSocket Closed for room', safeTargetId);
+      };
+
+      ws.onerror = function (err) {
+        if (timeWs !== ws) return;
+        stopTimeHeartbeat();
+        try { ws.close(); } catch (e) {}
+      };
+    }
+
+    fetch(apiBase + '/api/get_token?roomId=' + safeTargetId, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    })
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        if (data && data.token) {
+          establishTimeWs(data.token);
+        } else {
+          fetch(apiBase + '/api/get_token?roomId=' + safeTargetId)
+            .then(function (r2) { return r2.json(); })
+            .then(function (d2) {
+              if (d2 && d2.token) establishTimeWs(d2.token);
+            })
+            .catch(function (e2) {});
+        }
+      })
+      .catch(function (err) {
+        console.error('[OBS Overlay] Fetch Time Token Error', err);
+        fetch(apiBase + '/api/get_token?roomId=' + safeTargetId)
+          .then(function (r2) { return r2.json(); })
+          .then(function (d2) {
+            if (d2 && d2.token) establishTimeWs(d2.token);
+          })
+          .catch(function (e2) {});
+      });
+  }
+
   // 初始默认高对比度应用
   applyTeamContrastStyle(domHomeName, domHomeScore, currentHomeColor);
   applyTeamContrastStyle(domAwayName, domAwayScore, currentAwayColor);
 
+  // 初始化主记分 WebSocket
   initWebSocket();
+
+  // 支持 URL 参数直连时间房间 (?timeRoom=xxxxxx)
+  var initialTimeRoomParam = urlParams.get('timeRoom') || urlParams.get('timeRoomId') || urlParams.get('time_room');
+  if (initialTimeRoomParam) {
+    connectTimeDevice(initialTimeRoomParam);
+  }
 })();

@@ -7293,7 +7293,7 @@ Page({
       console.error('[Collector][TimeCrop] start crop onCameraFrame fail', eStart);
     }
     this._cropFrameTimer = setInterval(function () {
-      var syncMode = self.data.mode || self.data.syncLabMode || 'crop_image';
+      var syncMode = self.data.timeSyncMode || 'crop_image';
       if (syncMode !== 'crop_image') return;
 
       if (self.data.wsState !== 'connected') {

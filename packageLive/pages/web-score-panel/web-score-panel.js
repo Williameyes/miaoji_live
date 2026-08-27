@@ -63,7 +63,12 @@ Page({
       { val: 4, label: '第 4 节' },
       { val: 5, label: '加时赛' },
       { val: 6, label: '完赛' }
-    ]
+    ],
+
+    // 时间采集设备联动 (大表切图)
+    timeDeviceRoomId: '',
+    isTimeDeviceConnected: false,
+    connectedTimeRoomId: ''
   },
 
   _socketTask: null,
@@ -171,9 +176,12 @@ Page({
       }];
     }
 
+    var storedTimeRoomId = wx.getStorageSync('MIAOXIE_TIME_DEVICE_ROOM_ID') || '';
+
     this.setData({
       statusBarHeight: sbh,
       roomId: roomId,
+      timeDeviceRoomId: storedTimeRoomId,
       matchId: matchId,
       matchTitle: mTitle,
       obsUrl: obsUrl,
@@ -428,6 +436,55 @@ Page({
     });
   },
 
+  // 3.1 时间设备联动 (输入采集端房间号控制)
+  onTimeDeviceRoomInput: function (e) {
+    var val = (e && e.detail && e.detail.value) || '';
+    var cleanVal = String(val).replace(/\D/g, '').slice(0, 6);
+    this.setData({ timeDeviceRoomId: cleanVal });
+  },
+
+  onConnectTimeDevice: function () {
+    var cleanId = String(this.data.timeDeviceRoomId || '').replace(/\D/g, '').slice(0, 6);
+    if (cleanId.length !== 6) {
+      wx.showToast({ title: '请输入 6 位采集房间码', icon: 'none' });
+      return;
+    }
+    wx.setStorageSync('MIAOXIE_TIME_DEVICE_ROOM_ID', cleanId);
+    this.setData({
+      isTimeDeviceConnected: true,
+      connectedTimeRoomId: cleanId
+    });
+    this._addLog('⏱️ 下发连接时间设备指令 (房间: ' + cleanId + ')', 'success');
+    this._sendUpdatePacket('CONNECT_TIME_ROOM', {
+      timeRoomId: cleanId,
+      time_room_id: cleanId,
+      timeSyncEnabled: 1,
+      time_device: {
+        enabled: true,
+        roomId: cleanId
+      }
+    });
+    wx.showToast({ title: '已通知网页端连接时间设备', icon: 'success' });
+  },
+
+  onDisconnectTimeDevice: function () {
+    this.setData({
+      isTimeDeviceConnected: false,
+      connectedTimeRoomId: ''
+    });
+    this._addLog('🔌 下发断开时间设备指令并通知网页端撤下时间', 'error');
+    this._sendUpdatePacket('DISCONNECT_TIME_ROOM', {
+      timeRoomId: '',
+      time_room_id: '',
+      timeSyncEnabled: 0,
+      time_device: {
+        enabled: false,
+        roomId: ''
+      }
+    });
+    wx.showToast({ title: '已通知网页端断开并撤下时间', icon: 'none' });
+  },
+
   // 将比赛元数据（比赛名、主客队名、主客队球衣颜色）编码进 match_id 字段中，确保服务端广播 100% 透传
   _buildEncodedMatchId: function () {
     var mTitle = this.data.matchTitle || '常规赛';
@@ -444,7 +501,8 @@ Page({
         a: tA_name,
         b: tB_name,
         ca: tA_color,
-        cb: tB_color
+        cb: tB_color,
+        tr: this.data.isTimeDeviceConnected ? this.data.connectedTimeRoomId : ''
       };
       var jsonStr = JSON.stringify(payload);
       var utf8Bytes = [];
@@ -504,6 +562,15 @@ Page({
       match_id: encodedMatchId,
       sync_score: 1,
 
+      // 时间设备联动状态
+      timeRoomId: this.data.isTimeDeviceConnected ? this.data.connectedTimeRoomId : '',
+      time_room_id: this.data.isTimeDeviceConnected ? this.data.connectedTimeRoomId : '',
+      timeSyncEnabled: this.data.isTimeDeviceConnected ? 1 : 0,
+      time_device: {
+        enabled: this.data.isTimeDeviceConnected,
+        roomId: this.data.isTimeDeviceConnected ? this.data.connectedTimeRoomId : ''
+      },
+
       // 全量平铺元数据
       title: mTitle,
       matchTitle: mTitle,
@@ -538,7 +605,8 @@ Page({
         teamB: tB_name,
         colorA: tA_color,
         colorB: tB_color,
-        period: mPeriod
+        period: mPeriod,
+        timeRoomId: this.data.isTimeDeviceConnected ? this.data.connectedTimeRoomId : ''
       }
     };
 

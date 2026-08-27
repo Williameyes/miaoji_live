@@ -100,6 +100,58 @@
     <text class="obs-tip">✨ 零切链接特性：OBS 只需挂载此固定链接，在小程序中直接【切换场次】，网页记分牌会自动平滑换场，无需修改 OBS 任何设置！</text>
   </view>
 
+  <!-- 3.1 赛场时间切图设备联动卡片 (输入采集端房间号控制) -->
+  <view class="card time-sync-card">
+    <view class="card-header flex-between">
+      <view class="header-left">
+        <text class="card-icon">⏱️</text>
+        <text class="card-title">赛场时间设备联动 (大表切图)</text>
+      </view>
+      <view class="ws-status-tag {{isTimeDeviceConnected ? 'connected' : ''}}" style="padding: 4rpx 14rpx; font-size: 20rpx;">
+        <view class="status-dot"></view>
+        <text>{{isTimeDeviceConnected ? '已连通 (' + connectedTimeRoomId + ')' : '未连接'}}</text>
+      </view>
+    </view>
+
+    <!-- 采集端房间号输入区 -->
+    <view class="time-input-row">
+      <input 
+        class="time-room-input {{isTimeDeviceConnected ? 'input--disabled' : ''}}" 
+        type="number" 
+        maxlength="6" 
+        placeholder="输入采集手机的 6 位房间码 (如 123456)" 
+        value="{{timeDeviceRoomId}}"
+        disabled="{{isTimeDeviceConnected}}"
+        bindinput="onTimeDeviceRoomInput"
+      />
+    </view>
+
+    <!-- 操作按钮组 -->
+    <view class="time-action-btns-row" style="margin-top: 16rpx;">
+      <button 
+        wx:if="{{!isTimeDeviceConnected}}"
+        class="btn-primary time-connect-btn" 
+        bindtap="onConnectTimeDevice" 
+        hover-class="btn-hover"
+      >
+        <text class="btn-icon">🔗</text>
+        <text>连接时间设备并下发给网页端</text>
+      </button>
+
+      <button 
+        wx:else
+        class="btn-primary time-disconnect-btn" 
+        bindtap="onDisconnectTimeDevice" 
+        hover-class="btn-hover"
+      >
+        <text class="btn-icon">🔌</text>
+        <text>断开时间设备 (通知网页端撤下)</text>
+      </button>
+    </view>
+
+    <text class="obs-tip">💡 联动说明：在拍摄大表的手机上开启【时间切图采集】，在此输入该手机显示的 6 位码并点击【连接】，网页记分牌就会自动连接该房间并展示时间切图！点击【断开】可随时撤下时间容器。</text>
+  </view>
+
   <!-- 4. 主客队比分控板 -->
   <view class="score-control-section">
     <!-- 主队控板 -->

@@ -71,8 +71,7 @@ body, html {
 /* ──────────────────────────────────────────────
    左侧灵动岛专业电视转播级「LIVE 现场直播」纵向遮罩角标
    专为遮盖 iPhone 横屏时左侧中部的灵动岛黑胶囊及指示绿点
-   采用与记分牌节次一致的经典转播皇室蓝渐变 (#3B82F6 -> #2563EB -> #1D4ED8)
-   始终保持等比精致排版，杜绝字距被拉开变形
+   采用经典转播皇室蓝渐变 (#3B82F6 -> #2563EB -> #1D4ED8)
 ────────────────────────────────────────────── */
 .dynamic-island-badge {
   position: absolute;
@@ -83,7 +82,7 @@ body, html {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center; /* 紧凑居中排列，彻底解决拉伸后字距过大变形问题 */
+  justify-content: center;
   gap: 6px;
   width: 36px;
   height: 136px;
@@ -106,7 +105,6 @@ body, html {
   cursor: grabbing;
 }
 
-/* 顶部 LIVE 胶囊与呼吸发光点 */
 .live-top-pill {
   display: flex;
   flex-direction: column;
@@ -162,7 +160,6 @@ body, html {
   flex-shrink: 0;
 }
 
-/* 纵向现场直播标题 (固定 4.5px 紧凑间距，杜绝拉伸稀疏) */
 .live-vertical-title {
   display: flex;
   flex-direction: column;
@@ -181,12 +178,11 @@ body, html {
   letter-spacing: 0.2px;
 }
 
-/* 隐藏右下角拉手图标，防止直播画面出现多余白角 */
 .island-resize-handle {
   display: none !important;
 }
 
-/* 独立灵动岛遮罩组件模式 (可在 OBS 中作为小窗口图层，用鼠标在画布上 100% 随意拖动和任意缩放拉伸) */
+/* 独立灵动岛遮罩组件模式 */
 body.mode-island-only .obs-container,
 body.mode-live-only .obs-container,
 body.mode-island-only .ws-status-banner,
@@ -208,7 +204,7 @@ body.mode-live-only .dynamic-island-badge {
 }
 
 /* ──────────────────────────────────────────────
-   16:9 全高清全屏容器 (自适应 1920x1080 / 1280x720 满屏覆盖)
+   16:9 全高清全屏容器
 ────────────────────────────────────────────── */
 .obs-container {
   position: relative;
@@ -216,15 +212,14 @@ body.mode-live-only .dynamic-island-badge {
   height: 100vh;
   display: flex;
   justify-content: center;
-  align-items: flex-end; /* 16:9 底部居中 */
-  padding-bottom: clamp(20px, 3.2vh, 44px);
+  align-items: flex-end;
+  padding-bottom: clamp(16px, 2.8vh, 36px);
   box-sizing: border-box;
 }
 
-/* 可选：顶部居中布局模式 (通过 URL 参数 ?pos=top 开启) */
 .obs-container.pos-top {
   align-items: flex-start;
-  padding-top: clamp(20px, 3.2vh, 44px);
+  padding-top: clamp(16px, 2.8vh, 36px);
   padding-bottom: 0;
 }
 
@@ -235,14 +230,14 @@ body.mode-live-only .dynamic-island-badge {
 }
 
 /* ──────────────────────────────────────────────
-   转播记分牌整体 (1080P 广播级黄金比例，自适应大字号)
+   转播记分牌整体 (紧凑自适应结构，绝不撑出多余空白)
 ────────────────────────────────────────────── */
 .broadcast-scoreboard {
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: clamp(580px, 42vw, 840px); /* 1080P 广播级适中大气宽度 (~720px) */
-  filter: drop-shadow(0 4px 18px rgba(0, 0, 0, 0.75));
+  justify-content: center;
+  filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.65));
   z-index: 100;
   transition: transform 0.2s ease;
 }
@@ -252,117 +247,159 @@ body.mode-live-only .dynamic-island-badge {
   display: flex;
   justify-content: center;
   align-items: center;
-  margin-bottom: 6px;
+  margin-bottom: 5px;
   width: 100%;
 }
 
 .match-title-text {
   color: #FFFFFF;
-  font-size: clamp(14px, 1.35vw, 18px);
+  font-size: clamp(13px, 1.25vw, 16px);
   font-weight: 800;
   line-height: 1.2;
-  padding: 3px 16px;
-  background: rgba(15, 23, 42, 0.82);
-  border-radius: 14px;
+  padding: 3px 14px;
+  background: rgba(15, 23, 42, 0.85);
+  border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.28);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(6px);
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95);
-  letter-spacing: 0.6px;
+  letter-spacing: 0.5px;
   max-width: 90%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* 核心一体化记分横条 */
-.score-ribbon-bar {
-  width: 100%;
-  display: flex;
+/* ──────────────────────────────────────────────
+   核心一体化转播记分条 (与 live.wxss 的 score-bar-core 100% 对齐)
+────────────────────────────────────────────── */
+.score-bar-core {
+  position: relative;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  position: relative;
+  flex: 0 0 auto;
   border-radius: 8px;
   overflow: visible;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.6);
+  background: transparent;
 }
 
-/* 主/客队色带块 */
-.team-ribbon {
-  flex: 1 1 0;
-  height: clamp(48px, 4.6vw, 60px);
-  display: flex;
-  align-items: center;
-  padding: 0 clamp(12px, 1.5vw, 22px);
-  box-sizing: border-box;
+/* 球队板块 (主队/客队) */
+.team-group {
   position: relative;
+  display: block;
+  flex: 0 0 auto;
+  min-width: clamp(130px, 12vw, 190px);
+  max-width: 240px;
+  height: clamp(44px, 4.2vw, 54px);
+  box-sizing: border-box;
+  overflow: visible;
+}
+
+/* 球队背景色带 */
+.team-group-bg {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.92;
+  box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, 0.35), 0 3px 10px rgba(0, 0, 0, 0.4);
   transition: background-color 0.3s ease;
-  box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, 0.4), inset 0 -1.5px 0 rgba(0, 0, 0, 0.25);
 }
 
-.team-ribbon--home {
+.team-group-bg--left {
   border-radius: 8px 0 0 8px;
-  justify-content: space-between;
 }
 
-.team-ribbon--away {
+.team-group-bg--right {
   border-radius: 0 8px 8px 0;
-  justify-content: space-between;
 }
 
-/* 队伍名称 (矢量高清，自动高对比度) */
+/* 球队内部排版行 (主队：队名靠左、分数靠右；客队：分数靠左、队名靠右) */
+.team-group-row {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 100%;
+  padding: 0 clamp(10px, 1.1vw, 16px);
+  gap: 8px;
+  box-sizing: border-box;
+}
+
+/* 队伍名称 */
 .team-name {
-  font-size: clamp(16px, 1.65vw, 23px);
+  flex: 1 1 0;
+  font-size: clamp(15px, 1.5vw, 20px);
   font-weight: 800;
   color: #FFFFFF;
-  max-width: 50%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  letter-spacing: 0.4px;
+  letter-spacing: 0.3px;
+  text-align: center;
   transition: color 0.3s ease, text-shadow 0.3s ease;
 }
 
-/* 比分数字 (DIN 等宽数字、赛事级大字号、自动高对比度) */
-.team-score {
+/* 比分数字 (DIN 等宽、加粗赛事级大字) */
+.score-value {
   font-family: 'DIN Alternate', 'Impact', 'Chakra Petch', 'SF Pro Display', -apple-system, BlinkMacSystemFont, monospace, sans-serif;
-  font-size: clamp(30px, 3.1vw, 42px);
+  font-size: clamp(28px, 2.9vw, 38px);
   font-weight: 900;
   color: #FFFFFF;
-  min-width: 44px;
+  min-width: 40px;
   text-align: center;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.5px;
+  flex-shrink: 0;
   transition: color 0.3s ease, text-shadow 0.3s ease;
 }
 
 /* ──────────────────────────────────────────────
-   中间节次立体高光胶囊
-   与小程序 live.wxss 100% 一致：上红中蓝下深蓝经典转播渐变
+   中间节次立体高光胶囊 (与小程序 live.wxss 100% 一致)
 ────────────────────────────────────────────── */
-.period-capsule-wrap {
+.period-center-outer {
   position: relative;
   z-index: 5;
-  flex-shrink: 0;
-  margin: 0 -3px;
-}
-
-.period-capsule {
-  height: clamp(56px, 5.4vw, 70px);
-  min-width: clamp(86px, 7.8vw, 116px);
-  padding: 0 clamp(8px, 1vw, 16px);
-  border-radius: 9px;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(180deg, rgba(239, 68, 68, 0.98) 0%, rgba(59, 130, 246, 0.98) 50%, rgba(29, 78, 216, 0.98) 100%) !important;
-  border-top: 1.5px solid rgba(255, 255, 255, 0.65);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6), inset 0 1.2px 0 rgba(255, 255, 255, 0.45);
+  min-width: clamp(80px, 7.2vw, 106px);
+  height: clamp(52px, 5vw, 64px);
+  margin: 0 -2px;
 }
 
-.period-label {
+.period-strip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(180deg, rgba(239, 68, 68, 0.98) 0%, rgba(59, 130, 246, 0.98) 50%, rgba(29, 78, 216, 0.98) 100%) !important;
+  border-radius: 8px;
+  border-top: 1.5px solid rgba(255, 255, 255, 0.65);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55), inset 0 1.2px 0 rgba(255, 255, 255, 0.45);
+}
+
+.period-container {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+}
+
+.period-text {
   color: #FFFFFF;
-  font-size: clamp(14px, 1.4vw, 19px);
+  font-size: clamp(13.5px, 1.35vw, 17.5px);
   font-weight: 900;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
   letter-spacing: 0.8px;
@@ -380,3 +417,43 @@ body.mode-live-only .dynamic-island-badge {
   100% { transform: scale(1); }
 }
 
+/* ──────────────────────────────────────────────
+   切图同步：自适应动态宽度黑晶计时模块 (与 live.wxss 完全一致)
+   绝对定位在 score-bar-core 右侧，零偏移主记分栏，不打乱居中
+────────────────────────────────────────────── */
+.crop-time-box {
+  position: absolute;
+  left: calc(100% + clamp(8px, 1vw, 14px));
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: clamp(44px, 4.2vw, 54px);
+  min-width: clamp(66px, 5.5vw, 96px);
+  padding: 2px 6px;
+  background: linear-gradient(180deg, rgba(20, 26, 38, 0.95) 0%, rgba(10, 14, 23, 0.98) 100%);
+  border-radius: 7px;
+  border: 1.2px solid rgba(255, 255, 255, 0.28);
+  border-top: 1.5px solid rgba(255, 255, 255, 0.55);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6), inset 0 1.2px 0 rgba(255, 255, 255, 0.35);
+  box-sizing: border-box;
+  overflow: hidden;
+  transition: width 0.2s ease-out;
+}
+
+.crop-time-box--hidden {
+  display: none !important;
+}
+
+.crop-time-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border-radius: 4px;
+  mix-blend-mode: screen;
+  filter: contrast(1.15) brightness(1.1);
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
