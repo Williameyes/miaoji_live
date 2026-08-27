@@ -8,7 +8,12 @@
   var apiBase = 'https://api.mx.server.ndcoo.com';
 
   var domObsContainer = document.getElementById('obs-container');
+  var domScoreboardWrapper = document.getElementById('scoreboard-wrapper');
   var domScoreboard = document.getElementById('scoreboard');
+  var domDynamicIslandBadge = document.getElementById('dynamic-island-badge');
+  var domLiveTitle = document.getElementById('live-title');
+  var domResizeHandle = document.getElementById('island-resize-handle');
+
   var domHomeRibbon = document.getElementById('home-ribbon');
   var domHomeName = document.getElementById('home-name');
   var domHomeScore = document.getElementById('home-score');
@@ -23,17 +28,141 @@
   var statusBanner = document.getElementById('ws-status-banner');
   var statusText = document.getElementById('ws-status-text');
 
-  // 位置参数 (?pos=top 或 ?pos=bottom，默认底部居中)
+  // 1. 模式参数
+  var modeParam = urlParams.get('mode') || '';
+  if (modeParam === 'live_only' || urlParams.get('liveOnly') === '1') {
+    document.body.classList.add('mode-live-only');
+  }
+
+  // 2. 记分牌位置与间距参数 (?pos=top 或 ?pos=bottom，?bottom=40)
   var posParam = urlParams.get('pos') || 'bottom';
   if (domObsContainer && posParam === 'top') {
     domObsContainer.classList.add('pos-top');
   }
+  var bottomParam = urlParams.get('bottom');
+  if (bottomParam && domObsContainer && posParam !== 'top') {
+    domObsContainer.style.paddingBottom = isNaN(bottomParam) ? bottomParam : bottomParam + 'px';
+  }
 
-  // 缩放参数 (?scale=1.1 或 ?scale=0.9)
+  // 3. 记分牌整体缩放参数 (?scale=1.2 或 ?scale=0.9)
   var scaleParam = parseFloat(urlParams.get('scale'));
   if (!isNaN(scaleParam) && scaleParam > 0.3 && scaleParam < 3.0 && domScoreboard) {
     domScoreboard.style.transform = 'scale(' + scaleParam + ')';
     domScoreboard.style.transformOrigin = (posParam === 'top') ? 'top center' : 'bottom center';
+  }
+
+  // 4. 左侧灵动岛专业纵向「LIVE 现场直播」遮罩角标配置
+  var hideIsland = urlParams.get('hideIsland') === '1' || urlParams.get('noIsland') === '1' || urlParams.get('live') === '0' || urlParams.get('live') === 'false';
+  if (domDynamicIslandBadge && hideIsland) {
+    domDynamicIslandBadge.style.display = 'none';
+  } else if (domDynamicIslandBadge) {
+    // 自定义纵向文案 (?liveText=现场直播 或 ?islandText=高清直播)
+    var liveTextParam = urlParams.get('liveText') || urlParams.get('islandText');
+    if (domLiveTitle && liveTextParam) {
+      domLiveTitle.innerHTML = '';
+      for (var i = 0; i < liveTextParam.length; i++) {
+        var span = document.createElement('span');
+        span.textContent = liveTextParam[i];
+        domLiveTitle.appendChild(span);
+      }
+    }
+
+    // 等比缩放参数 (?liveScale=1.2 或 ?islandScale=1.2) - 严格保持长宽比与字距，绝不拉伸变形
+    var islandScale = parseFloat(urlParams.get('liveScale') || urlParams.get('islandScale') || urlParams.get('scaleIsland'));
+    if (isNaN(islandScale) || islandScale <= 0.2) islandScale = 1.0;
+
+    // 位置自定义微调 (?liveTop=48% 或 ?liveY=400, ?liveLeft=0)
+    var liveTop = urlParams.get('liveTop') || urlParams.get('liveY') || urlParams.get('islandTop');
+    var liveLeft = urlParams.get('liveLeft') || urlParams.get('liveX') || urlParams.get('islandLeft');
+
+    function applyIslandTransform() {
+      var isTopPercent = (liveTop && String(liveTop).includes('%'));
+      if (!liveTop || isTopPercent) {
+        var topVal = liveTop || '50%';
+        domDynamicIslandBadge.style.top = topVal;
+        domDynamicIslandBadge.style.transform = 'translateY(-50%) scale(' + islandScale + ')';
+      } else {
+        domDynamicIslandBadge.style.top = isNaN(liveTop) ? liveTop : liveTop + 'px';
+        domDynamicIslandBadge.style.transform = 'scale(' + islandScale + ')';
+      }
+      domDynamicIslandBadge.style.transformOrigin = 'left center';
+      if (liveLeft !== null) {
+        domDynamicIslandBadge.style.left = isNaN(liveLeft) ? liveLeft : liveLeft + 'px';
+      }
+    }
+
+    applyIslandTransform();
+
+    // 交互式鼠标拖拽与滚轮等比缩放支持 (带本地缓存自动记忆)
+    (function enableIslandDragAndResize() {
+      var isDragging = false;
+      var startX = 0, startY = 0;
+      var initLeft = 0, initTop = 0;
+
+      // 读取本地缓存位置与缩放
+      try {
+        var savedData = localStorage.getItem('obs_island_uniform_state');
+        if (savedData && !liveTop && !liveLeft) {
+          var p = JSON.parse(savedData);
+          if (p.top) liveTop = p.top;
+          if (p.left) liveLeft = p.left;
+          if (p.scale && !urlParams.get('liveScale')) islandScale = p.scale;
+          applyIslandTransform();
+        }
+      } catch (e) {}
+
+      function saveState() {
+        try {
+          localStorage.setItem('obs_island_uniform_state', JSON.stringify({
+            left: domDynamicIslandBadge.style.left,
+            top: domDynamicIslandBadge.style.top,
+            scale: islandScale
+          }));
+        } catch (e) {}
+      }
+
+      // 1. 鼠标拖动位置
+      domDynamicIslandBadge.addEventListener('mousedown', function (e) {
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        var rect = domDynamicIslandBadge.getBoundingClientRect();
+        initLeft = rect.left;
+        initTop = rect.top;
+        domDynamicIslandBadge.style.transform = 'scale(' + islandScale + ')';
+        domDynamicIslandBadge.style.transformOrigin = 'left center';
+        e.preventDefault();
+      });
+
+      // 2. 滚轮自由等比缩放大小 (绝不拉伸变形)
+      domDynamicIslandBadge.addEventListener('wheel', function (e) {
+        e.preventDefault();
+        var delta = e.deltaY < 0 ? 0.05 : -0.05;
+        islandScale = Math.max(0.5, Math.min(2.5, islandScale + delta));
+        applyIslandTransform();
+        saveState();
+      });
+
+      window.addEventListener('mousemove', function (e) {
+        if (!isDragging) return;
+        var dx = e.clientX - startX;
+        var dy = e.clientY - startY;
+        var newLeft = Math.max(0, initLeft + dx);
+        var newTop = Math.max(0, initTop + dy);
+        liveLeft = newLeft;
+        liveTop = newTop;
+        domDynamicIslandBadge.style.left = newLeft + 'px';
+        domDynamicIslandBadge.style.top = newTop + 'px';
+        domDynamicIslandBadge.style.transform = 'scale(' + islandScale + ')';
+      });
+
+      window.addEventListener('mouseup', function () {
+        if (isDragging) {
+          isDragging = false;
+          saveState();
+        }
+      });
+    })();
   }
 
   var currentHomeScore = null;

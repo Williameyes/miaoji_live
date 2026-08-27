@@ -83,10 +83,20 @@
     <view class="url-box">
       <text class="url-text">{{obsUrl}}</text>
     </view>
-    <button class="btn-primary copy-btn" bindtap="onCopyObsUrl" hover-class="btn-hover">
-      <text class="btn-icon">📋</text>
-      <text>一键复制 OBS 记分牌链接</text>
-    </button>
+    <view class="obs-copy-btns-group">
+      <button class="btn-primary copy-btn" bindtap="onCopyObsUrl" hover-class="btn-hover">
+        <text class="btn-icon">📋</text>
+        <text>一键复制 1080P 标准全屏记分牌链接</text>
+      </button>
+      <view class="sub-copy-row">
+        <button class="sub-copy-btn" bindtap="onCopyScoreDockedUrl" hover-class="btn-hover">
+          <text>🔗 记分牌左侧一体角标链接</text>
+        </button>
+        <button class="sub-copy-btn" bindtap="onCopyLiveOnlyUrl" hover-class="btn-hover">
+          <text>📺 独立 LIVE 角标小图层链接</text>
+        </button>
+      </view>
+    </view>
     <text class="obs-tip">✨ 零切链接特性：OBS 只需挂载此固定链接，在小程序中直接【切换场次】，网页记分牌会自动平滑换场，无需修改 OBS 任何设置！</text>
   </view>
 

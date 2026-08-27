@@ -398,8 +398,32 @@ Page({
     wx.setClipboardData({
       data: url,
       success: function () {
-        self._addLog('📋 已复制 OBS 网页链接: ' + url, 'success');
-        wx.showToast({ title: 'OBS链接已复制', icon: 'success' });
+        self._addLog('📋 已复制 1080P 标准全屏记分牌链接: ' + url, 'success');
+        wx.showToast({ title: '全屏链接已复制', icon: 'success' });
+      }
+    });
+  },
+
+  onCopyScoreDockedUrl: function () {
+    var url = this.data.obsUrl + '&livePos=score';
+    var self = this;
+    wx.setClipboardData({
+      data: url,
+      success: function () {
+        self._addLog('📋 已复制记分牌左侧一体角标链接: ' + url, 'success');
+        wx.showToast({ title: '一体角标链接已复制', icon: 'success' });
+      }
+    });
+  },
+
+  onCopyLiveOnlyUrl: function () {
+    var url = this.data.obsUrl + '&mode=live_only';
+    var self = this;
+    wx.setClipboardData({
+      data: url,
+      success: function () {
+        self._addLog('📋 已复制独立 LIVE 角标小图层链接: ' + url, 'success');
+        wx.showToast({ title: '独立角标链接已复制', icon: 'success' });
       }
     });
   },

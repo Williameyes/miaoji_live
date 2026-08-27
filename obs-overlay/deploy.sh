@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "=== 开始部署高光记分 OBS 网页 Overlay (16:9 全高清自适应记分牌) ==="
+echo "=== 开始部署高光记分 OBS 网页 Overlay (等比紧凑专业排版，绝不拉伸变形) ==="
 
 sudo mkdir -p /var/www/gaoguang-obs-overlay
 sudo chown -R ubuntu:ubuntu /var/www/gaoguang-obs-overlay
@@ -16,39 +16,56 @@ cat << 'EOF' > /var/www/gaoguang-obs-overlay/index.html
   <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-  <!-- 网页端/OBS 实时连接状态标识栏 (极简微型提示) -->
+  <!-- 网页端/OBS 实时连接状态标识栏 (右上角极简提示) -->
   <div class="ws-status-banner" id="ws-status-banner">
     <span class="status-dot"></span>
     <span class="status-text" id="ws-status-text">⏳ 正在连接中控台...</span>
   </div>
 
-  <!-- 16:9 手机横屏紧凑型转播记分牌 (居中底部，比例精致适中) -->
+  <!-- 左侧灵动岛专业电视转播级「LIVE 现场直播」纵向遮罩角标 (专为遮盖 iPhone 横屏左侧中部的灵动岛及绿点设计，支持等比缩放与拖动) -->
+  <div class="dynamic-island-badge" id="dynamic-island-badge" title="可拖动调整位置，滚轮可等比缩放大小">
+    <div class="live-top-pill">
+      <span class="live-pulse-dot"></span>
+      <span class="live-en-text">LIVE</span>
+    </div>
+    <div class="live-v-divider"></div>
+    <div class="live-vertical-title" id="live-title">
+      <span>现</span>
+      <span>场</span>
+      <span>直</span>
+      <span>播</span>
+    </div>
+  </div>
+
+  <!-- 16:9 全高清广播级自适应转播记分牌 (居中底部，比例清晰大气) -->
   <div class="obs-container" id="obs-container">
-    <div class="broadcast-scoreboard" id="scoreboard">
-      <!-- 顶部比赛名称 -->
-      <div class="match-title-row">
-        <span class="match-title-text" id="match-title">常规赛</span>
-      </div>
-
-      <!-- 核心水平一体化转播记分条 (精致手机宽度 350px，高度 32px) -->
-      <div class="score-ribbon-bar">
-        <!-- 主队板块 (左侧圆角 + 纯色背景 + 队名靠左 + 分数靠中，文字根据队服颜色自动高对比变色) -->
-        <div class="team-ribbon team-ribbon--home" id="home-ribbon" style="background-color: #E64340;">
-          <span class="team-name team-name--home" id="home-name">主队</span>
-          <span class="team-score team-score--home" id="home-score">0</span>
+    <div class="broadcast-scoreboard-wrapper" id="scoreboard-wrapper">
+      <div class="broadcast-scoreboard" id="scoreboard">
+        <!-- 顶部比赛名称 (精致半透深色胶囊) -->
+        <div class="match-title-row">
+          <span class="match-title-text" id="match-title">常规赛</span>
         </div>
 
-        <!-- 中间节次立体胶囊 (与小程序 live 页 100% 一致：上红中蓝下深蓝立体渐变) -->
-        <div class="period-capsule-wrap">
-          <div class="period-capsule" id="period-capsule">
-            <span class="period-label" id="period-badge">第 1 节</span>
+        <!-- 核心水平一体化转播记分条 (广播级黄金比例，自适应高清字号) -->
+        <div class="score-ribbon-bar">
+          <!-- 主队板块 (左侧圆角 + 纯色背景 + 队名靠左 + 分数靠中，文字根据队服颜色自动高对比变色) -->
+          <div class="team-ribbon team-ribbon--home" id="home-ribbon" style="background-color: #E64340;">
+            <span class="team-name team-name--home" id="home-name">主队</span>
+            <span class="team-score team-score--home" id="home-score">0</span>
           </div>
-        </div>
 
-        <!-- 客队板块 (右侧圆角 + 纯色背景 + 分数靠中 + 队名靠右，文字根据队服颜色自动高对比变色) -->
-        <div class="team-ribbon team-ribbon--away" id="away-ribbon" style="background-color: #10AEFF;">
-          <span class="team-score team-score--away" id="away-score">0</span>
-          <span class="team-name team-name--away" id="away-name">客队</span>
+          <!-- 中间节次立体胶囊 (与小程序 live 页 100% 一致：上红中蓝下深蓝立体渐变) -->
+          <div class="period-capsule-wrap">
+            <div class="period-capsule" id="period-capsule">
+              <span class="period-label" id="period-badge">第 1 节</span>
+            </div>
+          </div>
+
+          <!-- 客队板块 (右侧圆角 + 纯色背景 + 分数靠中 + 队名靠右，文字根据队服颜色自动高对比变色) -->
+          <div class="team-ribbon team-ribbon--away" id="away-ribbon" style="background-color: #10AEFF;">
+            <span class="team-score team-score--away" id="away-score">0</span>
+            <span class="team-name team-name--away" id="away-name">客队</span>
+          </div>
         </div>
       </div>
     </div>
@@ -78,33 +95,35 @@ body, html {
   text-rendering: optimizeLegibility;
 }
 
-/* 顶部状态提示微胶囊 */
+/* ──────────────────────────────────────────────
+   顶部状态提示微胶囊 (仅连接中/断开时短暂浮现)
+────────────────────────────────────────────── */
 .ws-status-banner {
   position: absolute;
-  top: 10px;
-  right: 10px;
+  top: 12px;
+  right: 14px;
   display: flex;
-  align-items: gap;
-  gap: 5px;
-  padding: 4px 10px;
-  border-radius: 12px;
-  font-size: 11px;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 14px;
+  font-size: 12px;
   font-weight: 600;
   color: #FFFFFF;
-  background: rgba(255, 149, 0, 0.88);
+  background: rgba(255, 149, 0, 0.9);
   backdrop-filter: blur(8px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
   transition: opacity 0.6s ease, transform 0.3s ease;
   z-index: 9999;
   pointer-events: none;
 }
 
 .ws-status-banner.connected {
-  background: rgba(52, 199, 89, 0.88);
+  background: rgba(52, 199, 89, 0.92);
 }
 
 .ws-status-banner.error {
-  background: rgba(255, 59, 48, 0.88);
+  background: rgba(255, 59, 48, 0.92);
 }
 
 .ws-status-banner.fade-out {
@@ -114,8 +133,8 @@ body, html {
 }
 
 .status-dot {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background-color: #FFFFFF;
   display: inline-block;
@@ -129,7 +148,146 @@ body, html {
 }
 
 /* ──────────────────────────────────────────────
-   16:9 全屏容器 (自适应 1920x1080 / 1280x720 满屏覆盖)
+   左侧灵动岛专业电视转播级「LIVE 现场直播」纵向遮罩角标
+   专为遮盖 iPhone 横屏时左侧中部的灵动岛黑胶囊及指示绿点
+   采用与记分牌节次一致的经典转播皇室蓝渐变 (#3B82F6 -> #2563EB -> #1D4ED8)
+   始终保持等比精致排版，杜绝字距被拉开变形
+────────────────────────────────────────────── */
+.dynamic-island-badge {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 36px;
+  height: 136px;
+  padding: 8px 3px;
+  background: linear-gradient(180deg, #3B82F6 0%, #2563EB 50%, #1D4ED8 100%);
+  border-top: 1.5px solid rgba(255, 255, 255, 0.7);
+  border-right: 1.2px solid rgba(255, 255, 255, 0.5);
+  border-bottom: 1.2px solid rgba(255, 255, 255, 0.3);
+  border-left: none;
+  border-radius: 0 18px 18px 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.55), 0 0 14px rgba(37, 99, 235, 0.45), inset 0 1.2px 0 rgba(255, 255, 255, 0.5);
+  backdrop-filter: blur(12px);
+  transition: transform 0.2s ease, opacity 0.3s ease;
+  user-select: none;
+  cursor: grab;
+  box-sizing: border-box;
+}
+
+.dynamic-island-badge:active {
+  cursor: grabbing;
+}
+
+/* 顶部 LIVE 胶囊与呼吸发光点 */
+.live-top-pill {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.live-pulse-dot {
+  position: relative;
+  width: 7px;
+  height: 7px;
+  background-color: #FFFFFF;
+  border-radius: 50%;
+  box-shadow: 0 0 8px #FFFFFF, 0 0 14px rgba(96, 165, 250, 0.9);
+  flex-shrink: 0;
+}
+
+.live-pulse-dot::after {
+  content: '';
+  position: absolute;
+  top: -3.5px;
+  left: -3.5px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.5);
+  animation: livePulseWave 1.8s infinite cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+@keyframes livePulseWave {
+  0% { transform: scale(0.5); opacity: 1; }
+  100% { transform: scale(2.5); opacity: 0; }
+}
+
+.live-en-text {
+  font-family: 'DIN Alternate', 'Impact', 'SF Pro Display', -apple-system, sans-serif;
+  font-size: 11px;
+  font-weight: 900;
+  color: #FFFFFF;
+  letter-spacing: 0.8px;
+  line-height: 1;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+
+.live-v-divider {
+  width: 18px;
+  height: 1.2px;
+  background: rgba(255, 255, 255, 0.45);
+  border-radius: 1px;
+  margin: 1px 0 2px;
+  flex-shrink: 0;
+}
+
+/* 纵向现场直播标题 (固定 4.5px 紧凑间距，杜绝拉伸稀疏) */
+.live-vertical-title {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4.5px;
+  flex-shrink: 0;
+}
+
+.live-vertical-title span {
+  font-size: 11.5px;
+  font-weight: 800;
+  color: #FFFFFF;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  line-height: 1.1;
+  letter-spacing: 0.2px;
+}
+
+/* 隐藏右下角拉手图标，防止直播画面出现多余白角 */
+.island-resize-handle {
+  display: none !important;
+}
+
+/* 独立灵动岛遮罩组件模式 (可在 OBS 中作为小窗口图层，用鼠标在画布上 100% 随意拖动和任意缩放拉伸) */
+body.mode-island-only .obs-container,
+body.mode-live-only .obs-container,
+body.mode-island-only .ws-status-banner,
+body.mode-live-only .ws-status-banner {
+  display: none !important;
+}
+
+body.mode-island-only .dynamic-island-badge,
+body.mode-live-only .dynamic-island-badge {
+  position: fixed !important;
+  left: 50% !important;
+  top: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  margin: 0 !important;
+  border-radius: 18px !important;
+  border-left: 1.2px solid rgba(255, 255, 255, 0.5) !important;
+  width: 36px !important;
+  height: 136px !important;
+}
+
+/* ──────────────────────────────────────────────
+   16:9 全高清全屏容器 (自适应 1920x1080 / 1280x720 满屏覆盖)
 ────────────────────────────────────────────── */
 .obs-container {
   position: relative;
@@ -138,51 +296,62 @@ body, html {
   display: flex;
   justify-content: center;
   align-items: flex-end; /* 16:9 底部居中 */
-  padding-bottom: clamp(10px, 2.2vh, 28px);
+  padding-bottom: clamp(20px, 3.2vh, 44px);
   box-sizing: border-box;
 }
 
 /* 可选：顶部居中布局模式 (通过 URL 参数 ?pos=top 开启) */
 .obs-container.pos-top {
   align-items: flex-start;
-  padding-top: clamp(10px, 2.2vh, 28px);
+  padding-top: clamp(20px, 3.2vh, 44px);
   padding-bottom: 0;
 }
 
+.broadcast-scoreboard-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* ──────────────────────────────────────────────
-   转播记分牌整体 (根据 16:9 视口自适应黄金比例)
+   转播记分牌整体 (1080P 广播级黄金比例，自适应大字号)
 ────────────────────────────────────────────── */
 .broadcast-scoreboard {
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: clamp(340px, 36vw, 480px);
-  filter: drop-shadow(0 3px 12px rgba(0, 0, 0, 0.65));
+  width: clamp(580px, 42vw, 840px); /* 1080P 广播级适中大气宽度 (~720px) */
+  filter: drop-shadow(0 4px 18px rgba(0, 0, 0, 0.75));
   z-index: 100;
   transition: transform 0.2s ease;
 }
 
-/* 顶部比赛标题 */
+/* 顶部比赛标题 (精致深色微透胶囊) */
 .match-title-row {
   display: flex;
   justify-content: center;
   align-items: center;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
   width: 100%;
 }
 
 .match-title-text {
   color: #FFFFFF;
-  font-size: clamp(11px, 1.1vw, 13px);
-  font-weight: 700;
+  font-size: clamp(14px, 1.35vw, 18px);
+  font-weight: 800;
   line-height: 1.2;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95), 0 2px 6px rgba(0, 0, 0, 0.8);
-  letter-spacing: 0.4px;
+  padding: 3px 16px;
+  background: rgba(15, 23, 42, 0.82);
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(6px);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95);
+  letter-spacing: 0.6px;
   max-width: 90%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  opacity: 0.95;
 }
 
 /* 核心一体化记分横条 */
@@ -192,53 +361,54 @@ body, html {
   align-items: center;
   justify-content: center;
   position: relative;
-  border-radius: 6px;
+  border-radius: 8px;
   overflow: visible;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.6);
 }
 
 /* 主/客队色带块 */
 .team-ribbon {
   flex: 1 1 0;
-  height: clamp(32px, 3.5vw, 40px);
+  height: clamp(48px, 4.6vw, 60px);
   display: flex;
   align-items: center;
-  padding: 0 clamp(8px, 1.2vw, 14px);
+  padding: 0 clamp(12px, 1.5vw, 22px);
   box-sizing: border-box;
   position: relative;
   transition: background-color 0.3s ease;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32);
+  box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, 0.4), inset 0 -1.5px 0 rgba(0, 0, 0, 0.25);
 }
 
 .team-ribbon--home {
-  border-radius: 6px 0 0 6px;
+  border-radius: 8px 0 0 8px;
   justify-content: space-between;
 }
 
 .team-ribbon--away {
-  border-radius: 0 6px 6px 0;
+  border-radius: 0 8px 8px 0;
   justify-content: space-between;
 }
 
-/* 队伍名称 (自动高对比度) */
+/* 队伍名称 (矢量高清，自动高对比度) */
 .team-name {
-  font-size: clamp(12px, 1.25vw, 15px);
-  font-weight: 700;
+  font-size: clamp(16px, 1.65vw, 23px);
+  font-weight: 800;
   color: #FFFFFF;
-  max-width: 46%;
+  max-width: 50%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  letter-spacing: 0.2px;
+  letter-spacing: 0.4px;
   transition: color 0.3s ease, text-shadow 0.3s ease;
 }
 
-/* 比分数字 (等宽数字、专业赛事字体、自动高对比度) */
+/* 比分数字 (DIN 等宽数字、赛事级大字号、自动高对比度) */
 .team-score {
   font-family: 'DIN Alternate', 'Impact', 'Chakra Petch', 'SF Pro Display', -apple-system, BlinkMacSystemFont, monospace, sans-serif;
-  font-size: clamp(19px, 2.1vw, 25px);
-  font-weight: 800;
+  font-size: clamp(30px, 3.1vw, 42px);
+  font-weight: 900;
   color: #FFFFFF;
-  min-width: 26px;
+  min-width: 44px;
   text-align: center;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.5px;
@@ -253,28 +423,28 @@ body, html {
   position: relative;
   z-index: 5;
   flex-shrink: 0;
-  margin: 0 -2px;
+  margin: 0 -3px;
 }
 
 .period-capsule {
-  height: clamp(38px, 4.2vw, 48px);
-  min-width: clamp(56px, 6vw, 76px);
-  padding: 0 clamp(6px, 0.8vw, 10px);
-  border-radius: 7px;
+  height: clamp(56px, 5.4vw, 70px);
+  min-width: clamp(86px, 7.8vw, 116px);
+  padding: 0 clamp(8px, 1vw, 16px);
+  border-radius: 9px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(180deg, rgba(239, 68, 68, 0.95) 0%, rgba(59, 130, 246, 0.95) 50%, rgba(29, 78, 216, 0.95) 100%) !important;
-  border-top: 1.2px solid rgba(255, 255, 255, 0.55);
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  background: linear-gradient(180deg, rgba(239, 68, 68, 0.98) 0%, rgba(59, 130, 246, 0.98) 50%, rgba(29, 78, 216, 0.98) 100%) !important;
+  border-top: 1.5px solid rgba(255, 255, 255, 0.65);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6), inset 0 1.2px 0 rgba(255, 255, 255, 0.45);
 }
 
 .period-label {
   color: #FFFFFF;
-  font-size: clamp(11px, 1.15vw, 13.5px);
-  font-weight: 800;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
-  letter-spacing: 0.5px;
+  font-size: clamp(14px, 1.4vw, 19px);
+  font-weight: 900;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+  letter-spacing: 0.8px;
   white-space: nowrap;
 }
 
@@ -285,7 +455,7 @@ body, html {
 
 @keyframes bumpAnim {
   0% { transform: scale(1); }
-  50% { transform: scale(1.3); }
+  50% { transform: scale(1.22); }
   100% { transform: scale(1); }
 }
 EOF
@@ -301,7 +471,11 @@ cat << 'EOF' > /var/www/gaoguang-obs-overlay/overlay.js
   var apiBase = 'https://api.mx.server.ndcoo.com';
 
   var domObsContainer = document.getElementById('obs-container');
+  var domScoreboardWrapper = document.getElementById('scoreboard-wrapper');
   var domScoreboard = document.getElementById('scoreboard');
+  var domDynamicIslandBadge = document.getElementById('dynamic-island-badge');
+  var domLiveTitle = document.getElementById('live-title');
+
   var domHomeRibbon = document.getElementById('home-ribbon');
   var domHomeName = document.getElementById('home-name');
   var domHomeScore = document.getElementById('home-score');
@@ -316,17 +490,141 @@ cat << 'EOF' > /var/www/gaoguang-obs-overlay/overlay.js
   var statusBanner = document.getElementById('ws-status-banner');
   var statusText = document.getElementById('ws-status-text');
 
-  // 位置参数 (?pos=top 或 ?pos=bottom，默认底部居中)
+  // 1. 模式参数
+  var modeParam = urlParams.get('mode') || '';
+  if (modeParam === 'live_only' || modeParam === 'island_only' || urlParams.get('liveOnly') === '1' || urlParams.get('islandOnly') === '1') {
+    document.body.classList.add('mode-island-only');
+  }
+
+  // 2. 记分牌位置与间距参数 (?pos=top 或 ?pos=bottom，?bottom=40)
   var posParam = urlParams.get('pos') || 'bottom';
   if (domObsContainer && posParam === 'top') {
     domObsContainer.classList.add('pos-top');
   }
+  var bottomParam = urlParams.get('bottom');
+  if (bottomParam && domObsContainer && posParam !== 'top') {
+    domObsContainer.style.paddingBottom = isNaN(bottomParam) ? bottomParam : bottomParam + 'px';
+  }
 
-  // 缩放参数 (?scale=1.1 或 ?scale=0.9)
+  // 3. 记分牌整体缩放参数 (?scale=1.2 或 ?scale=0.9)
   var scaleParam = parseFloat(urlParams.get('scale'));
   if (!isNaN(scaleParam) && scaleParam > 0.3 && scaleParam < 3.0 && domScoreboard) {
     domScoreboard.style.transform = 'scale(' + scaleParam + ')';
     domScoreboard.style.transformOrigin = (posParam === 'top') ? 'top center' : 'bottom center';
+  }
+
+  // 4. 左侧灵动岛专业纵向「LIVE 现场直播」遮罩角标配置
+  var hideIsland = urlParams.get('hideIsland') === '1' || urlParams.get('noIsland') === '1' || urlParams.get('live') === '0' || urlParams.get('live') === 'false';
+  if (domDynamicIslandBadge && hideIsland) {
+    domDynamicIslandBadge.style.display = 'none';
+  } else if (domDynamicIslandBadge) {
+    // 自定义纵向文案 (?liveText=现场直播 或 ?islandText=高清直播)
+    var liveTextParam = urlParams.get('liveText') || urlParams.get('islandText');
+    if (domLiveTitle && liveTextParam) {
+      domLiveTitle.innerHTML = '';
+      for (var i = 0; i < liveTextParam.length; i++) {
+        var span = document.createElement('span');
+        span.textContent = liveTextParam[i];
+        domLiveTitle.appendChild(span);
+      }
+    }
+
+    // 等比缩放参数 (?liveScale=1.2 或 ?islandScale=1.2) - 严格保持长宽比与字距，绝不拉伸变形
+    var islandScale = parseFloat(urlParams.get('liveScale') || urlParams.get('islandScale') || urlParams.get('scaleIsland'));
+    if (isNaN(islandScale) || islandScale <= 0.2) islandScale = 1.0;
+
+    // 位置自定义微调 (?liveTop=48% 或 ?liveY=400, ?liveLeft=0)
+    var liveTop = urlParams.get('liveTop') || urlParams.get('liveY') || urlParams.get('islandTop');
+    var liveLeft = urlParams.get('liveLeft') || urlParams.get('liveX') || urlParams.get('islandLeft');
+
+    function applyIslandTransform() {
+      var isTopPercent = (liveTop && String(liveTop).includes('%'));
+      if (!liveTop || isTopPercent) {
+        var topVal = liveTop || '50%';
+        domDynamicIslandBadge.style.top = topVal;
+        domDynamicIslandBadge.style.transform = 'translateY(-50%) scale(' + islandScale + ')';
+      } else {
+        domDynamicIslandBadge.style.top = isNaN(liveTop) ? liveTop : liveTop + 'px';
+        domDynamicIslandBadge.style.transform = 'scale(' + islandScale + ')';
+      }
+      domDynamicIslandBadge.style.transformOrigin = 'left center';
+      if (liveLeft !== null) {
+        domDynamicIslandBadge.style.left = isNaN(liveLeft) ? liveLeft : liveLeft + 'px';
+      }
+    }
+
+    applyIslandTransform();
+
+    // 交互式鼠标拖拽与滚轮等比缩放支持 (带本地缓存自动记忆)
+    (function enableIslandDragAndResize() {
+      var isDragging = false;
+      var startX = 0, startY = 0;
+      var initLeft = 0, initTop = 0;
+
+      // 读取本地缓存位置与缩放
+      try {
+        var savedData = localStorage.getItem('obs_island_uniform_state');
+        if (savedData && !liveTop && !liveLeft) {
+          var p = JSON.parse(savedData);
+          if (p.top) liveTop = p.top;
+          if (p.left) liveLeft = p.left;
+          if (p.scale && !urlParams.get('liveScale')) islandScale = p.scale;
+          applyIslandTransform();
+        }
+      } catch (e) {}
+
+      function saveState() {
+        try {
+          localStorage.setItem('obs_island_uniform_state', JSON.stringify({
+            left: domDynamicIslandBadge.style.left,
+            top: domDynamicIslandBadge.style.top,
+            scale: islandScale
+          }));
+        } catch (e) {}
+      }
+
+      // 1. 鼠标拖动位置
+      domDynamicIslandBadge.addEventListener('mousedown', function (e) {
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        var rect = domDynamicIslandBadge.getBoundingClientRect();
+        initLeft = rect.left;
+        initTop = rect.top;
+        domDynamicIslandBadge.style.transform = 'scale(' + islandScale + ')';
+        domDynamicIslandBadge.style.transformOrigin = 'left center';
+        e.preventDefault();
+      });
+
+      // 2. 滚轮自由等比缩放大小 (绝不拉伸变形)
+      domDynamicIslandBadge.addEventListener('wheel', function (e) {
+        e.preventDefault();
+        var delta = e.deltaY < 0 ? 0.05 : -0.05;
+        islandScale = Math.max(0.5, Math.min(2.5, islandScale + delta));
+        applyIslandTransform();
+        saveState();
+      });
+
+      window.addEventListener('mousemove', function (e) {
+        if (!isDragging) return;
+        var dx = e.clientX - startX;
+        var dy = e.clientY - startY;
+        var newLeft = Math.max(0, initLeft + dx);
+        var newTop = Math.max(0, initTop + dy);
+        liveLeft = newLeft;
+        liveTop = newTop;
+        domDynamicIslandBadge.style.left = newLeft + 'px';
+        domDynamicIslandBadge.style.top = newTop + 'px';
+        domDynamicIslandBadge.style.transform = 'scale(' + islandScale + ')';
+      });
+
+      window.addEventListener('mouseup', function () {
+        if (isDragging) {
+          isDragging = false;
+          saveState();
+        }
+      });
+    })();
   }
 
   var currentHomeScore = null;
@@ -696,4 +994,4 @@ cat << 'EOF' > /var/www/gaoguang-obs-overlay/overlay.js
 })();
 EOF
 
-echo "=== OBS Overlay 部署脚本对齐完毕 ==="
+echo "=== 部署完成！OBS Overlay 已更新为等比紧凑专业排版 ==="
