@@ -152,6 +152,95 @@
     <text class="obs-tip">💡 联动说明：在拍摄大表的手机上开启【时间切图采集】，在此输入该手机显示的 6 位码并点击【连接】，网页记分牌就会自动连接该房间并展示时间切图！点击【断开】可随时撤下时间容器。</text>
   </view>
 
+  <!-- 3.2 赛场高光回放控制卡片 (下发指令控制网页端高光回放) -->
+  <view class="card highlight-replay-card">
+    <view class="card-header flex-between">
+      <view class="header-left">
+        <text class="card-icon">🎬</text>
+        <text class="card-title">赛场高光回放控制</text>
+      </view>
+      <view class="ws-status-tag {{isHighlightReplaying ? 'connected' : ''}}" style="padding: 4rpx 14rpx; font-size: 20rpx;">
+        <view class="status-dot"></view>
+        <text>{{isHighlightReplaying ? '高光回放中' : '实时直播中'}}</text>
+      </view>
+    </view>
+
+    <!-- 操作按钮组 -->
+    <view class="time-action-btns-row" style="margin-top: 16rpx; flex-direction: column; gap: 12rpx;">
+      <button 
+        class="sub-copy-btn" 
+        style="width: 100%; border: 1rpx solid rgba(0, 240, 255, 0.4); background: rgba(0, 240, 255, 0.08); color: #00f0ff; height: 76rpx; line-height: 76rpx; font-weight: bold; border-radius: 12rpx;"
+        bindtap="onTriggerSaveHighlight" 
+        hover-class="btn-hover"
+      >
+        <text class="btn-icon">💾</text>
+        <text> 触发 OBS 保存精彩高光片段 (远程保存)</text>
+      </button>
+
+      <view wx:if="{{!isHighlightReplaying}}" style="display: flex; gap: 12rpx; width: 100%;">
+        <button 
+          class="btn-primary highlight-start-btn" 
+          style="flex: 1; margin-top: 0; font-size: 26rpx; height: 80rpx; line-height: 80rpx;"
+          bindtap="onStartHighlightReplay" 
+          hover-class="btn-hover"
+        >
+          <text class="btn-icon">▶</text>
+          <text>播放最新高光</text>
+        </button>
+
+        <button 
+          class="btn-primary highlight-start-btn" 
+          style="flex: 1; margin-top: 0; font-size: 26rpx; height: 80rpx; line-height: 80rpx; background: linear-gradient(135deg, #7928CA, #FF0080);"
+          bindtap="onPlayAllHighlights" 
+          hover-class="btn-hover"
+        >
+          <text class="btn-icon">⏩</text>
+          <text>连续轮播全部</text>
+        </button>
+      </view>
+
+      <button 
+        wx:else
+        class="btn-primary highlight-stop-btn" 
+        bindtap="onStopHighlightReplay" 
+        hover-class="btn-hover"
+      >
+        <text class="btn-icon">📺</text>
+        <text>立即返回直播画面 (红色 Wipe 转场)</text>
+      </button>
+
+      <!-- 历史高光切片点播列表 -->
+      <view wx:if="{{savedHighlightClips && savedHighlightClips.length > 0}}" style="margin-top: 8rpx; background: rgba(0,0,0,0.25); border-radius: 12rpx; padding: 12rpx;">
+        <view style="font-size: 22rpx; color: #8fa3b0; margin-bottom: 8rpx; display: flex; justify-content: space-between;">
+          <text>🎬 本场已捕获高光历史 (点击单播)：</text>
+          <text style="color: #00f0ff;">共 {{savedHighlightClips.length}} 条</text>
+        </view>
+        <view style="display: flex; flex-direction: column; gap: 8rpx; max-height: 240rpx; overflow-y: auto;">
+          <view 
+            wx:for="{{savedHighlightClips}}" 
+            wx:key="id" 
+            style="display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,0.06); padding: 10rpx 16rpx; border-radius: 8rpx;"
+          >
+            <view style="display: flex; align-items: center; gap: 8rpx;">
+              <text style="font-size: 22rpx; color: #fff; font-weight: bold;">{{item.title}}</text>
+              <text style="font-size: 20rpx; color: #64748b;">({{item.time}})</text>
+            </view>
+            <button 
+              size="mini" 
+              style="margin: 0; padding: 0 16rpx; height: 48rpx; line-height: 48rpx; font-size: 20rpx; background: #00f0ff; color: #000; font-weight: bold; border-radius: 6rpx;"
+              bindtap="onPlaySpecificClip" 
+              data-index="{{item.index}}"
+            >
+              ▶ 播放此段
+            </button>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <text class="obs-tip">💡 高光回放说明：视频播放完毕后系统会【自动播放红色片尾转场】切回直播！您也可以在此随时点播单条历史高光或一键连续轮播全部高光。</text>
+  </view>
+
   <!-- 4. 主客队比分控板 -->
   <view class="score-control-section">
     <!-- 主队控板 -->

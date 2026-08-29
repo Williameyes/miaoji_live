@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Token Bridge</title>
+</head>
+<body>
+<script>
+(function() {
+  var urlParams = new URLSearchParams(window.location.search);
+  var roomId = urlParams.get('roomId') || '666888';
+  var apiBase = window.location.origin;
+
+  fetch(apiBase + '/api/get_token?roomId=' + roomId, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' }
+  })
+  .then(function(res) { return res.json(); })
+  .then(function(data) {
+    if (data && data.token) {
+      window.parent.postMessage({ type: 'WS_TOKEN_SUCCESS', token: data.token, roomId: roomId }, '*');
+    } else {
+      fetch(apiBase + '/api/get_token?roomId=' + roomId)
+      .then(function(r2) { return r2.json(); })
+      .then(function(d2) {
+        if (d2 && d2.token) {
+          window.parent.postMessage({ type: 'WS_TOKEN_SUCCESS', token: d2.token, roomId: roomId }, '*');
+        } else {
+          window.parent.postMessage({ type: 'WS_TOKEN_ERROR', error: 'Token missing', roomId: roomId }, '*');
+        }
+      })
+      .catch(function(e2) {
+        window.parent.postMessage({ type: 'WS_TOKEN_ERROR', error: String(e2), roomId: roomId }, '*');
+      });
+    }
+  })
+  .catch(function(err) {
+    fetch(apiBase + '/api/get_token?roomId=' + roomId)
+    .then(function(r2) { return r2.json(); })
+    .then(function(d2) {
+      if (d2 && d2.token) {
+        window.parent.postMessage({ type: 'WS_TOKEN_SUCCESS', token: d2.token, roomId: roomId }, '*');
+      } else {
+        window.parent.postMessage({ type: 'WS_TOKEN_ERROR', error: String(err), roomId: roomId }, '*');
+      }
+    })
+    .catch(function(e2) {
+      window.parent.postMessage({ type: 'WS_TOKEN_ERROR', error: String(e2), roomId: roomId }, '*');
+    });
+  });
+})();
+</script>
+</body>
+</html>

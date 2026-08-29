@@ -449,25 +449,26 @@ body.mode-live-only .dynamic-island-badge {
 }
 
 /* ──────────────────────────────────────────────
-   切图时间容器：定位在 score-bar-core 右侧旁 (绝对定位，不影响记分牌水平居中)
+   切图时间容器：与小程序 live.wxss 100% 完全对齐
+   高度、圆角、材质光泽与记分条浑然一体，挂在右侧独立自适应
 ────────────────────────────────────────────── */
 .crop-time-box {
   position: absolute;
-  left: calc(100% + clamp(12px, 1.4vw, 18px));
+  left: calc(100% + clamp(10px, 1.2vw, 16px));
   top: 50%;
   transform: translateY(-50%);
   z-index: 10;
   display: flex;
   align-items: center;
   justify-content: center;
-  height: clamp(52px, 5vw, 62px);
-  min-width: clamp(74px, 6.8vw, 110px);
-  padding: 2px 6px;
-  background: linear-gradient(180deg, rgba(20, 26, 38, 0.95) 0%, rgba(10, 14, 23, 0.98) 100%);
+  height: clamp(48px, 4.8vw, 58px);
+  min-width: clamp(64px, 6vw, 96px);
+  padding: 3px 6px;
+  background: linear-gradient(180deg, rgba(20, 26, 38, 0.94) 0%, rgba(10, 14, 23, 0.97) 100%);
   border-radius: 8px;
-  border: 1.2px solid rgba(255, 255, 255, 0.28);
+  border: 1.2px solid rgba(255, 255, 255, 0.25);
   border-top: 1.5px solid rgba(255, 255, 255, 0.55);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6), inset 0 1.2px 0 rgba(255, 255, 255, 0.35);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.28);
   box-sizing: border-box;
   overflow: hidden;
   transition: width 0.2s ease-out;
@@ -483,7 +484,423 @@ body.mode-live-only .dynamic-island-badge {
   display: block;
   border-radius: 4px;
   mix-blend-mode: screen;
-  filter: contrast(1.15) brightness(1.1);
+  filter: contrast(1.18) brightness(1.08);
   image-rendering: pixelated;
   image-rendering: crisp-edges;
+}
+
+/* ──────────────────────────────────────────────
+   高光回放全屏播放层与角标 (Replay Video Layer)
+────────────────────────────────────────────── */
+.replay-overlay-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 100;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  opacity: 1;
+  pointer-events: none;
+  transition: opacity 0.4s ease;
+}
+
+.replay-hidden {
+  display: none !important;
+}
+
+.replay-video-player {
+  display: none !important;
+}
+
+.replay-corner-badge {
+  position: absolute;
+  top: 24px;
+  left: 28px;
+  z-index: 105;
+  display: flex;
+  align-items: center;
+  padding: 8px 18px;
+  background: rgba(15, 23, 42, 0.82);
+  border: 1px solid rgba(0, 240, 255, 0.6);
+  border-radius: 20px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6), 0 0 12px rgba(0, 240, 255, 0.3);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.replay-corner-badge .replay-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #00f0ff;
+  box-shadow: 0 0 10px #00f0ff;
+  margin-right: 10px;
+  animation: replayDotPulse 1.2s ease-in-out infinite alternate;
+}
+
+.replay-corner-badge .replay-text {
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+@keyframes replayDotPulse {
+  0% { opacity: 0.4; transform: scale(0.85); }
+  100% { opacity: 1; transform: scale(1.15); }
+}
+
+/* ──────────────────────────────────────────────
+   专业广播级回放转场遮罩（与小程序 live 页 100% 对齐）
+────────────────────────────────────────────── */
+.replay-mask {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 120;
+  background: radial-gradient(circle at center, rgba(15, 23, 42, 0.88) 0%, rgba(7, 11, 22, 0.96) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  pointer-events: none;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.replay-mask--hidden {
+  display: none !important;
+}
+
+/* 动感斜向 Wipe 切割光条 */
+.replay-stinger-wipe {
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: linear-gradient(135deg, 
+    transparent 42%, 
+    rgba(0, 240, 255, 0.45) 47%, 
+    rgba(255, 255, 255, 0.95) 50%, 
+    rgba(255, 215, 0, 0.65) 53%, 
+    transparent 58%
+  );
+  transform: rotate(-25deg) translateY(-120%);
+  pointer-events: none;
+}
+
+.replay-stinger-slash {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: linear-gradient(90deg, rgba(0, 162, 255, 0.18), rgba(255, 170, 0, 0.18));
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 广播级 3D 悬浮勋章徽标层 */
+.replay-badge-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: skewX(-12deg);
+  transform-origin: center center;
+}
+
+.replay-badge-card {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 16px 40px;
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.94) 0%, rgba(30, 58, 138, 0.90) 100%);
+  border: 2px solid rgba(0, 240, 255, 0.65);
+  border-radius: 14px;
+  box-shadow: 
+    0 0 40px rgba(0, 240, 255, 0.4),
+    inset 0 0 24px rgba(0, 240, 255, 0.25);
+  overflow: hidden;
+}
+
+.replay-mask--live .replay-badge-card {
+  background: linear-gradient(135deg, rgba(40, 12, 18, 0.94) 0%, rgba(190, 24, 42, 0.90) 100%);
+  border-color: rgba(255, 77, 79, 0.75);
+  box-shadow: 
+    0 0 40px rgba(255, 77, 79, 0.45),
+    inset 0 0 24px rgba(255, 77, 79, 0.3);
+}
+
+.replay-badge-icon-box {
+  margin-right: 20px;
+  font-size: 38px;
+  line-height: 1;
+}
+
+.replay-badge-flash {
+  color: #00f0ff;
+  text-shadow: 0 0 16px #00f0ff;
+}
+
+.replay-mask--live .replay-badge-flash {
+  color: #ff4d4f;
+  text-shadow: 0 0 16px #ff4d4f;
+}
+
+.replay-badge-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.replay-badge-main {
+  color: #ffffff;
+  font-size: 42px;
+  font-weight: 900;
+  letter-spacing: 6px;
+  line-height: 1;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  text-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
+}
+
+.replay-badge-sub {
+  color: #00f0ff;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 4px;
+  margin-top: 6px;
+  text-transform: uppercase;
+}
+
+.replay-mask--live .replay-badge-sub {
+  color: #ff7875;
+}
+
+/* 扫过勋章的光芒动效 */
+.replay-badge-shimmer {
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.7), transparent);
+  transform: skewX(-20deg);
+}
+
+/* 进入回放：Stinger Wipe 与徽标组合擦除动效 (0.88s) */
+.replay-mask--replay {
+  animation: replayBackdropFade 0.88s ease-out both;
+}
+
+.replay-mask--replay .replay-stinger-wipe {
+  animation: stingerWipeMotion 0.88s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.replay-mask--replay .replay-stinger-slash {
+  animation: stingerSlashPulse 0.88s ease-in-out both;
+}
+
+.replay-mask--replay .replay-badge-container {
+  animation: replayBadgePop 0.88s cubic-bezier(0.34, 1.3, 0.64, 1) both;
+}
+
+.replay-mask--replay .replay-badge-shimmer {
+  animation: badgeShimmer 0.88s ease-in-out both;
+}
+
+/* 回到直播：红色切回动效 (0.92s) */
+.replay-mask--live {
+  animation: replayBackdropFade 0.92s ease-out both;
+}
+
+.replay-mask--live .replay-stinger-wipe {
+  animation: stingerWipeMotion 0.92s cubic-bezier(0.16, 1, 0.3, 1) reverse both;
+}
+
+.replay-mask--live .replay-badge-container {
+  animation: liveBadgePop 0.92s cubic-bezier(0.34, 1.2, 0.64, 1) both;
+}
+
+@keyframes stingerWipeMotion {
+  0% {
+    transform: rotate(-25deg) translateY(-130%);
+  }
+  100% {
+    transform: rotate(-25deg) translateY(130%);
+  }
+}
+
+@keyframes stingerSlashPulse {
+  0% { opacity: 0; }
+  50% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes replayBadgePop {
+  0% {
+    opacity: 0;
+    transform: skewX(-12deg) scale(0.6);
+  }
+  60% {
+    opacity: 1;
+    transform: skewX(-12deg) scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: skewX(-12deg) scale(1);
+  }
+}
+
+@keyframes liveBadgePop {
+  0% {
+    opacity: 0;
+    transform: skewX(-12deg) scale(0.7);
+  }
+  100% {
+    opacity: 1;
+    transform: skewX(-12deg) scale(1);
+  }
+}
+
+@keyframes badgeShimmer {
+  0% { left: -100%; }
+  100% { left: 200%; }
+}
+
+@keyframes replayBackdropFade {
+  0% { opacity: 0; }
+  30% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* ──────────────────────────────────────────────
+   房间号修改按钮与 Modal 弹窗样式
+────────────────────────────────────────────── */
+.ws-room-edit-btn {
+  margin-left: 10px;
+  background: rgba(0, 240, 255, 0.15);
+  border: 1px solid rgba(0, 240, 255, 0.5);
+  color: #00f0ff;
+  border-radius: 12px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: bold;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.2s ease;
+  pointer-events: auto;
+}
+
+.ws-room-edit-btn:hover {
+  background: rgba(0, 240, 255, 0.35);
+  box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
+}
+
+.room-setting-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 300;
+  background: rgba(7, 11, 22, 0.85);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+}
+
+.room-modal--hidden {
+  display: none !important;
+}
+
+.room-modal-card {
+  width: 420px;
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  border: 1.5px solid rgba(0, 240, 255, 0.6);
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.8), 0 0 20px rgba(0, 240, 255, 0.25);
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.room-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.modal-title {
+  font-size: 18px;
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.modal-close-btn {
+  font-size: 24px;
+  color: #94a3b8;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.modal-close-btn:hover {
+  color: #ffffff;
+}
+
+.modal-desc {
+  font-size: 14px;
+  color: #94a3b8;
+  margin-bottom: 16px;
+}
+
+.modal-input-row {
+  display: flex;
+  gap: 12px;
+}
+
+.modal-input-row input {
+  flex: 1;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(0, 240, 255, 0.4);
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: #ffffff;
+  font-size: 18px;
+  font-weight: bold;
+  letter-spacing: 2px;
+  outline: none;
+  text-align: center;
+}
+
+.modal-input-row button {
+  background: linear-gradient(135deg, #00f0ff 0%, #007aff 100%);
+  border: none;
+  border-radius: 8px;
+  padding: 0 20px;
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: bold;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.modal-input-row button:hover {
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.6);
 }

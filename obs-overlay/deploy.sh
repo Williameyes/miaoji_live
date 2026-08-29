@@ -10,6 +10,7 @@ if [ -f "$DIR/index.html" ] && [ -f "$DIR/style.css" ] && [ -f "$DIR/overlay.js"
   cp "$DIR/index.html" /var/www/gaoguang-obs-overlay/
   cp "$DIR/style.css" /var/www/gaoguang-obs-overlay/
   cp "$DIR/overlay.js" /var/www/gaoguang-obs-overlay/
+  cp "$DIR/token-bridge.html" /var/www/gaoguang-obs-overlay/
   echo "✅ 已直接从本地文件目录复制更新至 /var/www/gaoguang-obs-overlay/"
   echo "=== 部署完成！==="
   exit 0

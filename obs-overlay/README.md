@@ -37,7 +37,8 @@ scp ./obs-overlay/index.html ./obs-overlay/style.css ./obs-overlay/overlay.js ub
    - 常驻连接主播房间 `666888`，渲染常规比分、队名、节次；
    - 收到中控台的 `CONNECT_TIME_ROOM` 后，**由 OBS 里的网页端动态发起长连接连入 `123456` 房间**；
    - 实时接收大表切图帧，平滑展开右侧黑晶时间容器并绘制；
-   - 收到 `DISCONNECT_TIME_ROOM` 时，立即断开 `123456` 并撤下时间容器。
+   - 收到 `DISCONNECT_TIME_ROOM` 时，立即断开 `123456` 并撤下时间容器；
+   - **🎬 零配置高光回放**：后台静默建立 OBS 原生 WebSocket (`ws://localhost:4455`)，自动监听 `ReplayBufferSaved` 事件捕获本地保存的高光 MP4 路径；收到中控台 `START_HIGHLIGHT_REPLAY` 信令后，触发专业 Wipe 擦除转场动画并从最新切片开始播放高光，收到 `STOP_HIGHLIGHT_REPLAY` 时切回直播。
 
 ---
 
@@ -54,6 +55,8 @@ scp ./obs-overlay/index.html ./obs-overlay/style.css ./obs-overlay/overlay.js ub
 | `liveScale`| `1.0` | `liveScale=1.2` | 左侧遮罩等比缩放倍率（也可在网页上直接滚轮缩放） |
 | `mode` | `normal` | `mode=live_only` | 独立角标模式（仅显示左侧 LIVE 遮罩） |
 | `timeRoom`| 无 | `timeRoom=123456` | 页面加载时初始直连的时间采集端房间码（可选） |
+| `obsWsPort`| `4455` | `obsWsPort=4455` | OBS 原生 WebSocket 端口（默认 4455） |
+| `highlightFile`| 无 | `highlightFile=file:///C:/...` | 初始调试直接塞入的高光视频文件路径（可选） |
 
 ---
 
@@ -67,5 +70,6 @@ scp ./obs-overlay/index.html ./obs-overlay/style.css ./obs-overlay/overlay.js ub
    - 按 `F12` 打开控制台（Console），可实时观察：
      - `[OBS Overlay] WebSocket Connected to room 666888`
      - `[OBS Overlay] Received CONNECT_TIME_ROOM -> connecting time device: 123456`
-     - `[OBS Overlay] Time Device Connected to room 123456`
-     - `[OBS Overlay] Time Channel Message: ...`
+     - `[OBS Overlay] Received START_HIGHLIGHT_REPLAY -> starting replay`
+     - `[OBS Overlay] Connected to OBS Native WebSocket at ws://localhost:4455`
+

@@ -8,10 +8,28 @@
   <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-  <!-- 网页端/OBS 实时连接状态标识栏 (极简微型提示) -->
+  <!-- 网页端/OBS 实时连接状态标识栏 (支持点击一键修改房间号) -->
   <div class="ws-status-banner" id="ws-status-banner">
     <span class="status-dot"></span>
     <span class="status-text" id="ws-status-text">⏳ 正在连接中控台...</span>
+    <button class="ws-room-edit-btn" id="ws-room-edit-btn" title="点击修改 6 位房间号">🔑 房间号: <span id="ws-current-room-text">666888</span> [修改]</button>
+  </div>
+
+  <!-- 房间号快速设置/切换弹窗 (首次或点击修改时使用) -->
+  <div class="room-setting-modal room-modal--hidden" id="room-setting-modal">
+    <div class="room-modal-card">
+      <div class="room-modal-header">
+        <span class="modal-title">🔑 设置 OBS 记分牌房间号</span>
+        <span class="modal-close-btn" id="room-modal-close">×</span>
+      </div>
+      <div class="room-modal-body">
+        <p class="modal-desc">请输入小程序网页记分中控台显示的 6 位房间码：</p>
+        <div class="modal-input-row">
+          <input type="text" id="room-modal-input" maxlength="6" placeholder="例如: 178800" value="178800">
+          <button id="room-modal-submit-btn">保存并连接</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- 左侧灵动岛专业电视转播级「LIVE 现场直播」纵向遮罩角标 (贴边零边距，放大1倍，支持一键关闭) -->
@@ -79,6 +97,37 @@
     </div>
   </div>
 
+  <!-- 全屏高光回放角标图层 (悬浮在 OBS 媒体源之上) -->
+  <div class="replay-overlay-container replay-hidden" id="replay-overlay-container">
+    <!-- 广播级回放角标 (播放高光视频时悬浮展示) -->
+    <div class="replay-corner-badge" id="replay-corner-badge">
+      <span class="replay-dot"></span>
+      <span class="replay-text" id="replay-corner-text">精彩回放 REPLAY</span>
+    </div>
+  </div>
+
+  <!-- 专业广播级回放转场遮罩（与小程序 live 页结构完全一致） -->
+  <div class="replay-mask replay-mask--hidden" id="replay-mask">
+    <!-- 动感斜向 Wipe 切割光条 -->
+    <div class="replay-stinger-wipe"></div>
+    <div class="replay-stinger-slash"></div>
+
+    <!-- 广播级 3D 悬浮勋章徽标层 -->
+    <div class="replay-badge-container">
+      <div class="replay-badge-card" id="replay-badge-card">
+        <div class="replay-badge-icon-box">
+          <span class="replay-badge-flash">⚡</span>
+        </div>
+        <div class="replay-badge-content">
+          <div class="replay-badge-main" id="replay-badge-main">精彩回放</div>
+          <div class="replay-badge-sub" id="replay-badge-sub">HIGHLIGHT REPLAY</div>
+        </div>
+        <div class="replay-badge-shimmer"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="./config.js"></script>
   <script src="./overlay.js"></script>
 </body>
 </html>

@@ -68,7 +68,10 @@ Page({
     // 时间采集设备联动 (大表切图)
     timeDeviceRoomId: '',
     isTimeDeviceConnected: false,
-    connectedTimeRoomId: ''
+    connectedTimeRoomId: '',
+
+    // 赛场高光回放控制
+    isHighlightReplaying: false
   },
 
   _socketTask: null,
@@ -523,6 +526,80 @@ Page({
       }
     });
     wx.showToast({ title: '已通知网页端断开并撤下时间', icon: 'none' });
+  },
+
+  // 3.2 赛场高光回放控制下发
+  onTriggerSaveHighlight: function () {
+    var now = new Date();
+    var timeStr = (now.getHours() < 10 ? '0' : '') + now.getHours() + ':' +
+                  (now.getMinutes() < 10 ? '0' : '') + now.getMinutes() + ':' +
+                  (now.getSeconds() < 10 ? '0' : '') + now.getSeconds();
+
+    var currentList = this.data.savedHighlightClips || [];
+    var newClip = {
+      id: 'clip_' + Date.now(),
+      index: 0,
+      time: timeStr,
+      title: '精彩高光 #' + (currentList.length + 1)
+    };
+
+    var updatedList = [newClip].concat(currentList).map(function (item, idx) {
+      item.index = idx;
+      return item;
+    });
+
+    this.setData({ savedHighlightClips: updatedList });
+    this._addLog('💾 远程下发【保存 OBS 重放缓冲区高光片段】指令 (' + timeStr + ')', 'success');
+    this._sendUpdatePacket('TRIGGER_SAVE_HIGHLIGHT', {
+      timestamp: Date.now()
+    });
+    wx.showToast({ title: '已保存高光 #' + updatedList.length, icon: 'success' });
+  },
+
+  onStartHighlightReplay: function () {
+    this.setData({ isHighlightReplaying: true });
+    this._addLog('🎬 下发【播放最新高光】指令 (蓝色 Wipe 转场)', 'success');
+    this._sendUpdatePacket('START_HIGHLIGHT_REPLAY', {
+      isReplay: true,
+      clipIndex: 0,
+      timestamp: Date.now()
+    });
+    wx.showToast({ title: '播放最新高光', icon: 'success' });
+  },
+
+  onPlayAllHighlights: function () {
+    this.setData({ isHighlightReplaying: true });
+    this._addLog('🎬 下发【连续轮播全部高光】指令', 'success');
+    this._sendUpdatePacket('START_HIGHLIGHT_REPLAY', {
+      isReplay: true,
+      playAll: true,
+      clipIndex: 0,
+      timestamp: Date.now()
+    });
+    wx.showToast({ title: '轮播全部高光', icon: 'success' });
+  },
+
+  onPlaySpecificClip: function (e) {
+    var clipIdx = e.currentTarget.dataset.index;
+    if (typeof clipIdx !== 'number') clipIdx = 0;
+    this.setData({ isHighlightReplaying: true });
+    this._addLog('🎬 下发【播放指定高光 #' + (clipIdx + 1) + '】指令', 'success');
+    this._sendUpdatePacket('START_HIGHLIGHT_REPLAY', {
+      isReplay: true,
+      clipIndex: clipIdx,
+      timestamp: Date.now()
+    });
+    wx.showToast({ title: '播放第 ' + (clipIdx + 1) + ' 个切片', icon: 'success' });
+  },
+
+  onStopHighlightReplay: function () {
+    this.setData({ isHighlightReplaying: false });
+    this._addLog('📺 下发【返回直播画面】指令到网页记分牌 (红色 Live 转场)', 'error');
+    this._sendUpdatePacket('STOP_HIGHLIGHT_REPLAY', {
+      isReplay: false,
+      timestamp: Date.now()
+    });
+    wx.showToast({ title: '已切回直播画面', icon: 'none' });
   },
 
   // 将比赛元数据（比赛名、主客队名、主客队球衣颜色）编码进 match_id 字段中，确保服务端广播 100% 透传
