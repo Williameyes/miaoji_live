@@ -193,8 +193,11 @@
       <!-- 3. 历史高光切片点播列表 (点击任意一段精准点播) -->
       <view style="margin-top: 8rpx; background: rgba(0,0,0,0.25); border-radius: 12rpx; padding: 14rpx;">
         <view style="font-size: 22rpx; color: #8fa3b0; margin-bottom: 12rpx; display: flex; justify-content: space-between; align-items: center;">
-          <text style="font-weight: bold; color: #cbd5e1;">🎬 本场精彩高光列表 (点击直接点播)：</text>
-          <text style="color: #00f0ff; font-weight: bold;">共 {{savedHighlightClips ? savedHighlightClips.length : 0}} 段</text>
+          <text style="font-weight: bold; color: #cbd5e1;">🎬 本场高光列表 (点击直接点播)：</text>
+          <view style="display: flex; align-items: center; gap: 16rpx;">
+            <text style="color: #00f0ff; font-weight: bold;">共 {{savedHighlightClips ? savedHighlightClips.length : 0}} 段</text>
+            <text wx:if="{{savedHighlightClips && savedHighlightClips.length > 0}}" style="color: #f87171; font-size: 22rpx; text-decoration: underline; padding: 4rpx 8rpx;" bindtap="onClearHighlightClips">清空</text>
+          </view>
         </view>
         
         <view wx:if="{{savedHighlightClips.length > 0}}" class="clips-list">

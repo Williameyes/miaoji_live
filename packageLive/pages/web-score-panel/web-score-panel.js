@@ -6,6 +6,15 @@ var STORAGE_KEY = 'MIAOXIE_MATCHES';
 var FIXED_ROOM_KEY = 'MIAOXIE_FIXED_ROOM_ID';
 
 /**
+ * 获取每场比赛独立的高光切片持久化 Storage Key
+ */
+function getHighlightStorageKey(matchId, roomId) {
+  var cleanMatchId = String(matchId || '').trim();
+  var cleanRoomId = String(roomId || '').trim();
+  return 'MIAOXIE_HIGHLIGHT_CLIPS_' + (cleanMatchId || ('ROOM_' + (cleanRoomId || 'default')));
+}
+
+/**
  * 确保 roomId 为合规的 6 位纯数字房间码（默认 666888）
  * @param {string|number} rawId
  * @returns {string}
@@ -180,6 +189,8 @@ Page({
     }
 
     var storedTimeRoomId = wx.getStorageSync('MIAOXIE_TIME_DEVICE_ROOM_ID') || '';
+    var highlightKey = getHighlightStorageKey(matchId, roomId);
+    var storedClips = wx.getStorageSync(highlightKey) || [];
 
     this.setData({
       statusBarHeight: sbh,
@@ -191,6 +202,7 @@ Page({
       matchList: formattedList,
       selectedMatchIndex: targetIndex,
       period: mPeriod,
+      savedHighlightClips: storedClips,
       'teamA.name': tA_name,
       'teamA.color': tA_color,
       'teamA.score': tA_score,
@@ -199,7 +211,7 @@ Page({
       'teamB.score': tB_score
     });
 
-    this._addLog('🚀 页面初始化: [' + mTitle + '] ' + tA_name + '(' + tA_color + ') VS ' + tB_name + '(' + tB_color + ')', 'success');
+    this._addLog('🚀 页面初始化: [' + mTitle + '] ' + tA_name + '(' + tA_color + ') VS ' + tB_name + '(' + tB_color + ') | 本场切片: ' + storedClips.length + '段', 'success');
     this._connectWs(roomId);
   },
 
@@ -246,12 +258,16 @@ Page({
     var mTitle = match.matchName || '常规赛';
     var mPeriod = (match.period !== undefined) ? match.period : 1;
 
+    var matchHighlightKey = getHighlightStorageKey(newMatchId, this.data.roomId);
+    var matchStoredClips = wx.getStorageSync(matchHighlightKey) || [];
+
     var self = this;
     this.setData({
       selectedMatchIndex: index,
       matchId: newMatchId,
       matchTitle: mTitle,
       period: mPeriod,
+      savedHighlightClips: matchStoredClips,
       'teamA.name': tA_name,
       'teamA.color': tA_color,
       'teamA.score': tA_score,
@@ -259,7 +275,7 @@ Page({
       'teamB.color': tB_color,
       'teamB.score': tB_score
     }, function () {
-      self._addLog('🔄 无缝切换场次: [' + mTitle + '] ' + tA_name + ' VS ' + tB_name, 'success');
+      self._addLog('🔄 无缝切换场次: [' + mTitle + '] ' + tA_name + ' VS ' + tB_name + ' (已载入切片: ' + matchStoredClips.length + '段)', 'success');
       if (!self.data.isScoringStarted) {
         self.setData({ isScoringStarted: true });
       }
@@ -572,12 +588,38 @@ Page({
       return item;
     });
 
+    var highlightKey = getHighlightStorageKey(this.data.matchId, this.data.roomId);
     this.setData({ savedHighlightClips: updatedList });
+    try {
+      wx.setStorageSync(highlightKey, updatedList);
+    } catch (e) {}
+
     this._addLog('💾 远程下发【保存 OBS 重放缓冲区高光片段】指令 (' + timeStr + ')', 'success');
     this._sendUpdatePacket('TRIGGER_SAVE_HIGHLIGHT', {
       timestamp: Date.now()
     });
     wx.showToast({ title: '已保存高光 #' + updatedList.length, icon: 'success' });
+  },
+
+  onClearHighlightClips: function () {
+    var self = this;
+    wx.showModal({
+      title: '清空本场高光',
+      content: '确定清空本场比赛已保存的高光切片列表吗？',
+      confirmText: '清空',
+      confirmColor: '#FF2D55',
+      success: function (res) {
+        if (res.confirm) {
+          var highlightKey = getHighlightStorageKey(self.data.matchId, self.data.roomId);
+          try {
+            wx.removeStorageSync(highlightKey);
+          } catch (e) {}
+          self.setData({ savedHighlightClips: [] });
+          self._addLog('🗑️ 已清空本场比赛高光切片记录', 'success');
+          wx.showToast({ title: '已清空记录', icon: 'none' });
+        }
+      }
+    });
   },
 
   onPlaySpecificClip: function (e) {
