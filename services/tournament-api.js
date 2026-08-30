@@ -21,7 +21,8 @@ function parseTournamentItem(raw) {
     monitoredCount: Number(o.total_monitored_matches ?? o.totalMonitoredMatches ?? 0) || 0,
     canManage: o.can_manage !== false && o.canManage !== false,
     sportType: String(rawSportType || 'basketball'),
-    format: String(rawFormat || 'LEAGUE')
+    format: String(rawFormat || 'LEAGUE'),
+    coverUrl: String(o.cover_url || o.coverUrl || o.cover || '')
   };
 }
 

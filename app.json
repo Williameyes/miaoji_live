@@ -71,6 +71,10 @@
     "pages/index/index": {
       "network": "all",
       "packages": ["packageLive", "packageReport"]
+    },
+    "pages/tournament/tournament": {
+      "network": "all",
+      "packages": ["packagePromo"]
     }
   },
   "window": {

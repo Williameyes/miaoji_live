@@ -1,7 +1,7 @@
 /**
  * @fileoverview 赛事资讯大厅页面（风格与主页保持一致）
  */
-const { fetchTournamentList, fetchTournamentDetail } = require('../../services/tournament-api.js');
+const { fetchTournamentList } = require('../../services/tournament-api.js');
 const { sortTournamentsWithPins } = require('../../utils/tournament-pin.js');
 
 const CARD_THEME_PALETTE = [
@@ -57,6 +57,14 @@ Page({
     } catch (e) {
       // fallback
     }
+
+    if (wx.showShareMenu) {
+      wx.showShareMenu({
+        withShareTicket: true,
+        menus: ['shareAppMessage', 'shareTimeline']
+      });
+    }
+
     this.loadTournaments();
   },
 
@@ -89,22 +97,8 @@ Page({
     this.setData({ loading: true });
     return fetchTournamentList({ scope: 'public' })
       .then(function (list) {
-        return Promise.all(list.map(function (item) {
-          return fetchTournamentDetail(item.id)
-            .then(function (detail) {
-              return Object.assign({}, item, {
-                sportType: detail && detail.sport_type ? detail.sport_type : item.sportType,
-                format: detail && detail.format ? detail.format : item.format
-              });
-            })
-            .catch(function () {
-              return item;
-            });
-        }));
-      })
-      .then(function (listWithDetail) {
         const usedThemes = [];
-        const formatted = listWithDetail.map(function (item) {
+        const formatted = (list || []).map(function (item) {
           const now = Date.now();
           const startDateMs = item.startDate ? new Date(item.startDate).getTime() : 0;
           const endDateMs = item.endDate ? new Date(item.endDate).getTime() + 86400000 : 0;
@@ -158,5 +152,18 @@ Page({
     wx.navigateTo({
       url: '/packagePromo/pages/tournament-detail/tournament-detail?id=' + encodeURIComponent(id)
     });
+  },
+
+  onShareAppMessage: function () {
+    return {
+      title: '高光记分 · 赛事资讯与实时排行榜',
+      path: '/pages/tournament/tournament'
+    };
+  },
+
+  onShareTimeline: function () {
+    return {
+      title: '高光记分 · 赛事资讯与实时排行榜'
+    };
   }
 });

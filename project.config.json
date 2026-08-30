@@ -63,7 +63,8 @@
       { "type": "file", "value": "utils/ble-protocol.js" },
       { "type": "folder", "value": "docs" },
       { "type": "folder", "value": "scripts" },
-      { "type": "folder", "value": "obs-overlay" }
+      { "type": "folder", "value": "obs-overlay" },
+      { "type": "folder", "value": "packageRec/models" }
     ],
     "include": []
   },
