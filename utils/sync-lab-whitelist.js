@@ -11,7 +11,8 @@ const { STORAGE_USER_INFO_KEY } = require('./request.js');
 const SYNC_LAB_OPENID_WHITELIST = [
   'owImn7cUbBnTEk2Mx9IyZDnbVR1I',
   'owImn7YI-B-Zm8PCXCEW7BDiu--E',
-  'owImn7d3tOlRRlyhLMggkDNYZBr4'
+  'owImn7d3tOlRRlyhLMggkDNYZBr4',
+  'owImn7ctZbR2ZwLLAjoUbbfV5Yjc'
 ];
 
 /**

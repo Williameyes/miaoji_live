@@ -1,5 +1,6 @@
 var API = require('../../../config/api.js');
 var wsTokenReq = require('../../../utils/ws-token-request.js');
+var checkSyncLabWhitelist = require('../../../utils/sync-lab-whitelist.js').checkSyncLabWhitelist;
 var app = getApp();
 
 var STORAGE_KEY = 'MIAOXIE_MATCHES';
@@ -172,6 +173,22 @@ Page({
   },
 
   onLoad: function (options) {
+    if (!checkSyncLabWhitelist()) {
+      wx.showModal({
+        title: '提示',
+        content: '网页记分功能目前仅对实验白名单用户开放',
+        showCancel: false,
+        success: function () {
+          wx.navigateBack({
+            fail: function () {
+              wx.switchTab({ url: '/pages/index/index' });
+            }
+          });
+        }
+      });
+      return;
+    }
+
     var sysInfo = wx.getSystemInfoSync();
     var sbh = sysInfo.statusBarHeight || 20;
 

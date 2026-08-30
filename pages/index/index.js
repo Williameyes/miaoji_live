@@ -1,6 +1,7 @@
 const app = getApp();
 
 const { STORAGE_USER_INFO_KEY } = require('../../utils/request.js');
+const { checkSyncLabWhitelist } = require('../../utils/sync-lab-whitelist.js');
 const {
   resolvePromoTargetMatchId,
   buildPromoSquarePageUrl
@@ -429,6 +430,9 @@ Page({
      */
     editingMatch: null,
 
+    /** 是否在白名单中（控制网页记分等实验功能显示） */
+    isWebScoreWhitelisted: false,
+
     /** 颜色选择器 */
     showColorPicker: false,
     colorPickerTarget: '', // 'matchName' | 'teamA' | 'teamB'
@@ -560,6 +564,9 @@ Page({
     }
     this.loadMatches();
     this.loadHighlights();
+    this.setData({
+      isWebScoreWhitelisted: checkSyncLabWhitelist()
+    });
     if (this._storageEstimateTimer) {
       clearTimeout(this._storageEstimateTimer);
     }
@@ -897,6 +904,11 @@ Page({
    * @param {WechatMiniprogram.TouchEvent} e
    */
   onGoToWebScore(e) {
+    if (!checkSyncLabWhitelist()) {
+      wx.showToast({ title: '该功能仅对白名单用户开放', icon: 'none' });
+      return;
+    }
+
     const { id } = e.currentTarget.dataset;
     const match = this.data.matches.find((m) => m.id === id);
     if (!match) return;

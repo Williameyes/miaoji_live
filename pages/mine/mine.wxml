@@ -110,6 +110,13 @@
       </view>
       <view class="list-divider"></view>
     </block>
+    <block wx:if="{{loggedIn && isInWhitelist}}">
+      <view class="list-item" hover-class="list-item-hover" bindtap="onWebScorePanelTap">
+        <text class="list-label">网页记分 <text class="list-label-badge">实验</text></text>
+        <text class="list-arrow">›</text>
+      </view>
+      <view class="list-divider"></view>
+    </block>
     <view class="list-item" hover-class="list-item-hover" bindtap="onHelpTap">
       <text class="list-label">使用帮助</text>
       <text class="list-arrow">›</text>
