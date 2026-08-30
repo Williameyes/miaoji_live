@@ -127,6 +127,54 @@
     </div>
   </div>
 
+  <!-- 🛠️ 网页内置可视化实时调试面板（按键盘 D 键或加 ?debug=1 开启） -->
+  <div class="obs-debug-panel" id="obs-debug-panel" style="display: none;">
+    <div class="debug-header">
+      <span class="debug-title">🛠️ OBS Overlay 实时调试控制台</span>
+      <button class="debug-close-btn" id="debug-close-btn">✕</button>
+    </div>
+    <div class="debug-body">
+      <div class="debug-row">
+        <span class="debug-label">📡 房间状态:</span>
+        <span class="debug-val" id="dbg-room-status">检测中...</span>
+      </div>
+      <div class="debug-row">
+        <span class="debug-label">🖥️ OBS WS:</span>
+        <span class="debug-val" id="dbg-obs-status">连接中(4455)...</span>
+      </div>
+      <div class="debug-row">
+        <span class="debug-label">🎬 媒体状态:</span>
+        <span class="debug-val" id="dbg-media-status">闲置 (NONE)</span>
+      </div>
+      <div class="debug-row">
+        <span class="debug-label">📋 切片队列:</span>
+        <span class="debug-val" id="dbg-queue-count">0 段切片</span>
+      </div>
+      
+      <!-- 快捷调试操作按钮 -->
+      <div class="debug-actions">
+        <button class="dbg-btn dbg-btn-danger" id="dbg-btn-stop">⏹ 立即中断切回直播</button>
+        <button class="dbg-btn" id="dbg-btn-clear-queue">🗑️ 清空切片历史</button>
+      </div>
+
+      <!-- 调试控制台内置切片精准点播列表 -->
+      <div class="debug-clips-section">
+        <div style="font-size: 11px; color: #94a3b8; margin: 4px 0 2px; display: flex; justify-content: space-between;">
+          <span style="font-weight: bold; color: #cbd5e1;">🎬 捕获切片列表 (点击直接测试播放):</span>
+          <span id="dbg-clips-tip" style="color: #00f0ff; font-weight: bold;">0 段</span>
+        </div>
+        <div class="debug-clips-list" id="dbg-clips-list">
+          <div style="color: #64748b; font-size: 11px; text-align: center; padding: 6px;">暂无捕获切片</div>
+        </div>
+      </div>
+
+      <!-- 实时日志窗 -->
+      <div class="debug-logs" id="dbg-logs-box">
+        <div class="dbg-log-item">系统初始化就绪...</div>
+      </div>
+    </div>
+  </div>
+
   <script src="./config.js"></script>
   <script src="./overlay.js"></script>
 </body>

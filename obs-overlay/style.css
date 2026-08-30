@@ -75,6 +75,7 @@ body, html {
    - 提供关闭按钮，可点击关闭
 ────────────────────────────────────────────── */
 .dynamic-island-badge {
+  display: none !important; /* 暂时隐藏左侧直播标识 */
   position: absolute;
   left: 0 !important;
   margin-left: 0 !important;
@@ -903,4 +904,193 @@ body.mode-live-only .dynamic-island-badge {
 
 .modal-input-row button:hover {
   box-shadow: 0 0 12px rgba(0, 240, 255, 0.6);
+}
+
+/* ──────────────────────────────────────────────
+   🛠️ 网页内置可视化实时调试面板样式
+────────────────────────────────────────────── */
+.obs-debug-panel {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  width: 380px;
+  max-height: 480px;
+  background: rgba(10, 15, 29, 0.95);
+  border: 1.5px solid rgba(0, 240, 255, 0.5);
+  border-radius: 14px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.8), 0 0 20px rgba(0, 240, 255, 0.25);
+  backdrop-filter: blur(16px);
+  z-index: 99999;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+  color: #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  user-select: none;
+}
+
+.debug-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: rgba(0, 240, 255, 0.12);
+  border-bottom: 1px solid rgba(0, 240, 255, 0.2);
+}
+
+.debug-title {
+  font-size: 13px;
+  font-weight: bold;
+  color: #00f0ff;
+  letter-spacing: 0.5px;
+}
+
+.debug-close-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.debug-close-btn:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.debug-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.debug-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.debug-label {
+  color: #94a3b8;
+}
+
+.debug-val {
+  color: #38bdf8;
+  font-weight: 600;
+}
+
+.debug-actions {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.dbg-btn {
+  padding: 6px 10px;
+  background: rgba(0, 240, 255, 0.15);
+  border: 1px solid rgba(0, 240, 255, 0.4);
+  color: #00f0ff;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.dbg-btn:hover {
+  background: rgba(0, 240, 255, 0.3);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.4);
+}
+
+.dbg-btn-danger {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #f87171;
+}
+
+.dbg-btn-danger:hover {
+  background: rgba(239, 68, 68, 0.3);
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
+}
+
+.debug-clips-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.debug-clips-list {
+  max-height: 120px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dbg-clip-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.dbg-clip-name {
+  color: #f1f5f9;
+  max-width: 230px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: monospace;
+}
+
+.dbg-clip-btn {
+  background: #00f0ff;
+  color: #000;
+  border: none;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: bold;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.dbg-clip-btn:hover {
+  background: #38bdf8;
+  box-shadow: 0 0 8px rgba(0, 240, 255, 0.6);
+}
+
+.debug-logs {
+  margin-top: 6px;
+  height: 100px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 8px;
+  overflow-y: auto;
+  font-family: monospace;
+  font-size: 11px;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 4px;
+}
+
+.dbg-log-item {
+  color: #a7f3d0;
+  line-height: 1.3;
+  word-break: break-all;
 }

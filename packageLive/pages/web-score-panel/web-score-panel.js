@@ -364,6 +364,30 @@ Page({
         self._socketTask.onMessage(function (event) {
           try {
             var msg = JSON.parse(event.data);
+            var d = (msg.data || msg);
+            var act = d.act || msg.act || msg.type || '';
+
+            // 监听 OBS 高光自动结束广播 -> 自动将小程序按钮重置为【播放高光】
+            if (act === 'STOP_HIGHLIGHT_REPLAY' || d.isReplay === false) {
+              if (self.data.isHighlightReplaying) {
+                self.setData({ isHighlightReplaying: false });
+                self._addLog('🎬 OBS 高光播放结束，已自动切回直播控制', 'success');
+              }
+            } else if (act === 'HIGHLIGHT_LIST_SYNC' && Array.isArray(d.clips)) {
+              var mapped = d.clips.map(function (pathStr, idx) {
+                var fName = decodeURIComponent(String(pathStr).split('/').pop().split('\\').pop());
+                return {
+                  id: 'clip_' + idx + '_' + fName,
+                  index: idx,
+                  filePath: pathStr,
+                  title: '精彩高光 #' + (d.clips.length - idx),
+                  fileName: fName
+                };
+              });
+              self.setData({ savedHighlightClips: mapped });
+              self._addLog('⚡ 已同步 OBS 实际高光切片 (' + mapped.length + '段)', 'success');
+            }
+
             if (msg.type === 'BROADCAST_JOIN' || msg.act === 'BROADCAST_JOIN' || msg.type === 'BROADCAST_JOINED_TRIGGER' || msg.act === 'BROADCAST_JOINED_TRIGGER' || msg.type === 'REQUEST_CROP_FRAME') {
               self._addLog('🔔 收到 OBS 网页端进房请求，实时推送队伍及比分快照!', 'success');
               if (!self.data.isScoringStarted) {
@@ -556,54 +580,37 @@ Page({
     wx.showToast({ title: '已保存高光 #' + updatedList.length, icon: 'success' });
   },
 
-  onStartHighlightReplay: function () {
-    this.setData({ isHighlightReplaying: true });
-    this._addLog('🎬 下发【播放最新高光】指令 (蓝色 Wipe 转场)', 'success');
-    this._sendUpdatePacket('START_HIGHLIGHT_REPLAY', {
-      isReplay: true,
-      clipIndex: 0,
-      timestamp: Date.now()
-    });
-    wx.showToast({ title: '播放最新高光', icon: 'success' });
-  },
-
-  onPlayAllHighlights: function () {
-    this.setData({ isHighlightReplaying: true });
-    this._addLog('🎬 下发【连续轮播全部高光】指令', 'success');
-    this._sendUpdatePacket('START_HIGHLIGHT_REPLAY', {
-      isReplay: true,
-      playAll: true,
-      clipIndex: 0,
-      timestamp: Date.now()
-    });
-    wx.showToast({ title: '轮播全部高光', icon: 'success' });
-  },
-
   onPlaySpecificClip: function (e) {
-    var clipIdx = e.currentTarget.dataset.index;
-    if (typeof clipIdx !== 'number') clipIdx = 0;
+    var ds = (e && e.currentTarget && e.currentTarget.dataset) || {};
+    var clipIdx = parseInt(ds.index, 10);
+    if (isNaN(clipIdx) || clipIdx < 0) clipIdx = 0;
+    var targetNum = clipIdx + 1;
+    var customAct = 'START_HIGHLIGHT_REPLAY_' + targetNum;
+
     this.setData({ isHighlightReplaying: true });
-    this._addLog('🎬 下发【播放指定高光 #' + (clipIdx + 1) + '】指令', 'success');
-    this._sendUpdatePacket('START_HIGHLIGHT_REPLAY', {
+    this._addLog('🎬 下发【播放第 ' + targetNum + ' 段高光】指令 (ACT: ' + customAct + ')', 'success');
+    this._sendUpdatePacket(customAct, {
       isReplay: true,
+      targetIndex: targetNum,
       clipIndex: clipIdx,
+      act: customAct,
       timestamp: Date.now()
     });
-    wx.showToast({ title: '播放第 ' + (clipIdx + 1) + ' 个切片', icon: 'success' });
+    wx.showToast({ title: '播放第 ' + targetNum + ' 段高光', icon: 'success' });
   },
 
   onStopHighlightReplay: function () {
     this.setData({ isHighlightReplaying: false });
-    this._addLog('📺 下发【返回直播画面】指令到网页记分牌 (红色 Live 转场)', 'error');
+    this._addLog('📺 下发【立即中断回放】指令到网页记分牌 (红色 Live 转场)', 'error');
     this._sendUpdatePacket('STOP_HIGHLIGHT_REPLAY', {
       isReplay: false,
       timestamp: Date.now()
     });
-    wx.showToast({ title: '已切回直播画面', icon: 'none' });
+    wx.showToast({ title: '已中断切回直播', icon: 'none' });
   },
 
-  // 将比赛元数据（比赛名、主客队名、主客队球衣颜色）编码进 match_id 字段中，确保服务端广播 100% 透传
-  _buildEncodedMatchId: function () {
+  // 将比赛元数据（比赛名、主客队名、主客队球衣颜色、高光目标索引）编码进 match_id 字段中，确保服务端广播 100% 透传
+  _buildEncodedMatchId: function (extra) {
     var mTitle = this.data.matchTitle || '常规赛';
     var tA_name = this.data.teamA.name || '主队';
     var tB_name = this.data.teamB.name || '客队';
@@ -619,7 +626,9 @@ Page({
         b: tB_name,
         ca: tA_color,
         cb: tB_color,
-        tr: this.data.isTimeDeviceConnected ? this.data.connectedTimeRoomId : ''
+        tr: this.data.isTimeDeviceConnected ? this.data.connectedTimeRoomId : '',
+        ci: (extra && typeof extra.targetIndex !== 'undefined') ? extra.targetIndex : ((extra && typeof extra.clipIndex !== 'undefined') ? (extra.clipIndex + 1) : 0),
+        act: (extra && extra.act) || ''
       };
       var jsonStr = JSON.stringify(payload);
       var utf8Bytes = [];
@@ -664,7 +673,7 @@ Page({
     var mTitle = this.data.matchTitle || '常规赛';
     var mPeriod = Number(this.data.period) || 1;
 
-    var encodedMatchId = this._buildEncodedMatchId();
+    var encodedMatchId = this._buildEncodedMatchId(extra);
 
     var packet = {
       type: 'COLLECTOR_UPDATE',
