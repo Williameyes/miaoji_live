@@ -5,6 +5,45 @@ var app = getApp();
 var STORAGE_KEY = 'MIAOXIE_MATCHES';
 var FIXED_ROOM_KEY = 'MIAOXIE_FIXED_ROOM_ID';
 
+/** @const {string[]} 快捷常用预设色 */
+var COLOR_PRESETS = [
+  '#E64340', '#10AEFF', '#FFBE00', '#07C160',
+  '#FF69B4', '#9B59B6', '#34495E', '#000000',
+  '#22D3EE', '#F87171', '#60A5FA', '#34D399'
+];
+
+/** @const {string[]} 扩展色板 */
+var EXTENDED_COLORS = [
+  '#FFFFFF',
+  '#E64340', '#F87171', '#EF4444', '#B91C1C', '#991B1B', '#7F1D1D',
+  '#10AEFF', '#60A5FA', '#3B82F6', '#2563EB', '#1D4ED8', '#1E3A8A',
+  '#FFBE00', '#FBBF24', '#F59E0B', '#D97706', '#B45309', '#78350F',
+  '#07C160', '#34D399', '#10B981', '#059669', '#047857', '#064E3B',
+  '#FF69B4', '#F472B6', '#EC4899', '#DB2777', '#BE185D', '#831843',
+  '#9B59B6', '#A855F7', '#8B5CF6', '#7C3AED', '#6D28D9', '#4C1D95',
+  '#34495E', '#475569', '#334155', '#1E293B', '#0F172A', '#020617',
+  '#000000', '#171717', '#262626', '#404040', '#525252', '#737373',
+  '#22D3EE', '#06B6D4', '#0891B2', '#0E7490', '#155E75', '#164E63'
+];
+
+/**
+ * 根据背景色计算高对比度文字色
+ * @param {string} hexcolor
+ * @returns {string} '#0F172A' | '#FFFFFF'
+ */
+function getContrastColor(hexcolor) {
+  if (!hexcolor) return '#FFFFFF';
+  var c = String(hexcolor).replace('#', '');
+  if (c.length === 3) c = c.split('').map(function (x) { return x + x; }).join('');
+  if (c.length !== 6) return '#FFFFFF';
+  var r = parseInt(c.substr(0, 2), 16);
+  var g = parseInt(c.substr(2, 2), 16);
+  var b = parseInt(c.substr(4, 2), 16);
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return '#FFFFFF';
+  var yiq = (r * 299 + g * 587 + b * 114) / 1000;
+  return yiq >= 145 ? '#0F172A' : '#FFFFFF';
+}
+
 /**
  * 获取每场比赛独立的高光切片持久化 Storage Key
  */
@@ -50,18 +89,28 @@ Page({
     // 调试日志
     debugLogs: [],
     
-    // 球队数据
+    // 球队数据 (包含背景球衣色与自动计算的高对比度文本色)
     teamA: {
       name: '主队',
       color: '#FF2D55',
+      textColor: '#FFFFFF',
       score: 0
     },
     teamB: {
       name: '客队',
       color: '#007AFF',
+      textColor: '#FFFFFF',
       score: 0
     },
     
+    // 颜色选择器浮层状态
+    showColorPicker: false,
+    colorPickerTarget: '', // 'teamA' | 'teamB'
+    colorPickerTitle: '设置队服颜色',
+    tempSelectedColor: '#FF2D55',
+    colorPresets: COLOR_PRESETS,
+    extendedColors: EXTENDED_COLORS,
+
     // 节次字典
     period: 1,
     periodList: [
@@ -192,6 +241,9 @@ Page({
     var highlightKey = getHighlightStorageKey(matchId, roomId);
     var storedClips = wx.getStorageSync(highlightKey) || [];
 
+    var tA_textColor = getContrastColor(tA_color);
+    var tB_textColor = getContrastColor(tB_color);
+
     this.setData({
       statusBarHeight: sbh,
       roomId: roomId,
@@ -205,9 +257,11 @@ Page({
       savedHighlightClips: storedClips,
       'teamA.name': tA_name,
       'teamA.color': tA_color,
+      'teamA.textColor': tA_textColor,
       'teamA.score': tA_score,
       'teamB.name': tB_name,
       'teamB.color': tB_color,
+      'teamB.textColor': tB_textColor,
       'teamB.score': tB_score
     });
 
@@ -261,6 +315,9 @@ Page({
     var matchHighlightKey = getHighlightStorageKey(newMatchId, this.data.roomId);
     var matchStoredClips = wx.getStorageSync(matchHighlightKey) || [];
 
+    var tA_textColor = getContrastColor(tA_color);
+    var tB_textColor = getContrastColor(tB_color);
+
     var self = this;
     this.setData({
       selectedMatchIndex: index,
@@ -270,9 +327,11 @@ Page({
       savedHighlightClips: matchStoredClips,
       'teamA.name': tA_name,
       'teamA.color': tA_color,
+      'teamA.textColor': tA_textColor,
       'teamA.score': tA_score,
       'teamB.name': tB_name,
       'teamB.color': tB_color,
+      'teamB.textColor': tB_textColor,
       'teamB.score': tB_score
     }, function () {
       self._addLog('🔄 无缝切换场次: [' + mTitle + '] ' + tA_name + ' VS ' + tB_name + ' (已载入切片: ' + matchStoredClips.length + '段)', 'success');
@@ -870,5 +929,95 @@ Page({
       self._sendUpdatePacket('PERIOD');
       self._syncMatchToStorage();
     });
+  },
+
+  // ─────────────────────────────────────────────
+  // 7. 🎨 球衣颜色选择器交互与实时广播
+  // ─────────────────────────────────────────────
+
+  /** 长按比分或点击色块弹出颜色选择器 */
+  onOpenColorPicker: function (e) {
+    var ds = (e && e.currentTarget && e.currentTarget.dataset) || {};
+    var target = ds.target || 'teamA';
+    var curColor = target === 'teamA' ? (this.data.teamA.color || '#FF2D55') : (this.data.teamB.color || '#007AFF');
+    var teamName = target === 'teamA' ? (this.data.teamA.name || '主队') : (this.data.teamB.name || '客队');
+
+    this.setData({
+      showColorPicker: true,
+      colorPickerTarget: target,
+      colorPickerTitle: '设置【' + teamName + '】球衣颜色',
+      tempSelectedColor: curColor
+    });
+
+    if (wx.vibrateShort) wx.vibrateShort({ type: 'light' });
+  },
+
+  onCloseColorPicker: function () {
+    this.setData({ showColorPicker: false });
+  },
+
+  stopBubbling: function () {
+    // 阻止点击浮层面板时的冒泡关闭
+  },
+
+  onModalPresetColorTap: function (e) {
+    var color = (e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.color) || '';
+    if (color) this.setData({ tempSelectedColor: color });
+  },
+
+  onColorGridSelect: function (e) {
+    var color = (e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.color) || '';
+    if (color) this.setData({ tempSelectedColor: color });
+  },
+
+  /** 确认选择球衣颜色：写回本地存储并立即广播给网页端 OBS */
+  onConfirmColorSelection: function () {
+    var color = this.data.tempSelectedColor;
+    var target = this.data.colorPickerTarget; // 'teamA' | 'teamB'
+    if (!color || !target) {
+      this.setData({ showColorPicker: false });
+      return;
+    }
+
+    var textColor = getContrastColor(color);
+    var upd = { showColorPicker: false };
+    if (target === 'teamA') {
+      upd['teamA.color'] = color;
+      upd['teamA.textColor'] = textColor;
+    } else {
+      upd['teamB.color'] = color;
+      upd['teamB.textColor'] = textColor;
+    }
+
+    // 1. 同步保存到本地持久化 Storage (当前比赛场次列表)
+    var rawMatches = wx.getStorageSync(STORAGE_KEY) || [];
+    var matchId = this.data.matchId;
+    if (Array.isArray(rawMatches) && rawMatches.length > 0) {
+      for (var i = 0; i < rawMatches.length; i++) {
+        if (rawMatches[i].id === matchId) {
+          if (target === 'teamA') {
+            if (!rawMatches[i].teamA || typeof rawMatches[i].teamA !== 'object') rawMatches[i].teamA = {};
+            rawMatches[i].teamA.bgColor = color;
+            rawMatches[i].teamA.color = color;
+          } else {
+            if (!rawMatches[i].teamB || typeof rawMatches[i].teamB !== 'object') rawMatches[i].teamB = {};
+            rawMatches[i].teamB.bgColor = color;
+            rawMatches[i].teamB.color = color;
+          }
+          break;
+        }
+      }
+      try { wx.setStorageSync(STORAGE_KEY, rawMatches); } catch (e) {}
+    }
+
+    var self = this;
+    this.setData(upd, function () {
+      var teamName = target === 'teamA' ? self.data.teamA.name : self.data.teamB.name;
+      self._addLog('🎨 已更新【' + teamName + '】球衣颜色为 ' + color + '，实时同步网页端', 'success');
+      // 2. 立即向 OBS 网页端广播更新球衣颜色！
+      self._broadcastMatchInfo();
+    });
+
+    wx.showToast({ title: '球衣颜色已更新', icon: 'success' });
   }
 });

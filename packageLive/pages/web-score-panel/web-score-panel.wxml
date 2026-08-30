@@ -233,39 +233,83 @@
     <text class="obs-tip">💡 高光回放说明：点击任意一段高光的【▶ 播放此段】，网页将触发广播级转场并播放该视频！播放中可随时点击【立即中断回放】提前切回现场直播。</text>
   </view>
 
-  <!-- 4. 主客队比分控板 -->
+  <!-- 4. 主客队比分控板 (背景为球衣颜色，得分自动选择高对比度文本色，长按或点击色标可修改球衣颜色) -->
   <view class="score-control-section">
     <!-- 主队控板 -->
-    <view class="team-control-card home-card">
+    <view 
+      class="team-control-card home-card"
+      style="background: {{teamA.color || '#FF2D55'}}; color: {{teamA.textColor || '#FFFFFF'}}; box-shadow: 0 8rpx 24rpx {{teamA.color || '#FF2D55'}}40;"
+      bindlongpress="onOpenColorPicker"
+      data-target="teamA"
+    >
       <view class="team-card-header">
-        <view class="color-bar" style="background-color: {{teamA.color || '#FF2D55'}}"></view>
-        <text class="team-title">{{teamA.name || '主队'}}</text>
+        <view class="team-header-info">
+          <view class="color-indicator-dot" style="background: {{teamA.textColor || '#FFFFFF'}};"></view>
+          <text class="team-title" style="color: {{teamA.textColor || '#FFFFFF'}};">{{teamA.name || '主队'}}</text>
+        </view>
+        <view 
+          class="color-edit-tag" 
+          bindtap="onOpenColorPicker" 
+          data-target="teamA"
+          style="background: rgba(255,255,255,0.22); color: {{teamA.textColor || '#FFFFFF'}};"
+        >
+          🎨 改球衣
+        </view>
       </view>
-      <view class="score-display" style="color: {{teamA.color || '#FF2D55'}}">
+
+      <view 
+        class="score-display" 
+        style="color: {{teamA.textColor || '#FFFFFF'}};"
+        bindlongpress="onOpenColorPicker"
+        data-target="teamA"
+      >
         {{teamA.score}}
       </view>
+
       <view class="score-btns-grid">
-        <button class="score-btn" bindtap="onScoreChange" data-target="teamA" data-delta="1" hover-class="btn-hover">+1</button>
-        <button class="score-btn" bindtap="onScoreChange" data-target="teamA" data-delta="2" hover-class="btn-hover">+2</button>
-        <button class="score-btn" bindtap="onScoreChange" data-target="teamA" data-delta="3" hover-class="btn-hover">+3</button>
-        <button class="score-btn btn-sub" bindtap="onScoreChange" data-target="teamA" data-delta="-1" hover-class="btn-hover">-1</button>
+        <button class="score-btn" style="color: {{teamA.textColor || '#FFFFFF'}};" bindtap="onScoreChange" data-target="teamA" data-delta="1" hover-class="btn-hover">+1</button>
+        <button class="score-btn" style="color: {{teamA.textColor || '#FFFFFF'}};" bindtap="onScoreChange" data-target="teamA" data-delta="2" hover-class="btn-hover">+2</button>
+        <button class="score-btn" style="color: {{teamA.textColor || '#FFFFFF'}};" bindtap="onScoreChange" data-target="teamA" data-delta="3" hover-class="btn-hover">+3</button>
+        <button class="score-btn btn-sub" style="color: {{teamA.textColor || '#FFFFFF'}};" bindtap="onScoreChange" data-target="teamA" data-delta="-1" hover-class="btn-hover">-1</button>
       </view>
     </view>
 
     <!-- 客队控板 -->
-    <view class="team-control-card away-card">
+    <view 
+      class="team-control-card away-card"
+      style="background: {{teamB.color || '#007AFF'}}; color: {{teamB.textColor || '#FFFFFF'}}; box-shadow: 0 8rpx 24rpx {{teamB.color || '#007AFF'}}40;"
+      bindlongpress="onOpenColorPicker"
+      data-target="teamB"
+    >
       <view class="team-card-header">
-        <text class="team-title">{{teamB.name || '客队'}}</text>
-        <view class="color-bar" style="background-color: {{teamB.color || '#007AFF'}}"></view>
+        <view class="team-header-info">
+          <view class="color-indicator-dot" style="background: {{teamB.textColor || '#FFFFFF'}};"></view>
+          <text class="team-title" style="color: {{teamB.textColor || '#FFFFFF'}};">{{teamB.name || '客队'}}</text>
+        </view>
+        <view 
+          class="color-edit-tag" 
+          bindtap="onOpenColorPicker" 
+          data-target="teamB"
+          style="background: rgba(255,255,255,0.22); color: {{teamB.textColor || '#FFFFFF'}};"
+        >
+          🎨 改球衣
+        </view>
       </view>
-      <view class="score-display" style="color: {{teamB.color || '#007AFF'}}">
+
+      <view 
+        class="score-display" 
+        style="color: {{teamB.textColor || '#FFFFFF'}};"
+        bindlongpress="onOpenColorPicker"
+        data-target="teamB"
+      >
         {{teamB.score}}
       </view>
+
       <view class="score-btns-grid">
-        <button class="score-btn" bindtap="onScoreChange" data-target="teamB" data-delta="1" hover-class="btn-hover">+1</button>
-        <button class="score-btn" bindtap="onScoreChange" data-target="teamB" data-delta="2" hover-class="btn-hover">+2</button>
-        <button class="score-btn" bindtap="onScoreChange" data-target="teamB" data-delta="3" hover-class="btn-hover">+3</button>
-        <button class="score-btn btn-sub" bindtap="onScoreChange" data-target="teamB" data-delta="-1" hover-class="btn-hover">-1</button>
+        <button class="score-btn" style="color: {{teamB.textColor || '#FFFFFF'}};" bindtap="onScoreChange" data-target="teamB" data-delta="1" hover-class="btn-hover">+1</button>
+        <button class="score-btn" style="color: {{teamB.textColor || '#FFFFFF'}};" bindtap="onScoreChange" data-target="teamB" data-delta="2" hover-class="btn-hover">+2</button>
+        <button class="score-btn" style="color: {{teamB.textColor || '#FFFFFF'}};" bindtap="onScoreChange" data-target="teamB" data-delta="3" hover-class="btn-hover">+3</button>
+        <button class="score-btn btn-sub" style="color: {{teamB.textColor || '#FFFFFF'}};" bindtap="onScoreChange" data-target="teamB" data-delta="-1" hover-class="btn-hover">-1</button>
       </view>
     </view>
   </view>
@@ -310,5 +354,56 @@
       </view>
       <view class="log-empty" wx:if="{{debugLogs.length === 0}}">暂无调试日志，尝试操作加分看日志输出...</view>
     </scroll-view>
+  </view>
+
+  <!-- ===== 🎨 球衣颜色选择器浮层 ===== -->
+  <view class="color-picker-overlay" wx:if="{{showColorPicker}}" bindtap="onCloseColorPicker">
+    <view class="color-picker-panel" catchtap="stopBubbling">
+
+      <view class="picker-header">
+        <text class="picker-title">{{colorPickerTitle}}</text>
+        <view class="close-icon" bindtap="onCloseColorPicker">×</view>
+      </view>
+
+      <view class="picker-presets-label">常用预设色</view>
+      <view class="picker-presets">
+        <view
+          class="picker-preset-dot-wrap"
+          wx:for="{{colorPresets}}"
+          wx:key="*this"
+          bindtap="onModalPresetColorTap"
+          data-color="{{item}}"
+        >
+          <view
+            class="picker-preset-dot {{tempSelectedColor === item ? 'active' : ''}}"
+            style="background-color: {{item}}"
+          ></view>
+        </view>
+      </view>
+
+      <view class="picker-presets-label" style="margin-top: 12rpx;">全部色板</view>
+      <scroll-view scroll-y class="color-grid-scroll">
+        <view class="color-grid">
+          <view
+            wx:for="{{extendedColors}}"
+            wx:key="*this"
+            class="grid-color-dot {{tempSelectedColor === item ? 'active' : ''}}"
+            style="background-color: {{item}}"
+            bindtap="onColorGridSelect"
+            data-color="{{item}}"
+          ></view>
+        </view>
+      </scroll-view>
+
+      <view class="picker-footer">
+        <view class="current-selection">
+          <text>当前选择:</text>
+          <view class="selected-dot" style="background-color: {{tempSelectedColor}}"></view>
+          <text class="color-hex">{{tempSelectedColor}}</text>
+        </view>
+        <view class="confirm-btn" hover-class="confirm-btn-hover" bindtap="onConfirmColorSelection">确定并同步网页</view>
+      </view>
+
+    </view>
   </view>
 </view>

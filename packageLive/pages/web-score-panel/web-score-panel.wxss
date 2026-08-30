@@ -336,49 +336,65 @@
 }
 
 .team-control-card {
-  background: #FFFFFF;
-  border: 1rpx solid #E2E8F0;
-  border-radius: 24rpx;
+  border-radius: 28rpx;
   padding: 24rpx;
   display: flex;
   flex-direction: column;
   align-items: center;
-  box-shadow: 0 4rpx 16rpx rgba(15, 23, 42, 0.04);
+  border: 2rpx solid rgba(255, 255, 255, 0.25);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  overflow: hidden;
 }
 
 .team-card-header {
   display: flex;
   align-items: center;
-  gap: 12rpx;
+  justify-content: space-between;
   width: 100%;
 }
 
-.home-card .team-card-header {
-  justify-content: flex-start;
+.team-header-info {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  max-width: 170rpx;
 }
 
-.away-card .team-card-header {
-  justify-content: flex-end;
+.color-indicator-dot {
+  width: 12rpx;
+  height: 12rpx;
+  border-radius: 50%;
+  box-shadow: 0 0 8rpx rgba(255, 255, 255, 0.6);
 }
 
-.color-bar {
-  width: 8rpx;
-  height: 28rpx;
-  border-radius: 4rpx;
+.color-edit-tag {
+  font-size: 20rpx;
+  font-weight: 700;
+  padding: 6rpx 14rpx;
+  border-radius: 12rpx;
+  border: 1rpx solid rgba(255, 255, 255, 0.35);
+  backdrop-filter: blur(4px);
+  white-space: nowrap;
 }
 
 .team-title {
-  font-size: 28rpx;
-  font-weight: 700;
-  color: #1E293B;
+  font-size: 30rpx;
+  font-weight: 800;
+  letter-spacing: 0.5rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .score-display {
-  font-size: 84rpx;
+  font-size: 96rpx;
   font-weight: 900;
   font-family: "Impact", -apple-system, sans-serif;
-  margin: 16rpx 0;
-  text-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.1);
+  margin: 12rpx 0;
+  text-shadow: 0 4rpx 16rpx rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+  user-select: none;
 }
 
 .score-btns-grid {
@@ -388,21 +404,22 @@
   width: 100%;
 }
 
-.score-btn {
+.team-control-card .score-btn {
   margin: 0;
   padding: 16rpx 0;
-  background: #F1F5F9;
-  border: 1rpx solid #E2E8F0;
-  color: #1E293B;
+  background: rgba(255, 255, 255, 0.22);
+  border: 1rpx solid rgba(255, 255, 255, 0.35);
   font-size: 32rpx;
-  font-weight: 700;
-  border-radius: 14rpx;
+  font-weight: 800;
+  border-radius: 16rpx;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4rpx 10rpx rgba(0, 0, 0, 0.1);
+  transition: all 0.15s ease;
 }
 
-.score-btn.btn-sub {
-  background: #FEF2F2;
-  border-color: #FCA5A5;
-  color: #EF4444;
+.team-control-card .score-btn.btn-sub {
+  background: rgba(0, 0, 0, 0.18);
+  border-color: rgba(0, 0, 0, 0.25);
 }
 
 /* 4. 节次与按键区 */
@@ -539,5 +556,164 @@
   width: 100% !important;
   background: linear-gradient(135deg, #EF4444 0%, #DC2626 100%) !important;
   box-shadow: 0 4rpx 14rpx rgba(239, 68, 68, 0.3) !important;
+}
+
+/* ─────────────────────────────────────
+   🎨 颜色选择器浮层样式
+───────────────────────────────────── */
+.color-picker-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(15, 23, 42, 0.65);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.color-picker-panel {
+  width: 86%;
+  max-width: 620rpx;
+  background: #FFFFFF;
+  border-radius: 36rpx;
+  padding: 36rpx;
+  box-shadow: 0 20rpx 60rpx rgba(0, 0, 0, 0.35);
+  box-sizing: border-box;
+}
+
+.picker-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24rpx;
+}
+
+.picker-title {
+  font-size: 34rpx;
+  font-weight: 800;
+  color: #0F172A;
+}
+
+.close-icon {
+  font-size: 44rpx;
+  color: #94A3B8;
+  padding: 6rpx 12rpx;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.picker-presets-label {
+  font-size: 22rpx;
+  font-weight: 700;
+  color: #64748B;
+  margin-bottom: 12rpx;
+}
+
+.picker-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+  margin-bottom: 16rpx;
+}
+
+.picker-preset-dot-wrap {
+  padding: 4rpx;
+}
+
+.picker-preset-dot {
+  width: 52rpx;
+  height: 52rpx;
+  border-radius: 50%;
+  border: 3rpx solid #F1F5F9;
+  box-sizing: border-box;
+  transition: all 0.2s ease;
+}
+
+.picker-preset-dot.active {
+  border-color: #3B82F6;
+  box-shadow: 0 0 0 6rpx rgba(59, 130, 246, 0.3);
+  transform: scale(1.1);
+}
+
+.color-grid-scroll {
+  height: 340rpx;
+  background: #F8FAFC;
+  border-radius: 20rpx;
+  padding: 12rpx;
+  box-sizing: border-box;
+}
+
+.color-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 14rpx;
+  padding: 4rpx;
+}
+
+.grid-color-dot {
+  width: 72rpx;
+  height: 72rpx;
+  border-radius: 16rpx;
+  border: 2rpx solid #E2E8F0;
+  box-sizing: border-box;
+  transition: all 0.2s ease;
+}
+
+.grid-color-dot.active {
+  transform: scale(1.15);
+  border: 4rpx solid #3B82F6;
+  box-shadow: 0 4rpx 12rpx rgba(59, 130, 246, 0.35);
+}
+
+.picker-footer {
+  margin-top: 28rpx;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.current-selection {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+}
+
+.current-selection text {
+  font-size: 22rpx;
+  color: #64748B;
+}
+
+.selected-dot {
+  width: 32rpx;
+  height: 32rpx;
+  border-radius: 50%;
+  border: 1rpx solid #CBD5E1;
+}
+
+.color-hex {
+  font-family: monospace;
+  font-weight: 800;
+  font-size: 24rpx;
+  color: #0F172A;
+}
+
+.confirm-btn {
+  background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+  color: #FFFFFF;
+  font-size: 26rpx;
+  font-weight: 800;
+  padding: 14rpx 28rpx;
+  border-radius: 16rpx;
+  box-shadow: 0 4rpx 14rpx rgba(37, 99, 235, 0.3);
+}
+
+.confirm-btn-hover {
+  opacity: 0.9;
+  transform: scale(0.98);
 }
 
