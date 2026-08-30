@@ -520,36 +520,36 @@ body.mode-live-only .dynamic-island-badge {
 
 .replay-corner-badge {
   position: absolute;
-  top: 24px;
-  left: 28px;
+  top: 32px;
+  left: 36px;
   z-index: 105;
   display: flex;
   align-items: center;
-  padding: 8px 18px;
-  background: rgba(15, 23, 42, 0.82);
-  border: 1px solid rgba(0, 240, 255, 0.6);
-  border-radius: 20px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6), 0 0 12px rgba(0, 240, 255, 0.3);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  padding: 12px 28px;
+  background: rgba(10, 15, 29, 0.88);
+  border: 2px solid rgba(0, 240, 255, 0.8);
+  border-radius: 28px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7), 0 0 20px rgba(0, 240, 255, 0.4);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
 .replay-corner-badge .replay-dot {
-  width: 10px;
-  height: 10px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   background: #00f0ff;
-  box-shadow: 0 0 10px #00f0ff;
-  margin-right: 10px;
+  box-shadow: 0 0 14px #00f0ff;
+  margin-right: 14px;
   animation: replayDotPulse 1.2s ease-in-out infinite alternate;
 }
 
 .replay-corner-badge .replay-text {
   color: #ffffff;
-  font-size: 15px;
-  font-weight: 800;
-  letter-spacing: 1.5px;
-  text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 2.5px;
+  text-shadow: 0 2px 6px rgba(0,0,0,0.6);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
@@ -590,11 +590,11 @@ body.mode-live-only .dynamic-island-badge {
   width: 200%;
   height: 200%;
   background: linear-gradient(135deg, 
-    transparent 42%, 
-    rgba(0, 240, 255, 0.45) 47%, 
-    rgba(255, 255, 255, 0.95) 50%, 
-    rgba(255, 215, 0, 0.65) 53%, 
-    transparent 58%
+    transparent 40%, 
+    rgba(0, 240, 255, 0.55) 46%, 
+    rgba(255, 255, 255, 0.98) 50%, 
+    rgba(255, 215, 0, 0.75) 54%, 
+    transparent 60%
   );
   transform: rotate(-25deg) translateY(-120%);
   pointer-events: none;
@@ -606,7 +606,7 @@ body.mode-live-only .dynamic-island-badge {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background: linear-gradient(90deg, rgba(0, 162, 255, 0.18), rgba(255, 170, 0, 0.18));
+  background: linear-gradient(90deg, rgba(0, 162, 255, 0.25), rgba(255, 170, 0, 0.25));
   opacity: 0;
   pointer-events: none;
 }
@@ -626,38 +626,40 @@ body.mode-live-only .dynamic-island-badge {
   display: flex;
   flex-direction: row;
   align-items: center;
-  padding: 16px 40px;
-  background: linear-gradient(135deg, rgba(15, 23, 42, 0.94) 0%, rgba(30, 58, 138, 0.90) 100%);
-  border: 2px solid rgba(0, 240, 255, 0.65);
-  border-radius: 14px;
+  padding: 28px 64px;
+  background: linear-gradient(135deg, rgba(10, 18, 42, 0.96) 0%, rgba(30, 58, 138, 0.94) 100%);
+  border: 3.5px solid rgba(0, 240, 255, 0.85);
+  border-radius: 24px;
   box-shadow: 
-    0 0 40px rgba(0, 240, 255, 0.4),
-    inset 0 0 24px rgba(0, 240, 255, 0.25);
+    0 0 60px rgba(0, 240, 255, 0.55),
+    0 20px 40px rgba(0, 0, 0, 0.8),
+    inset 0 0 32px rgba(0, 240, 255, 0.35);
   overflow: hidden;
 }
 
 .replay-mask--live .replay-badge-card {
-  background: linear-gradient(135deg, rgba(40, 12, 18, 0.94) 0%, rgba(190, 24, 42, 0.90) 100%);
-  border-color: rgba(255, 77, 79, 0.75);
+  background: linear-gradient(135deg, rgba(48, 10, 18, 0.96) 0%, rgba(190, 24, 42, 0.94) 100%);
+  border-color: rgba(255, 77, 79, 0.9);
   box-shadow: 
-    0 0 40px rgba(255, 77, 79, 0.45),
-    inset 0 0 24px rgba(255, 77, 79, 0.3);
+    0 0 60px rgba(255, 77, 79, 0.6),
+    0 20px 40px rgba(0, 0, 0, 0.8),
+    inset 0 0 32px rgba(255, 77, 79, 0.4);
 }
 
 .replay-badge-icon-box {
-  margin-right: 20px;
-  font-size: 38px;
+  margin-right: 28px;
+  font-size: 56px;
   line-height: 1;
 }
 
 .replay-badge-flash {
   color: #00f0ff;
-  text-shadow: 0 0 16px #00f0ff;
+  text-shadow: 0 0 20px #00f0ff;
 }
 
 .replay-mask--live .replay-badge-flash {
   color: #ff4d4f;
-  text-shadow: 0 0 16px #ff4d4f;
+  text-shadow: 0 0 20px #ff4d4f;
 }
 
 .replay-badge-content {
@@ -668,25 +670,27 @@ body.mode-live-only .dynamic-island-badge {
 
 .replay-badge-main {
   color: #ffffff;
-  font-size: 42px;
+  font-size: 64px;
   font-weight: 900;
-  letter-spacing: 6px;
+  letter-spacing: 8px;
   line-height: 1;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  text-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
+  text-shadow: 0 6px 16px rgba(0, 0, 0, 0.7);
 }
 
 .replay-badge-sub {
   color: #00f0ff;
-  font-size: 16px;
-  font-weight: 800;
-  letter-spacing: 4px;
-  margin-top: 6px;
+  font-size: 24px;
+  font-weight: 900;
+  letter-spacing: 6px;
+  margin-top: 10px;
   text-transform: uppercase;
+  text-shadow: 0 0 12px rgba(0, 240, 255, 0.6);
 }
 
 .replay-mask--live .replay-badge-sub {
   color: #ff7875;
+  text-shadow: 0 0 12px rgba(255, 120, 117, 0.6);
 }
 
 /* 扫过勋章的光芒动效 */

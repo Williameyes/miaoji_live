@@ -1523,7 +1523,7 @@
     console.log('[OBS Overlay] Playing highlight clip via OBS Media Source [' + (idx + 1) + '/' + highlightQueue.length + ']:', targetSrc);
 
     if (domReplayCornerText) {
-      domReplayCornerText.textContent = '精彩回放 REPLAY (' + (idx + 1) + '/' + highlightQueue.length + ') ' + fileName;
+      domReplayCornerText.textContent = '精彩回放 · REPLAY';
     }
 
     if (domReplayContainer) {
