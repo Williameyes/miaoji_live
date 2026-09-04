@@ -76,28 +76,53 @@
       </view>
       <text class="fixed-tag">固定不换链接</text>
     </view>
-    <view class="room-id-row">
-      <text class="label">主播专属房间号：</text>
-      <text class="room-id-code">{{roomId || '666888'}}</text>
-    </view>
-    <view class="url-box">
-      <text class="url-text">{{obsUrl}}</text>
-    </view>
-    <view class="obs-copy-btns-group">
-      <button class="btn-primary copy-btn" bindtap="onCopyObsUrl" hover-class="btn-hover">
-        <text class="btn-icon">📋</text>
-        <text>一键复制 1080P 标准全屏记分牌链接</text>
-      </button>
-      <view class="sub-copy-row">
-        <button class="sub-copy-btn" bindtap="onCopyScoreDockedUrl" hover-class="btn-hover">
-          <text>🔗 记分牌左侧一体角标链接</text>
+    <view class="room-id-row" style="display: flex; justify-content: space-between; align-items: center;">
+      <view bindtap="onCopyRoomCode" hover-class="btn-hover" style="cursor: pointer;" title="点击复制房间码">
+        <text class="label">专属房间号：</text>
+        <text class="room-id-code">{{roomId || '313251'}}</text>
+        <text style="font-size: 20rpx; color: #00f0ff; margin-left: 8rpx;">[点击复制]</text>
+      </view>
+      <view style="display: flex; gap: 12rpx;">
+        <button class="sub-copy-btn" style="margin: 0; padding: 0 16rpx; height: 50rpx; line-height: 50rpx; font-size: 22rpx; border-radius: 8rpx;" bindtap="onEditRoomId" hover-class="btn-hover">
+          <text>✏️ 修改</text>
         </button>
-        <button class="sub-copy-btn" bindtap="onCopyLiveOnlyUrl" hover-class="btn-hover">
-          <text>📺 独立 LIVE 角标小图层链接</text>
+        <button class="sub-copy-btn" style="margin: 0; padding: 0 16rpx; height: 50rpx; line-height: 50rpx; font-size: 22rpx; border-radius: 8rpx;" bindtap="onGenerateNewRoomId" hover-class="btn-hover">
+          <text>🎲 换专属号</text>
         </button>
       </view>
     </view>
-    <text class="obs-tip">✨ 零切链接特性：OBS 只需挂载此固定链接，在小程序中直接【切换场次】，网页记分牌会自动平滑换场，无需修改 OBS 任何设置！</text>
+    <!-- 快捷房间切换条 -->
+    <view style="display: flex; gap: 12rpx; margin: 10rpx 0 16rpx; align-items: center;">
+      <text style="font-size: 20rpx; color: #8fa3b0;">快捷核对/切换：</text>
+      <button class="sub-copy-btn" style="margin: 0; padding: 0 14rpx; height: 44rpx; line-height: 44rpx; font-size: 20rpx; border-radius: 8rpx; background: {{roomId === '313251' ? 'rgba(0, 240, 255, 0.25)' : 'rgba(255,255,255,0.08)'}}; color: {{roomId === '313251' ? '#00f0ff' : '#cbd5e1'}};" bindtap="onTapWsStatus">
+        <text>⚡ 房间 313251</text>
+      </button>
+      <button class="sub-copy-btn" style="margin: 0; padding: 0 14rpx; height: 44rpx; line-height: 44rpx; font-size: 20rpx; border-radius: 8rpx; background: {{roomId === '178884' ? 'rgba(0, 240, 255, 0.25)' : 'rgba(255,255,255,0.08)'}}; color: {{roomId === '178884' ? '#00f0ff' : '#cbd5e1'}};" bindtap="onTapWsStatus">
+        <text>⚡ 房间 178884</text>
+      </button>
+    </view>
+    <view class="url-box" bindtap="onCopyCleanObsUrl" hover-class="btn-hover" style="cursor: pointer;">
+      <text class="url-text">https://api.mx.server.ndcoo.com/obs-overlay/index.html</text>
+    </view>
+    <view class="obs-copy-btns-group">
+      <button class="btn-primary copy-btn" bindtap="onCopyRoomCode" hover-class="btn-hover" style="background: linear-gradient(135deg, #00f0ff 0%, #007aff 100%);">
+        <text class="btn-icon">📋</text>
+        <text>一键复制 6 位房间码 ({{roomId || '313251'}})</text>
+      </button>
+      <button class="btn-primary copy-btn" bindtap="onTestPingOBS" hover-class="btn-hover" style="margin-top: 14rpx; background: rgba(0, 240, 255, 0.12); border: 1rpx solid #00f0ff; color: #00f0ff;">
+        <text class="btn-icon">🚀</text>
+        <text>测试双端互通 (即时推送比分+横幅到 OBS)</text>
+      </button>
+      <view class="sub-copy-row">
+        <button class="sub-copy-btn" bindtap="onCopyCleanObsUrl" hover-class="btn-hover">
+          <text>🌐 复制 OBS 纯网页链接</text>
+        </button>
+        <button class="sub-copy-btn" bindtap="onCopyObsUrl" hover-class="btn-hover">
+          <text>🔗 复制带参数直连链接</text>
+        </button>
+      </view>
+    </view>
+    <text class="obs-tip">💡 确保两端房间一致：OBS 页面按键盘【R】键可查看当前房间号。点击上方【测试双端互通】可一键验证指令下发！</text>
   </view>
 
   <!-- 3.1 赛场时间切图设备联动卡片 (输入采集端房间号控制) -->
@@ -170,12 +195,13 @@
       <!-- 1. 触发 OBS 保存高光切片 -->
       <button 
         class="sub-copy-btn" 
-        style="width: 100%; border: 1rpx solid rgba(0, 240, 255, 0.4); background: rgba(0, 240, 255, 0.08); color: #00f0ff; height: 76rpx; line-height: 76rpx; font-weight: bold; border-radius: 12rpx;"
+        style="width: 100%; border: 1rpx solid rgba(0, 240, 255, 0.4); background: rgba(0, 240, 255, 0.08); color: #00f0ff; height: 76rpx; line-height: 76rpx; font-weight: bold; border-radius: 12rpx; opacity: {{isSaveOperating ? 0.6 : 1}};"
         bindtap="onTriggerSaveHighlight" 
+        disabled="{{isSaveOperating}}"
         hover-class="btn-hover"
       >
         <text class="btn-icon">💾</text>
-        <text> 触发 OBS 保存精彩高光片段 (远程保存)</text>
+        <text> {{isSaveOperating ? '正在触发保存...' : '触发 OBS 保存精彩高光片段 (远程保存)'}}</text>
       </button>
 
       <!-- 2. 回放进行中：一键主动中断并返回直播 -->
@@ -187,7 +213,7 @@
         hover-class="btn-hover"
       >
         <text class="btn-icon">📺</text>
-        <text>立即中断回放，切回直播画面 (红色 Wipe)</text>
+        <text>矢量切回直播画面 (红色 Wipe)</text>
       </button>
 
       <!-- 3. 历史高光切片点播列表 (点击任意一段精准点播) -->
@@ -215,11 +241,12 @@
             </view>
             <button 
               size="mini" 
-              style="margin: 0; padding: 0 24rpx; height: 56rpx; line-height: 56rpx; font-size: 24rpx; background: #00f0ff; color: #000; font-weight: bold; border-radius: 10rpx;"
+              style="margin: 0; padding: 0 24rpx; height: 56rpx; line-height: 56rpx; font-size: 24rpx; background: {{operatingClipIndex === index ? '#64748b' : '#00f0ff'}}; color: {{operatingClipIndex === index ? '#fff' : '#000'}}; font-weight: bold; border-radius: 10rpx; opacity: {{operatingClipIndex === index ? 0.7 : 1}};"
               bindtap="onPlaySpecificClip" 
+              disabled="{{isReplayOperating && operatingClipIndex === index}}"
               data-index="{{index}}"
             >
-              ▶ 播放第 {{index + 1}} 段
+              {{operatingClipIndex === index ? '▶ 启动中...' : '▶ 播放第 ' + (index + 1) + ' 段'}}
             </button>
           </view>
         </view>
@@ -231,6 +258,92 @@
     </view>
 
     <text class="obs-tip">💡 高光回放说明：点击任意一段高光的【▶ 播放此段】，网页将触发广播级转场并播放该视频！播放中可随时点击【立即中断回放】提前切回现场直播。</text>
+  </view>
+
+  <!-- 3.3 直播版权署名卡片 (获取微信昵称用于"韦伯 现场实拍") -->
+  <view class="card broadcaster-card">
+    <view class="card-header flex-between">
+      <view class="header-left">
+        <text class="card-icon">🎙️</text>
+        <text class="card-title">直播版权署名</text>
+      </view>
+      <view wx:if="{{broadcasterNickname}}" style="background: rgba(255,215,0,0.15); border: 1rpx solid rgba(255,215,0,0.5); border-radius: 20rpx; padding: 4rpx 16rpx;">
+        <text style="color: #FFD700; font-size: 22rpx; font-weight: bold;">{{broadcasterNickname}}</text>
+      </view>
+    </view>
+
+    <view style="padding: 6rpx 0 16rpx;">
+      <text style="font-size: 24rpx; color: #8fa3b0; line-height: 1.6;">网页展示预览：</text>
+      <text style="font-size: 24rpx; color: #cbd5e1;">本地民间篮球赛・</text>
+      <text style="color: {{broadcasterNickname ? '#FFD700' : '#94a3b8'}}; font-size: 26rpx; font-weight: bold;">{{broadcasterNickname || '本人'}}</text>
+      <text style="font-size: 24rpx; color: #8fa3b0;"> 现场实拍</text>
+    </view>
+
+    <view style="display: flex; gap: 14rpx; flex-wrap: wrap;">
+      <button
+        class="btn-primary"
+        style="flex: 1.2; min-width: 260rpx; background: linear-gradient(135deg, #1d4ed8, #3b82f6); border-radius: 12rpx; height: 76rpx; line-height: 76rpx; margin: 0;"
+        bindtap="onEditBroadcasterNickname"
+        hover-class="btn-hover"
+      >
+        <text class="btn-icon">✏️</text>
+        <text>{{broadcasterNickname ? '修改主播名 / 抖音号' : '设置主播名 / 抖音号'}}</text>
+      </button>
+
+      <button
+        class="btn-secondary"
+        style="flex: 1; min-width: 220rpx; background: rgba(34, 197, 94, 0.2); border: 1rpx solid rgba(34, 197, 94, 0.5); border-radius: 12rpx; height: 76rpx; line-height: 76rpx; color: #4ade80; font-size: 26rpx; font-weight: bold; margin: 0;"
+        bindtap="onSyncBroadcasterToWeb"
+        hover-class="btn-hover"
+      >
+        <text class="btn-icon">📡</text>
+        <text>下发署名到网页</text>
+      </button>
+    </view>
+    <text class="obs-tip" style="margin-top: 12rpx;">💡 登录后已自动关联您的昵称；可点击修改为抖音号（如"韦伯"），点击【下发署名到网页】即可强制刷新网页端版权声明与欢迎文案。</text>
+  </view>
+
+  <!-- 3.4 防盗播飘动欢迎文案控制卡片 -->
+  <view class="card marquee-card">
+    <view class="card-header flex-between">
+      <view class="header-left">
+        <text class="card-icon">🎉</text>
+        <text class="card-title">防盗播欢迎文案</text>
+      </view>
+      <view class="ws-status-tag {{isWelcomeMarqueeVisible ? 'connected' : ''}}" style="padding: 4rpx 14rpx; font-size: 20rpx;">
+        <view class="status-dot"></view>
+        <text>{{isWelcomeMarqueeVisible ? '飘动中' : '已关闭'}}</text>
+      </view>
+    </view>
+
+    <view style="background: rgba(0,0,0,0.25); border-radius: 12rpx; padding: 16rpx; margin-bottom: 16rpx;">
+      <text style="font-size: 22rpx; color: #94a3b8;">当前文案：</text>
+      <text style="font-size: 24rpx; color: #e2e8f0; line-height: 1.6;">{{welcomeMarqueeText}}</text>
+    </view>
+
+    <button
+      wx:if="{{!isWelcomeMarqueeVisible}}"
+      class="btn-primary"
+      style="width: 100%; background: linear-gradient(135deg, #059669, #10b981); border-radius: 12rpx; height: 80rpx; line-height: 80rpx;"
+      bindtap="onShowWelcomeMarquee"
+      hover-class="btn-hover"
+    >
+      <text class="btn-icon">🎉</text>
+      <text>触发欢迎文案飘动 (节间休息用)</text>
+    </button>
+
+    <button
+      wx:else
+      class="btn-primary"
+      style="width: 100%; background: linear-gradient(135deg, #dc2626, #ef4444); border-radius: 12rpx; height: 80rpx; line-height: 80rpx;"
+      bindtap="onHideWelcomeMarquee"
+      hover-class="btn-hover"
+    >
+      <text class="btn-icon">🔕</text>
+      <text>关闭欢迎文案 (开赛前关闭)</text>
+    </button>
+
+    <text class="obs-tip" style="margin-top: 12rpx;">💡 节间休息时触发，5 条文案交错高度、不同速度慢速飘过画面，防止盗播遮挡。开赛前点击【关闭】即可。</text>
   </view>
 
   <!-- 4. 主客队比分控板 (背景为球衣颜色，得分自动选择高对比度文本色，长按或点击色标可修改球衣颜色) -->

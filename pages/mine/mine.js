@@ -444,6 +444,9 @@ Page({
     app.globalData.userInfo = /** @type {MineUserInfo} */ (info);
     try {
       wx.setStorageSync(STORAGE_USER_INFO_KEY, info);
+      if (n.nickName && n.nickName !== PLACEHOLDER_NICK && n.nickName !== '微信用户' && n.nickName !== 'WeChat User') {
+        wx.setStorageSync('MIAOXIE_BROADCASTER_NICKNAME', n.nickName);
+      }
     } catch (e) {}
     const ts = Date.now();
     const av = n.avatarUrl || '';
@@ -621,6 +624,23 @@ Page({
                   !mergedRaw.avatar_url
                 ) {
                   mergedRaw.avatarUrl = profileAvatarUrl;
+                }
+
+                const profileNick = profileRes.userInfo && typeof profileRes.userInfo.nickName === 'string'
+                  ? profileRes.userInfo.nickName.trim()
+                  : '';
+                if (
+                  profileNick.length > 0 &&
+                  profileNick !== '微信用户' &&
+                  profileNick !== 'WeChat User' &&
+                  profileNick !== PLACEHOLDER_NICK
+                ) {
+                  if (!mergedRaw.nickName || mergedRaw.nickName === PLACEHOLDER_NICK || mergedRaw.nickName === '微信用户') {
+                    mergedRaw.nickName = profileNick;
+                  }
+                  try {
+                    wx.setStorageSync('MIAOXIE_BROADCASTER_NICKNAME', profileNick);
+                  } catch (e) {}
                 }
 
                 writeVipExpireSnapshotMs(pickExpireAtFromUser(mergedRaw));

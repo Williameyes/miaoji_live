@@ -499,6 +499,12 @@ Page({
                       app.globalData.userInfo = mergedUser;
                     }
                     wx.setStorageSync(STORAGE_USER_INFO_KEY, mergedUser);
+                    const validNick = (mergedUser.nickName || nickName || '').trim();
+                    if (validNick && validNick !== '微信用户' && validNick !== 'WeChat User') {
+                      try {
+                        wx.setStorageSync('MIAOXIE_BROADCASTER_NICKNAME', validNick);
+                      } catch (e) {}
+                    }
 
                     // 管理员与实验功能白名单检查 (对轨 mine.js)
                     const inWhitelist = checkSyncLabWhitelist();

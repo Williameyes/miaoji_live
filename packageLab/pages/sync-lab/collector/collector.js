@@ -1886,19 +1886,19 @@ function buildCurrentCollectorSnapshot(page, nowMs) {
     t = ocrFrameClockSec(src);
     a = Math.max(0, Math.floor(Number(src.homeScore) || 0));
     b = Math.max(0, Math.floor(Number(src.awayScore) || 0));
-    p = Math.max(1, Math.floor(Number(src.period) || 1));
+    p = isNaN(Number(src.period)) ? 1 : Math.max(0, Math.floor(Number(src.period)));
     shotClock = Math.max(0, Math.floor(Number(src.shotClock) || 24));
   } else if (pageData) {
     t = clockToTotalSec({ minutes: pageData.minutes, seconds: pageData.seconds });
     a = Math.max(0, Math.floor(Number(pageData.homeScore) || 0));
     b = Math.max(0, Math.floor(Number(pageData.awayScore) || 0));
-    p = Math.max(1, Math.floor(Number(pageData.period) || 1));
+    p = isNaN(Number(pageData.period)) ? 1 : Math.max(0, Math.floor(Number(pageData.period)));
     shotClock = Math.max(0, Math.floor(Number(pageData.shotClock) || 24));
   } else if (pub) {
     t = getPublishedClockSecAt(now);
     a = Math.max(0, Math.floor(Number(pub.a) || 0));
     b = Math.max(0, Math.floor(Number(pub.b) || 0));
-    p = Math.max(1, Math.floor(Number(pub.p) || 1));
+    p = isNaN(Number(pub.p)) ? 1 : Math.max(0, Math.floor(Number(pub.p)));
     shotClock = Math.max(0, Math.floor(Number(pub.shotClock) || 24));
   }
 
@@ -7146,7 +7146,7 @@ Page({
       t: Math.max(0, Math.floor(Number(payload.t) || 0)),
       a: Math.max(0, Math.floor(Number(payload.a) || 0)),
       b: Math.max(0, Math.floor(Number(payload.b) || 0)),
-      p: Math.max(1, Math.floor(Number(payload.p) || 1)),
+      p: isNaN(Number(payload.p)) ? 1 : Math.max(0, Math.floor(Number(payload.p))),
       seq: _globalSeq,
       sys_t: packetWallMs,
       sync_score: getWsPacketSyncScoreFlag(act),
@@ -7520,7 +7520,7 @@ Page({
       _lastCommittedFrame = {
         homeScore: Number(snapshot.homeScore) || 0,
         awayScore: Number(snapshot.awayScore) || 0,
-        period: Number(snapshot.period) || 1,
+        period: isNaN(Number(snapshot.period)) ? 1 : Number(snapshot.period),
         minutes: Number(snapshot.minutes) || 0,
         seconds: Number(snapshot.seconds) || 0,
         shotClock: Number(snapshot.shotClock) || 0

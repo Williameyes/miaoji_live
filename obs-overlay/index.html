@@ -2,31 +2,88 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>高光记分 - OBS 专业直播记分牌</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="./style.css?v=20260904_12">
 </head>
 <body>
-  <!-- 网页端/OBS 实时连接状态标识栏 (支持点击一键修改房间号) -->
+  <!-- 网页端/OBS 实时连接提示 (仅连接时短暂浮现 2 秒后完全消失，绝不残留任何按钮或胶囊，保证直播纯净) -->
   <div class="ws-status-banner" id="ws-status-banner">
     <span class="status-dot"></span>
     <span class="status-text" id="ws-status-text">⏳ 正在连接中控台...</span>
-    <button class="ws-room-edit-btn" id="ws-room-edit-btn" title="点击修改 6 位房间号">🔑 房间号: <span id="ws-current-room-text">666888</span> [修改]</button>
   </div>
 
-  <!-- 房间号快速设置/切换弹窗 (首次或点击修改时使用) -->
-  <div class="room-setting-modal room-modal--hidden" id="room-setting-modal">
+  <!-- 房间号设置与图层控制面板 (未连接时居中展示，连接后完全隐形，按 R 或双击记分牌唤出) -->
+  <div class="room-setting-modal" id="room-setting-modal">
     <div class="room-modal-card">
       <div class="room-modal-header">
-        <span class="modal-title">🔑 设置 OBS 记分牌房间号</span>
-        <span class="modal-close-btn" id="room-modal-close">×</span>
+        <span class="modal-title">🏀 妙计记分牌・设置面板</span>
+        <span class="modal-close-btn" id="room-modal-close" style="display: none;" title="关闭设置">×</span>
       </div>
       <div class="room-modal-body">
-        <p class="modal-desc">请输入小程序网页记分中控台显示的 6 位房间码：</p>
+        <!-- 房间号切换模块 -->
+        <div class="modal-section-title">🔑 连接房间号（当前：<span id="modal-current-room-text" style="color: #00f0ff;">未设置</span>）</div>
+        <p class="modal-desc" style="font-size: 13px; color: #94a3b8; margin-bottom: 10px;">输入小程序【网页记分中控台】显示的 6 位专属房间码，连接后全屏纯净无遮挡：</p>
         <div class="modal-input-row">
-          <input type="text" id="room-modal-input" maxlength="6" placeholder="例如: 178800" value="178800">
-          <button id="room-modal-submit-btn">保存并连接</button>
+          <input 
+            type="text" 
+            id="room-modal-input" 
+            maxlength="6" 
+            inputmode="numeric" 
+            pattern="[0-9]*" 
+            placeholder="例如: 313251" 
+            value=""
+            autofocus
+          >
+          <button id="room-modal-submit-btn">立即连接 🚀</button>
+        </div>
+        <div class="modal-err-tip" id="modal-err-tip" style="color: #f87171; font-size: 13px; margin-top: 8px; font-weight: bold; display: none;"></div>
+
+        <!-- 实时通信诊断卡片 (帮助用户瞬间排查房间号是否对齐与指令是否到达) -->
+        <div class="modal-diagnostics-box" style="margin-top: 12px; padding: 10px 14px; background: rgba(0, 0, 0, 0.4); border-radius: 8px; font-size: 12px; border: 1px solid rgba(255, 255, 255, 0.08); line-height: 1.8;">
+          <div style="display: flex; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 4px; margin-bottom: 4px;">
+            <span style="color: #94a3b8;">📡 房间通信状态：</span>
+            <span id="diag-ws-status" style="font-weight: bold; color: #f87171;">🔴 未连接</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 4px; margin-bottom: 4px;">
+            <span style="color: #94a3b8;">📥 最近收到控制指令：</span>
+            <span id="diag-last-packet" style="color: #38bdf8;">等待控制端下发...</span>
+          </div>
+          <div style="display: flex; justify-content: space-between;">
+            <span style="color: #94a3b8;">🖥️ OBS 本地服务 (4455)：</span>
+            <span id="diag-obs-ws-status" style="color: #94a3b8;">检测中...</span>
+          </div>
+        </div>
+
+        <!-- 图层显隐管理模块 (解决版权说明隐藏后无法恢复的问题) -->
+        <div class="modal-layers-section" style="margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.1);">
+          <div class="modal-section-title" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <span>🎨 图层显隐与恢复</span>
+            <span style="font-size: 11px; color: #64748b; font-weight: normal;">快捷键: C(版权) / L(LIVE)</span>
+          </div>
+          <div class="modal-layers-grid" style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button class="layer-toggle-btn" id="btn-toggle-copyright" type="button" title="点击显示或隐藏版权说明 (快捷键: C)">
+              <span class="layer-btn-icon" id="icon-toggle-copyright">📷</span>
+              <span id="text-toggle-copyright">版权说明: 显示中</span>
+            </button>
+            <button class="layer-toggle-btn" id="btn-toggle-live" type="button" title="点击显示或隐藏LIVE角标 (快捷键: L)">
+              <span class="layer-btn-icon" id="icon-toggle-live">🔴</span>
+              <span id="text-toggle-live">LIVE角标: 显示中</span>
+            </button>
+            <button class="layer-toggle-btn layer-reset-btn" id="btn-reset-layer-pos" type="button" title="将所有角标恢复至默认位置与大小">
+              <span>🔄 恢复默认位置</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="modal-guide-tip" style="margin-top: 16px; color: #94a3b8; font-size: 12px; line-height: 1.6;">
+          💡 <strong>直播零干扰</strong>：连接后所有控制组件 100% 隐藏，绝不残留任何胶囊，不影响直播！<br>
+          ⌨️ <strong>随时换房间</strong>：在 OBS 来源右键点<strong>【交互】</strong>，按键盘 <strong>R</strong> 键（或双击记分牌）即可随时唤出此面板换房间。<br>
+          📷 <strong>快捷键</strong>：按 <strong>C</strong> 显隐版权说明，按 <strong>L</strong> 显隐LIVE角标。
         </div>
       </div>
     </div>
@@ -49,6 +106,21 @@
       <span>播</span>
     </div>
     <div class="island-resize-handle" id="island-resize-handle"></div>
+  </div>
+
+  <!-- 独立悬浮专业广播级「防误封版权声明」微胶囊角标 (拖拽移动位置、拖拽右下角手柄改变大小、双击隐藏关闭) -->
+  <div class="copyright-floating-badge" id="copyright-floating-badge" title="按住拖拽可移动位置，拖拽右下角手柄可改变大小，双击隐藏关闭">
+    <span class="copyright-icon">📷</span>
+    <span class="copyright-text" id="copyright-text">本地民间篮球赛・<span class="copyright-name" id="copyright-name">本人</span><span class="copyright-sep">现场实拍</span></span>
+    <div class="copyright-resize-handle" id="copyright-resize-handle" title="拖拽此处改变大小"></div>
+  </div>
+
+  <!-- 🎉 全屏弹球碰撞飘动欢迎/防盗播文案 (单条轻量碰撞反弹，极低资源占用) -->
+  <div class="welcome-bounce-overlay welcome-bounce--hidden" id="welcome-bounce-overlay">
+    <div class="welcome-bounce-pill" id="welcome-bounce-pill">
+      <span class="welcome-bounce-icon">🏀</span>
+      <span class="welcome-bounce-text" id="welcome-bounce-text">欢迎来到直播间，关注主播一起看球！</span>
+    </div>
   </div>
 
   <!-- 16:9 全高清广播级自适应转播记分牌 (居中底部，结构样式与小程序 live 页 100% 对齐) -->
@@ -175,7 +247,7 @@
     </div>
   </div>
 
-  <script src="./config.js"></script>
-  <script src="./overlay.js"></script>
+  <script src="./config.js?v=20260904_12"></script>
+  <script src="./overlay.js?v=20260904_12"></script>
 </body>
 </html>

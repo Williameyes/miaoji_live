@@ -1,23 +1,163 @@
 (function () {
   'use strict';
 
-  var urlParams = new URLSearchParams(window.location.search);
-  var rawRoomId = urlParams.get('roomId') || urlParams.get('room_id') || urlParams.get('matchCode') || urlParams.get('matchId');
-  if (!rawRoomId && window.location.search) {
-    var match = window.location.search.match(/(?:roomId|room_id|room)=(\d+)/i);
-    if (match) rawRoomId = match[1];
+  /**
+   * 解码 URL 片段；OBS CEF 偶发非法 % 序列时不抛死整页。
+   * @param {string} s
+   * @returns {string}
+   */
+  function decodeComp(s) {
+    try {
+      return decodeURIComponent(String(s || '').replace(/\+/g, ' '));
+    } catch (eDecode) {
+      return String(s || '');
+    }
   }
-  if (!rawRoomId && window.MIAOXIE_ROOM_ID) {
-    rawRoomId = window.MIAOXIE_ROOM_ID;
+
+  /**
+   * 手动解析 query + hash（不依赖 URLSearchParams / location.search）。
+   * OBS 浏览器源常见：location.search 为空，但 href/hash 仍带 roomId。
+   * @param {string} href
+   * @returns {Object<string, string>}
+   */
+  function parseHrefParams(href) {
+    var map = {};
+    var s = String(href || '');
+    try { s = decodeURIComponent(s); } catch (eHref) {}
+    var hashPos = s.indexOf('#');
+    var searchPos = s.indexOf('?');
+    var query = '';
+    var hash = '';
+    if (searchPos >= 0) {
+      query = (hashPos > searchPos) ? s.substring(searchPos + 1, hashPos) : s.substring(searchPos + 1);
+    }
+    if (hashPos >= 0) {
+      hash = s.substring(hashPos + 1);
+      if (hash.charAt(0) === '/') hash = hash.substring(1);
+      if (hash.charAt(0) === '?') hash = hash.substring(1);
+    }
+    function absorb(chunk) {
+      if (!chunk) return;
+      var parts = chunk.split('&');
+      for (var i = 0; i < parts.length; i++) {
+        var p = parts[i];
+        if (!p) continue;
+        var eq = p.indexOf('=');
+        var k = decodeComp(eq >= 0 ? p.substring(0, eq) : p);
+        var v = decodeComp(eq >= 0 ? p.substring(eq + 1) : '');
+        if (k) map[k] = v;
+      }
+    }
+    absorb(query);
+    absorb(hash);
+    return map;
+  }
+
+  /**
+   * 收集 OBS/CEF 可能提供的全部地址字符串。
+   * @returns {string[]}
+   */
+  function collectHrefCandidates() {
+    var list = [];
+    function push(v) {
+      var s = String(v || '');
+      if (s && list.indexOf(s) === -1) list.push(s);
+    }
+    try { push(window.location.href); } catch (e1) {}
+    try { push(window.location.search); } catch (e2) {}
+    try { push(window.location.hash); } catch (e3) {}
+    try { push(document.URL); } catch (e4) {}
+    try { push(document.location && document.location.href); } catch (e5) {}
+    return list;
+  }
+
+  var paramMap = {};
+  var hrefCandidates = collectHrefCandidates();
+  var hi;
+  for (hi = 0; hi < hrefCandidates.length; hi++) {
+    var parsed = parseHrefParams(hrefCandidates[hi]);
+    var pk;
+    for (pk in parsed) {
+      if (Object.prototype.hasOwnProperty.call(parsed, pk) && parsed[pk] && !paramMap[pk]) {
+        paramMap[pk] = parsed[pk];
+      }
+    }
+  }
+
+  var urlParams = {
+    /**
+     * @param {string} key
+     * @returns {string|null}
+     */
+    get: function (key) {
+      if (!key) return null;
+      if (paramMap[key] != null && paramMap[key] !== '') return paramMap[key];
+      var lower = String(key).toLowerCase();
+      var k;
+      for (k in paramMap) {
+        if (Object.prototype.hasOwnProperty.call(paramMap, k) && k.toLowerCase() === lower && paramMap[k]) {
+          return paramMap[k];
+        }
+      }
+      return null;
+    }
+  };
+
+  var isObsBrowser = typeof window.obsstudio !== 'undefined';
+
+  // 智能提取房间号：query / hash / 完整 href，兼容 OBS 丢失 search
+  var rawRoomId = urlParams.get('roomId') || urlParams.get('roomid') || urlParams.get('roomld') || urlParams.get('room1d') || urlParams.get('room_id') || urlParams.get('room') || urlParams.get('matchCode') || urlParams.get('matchId') || urlParams.get('id') || '';
+  if (!rawRoomId) {
+    var hrefBlob = hrefCandidates.join('\n');
+    var urlMatch = hrefBlob.match(/(?:roomid|roomId|roomld|room1d|room_id|room|matchcode|matchid)[=:]+(\d{6})/i);
+    if (urlMatch && urlMatch[1]) {
+      rawRoomId = urlMatch[1];
+    }
   }
   if (!rawRoomId) {
-    try { rawRoomId = localStorage.getItem('obs_room_id'); } catch (e) {}
+    var anySixDigits = hrefCandidates.join('\n').match(/(?:^|[^\d])(\d{6})(?:[^\d]|$)/);
+    if (anySixDigits && anySixDigits[1]) {
+      rawRoomId = anySixDigits[1];
+      console.log('[OBS Overlay] 智能从 URL 中识别到 6 位房间号:', rawRoomId);
+    }
   }
-  if (!rawRoomId) rawRoomId = '666888';
+  console.log('[OBS Overlay] boot', {
+    isObsBrowser: isObsBrowser,
+    href: (function () { try { return window.location.href; } catch (eBoot) { return ''; } })(),
+    search: (function () { try { return window.location.search; } catch (eS) { return ''; } })(),
+    hash: (function () { try { return window.location.hash; } catch (eH) { return ''; } })(),
+    rawRoomId: rawRoomId
+  });
+  /**
+   * 规范化 6 位纯数字房间号
+   * @param {string} raw
+   * @returns {string}
+   */
+  function normalizeRoomId(raw) {
+    var digits = String(raw || '').replace(/\D/g, '');
+    if (digits.length >= 6) return digits.slice(0, 6);
+    return '';
+  }
 
-  var digits = String(rawRoomId).replace(/\D/g, '');
-  var roomId = digits.length >= 6 ? digits.slice(0, 6) : (digits + '666888').slice(0, 6);
-  try { localStorage.setItem('obs_room_id', roomId); } catch (e) {}
+  // 1. 优先从 URL (query / hash / href) 中读取专属房间号
+  rawRoomId = normalizeRoomId(rawRoomId);
+  var isCustomUrlRoom = !!rawRoomId;
+
+  // 2. 其次读取本地缓存保存的房间号
+  if (!rawRoomId) {
+    try { rawRoomId = normalizeRoomId(localStorage.getItem('obs_room_id')); } catch (e) {}
+  }
+  // 3. 再次读取 config.js 外部配置 (若手动指定)
+  if (!rawRoomId && window.MIAOXIE_ROOM_ID) {
+    rawRoomId = normalizeRoomId(window.MIAOXIE_ROOM_ID);
+  }
+
+  // 杜绝盲连公共房间：若无专属参数且无本地缓存，保持为空并弹出连接向导，支持 OBS 右键【交互】输入
+  var roomId = rawRoomId || '';
+  if (roomId) {
+    try { localStorage.setItem('obs_room_id', roomId); } catch (e) {}
+  }
+
   var apiBase = 'https://api.mx.server.ndcoo.com';
 
   var domObsContainer = document.getElementById('obs-container');
@@ -37,11 +177,6 @@
 
   var domMatchTitle = document.getElementById('match-title');
   var domPeriod = document.getElementById('period-badge');
-
-  var domTimeCropBox = document.getElementById('time-crop-box');
-  var domTimeCropCanvas = document.getElementById('time-crop-canvas');
-  var timeCropCanvasCtx = domTimeCropCanvas ? domTimeCropCanvas.getContext('2d') : null;
-
   var statusBanner = document.getElementById('ws-status-banner');
   var statusText = document.getElementById('ws-status-text');
 
@@ -183,6 +318,331 @@
     })();
   }
 
+  // 5. 防误封版权与现场实拍声明悬浮角标 (按住拖拽移动位置、拖拽右下角手柄改变大小、双击关闭隐藏)
+  var domCopyrightBadge = document.getElementById('copyright-floating-badge');
+  var domCopyrightResizeHandle = document.getElementById('copyright-resize-handle');
+
+  if (domCopyrightBadge) {
+    (function enableCopyrightBadgeDragAndResize() {
+      var badgeScale = 1.0;
+      var isMoveDragging = false;
+      var isResizeDragging = false;
+      var startX = 0, startY = 0;
+      var initLeft = 0, initTop = 0;
+      var startScale = 1.0;
+
+      // 还原本地保存的位置、大小与关闭状态
+      try {
+        var savedData = localStorage.getItem('obs_copyright_badge_state');
+        if (savedData) {
+          var state = JSON.parse(savedData);
+          if (state.hidden) {
+            domCopyrightBadge.style.display = 'none';
+          }
+          if (state.left !== undefined) domCopyrightBadge.style.left = isNaN(state.left) ? state.left : state.left + 'px';
+          if (state.top !== undefined) {
+            domCopyrightBadge.style.top = isNaN(state.top) ? state.top : state.top + 'px';
+            domCopyrightBadge.style.bottom = 'auto';
+            domCopyrightBadge.style.right = 'auto';
+          }
+          if (state.scale) badgeScale = parseFloat(state.scale) || 1.0;
+        }
+      } catch (e) {}
+
+      function applyBadgeTransform() {
+        domCopyrightBadge.style.transform = 'scale(' + badgeScale + ')';
+        domCopyrightBadge.style.transformOrigin = 'center center';
+      }
+
+      applyBadgeTransform();
+
+      function saveBadgeState(hidden) {
+        try {
+          localStorage.setItem('obs_copyright_badge_state', JSON.stringify({
+            hidden: hidden !== undefined ? hidden : (domCopyrightBadge.style.display === 'none'),
+            left: domCopyrightBadge.style.left,
+            top: domCopyrightBadge.style.top,
+            scale: badgeScale
+          }));
+        } catch (e) {}
+      }
+
+      // 双击组件全域隐藏关闭
+      domCopyrightBadge.addEventListener('dblclick', function (e) {
+        e.stopPropagation();
+        e.preventDefault();
+        domCopyrightBadge.style.display = 'none';
+        saveBadgeState(true);
+      });
+
+      // 拖拽右下角 L 型拉手改变大小
+      if (domCopyrightResizeHandle) {
+        domCopyrightResizeHandle.addEventListener('mousedown', function (e) {
+          isResizeDragging = true;
+          startX = e.clientX;
+          startY = e.clientY;
+          startScale = badgeScale;
+          e.stopPropagation();
+          e.preventDefault();
+        });
+      }
+
+      // 按住主体移动位置
+      domCopyrightBadge.addEventListener('mousedown', function (e) {
+        if (e.target === domCopyrightResizeHandle) return;
+        isMoveDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        var rect = domCopyrightBadge.getBoundingClientRect();
+        initLeft = rect.left;
+        initTop = rect.top;
+        domCopyrightBadge.style.left = initLeft + 'px';
+        domCopyrightBadge.style.top = initTop + 'px';
+        domCopyrightBadge.style.bottom = 'auto';
+        domCopyrightBadge.style.right = 'auto';
+        applyBadgeTransform();
+        e.preventDefault();
+      });
+
+      // 滚轮辅助缩放
+      domCopyrightBadge.addEventListener('wheel', function (e) {
+        e.preventDefault();
+        var delta = e.deltaY < 0 ? 0.05 : -0.05;
+        badgeScale = Math.max(0.5, Math.min(3.5, badgeScale + delta));
+        applyBadgeTransform();
+        saveBadgeState();
+      });
+
+      window.addEventListener('mousemove', function (e) {
+        if (isResizeDragging) {
+          var dx = e.clientX - startX;
+          var dy = e.clientY - startY;
+          var deltaScale = (dx + dy) / 200;
+          badgeScale = Math.max(0.5, Math.min(3.5, startScale + deltaScale));
+          applyBadgeTransform();
+        } else if (isMoveDragging) {
+          var dx = e.clientX - startX;
+          var dy = e.clientY - startY;
+          var newLeft = Math.max(0, initLeft + dx);
+          var newTop = Math.max(0, initTop + dy);
+          domCopyrightBadge.style.left = newLeft + 'px';
+          domCopyrightBadge.style.top = newTop + 'px';
+          applyBadgeTransform();
+        }
+      });
+
+      window.addEventListener('mouseup', function () {
+        if (isMoveDragging || isResizeDragging) {
+          isMoveDragging = false;
+          isResizeDragging = false;
+          saveBadgeState();
+        }
+      });
+    })();
+  }
+
+  // ─────────────────────────────────────────────
+  // ─────────────────────────────────────────────
+  // 版权署名动态替换 & 弹球碰撞飘动欢迎文案控制器
+  // ─────────────────────────────────────────────
+  var domCopyrightName = document.getElementById('copyright-name');
+  var domWelcomeOverlay = document.getElementById('welcome-bounce-overlay') || document.getElementById('marquee-overlay');
+  var domWelcomePill = document.getElementById('welcome-bounce-pill');
+  var domWelcomeText = document.getElementById('welcome-bounce-text');
+
+  var _currentBroadcasterName = '';
+  var _cachedBroadcaster = '';
+  try {
+    _cachedBroadcaster = urlParams.get('broadcaster') || urlParams.get('broadcasterNickname') || urlParams.get('nick') || localStorage.getItem('obs_broadcaster_name') || '';
+  } catch (e) {}
+
+  /**
+  /**
+   * 构造标准欢迎文案并高亮主播名
+   * 规范格式：欢迎来到***直播间，关注 *** 一起看球！
+   */
+  function buildWelcomeMarqueeHtml(customText) {
+    var broadcaster = (_currentBroadcasterName || _cachedBroadcaster || '').trim();
+    if (broadcaster === '微信用户' || broadcaster === 'WeChat User') {
+      broadcaster = '';
+    }
+
+    var baseText = (typeof customText === 'string' && customText.trim()) ? customText.trim() : '';
+
+    // 如果未传文本，或者文本是旧格式/未带当前主播名，则按规范自动生成
+    if (!baseText || baseText.indexOf('希望大家关注') >= 0 || (broadcaster && baseText.indexOf(broadcaster) === -1)) {
+      if (broadcaster) {
+        baseText = '欢迎来到 ' + broadcaster + ' 直播间，关注 ' + broadcaster + ' 一起看球！';
+      } else {
+        baseText = '欢迎来到直播间，关注主播一起看球！';
+      }
+    }
+
+    if (broadcaster && baseText.indexOf(broadcaster) >= 0) {
+      var escapedName = broadcaster.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return baseText.replace(new RegExp(escapedName, 'g'), '<span class="welcome-highlight-name">' + broadcaster + '</span>');
+    }
+    return baseText;
+  }
+
+  /**
+   * 极低资源弹球碰撞引擎 (DVD screensaver 经典反弹算法)
+   * 采用 requestAnimationFrame + translate3d 纯 GPU 合成，CPU 占用 < 0.05%
+   */
+  var BounceMarquee = {
+    rafId: null,
+    isRunning: false,
+    x: 100,
+    y: 150,
+    vx: 1.4,
+    vy: 1.2,
+    hitTimer: null,
+
+    start: function () {
+      if (!domWelcomeOverlay || !domWelcomePill) return;
+      domWelcomeOverlay.classList.remove('welcome-bounce--hidden');
+      if (domWelcomeOverlay.classList.contains('marquee-overlay--hidden')) {
+        domWelcomeOverlay.classList.remove('marquee-overlay--hidden');
+      }
+
+      if (this.isRunning) return;
+      this.isRunning = true;
+
+      // 首次启动时，随机一个初始位置和初始运动方向
+      var winW = window.innerWidth || 1920;
+      var winH = window.innerHeight || 1080;
+      var pillW = domWelcomePill.offsetWidth || 450;
+      var pillH = domWelcomePill.offsetHeight || 52;
+
+      var maxX = Math.max(20, winW - pillW - 40);
+      var maxY = Math.max(20, winH - pillH - 40);
+
+      this.x = Math.floor(Math.random() * (maxX - 40)) + 40;
+      this.y = Math.floor(Math.random() * (maxY - 40)) + 40;
+
+      // 速度模长在 1.3 ~ 1.7 像素/帧，随机角度
+      var speed = 1.35 + Math.random() * 0.35;
+      var angle = (Math.PI / 4) + (Math.random() * (Math.PI / 6) - Math.PI / 12); // ~35° - 55°
+      this.vx = Math.cos(angle) * speed * (Math.random() > 0.5 ? 1 : -1);
+      this.vy = Math.sin(angle) * speed * (Math.random() > 0.5 ? 1 : -1);
+
+      var self = this;
+      function tick() {
+        if (!self.isRunning) return;
+        self.update();
+        self.rafId = requestAnimationFrame(tick);
+      }
+      this.rafId = requestAnimationFrame(tick);
+    },
+
+    update: function () {
+      if (!domWelcomePill) return;
+      var winW = window.innerWidth || 1920;
+      var winH = window.innerHeight || 1080;
+      var pillW = domWelcomePill.offsetWidth || 450;
+      var pillH = domWelcomePill.offsetHeight || 52;
+
+      this.x += this.vx;
+      this.y += this.vy;
+
+      var hit = false;
+      var minX = 16;
+      var maxX = winW - pillW - 16;
+      var minY = 16;
+      var maxY = winH - pillH - 16;
+
+      if (this.x <= minX) {
+        this.x = minX;
+        this.vx = Math.abs(this.vx);
+        hit = true;
+      } else if (this.x >= maxX) {
+        this.x = maxX;
+        this.vx = -Math.abs(this.vx);
+        hit = true;
+      }
+
+      if (this.y <= minY) {
+        this.y = minY;
+        this.vy = Math.abs(this.vy);
+        hit = true;
+      } else if (this.y >= maxY) {
+        this.y = maxY;
+        this.vy = -Math.abs(this.vy);
+        hit = true;
+      }
+
+      if (hit) {
+        this.onHit();
+      }
+
+      domWelcomePill.style.transform = 'translate3d(' + this.x.toFixed(1) + 'px, ' + this.y.toFixed(1) + 'px, 0)';
+    },
+
+    onHit: function () {
+      if (!domWelcomePill) return;
+      domWelcomePill.classList.add('bounce-hit');
+      clearTimeout(this.hitTimer);
+      this.hitTimer = setTimeout(function () {
+        if (domWelcomePill) domWelcomePill.classList.remove('bounce-hit');
+      }, 180);
+    },
+
+    stop: function () {
+      this.isRunning = false;
+      if (this.rafId) {
+        cancelAnimationFrame(this.rafId);
+        this.rafId = null;
+      }
+      if (domWelcomeOverlay) {
+        domWelcomeOverlay.classList.add('welcome-bounce--hidden');
+      }
+    }
+  };
+
+  /**
+   * 更新版权署名：有 broadcaster 时显示金色高亮，否则回退"本人"
+   */
+  function updateBroadcasterName(name) {
+    if (!domCopyrightName) return;
+    var safeNick = (typeof name === 'string') ? name.trim() : '';
+    var isDefault = !safeNick || safeNick === '微信用户' || safeNick === 'WeChat User';
+    if (isDefault) {
+      domCopyrightName.textContent = '本人';
+      domCopyrightName.className = 'copyright-name';
+      _currentBroadcasterName = '';
+      try { localStorage.removeItem('obs_broadcaster_name'); } catch (e) {}
+    } else {
+      domCopyrightName.textContent = safeNick;
+      domCopyrightName.className = 'copyright-name copyright-name--branded';
+      try { localStorage.setItem('obs_broadcaster_name', safeNick); } catch (e) {}
+    }
+    if (domWelcomeText && typeof BounceMarquee !== 'undefined' && BounceMarquee && BounceMarquee.isRunning) {
+      domWelcomeText.innerHTML = buildWelcomeMarqueeHtml();
+    }
+  }
+
+  // 初始化时直接根据缓存或 URL query 预载入播主署名
+  if (_cachedBroadcaster) {
+    updateBroadcasterName(_cachedBroadcaster);
+  }
+
+  /**
+   * 显示飘动欢迎/防盗播文案 (单条弹球碰撞)
+   */
+  function showMarquee(text) {
+    if (domWelcomeText) {
+      domWelcomeText.innerHTML = buildWelcomeMarqueeHtml(text);
+    }
+    BounceMarquee.start();
+  }
+
+  /**
+   * 隐藏飘动文案并彻底停止计算
+   */
+  function hideMarquee() {
+    BounceMarquee.stop();
+  }
+
   var currentHomeScore = null;
   var currentAwayScore = null;
   var bannerTimer = null;
@@ -229,6 +689,11 @@
         statusBanner.classList.add('fade-out');
       }, 3000);
     }
+  }
+
+  function alertBanner(text, state) {
+    console.log('[OBS Overlay Notice]:', text);
+    showStatus(text, state || '', true);
   }
 
   function bumpAnimation(el) {
@@ -290,7 +755,7 @@
         }
         var obj = JSON.parse(decodedJson);
         return {
-          title: obj.t || obj.title || '',
+          title: obj.t || obj.title || obj.m || '',
           teamA: obj.a || obj.teamA || '',
           teamB: obj.b || obj.teamB || '',
           colorA: obj.ca ? '#' + obj.ca.replace('#', '') : (obj.colorA || ''),
@@ -299,7 +764,9 @@
           timeRoomId: obj.tr || '',
           targetIndex: obj.ci || 0,
           clipIndex: obj.ci ? (obj.ci - 1) : 0,
-          act: obj.act || ''
+          act: obj.act || '',
+          broadcaster: obj.bc || obj.broadcaster || obj.nick || '',
+          marqueeText: obj.mt || obj.text || obj.welcomeText || obj.marqueeText || ''
         };
       } catch (e) {
         console.warn('[OBS Overlay] decodeMatchMeta b64 error:', e);
@@ -319,7 +786,8 @@
               teamB: decodeURIComponent(parts[2] || ''),
               colorA: parts[3] ? '#' + parts[3].replace('#', '') : '',
               colorB: parts[4] ? '#' + parts[4].replace('#', '') : '',
-              matchId: parts[5] ? decodeURIComponent(parts[5]) : ''
+              matchId: parts[5] ? decodeURIComponent(parts[5]) : '',
+              broadcaster: parts[6] ? decodeURIComponent(parts[6]) : ''
             };
           }
         }
@@ -341,7 +809,8 @@
           timeRoomId: jsonObj.timeRoomId || jsonObj.tr || '',
           targetIndex: jsonObj.ci || jsonObj.targetIndex || 0,
           clipIndex: jsonObj.ci ? (jsonObj.ci - 1) : (jsonObj.clipIndex || 0),
-          act: jsonObj.act || ''
+          act: jsonObj.act || '',
+          broadcaster: jsonObj.bc || jsonObj.broadcaster || jsonObj.nick || ''
         };
       } catch (e3) {}
     }
@@ -454,6 +923,35 @@
       domPeriod.textContent = formatPeriod(periodVal);
     }
 
+    // 5.5 版权署名：多通道提取主播昵称 (兼容 top-level broadcaster, broadcasterNickname, bc, 以及 meta/decoded 字段)
+    var broadcasterVal = (typeof d.broadcaster === 'string' ? d.broadcaster : '') ||
+      (typeof d.broadcasterNickname === 'string' ? d.broadcasterNickname : '') ||
+      (typeof d.bc === 'string' ? d.bc : '') ||
+      (meta && typeof meta.broadcaster === 'string' ? meta.broadcaster : '') ||
+      (meta && typeof meta.bc === 'string' ? meta.bc : '') ||
+      (decoded && typeof decoded.broadcaster === 'string' ? decoded.broadcaster : '');
+
+    if (broadcasterVal) {
+      updateBroadcasterName(broadcasterVal);
+    }
+
+    // 5.8 实时更新设置面板中的通信诊断卡片状态 (让用户一目了然是否收到控制端指令)
+    var domDiagWsStatus = document.getElementById('diag-ws-status');
+    var domDiagLastPacket = document.getElementById('diag-last-packet');
+    if (domDiagWsStatus) {
+      domDiagWsStatus.textContent = '🟢 正常连通 (房间: ' + roomId + ')';
+      domDiagWsStatus.style.color = '#4ade80';
+    }
+    if (domDiagLastPacket) {
+      var dTime = new Date();
+      var tStr = (dTime.getHours() < 10 ? '0' : '') + dTime.getHours() + ':' +
+                 (dTime.getMinutes() < 10 ? '0' : '') + dTime.getMinutes() + ':' +
+                 (dTime.getSeconds() < 10 ? '0' : '') + dTime.getSeconds();
+      var actLabel = d.act || (decoded && decoded.act) || 'SCORE';
+      domDiagLastPacket.textContent = '[' + tStr + '] ' + actLabel + ' · ' + (nameA || '主队') + ' ' + (scoreA !== undefined ? scoreA : '-') + ':' + (scoreB !== undefined ? scoreB : '-') + ' ' + (nameB || '客队');
+      domDiagLastPacket.style.color = '#4ade80';
+    }
+
     // 6. 赛场时间采集设备联动控制与高光回放控制
     var actType = String(d.act || (decoded && decoded.act) || '');
     var targetTimeRoom = (d.timeRoomId || d.time_room_id || (d.time_device && d.time_device.roomId) || (meta && meta.timeRoomId) || (meta && meta.tr) || (decoded && decoded.timeRoomId));
@@ -478,6 +976,15 @@
     } else if (actType === 'TRIGGER_SAVE_HIGHLIGHT' || actType === 'SAVE_HIGHLIGHT' || d.type === 'TRIGGER_SAVE_HIGHLIGHT') {
       console.log('[OBS Overlay] Received TRIGGER_SAVE_HIGHLIGHT -> triggering OBS SaveReplayBuffer');
       triggerObsSaveReplayBuffer();
+    } else if (actType === 'SHOW_WELCOME_MARQUEE' || d.type === 'SHOW_WELCOME_MARQUEE') {
+      var marqueeText = d.marqueeText || d.welcomeText || d.text || (decoded && decoded.marqueeText) || '';
+      console.log('[OBS Overlay] Received SHOW_WELCOME_MARQUEE, text:', marqueeText);
+      showMarquee(marqueeText);
+      alertBanner('📢 收到中控台指令：欢迎横幅已启动');
+    } else if (actType === 'HIDE_WELCOME_MARQUEE' || d.type === 'HIDE_WELCOME_MARQUEE') {
+      console.log('[OBS Overlay] Received HIDE_WELCOME_MARQUEE');
+      hideMarquee();
+      alertBanner('🔕 收到中控台指令：欢迎横幅已关闭');
     }
 
     if (actType === 'CONNECT_TIME_ROOM' && targetTimeRoom) {
@@ -542,6 +1049,7 @@
   function startMainWatchdog() {
     if (mainWatchdogTimer) clearInterval(mainWatchdogTimer);
     mainWatchdogTimer = setInterval(function () {
+      if (!roomId || roomId.length !== 6) return;
       if (!mainWs || mainWs.readyState === WebSocket.CLOSED || mainWs.readyState === WebSocket.CLOSING) {
         if (!isMainConnecting && !mainReconnectTimer) {
           console.warn('[OBS Overlay][Watchdog] Main WS closed or missing, reconnecting...');
@@ -551,27 +1059,106 @@
     }, 4000);
   }
 
+  /**
+   * OBS CEF 上 fetch 可能不可用或 POST 失败，用 XHR 兜底。
+   * @param {string} method
+   * @param {string} url
+   * @returns {Promise<Object>}
+   */
+  function xhrJson(method, url) {
+    return new Promise(function (resolve, reject) {
+      try {
+        var xhr = new XMLHttpRequest();
+        xhr.open(method, url, true);
+        xhr.timeout = 10000;
+        if (method === 'POST') {
+          xhr.setRequestHeader('Content-Type', 'application/json');
+        }
+        xhr.onreadystatechange = function () {
+          if (xhr.readyState !== 4) return;
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              resolve(JSON.parse(xhr.responseText || '{}'));
+            } catch (eParse) {
+              reject(eParse);
+            }
+          } else {
+            reject(new Error('HTTP ' + xhr.status));
+          }
+        };
+        xhr.onerror = function () { reject(new Error('XHR error')); };
+        xhr.ontimeout = function () { reject(new Error('XHR timeout')); };
+        xhr.send(method === 'POST' ? '{}' : null);
+      } catch (eXhr) {
+        reject(eXhr);
+      }
+    });
+  }
+
+  /**
+   * @param {string} method
+   * @param {string} url
+   * @returns {Promise<Object>}
+   */
+  function fetchJson(method, url) {
+    if (typeof fetch === 'function') {
+      var opts = { method: method, cache: 'no-store' };
+      if (method === 'POST') {
+        opts.headers = { 'Content-Type': 'application/json' };
+        opts.body = '{}';
+      }
+      return fetch(url, opts).then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      });
+    }
+    return xhrJson(method, url);
+  }
+
+  /**
+   * @param {Object} data
+   * @returns {string}
+   */
+  function tokenFromPayload(data) {
+    if (data && data.token) return data.token;
+    throw new Error('Token missing in response');
+  }
+
+  /**
+   * POST → GET → XHR，兼容 Chrome 与 OBS CEF。
+   * @param {string} targetRoomId
+   * @returns {Promise<string>}
+   */
   function fetchTokenWithFallback(targetRoomId) {
     var safeRoomId = String(targetRoomId || '').replace(/\D/g, '').slice(0, 6);
-    if (safeRoomId.length !== 6) safeRoomId = '666888';
+    if (safeRoomId.length !== 6) {
+      return Promise.reject(new Error('未提供有效 6 位房间号'));
+    }
 
     var primaryUrl = apiBase + '/api/get_token?roomId=' + safeRoomId;
 
-    return fetch(primaryUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
-    })
-      .then(function (res) {
-        if (res.ok) return res.json();
-        throw new Error('HTTP ' + res.status);
+    return fetchJson('POST', primaryUrl)
+      .then(tokenFromPayload)
+      .catch(function () {
+        return fetchJson('GET', primaryUrl).then(tokenFromPayload);
       })
-      .then(function (data) {
-        if (data && data.token) return data.token;
-        throw new Error('Token missing in response');
+      .catch(function () {
+        return xhrJson('POST', primaryUrl).then(tokenFromPayload);
+      })
+      .catch(function () {
+        return xhrJson('GET', primaryUrl).then(tokenFromPayload);
       });
   }
 
   function initWebSocket() {
+    if (!roomId || roomId.length !== 6) {
+      console.log('[OBS Overlay] 未配置有效房间号，等待通过专属链接或右键【交互】输入');
+      showStatus('⚠️ 未连接中控台：请右键来源选择【交互】输入房间码', 'error', false);
+      if (domCurrentRoomText) domCurrentRoomText.textContent = '未设置';
+      openRoomModal(true);
+      return;
+    }
+
     if (isMainConnecting) {
       console.log('[OBS Overlay] initWebSocket skipped: already connecting...');
       return;
@@ -609,7 +1196,7 @@
           mainReconnectAttempt = 0;
           mainLastRecvAt = Date.now();
           console.log('[OBS Overlay] Scoreboard WebSocket Connected to room', roomId);
-          showStatus('🟢 已成功连接中控台 (房间 ' + roomId + ')', 'connected', true);
+          showStatus('🟢 已连通房间 ' + roomId, 'connected', true);
 
           ws.send(JSON.stringify({
             type: 'BROADCAST_JOIN',
@@ -653,6 +1240,7 @@
       .catch(function (err) {
         console.error('[OBS Overlay] All token fetch attempts failed:', err);
         isMainConnecting = false;
+        showStatus('🔴 取 Token 失败，正在重试 (房间 ' + roomId + ')', 'error', false);
         scheduleMainReconnect(3000);
       });
   }
@@ -1017,6 +1605,14 @@
   var obsWsPort = urlParams.get('obsWsPort') || '4455';
   var replayAnimTimer = null;
   var replayClipStartedAt = 0;
+  var hasMediaStartedPlaying = false;
+  var actualPlaybackStartedAt = 0;
+  var lastReplayStartAt = 0;
+  var lastReplayTargetIdx = -1;
+  var replaySpeedParam = parseFloat(urlParams.get('replaySpeed') || urlParams.get('speed') || '0.66');
+  var detectedReplaySpeed = 0;
+  var lastPolledCursor = 0;
+  var lastPolledTime = 0;
 
   function formatFilePath(filePath) {
     if (!filePath || typeof filePath !== 'string') return '';
@@ -1278,9 +1874,9 @@
             // 捕获 OBS 原生媒体源播放结束事件
             else if (evtType === 'MediaInputPlaybackEnded') {
               var inputName = msg.d.eventData && msg.d.eventData.inputName;
-              var elapsed = Date.now() - (replayClipStartedAt || 0);
-              if (isReplayPlaying && elapsed > 1500) {
-                console.log('[OBS Overlay] OBS MediaInputPlaybackEnded event received after ' + elapsed + 'ms -> advanceOrStopReplay');
+              var elapsed = Date.now() - (actualPlaybackStartedAt || replayClipStartedAt || 0);
+              if (isReplayPlaying && inputName === obsMediaSourceName && elapsed > 1200) {
+                console.log('[OBS Overlay] OBS MediaInputPlaybackEnded event received for [' + inputName + '] after ' + elapsed + 'ms -> advanceOrStopReplay');
                 advanceOrStopReplay();
               }
             }
@@ -1326,35 +1922,60 @@
               var duration = resp.mediaDuration || 0;
               var cursor = resp.mediaCursor || 0;
               var state = String(resp.mediaState || '').toUpperCase();
-              var elapsed = Date.now() - (replayClipStartedAt || 0);
+              var now = Date.now();
 
-              // 持续记录捕获到的最大视频时长 (毫秒)
+              // 持续记录捕获到的最大视频文件时长 (毫秒)
               if (duration > 0 && duration > currentClipDuration) {
                 currentClipDuration = duration;
               }
 
-              // 播完多重高精度判定（播放超过 1.5 秒后生效）
-              if (isReplayPlaying && elapsed > 1500) {
+              // 当媒体源明确进入 PLAYING 状态或 cursor > 100ms 时，确认真正开始解码播放
+              if (!hasMediaStartedPlaying && (state === 'OBS_MEDIA_STATE_PLAYING' || cursor > 100)) {
+                hasMediaStartedPlaying = true;
+                actualPlaybackStartedAt = now;
+                console.log('[OBS Overlay] Media playback confirmed active at:', actualPlaybackStartedAt, 'state:', state, 'cursor:', cursor);
+              }
+
+              // 动态测量当前 OBS 实际播放倍速 (根据 cursor 进度增量与真实 wall-clock 时间增量换算)
+              if (cursor > 200 && lastPolledCursor > 0 && cursor > lastPolledCursor && lastPolledTime > 0) {
+                var deltaCursor = cursor - lastPolledCursor;
+                var deltaTime = now - lastPolledTime;
+                if (deltaTime > 150 && deltaTime < 1000 && deltaCursor > 0) {
+                  var measured = deltaCursor / deltaTime;
+                  if (measured >= 0.1 && measured <= 2.5) {
+                    detectedReplaySpeed = detectedReplaySpeed ? (detectedReplaySpeed * 0.7 + measured * 0.3) : measured;
+                  }
+                }
+              }
+              lastPolledCursor = cursor;
+              lastPolledTime = now;
+
+              var effectiveSpeed = detectedReplaySpeed || replaySpeedParam || 0.66;
+              var elapsedFromStart = actualPlaybackStartedAt ? (now - actualPlaybackStartedAt) : (now - replayClipStartedAt);
+              var expectedWallDuration = (currentClipDuration > 0 && effectiveSpeed > 0) ? Math.round(currentClipDuration / effectiveSpeed) : 0;
+
+              // 播完多重高精度判定
+              if (isReplayPlaying) {
                 var isEnded = false;
 
-                // 1. OBS 明确返回了停止、闲置或结束状态 (当 OBS 勾选了“播放结束时不显示任何内容”时，状态会直接变为 STOPPED 或 NONE)
-                if (state === 'OBS_MEDIA_STATE_ENDED' || state === 'OBS_MEDIA_STATE_STOPPED' || state === 'OBS_MEDIA_STATE_NONE') {
-                  console.log('[OBS Overlay] Replay clip finished via state:', state);
+                // 1. OBS 明确返回了停止、闲置或结束状态 (前提：必须已经正式开始播放过，防止加载中误判)
+                if (hasMediaStartedPlaying && (state === 'OBS_MEDIA_STATE_ENDED' || state === 'OBS_MEDIA_STATE_STOPPED' || state === 'OBS_MEDIA_STATE_NONE')) {
+                  console.log('[OBS Overlay] Replay clip finished via state after playback started:', state);
                   isEnded = true;
                 }
-                // 2. 播放进度 cursor 接近已记录的时长
-                else if (currentClipDuration > 0 && cursor >= currentClipDuration - 400) {
-                  console.log('[OBS Overlay] Replay clip finished via cursor:', cursor, '/', currentClipDuration);
+                // 2. 播放进度 cursor 接近已记录的文件时长 (文件内部时间戳，不受播放倍速影响)
+                else if (hasMediaStartedPlaying && currentClipDuration > 0 && cursor >= currentClipDuration - 300) {
+                  console.log('[OBS Overlay] Replay clip finished via file cursor:', cursor, '/', currentClipDuration);
                   isEnded = true;
                 }
-                // 3. 实际播放经过时间超过了捕获到的视频时长
-                else if (currentClipDuration > 0 && elapsed >= currentClipDuration + 300) {
-                  console.log('[OBS Overlay] Replay clip finished via elapsed time:', elapsed, '>=', currentClipDuration);
+                // 3. 真实经过时间超过按倍速换算后的播放时长（给予 2.5 秒缓冲，避免提前掐断慢放）
+                else if (hasMediaStartedPlaying && expectedWallDuration > 0 && elapsedFromStart >= expectedWallDuration + 2500) {
+                  console.log('[OBS Overlay] Replay clip finished via converted wall duration:', elapsedFromStart, '>=', expectedWallDuration + 2500, '(file duration:', currentClipDuration, 'speed:', effectiveSpeed.toFixed(2), ')');
                   isEnded = true;
                 }
-                // 4. 超时安全强制兜底 (单段高光最长 16 秒自动退场，防止由于任何原因卡死)
-                else if (elapsed >= 16000) {
-                  console.log('[OBS Overlay] Replay clip finished via max safety timeout (16s)');
+                // 4. 超时安全强制兜底 (设为换算时长 + 15s 或 120 秒，杜绝硬切)
+                else if (elapsedFromStart >= (expectedWallDuration > 0 ? expectedWallDuration + 15000 : 120000)) {
+                  console.log('[OBS Overlay] Replay clip finished via max safety timeout');
                   isEnded = true;
                 }
 
@@ -1431,8 +2052,7 @@
   // 转场 Wipe 动效与视频顺序播放控制器
   function startHighlightReplay(opt) {
     opt = opt || {};
-    isReplayPlaying = true;
-    isPlayingSingleClipOnly = true;
+    var now = Date.now();
 
     // 1. 强制按时间倒序重新整理当前全部有效切片
     var sortedQueue = getSortedHighlightQueue();
@@ -1473,6 +2093,17 @@
     if (targetIdx < 0) targetIdx = 0;
     if (targetIdx >= sortedQueue.length) targetIdx = sortedQueue.length - 1;
 
+    // 3. 防抖与去重：如果 2.5 秒内收到相同的播放请求，且当前已经在播放该片段，予以忽略（防止连击打断 OBS 播放）
+    if (isReplayPlaying && lastReplayTargetIdx === targetIdx && (now - lastReplayStartAt) < 2500) {
+      console.log('[OBS Overlay] Ignored duplicate START_HIGHLIGHT_REPLAY command for targetIdx:', targetIdx, 'within 2500ms cooldown');
+      return;
+    }
+
+    lastReplayStartAt = now;
+    lastReplayTargetIdx = targetIdx;
+    isReplayPlaying = true;
+    isPlayingSingleClipOnly = true;
+
     currentReplayIndex = targetIdx;
     var targetFile = sortedQueue[currentReplayIndex];
     var targetName = decodeURIComponent(String(targetFile).split('/').pop().split('\\').pop());
@@ -1482,7 +2113,7 @@
       dbgLog('▶ 启动高光切片播放 [第 ' + (currentReplayIndex + 1) + ' 段 / 共 ' + sortedQueue.length + ' 段]: ' + targetName, '#38bdf8');
     }
 
-    // 3. 强制重置并触发 Wipe 入场转场遮罩（蓝色 Stinger + "精彩回放 HIGHLIGHT REPLAY"）
+    // 4. 强制重置并触发 Wipe 入场转场遮罩（蓝色 Stinger + "精彩回放 HIGHLIGHT REPLAY"）
     if (domReplayMask) {
       domReplayMask.className = 'replay-mask replay-mask--hidden';
       void domReplayMask.offsetWidth; // 强制 DOM 重绘，确保 CSS keyframes 每次百分百生效
@@ -1517,6 +2148,8 @@
     }
     currentReplayIndex = idx;
     replayClipStartedAt = Date.now();
+    hasMediaStartedPlaying = false;
+    actualPlaybackStartedAt = 0;
     currentClipDuration = 0;
     var targetSrc = highlightQueue[idx];
     var fileName = decodeURIComponent(String(targetSrc).split('/').pop().split('\\').pop());
@@ -1559,6 +2192,10 @@
       return;
     }
     isReplayPlaying = false;
+    hasMediaStartedPlaying = false;
+    actualPlaybackStartedAt = 0;
+    lastReplayTargetIdx = -1;
+
     if (replayPollTimer) {
       clearInterval(replayPollTimer);
       replayPollTimer = null;
@@ -1591,54 +2228,304 @@
     }, 920);
   }
 
-  // 房间号一键设置与修改 Modal 逻辑
+  // ──────────────────────────────────────────────
+  // 房间号一键设置/修改 & 图层显隐管理逻辑
+  // ──────────────────────────────────────────────
   var domRoomEditBtn = document.getElementById('ws-room-edit-btn');
   var domCurrentRoomText = document.getElementById('ws-current-room-text');
   var domRoomModal = document.getElementById('room-setting-modal');
   var domRoomInput = document.getElementById('room-modal-input');
   var domRoomSubmitBtn = document.getElementById('room-modal-submit-btn');
   var domRoomCloseBtn = document.getElementById('room-modal-close');
+  var domModalErrTip = document.getElementById('modal-err-tip');
+
+  var domBtnToggleCopyright = document.getElementById('btn-toggle-copyright');
+  var domIconToggleCopyright = document.getElementById('icon-toggle-copyright');
+  var domTextToggleCopyright = document.getElementById('text-toggle-copyright');
+
+  var domBtnToggleLive = document.getElementById('btn-toggle-live');
+  var domIconToggleLive = document.getElementById('icon-toggle-live');
+  var domTextToggleLive = document.getElementById('text-toggle-live');
+
+  var domBtnResetLayerPos = document.getElementById('btn-reset-layer-pos');
 
   if (domCurrentRoomText) {
-    domCurrentRoomText.textContent = roomId;
+    domCurrentRoomText.textContent = roomId || '未设置';
   }
   if (domRoomInput) {
-    domRoomInput.value = roomId;
+    domRoomInput.value = roomId || '';
   }
 
-  function openRoomModal() {
+  function showModalError(msg) {
+    if (domModalErrTip) {
+      domModalErrTip.textContent = msg || '';
+      domModalErrTip.style.display = msg ? 'block' : 'none';
+    }
+  }
+
+  /**
+   * 刷新面板上的图层显隐按钮状态
+   */
+  function updateLayerControlUI() {
+    if (domCopyrightBadge && domBtnToggleCopyright) {
+      var isCopyHidden = (domCopyrightBadge.style.display === 'none');
+      if (domIconToggleCopyright) domIconToggleCopyright.textContent = isCopyHidden ? '🚫' : '📷';
+      if (domTextToggleCopyright) domTextToggleCopyright.textContent = isCopyHidden ? '版权说明: 已隐藏 [点此恢复]' : '版权说明: 显示中';
+      if (isCopyHidden) {
+        domBtnToggleCopyright.classList.add('layer-hidden');
+      } else {
+        domBtnToggleCopyright.classList.remove('layer-hidden');
+      }
+    }
+
+    if (domDynamicIslandBadge && domBtnToggleLive) {
+      var isLiveHidden = (domDynamicIslandBadge.style.display === 'none');
+      if (domIconToggleLive) domIconToggleLive.textContent = isLiveHidden ? '🚫' : '🔴';
+      if (domTextToggleLive) domTextToggleLive.textContent = isLiveHidden ? 'LIVE角标: 已隐藏 [点此恢复]' : 'LIVE角标: 显示中';
+      if (isLiveHidden) {
+        domBtnToggleLive.classList.add('layer-hidden');
+      } else {
+        domBtnToggleLive.classList.remove('layer-hidden');
+      }
+    }
+  }
+
+  /**
+   * 恢复或显隐现场实拍版权声明说明
+   * @param {boolean} [forceShow]
+   */
+  window.__toggleCopyrightBadge = function (forceShow) {
+    if (!domCopyrightBadge) return;
+    var isHidden = (domCopyrightBadge.style.display === 'none');
+    var shouldShow = (forceShow !== undefined) ? !!forceShow : isHidden;
+    domCopyrightBadge.style.display = shouldShow ? 'flex' : 'none';
+
+    try {
+      var saved = localStorage.getItem('obs_copyright_badge_state');
+      var state = saved ? JSON.parse(saved) : {};
+      state.hidden = !shouldShow;
+      localStorage.setItem('obs_copyright_badge_state', JSON.stringify(state));
+    } catch (e) {}
+
+    updateLayerControlUI();
+    showStatus(shouldShow ? '📷 版权说明: 已恢复显示' : '📷 版权说明: 已隐藏', 'connected', true);
+  };
+
+  /**
+   * 恢复或显隐 LIVE 直播纵向角标
+   * @param {boolean} [forceShow]
+   */
+  window.__toggleLiveBadge = function (forceShow) {
+    if (!domDynamicIslandBadge) return;
+    var isHidden = (domDynamicIslandBadge.style.display === 'none');
+    var shouldShow = (forceShow !== undefined) ? !!forceShow : isHidden;
+    domDynamicIslandBadge.style.display = shouldShow ? 'flex' : 'none';
+
+    try {
+      var saved = localStorage.getItem('obs_island_uniform_state');
+      var state = saved ? JSON.parse(saved) : {};
+      state.hidden = !shouldShow;
+      localStorage.setItem('obs_island_uniform_state', JSON.stringify(state));
+    } catch (e) {}
+
+    updateLayerControlUI();
+    showStatus(shouldShow ? '🔴 LIVE角标: 已恢复显示' : '🔴 LIVE角标: 已隐藏', 'connected', true);
+  };
+
+  /**
+   * 一键将所有角标恢复为默认位置与默认可见状态
+   */
+  window.__resetAllLayerPositions = function () {
+    try {
+      localStorage.removeItem('obs_copyright_badge_state');
+      localStorage.removeItem('obs_island_uniform_state');
+    } catch (e) {}
+
+    if (domCopyrightBadge) {
+      domCopyrightBadge.style.display = 'flex';
+      domCopyrightBadge.style.left = 'auto';
+      domCopyrightBadge.style.right = '24px';
+      domCopyrightBadge.style.bottom = '24px';
+      domCopyrightBadge.style.top = 'auto';
+      domCopyrightBadge.style.transform = 'scale(1.0)';
+    }
+
+    if (domDynamicIslandBadge) {
+      domDynamicIslandBadge.style.display = 'flex';
+      domDynamicIslandBadge.style.left = '0px';
+      domDynamicIslandBadge.style.top = '0px';
+      domDynamicIslandBadge.style.transform = 'scale(1.0)';
+    }
+
+    updateLayerControlUI();
+    showStatus('🔄 所有角标已恢复默认位置与显示', 'connected', true);
+  };
+
+  var domModalCurrentRoomText = document.getElementById('modal-current-room-text');
+
+  function openRoomModal(isMandatory) {
     if (domRoomModal) domRoomModal.classList.remove('room-modal--hidden');
-    if (domRoomInput) domRoomInput.focus();
+    showModalError('');
+    updateLayerControlUI();
+    if (domModalCurrentRoomText) {
+      domModalCurrentRoomText.textContent = roomId ? (roomId + ' (已连接)') : '未设置';
+    }
+    var domDiagWsStatus = document.getElementById('diag-ws-status');
+    var domDiagObsStatus = document.getElementById('diag-obs-ws-status');
+    if (domDiagWsStatus) {
+      if (mainWs && mainWs.readyState === WebSocket.OPEN) {
+        domDiagWsStatus.textContent = '🟢 正常连通 (房间: ' + roomId + ')';
+        domDiagWsStatus.style.color = '#4ade80';
+      } else {
+        domDiagWsStatus.textContent = '🔴 未连接 (房间: ' + (roomId || '未设置') + ')';
+        domDiagWsStatus.style.color = '#f87171';
+      }
+    }
+    if (domDiagObsStatus) {
+      if (obsNativeWs && obsNativeWs.readyState === WebSocket.OPEN) {
+        domDiagObsStatus.textContent = '🟢 正常连通 (端口 ' + obsWsPort + ')';
+        domDiagObsStatus.style.color = '#4ade80';
+      } else {
+        domDiagObsStatus.textContent = '🔴 未连接 (端口 ' + obsWsPort + '，需在 OBS【工具->WebSocket服务器设置】开启)';
+        domDiagObsStatus.style.color = '#f87171';
+      }
+    }
+    if (domRoomCloseBtn) {
+      domRoomCloseBtn.style.display = (isMandatory && (!roomId || roomId.length !== 6)) ? 'none' : 'block';
+    }
+    if (domRoomInput) {
+      domRoomInput.value = roomId || '';
+      setTimeout(function () {
+        try {
+          domRoomInput.focus();
+          domRoomInput.select();
+        } catch (e) {}
+      }, 50);
+    }
   }
 
   function closeRoomModal() {
-    if (domRoomModal) domRoomModal.classList.add('room-modal--hidden');
+    if (roomId && roomId.length === 6) {
+      if (domRoomModal) domRoomModal.classList.add('room-modal--hidden');
+      showModalError('');
+    } else {
+      showModalError('⚠️ 请先输入 6 位房间码并点击连接');
+    }
   }
 
   function switchRoomId(newId) {
     var digits = String(newId || '').replace(/\D/g, '').slice(0, 6);
     if (digits.length !== 6) {
-      alert('请输入 6 位纯数字房间号！');
+      showModalError('⚠️ 请输入完整的 6 位纯数字房间码！');
+      if (domRoomInput) domRoomInput.focus();
       return;
     }
+    showModalError('');
     roomId = digits;
     try { localStorage.setItem('obs_room_id', roomId); } catch (e) {}
     if (domCurrentRoomText) domCurrentRoomText.textContent = roomId;
-    closeRoomModal();
+    if (domModalCurrentRoomText) domModalCurrentRoomText.textContent = roomId + ' (正在连接)';
+    var domDiagWsStatus = document.getElementById('diag-ws-status');
+    if (domDiagWsStatus) {
+      domDiagWsStatus.textContent = '⏳ 正在连接房间 ' + roomId + '...';
+      domDiagWsStatus.style.color = '#38bdf8';
+    }
+    if (domRoomInput) domRoomInput.value = roomId;
+    if (domRoomModal) domRoomModal.classList.add('room-modal--hidden');
 
     console.log('[OBS Overlay] Switched roomId to:', roomId);
-    if (statusText) statusText.textContent = '🔑 正在切换至房间 ' + roomId + '...';
-    // 重新连接主记分 WebSocket
+    showStatus('🔑 正在连接至房间 ' + roomId + '...', '', false);
+    
+    // 强制重置连接状态，防止被旧连接锁阻断
+    isMainConnecting = false;
+    if (mainWs) {
+      try {
+        mainWs.onclose = null;
+        mainWs.close();
+      } catch (e) {}
+      mainWs = null;
+    }
+    // 重新连接主记分 WebSocket 并启动看门狗
     initWebSocket();
+    startMainWatchdog();
   }
 
-  if (domRoomEditBtn) domRoomEditBtn.addEventListener('click', openRoomModal);
+  if (domRoomEditBtn) {
+    domRoomEditBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      openRoomModal(false);
+    });
+  }
   if (domRoomCloseBtn) domRoomCloseBtn.addEventListener('click', closeRoomModal);
   if (domRoomSubmitBtn) {
     domRoomSubmitBtn.addEventListener('click', function () {
       if (domRoomInput) switchRoomId(domRoomInput.value);
     });
   }
+  if (domRoomInput) {
+    domRoomInput.addEventListener('input', function () {
+      showModalError('');
+    });
+    domRoomInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        switchRoomId(domRoomInput.value);
+      }
+    });
+  }
+
+  // 双击顶部记分牌也可在 OBS 交互中唤出设置面板
+  if (domScoreboard) {
+    domScoreboard.addEventListener('dblclick', function () {
+      openRoomModal(false);
+    });
+  }
+
+  // 图层控制按钮事件
+  if (domBtnToggleCopyright) {
+    domBtnToggleCopyright.addEventListener('click', function () {
+      window.__toggleCopyrightBadge();
+    });
+  }
+  if (domBtnToggleLive) {
+    domBtnToggleLive.addEventListener('click', function () {
+      window.__toggleLiveBadge();
+    });
+  }
+  if (domBtnResetLayerPos) {
+    domBtnResetLayerPos.addEventListener('click', function () {
+      window.__resetAllLayerPositions();
+    });
+  }
+
+  // 点击遮罩空白处关闭设置面板 (若已连接房间)
+  if (domRoomModal) {
+    domRoomModal.addEventListener('click', function (e) {
+      if (e.target === domRoomModal) {
+        closeRoomModal();
+      }
+    });
+  }
+
+  // 快捷键支持：R (换房间/开设置), C (显隐版权说明), L (显隐LIVE角标)
+  window.addEventListener('keydown', function (e) {
+    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
+      return;
+    }
+    var k = (e.key || '').toUpperCase();
+    if (k === 'R') {
+      if (domRoomModal) {
+        if (domRoomModal.classList.contains('room-modal--hidden')) {
+          openRoomModal(false);
+        } else {
+          closeRoomModal();
+        }
+      }
+    } else if (k === 'C') {
+      window.__toggleCopyrightBadge();
+    } else if (k === 'L') {
+      window.__toggleLiveBadge();
+    }
+  });
 
   // ──────────────────────────────────────────────
   // 🛠️ 网页内置可视化实时调试面板逻辑 (按键盘 D 键或加 ?debug=1 开启)
@@ -1761,9 +2648,18 @@
   applyTeamContrastStyle(domHomeName, domHomeScore, currentHomeColor);
   applyTeamContrastStyle(domAwayName, domAwayScore, currentAwayColor);
 
-  // 初始化主记分 WebSocket 与看门狗
-  initWebSocket();
-  startMainWatchdog();
+  // 初始化主记分 WebSocket 与看门狗 (优先 URL / 缓存，无则向导输入)
+  if (domCurrentRoomText) domCurrentRoomText.textContent = roomId || '未设置';
+  if (domRoomInput) domRoomInput.value = roomId || '';
+
+  if (roomId && roomId.length === 6) {
+    if (domRoomModal) domRoomModal.classList.add('room-modal--hidden');
+    initWebSocket();
+    startMainWatchdog();
+  } else {
+    // 未带 URL 房间码且无本地缓存：展示向导面板引导用户输入，绝不盲连公共房间防串台
+    openRoomModal(true);
+  }
   startTimeDeviceWatchdog();
 
   // 支持 URL 参数直连时间房间 (?timeRoom=xxxxxx)
