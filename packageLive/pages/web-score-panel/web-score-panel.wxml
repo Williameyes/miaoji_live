@@ -11,33 +11,52 @@
     </view>
     <view class="ws-status-tag {{wsConnected ? 'connected' : ''}}" bindtap="onTapWsStatus">
       <view class="status-dot"></view>
-      <text>{{wsStatusText}}</text>
+      <text>{{wsConnected ? ('🟢 房间 ' + roomId) : ('🔴 未连接')}}</text>
     </view>
   </view>
 
-  <!-- 1. 场次直接切换选择器 -->
-  <view class="card match-selector-card">
-    <view class="card-header flex-between">
-      <view class="header-left">
-        <text class="card-icon">🏀</text>
-        <text class="card-title">当前记分场次</text>
-      </view>
-      <picker 
-        bindchange="onMatchPickerChange" 
-        value="{{selectedMatchIndex}}" 
-        range="{{matchList}}" 
-        range-key="displayTitle"
-      >
-        <view class="match-picker-btn" hover-class="btn-hover">
-          <text class="picker-label">切换场次</text>
-          <text class="picker-arrow">▾</text>
-        </view>
-      </picker>
+  <!-- 分段选项卡 (Segmented Tab Bar) -->
+  <view class="tab-nav-bar">
+    <view 
+      class="tab-item {{activeTab === 'scoring' ? 'active' : ''}}" 
+      bindtap="onSwitchTab" 
+      data-tab="scoring"
+    >
+      <text class="tab-icon">🏀</text>
+      <text class="tab-label">赛场记分</text>
     </view>
+    <view 
+      class="tab-item {{activeTab === 'settings' ? 'active' : ''}}" 
+      bindtap="onSwitchTab" 
+      data-tab="settings"
+    >
+      <text class="tab-icon">⚙️</text>
+      <text class="tab-label">推流与设置</text>
+    </view>
+  </view>
 
-    <!-- 当前场次对阵卡片预览 -->
-    <view class="match-preview-box">
-      <text class="match-title-tag">{{matchTitle || '常规赛'}}</text>
+  <!-- ==================== TAB 1: 赛场记分 ==================== -->
+  <view class="tab-content" wx:if="{{activeTab === 'scoring'}}">
+    <!-- 1. 当前场次与对阵选择条 (紧凑化设计) -->
+    <view class="card match-selector-card">
+      <view class="card-header flex-between">
+        <view class="header-left">
+          <text class="card-icon">🏀</text>
+          <text class="card-title">{{matchTitle || '常规赛'}}</text>
+        </view>
+        <picker 
+          bindchange="onMatchPickerChange" 
+          value="{{selectedMatchIndex}}" 
+          range="{{matchList}}" 
+          range-key="displayTitle"
+        >
+          <view class="match-picker-btn" hover-class="btn-hover">
+            <text class="picker-label">切换场次</text>
+            <text class="picker-arrow">▾</text>
+          </view>
+        </picker>
+      </view>
+
       <view class="teams-preview-row">
         <view class="team-item left">
           <view class="color-dot" style="background-color: {{teamA.color || '#FF2D55'}}"></view>
@@ -50,423 +69,326 @@
         </view>
       </view>
     </view>
-  </view>
 
-  <!-- 2. 【核心】开始记分控制与同步开关 -->
-  <view class="card start-action-card">
-    <button 
-      class="start-score-btn {{isScoringStarted ? 'active' : ''}}" 
-      bindtap="onToggleStartScore"
-      hover-class="btn-hover"
-    >
-      <text class="start-btn-icon">{{isScoringStarted ? '🟢' : '▶'}}</text>
-      <text class="start-btn-text">{{isScoringStarted ? '记分同步中 (点击重发数据包)' : '开始记分并同步至网页'}}</text>
-    </button>
-    <text class="start-tip">
-      {{isScoringStarted ? '✅ 已连通网页记分牌，点击加分将实时联动直播画面' : '💡 点击【开始记分】将队伍名称、颜色与当前比分瞬间推送到 OBS 记分牌'}}
-    </text>
-  </view>
-
-  <!-- 3. OBS 专属主播固定房间链接卡片 -->
-  <view class="card obs-link-card">
-    <view class="card-header flex-between">
-      <view class="header-left">
-        <text class="card-icon">🌐</text>
-        <text class="card-title">主播固定 OBS 网页素材链接</text>
-      </view>
-      <text class="fixed-tag">固定不换链接</text>
-    </view>
-    <view class="room-id-row" style="display: flex; justify-content: space-between; align-items: center;">
-      <view bindtap="onCopyRoomCode" hover-class="btn-hover" style="cursor: pointer;" title="点击复制房间码">
-        <text class="label">专属房间号：</text>
-        <text class="room-id-code">{{roomId || '313251'}}</text>
-        <text style="font-size: 20rpx; color: #00f0ff; margin-left: 8rpx;">[点击复制]</text>
-      </view>
-      <view style="display: flex; gap: 12rpx;">
-        <button class="sub-copy-btn" style="margin: 0; padding: 0 16rpx; height: 50rpx; line-height: 50rpx; font-size: 22rpx; border-radius: 8rpx;" bindtap="onEditRoomId" hover-class="btn-hover">
-          <text>✏️ 修改</text>
-        </button>
-        <button class="sub-copy-btn" style="margin: 0; padding: 0 16rpx; height: 50rpx; line-height: 50rpx; font-size: 22rpx; border-radius: 8rpx;" bindtap="onGenerateNewRoomId" hover-class="btn-hover">
-          <text>🎲 换专属号</text>
-        </button>
-      </view>
-    </view>
-    <!-- 快捷房间切换条 -->
-    <view style="display: flex; gap: 12rpx; margin: 10rpx 0 16rpx; align-items: center;">
-      <text style="font-size: 20rpx; color: #8fa3b0;">快捷核对/切换：</text>
-      <button class="sub-copy-btn" style="margin: 0; padding: 0 14rpx; height: 44rpx; line-height: 44rpx; font-size: 20rpx; border-radius: 8rpx; background: {{roomId === '313251' ? 'rgba(0, 240, 255, 0.25)' : 'rgba(255,255,255,0.08)'}}; color: {{roomId === '313251' ? '#00f0ff' : '#cbd5e1'}};" bindtap="onTapWsStatus">
-        <text>⚡ 房间 313251</text>
-      </button>
-      <button class="sub-copy-btn" style="margin: 0; padding: 0 14rpx; height: 44rpx; line-height: 44rpx; font-size: 20rpx; border-radius: 8rpx; background: {{roomId === '178884' ? 'rgba(0, 240, 255, 0.25)' : 'rgba(255,255,255,0.08)'}}; color: {{roomId === '178884' ? '#00f0ff' : '#cbd5e1'}};" bindtap="onTapWsStatus">
-        <text>⚡ 房间 178884</text>
-      </button>
-    </view>
-    <view class="url-box" bindtap="onCopyCleanObsUrl" hover-class="btn-hover" style="cursor: pointer;">
-      <text class="url-text">https://api.mx.server.ndcoo.com/obs-overlay/index.html</text>
-    </view>
-    <view class="obs-copy-btns-group">
-      <button class="btn-primary copy-btn" bindtap="onCopyRoomCode" hover-class="btn-hover" style="background: linear-gradient(135deg, #00f0ff 0%, #007aff 100%);">
-        <text class="btn-icon">📋</text>
-        <text>一键复制 6 位房间码 ({{roomId || '313251'}})</text>
-      </button>
-      <button class="btn-primary copy-btn" bindtap="onTestPingOBS" hover-class="btn-hover" style="margin-top: 14rpx; background: rgba(0, 240, 255, 0.12); border: 1rpx solid #00f0ff; color: #00f0ff;">
-        <text class="btn-icon">🚀</text>
-        <text>测试双端互通 (即时推送比分+横幅到 OBS)</text>
-      </button>
-      <view class="sub-copy-row">
-        <button class="sub-copy-btn" bindtap="onCopyCleanObsUrl" hover-class="btn-hover">
-          <text>🌐 复制 OBS 纯网页链接</text>
-        </button>
-        <button class="sub-copy-btn" bindtap="onCopyObsUrl" hover-class="btn-hover">
-          <text>🔗 复制带参数直连链接</text>
-        </button>
-      </view>
-    </view>
-    <text class="obs-tip">💡 确保两端房间一致：OBS 页面按键盘【R】键可查看当前房间号。点击上方【测试双端互通】可一键验证指令下发！</text>
-  </view>
-
-  <!-- 3.1 赛场时间切图设备联动卡片 (输入采集端房间号控制) -->
-  <view class="card time-sync-card">
-    <view class="card-header flex-between">
-      <view class="header-left">
-        <text class="card-icon">⏱️</text>
-        <text class="card-title">赛场时间设备联动 (大表切图)</text>
-      </view>
-      <view class="ws-status-tag {{isTimeDeviceConnected ? 'connected' : ''}}" style="padding: 4rpx 14rpx; font-size: 20rpx;">
-        <view class="status-dot"></view>
-        <text>{{isTimeDeviceConnected ? '已连通 (' + connectedTimeRoomId + ')' : '未连接'}}</text>
-      </view>
-    </view>
-
-    <!-- 采集端房间号输入区 -->
-    <view class="time-input-row">
-      <input 
-        class="time-room-input {{isTimeDeviceConnected ? 'input--disabled' : ''}}" 
-        type="number" 
-        maxlength="6" 
-        placeholder="输入采集手机的 6 位房间码 (如 123456)" 
-        value="{{timeDeviceRoomId}}"
-        disabled="{{isTimeDeviceConnected}}"
-        bindinput="onTimeDeviceRoomInput"
-      />
-    </view>
-
-    <!-- 操作按钮组 -->
-    <view class="time-action-btns-row" style="margin-top: 16rpx;">
-      <button 
-        wx:if="{{!isTimeDeviceConnected}}"
-        class="btn-primary time-connect-btn" 
-        bindtap="onConnectTimeDevice" 
-        hover-class="btn-hover"
+    <!-- 2. 主客队比分控板 (置顶黄金操作区) -->
+    <view class="score-control-section">
+      <!-- 主队控板 -->
+      <view 
+        class="team-control-card home-card"
+        style="background: {{teamA.color || '#FF2D55'}}; color: {{teamA.textColor || '#FFFFFF'}}; box-shadow: 0 8rpx 24rpx {{teamA.color || '#FF2D55'}}40;"
+        bindlongpress="onOpenColorPicker"
+        data-target="teamA"
       >
-        <text class="btn-icon">🔗</text>
-        <text>连接时间设备并下发给网页端</text>
-      </button>
-
-      <button 
-        wx:else
-        class="btn-primary time-disconnect-btn" 
-        bindtap="onDisconnectTimeDevice" 
-        hover-class="btn-hover"
-      >
-        <text class="btn-icon">🔌</text>
-        <text>断开时间设备 (通知网页端撤下)</text>
-      </button>
-    </view>
-
-    <text class="obs-tip">💡 联动说明：在拍摄大表的手机上开启【时间切图采集】，在此输入该手机显示的 6 位码并点击【连接】，网页记分牌就会自动连接该房间并展示时间切图！点击【断开】可随时撤下时间容器。</text>
-  </view>
-
-  <!-- 3.2 赛场高光回放控制卡片 (下发指令控制网页端高光回放) -->
-  <view class="card highlight-replay-card">
-    <view class="card-header flex-between">
-      <view class="header-left">
-        <text class="card-icon">🎬</text>
-        <text class="card-title">赛场高光回放控制</text>
-      </view>
-      <view class="ws-status-tag {{isHighlightReplaying ? 'connected' : ''}}" style="padding: 4rpx 14rpx; font-size: 20rpx;">
-        <view class="status-dot"></view>
-        <text>{{isHighlightReplaying ? '高光回放中' : '实时直播中'}}</text>
-      </view>
-    </view>
-
-    <!-- 操作按钮组 -->
-    <view class="time-action-btns-row" style="margin-top: 16rpx; flex-direction: column; gap: 12rpx;">
-      <!-- 1. 触发 OBS 保存高光切片 -->
-      <button 
-        class="sub-copy-btn" 
-        style="width: 100%; border: 1rpx solid rgba(0, 240, 255, 0.4); background: rgba(0, 240, 255, 0.08); color: #00f0ff; height: 76rpx; line-height: 76rpx; font-weight: bold; border-radius: 12rpx; opacity: {{isSaveOperating ? 0.6 : 1}};"
-        bindtap="onTriggerSaveHighlight" 
-        disabled="{{isSaveOperating}}"
-        hover-class="btn-hover"
-      >
-        <text class="btn-icon">💾</text>
-        <text> {{isSaveOperating ? '正在触发保存...' : '触发 OBS 保存精彩高光片段 (远程保存)'}}</text>
-      </button>
-
-      <!-- 2. 回放进行中：一键主动中断并返回直播 -->
-      <button 
-        wx:if="{{isHighlightReplaying}}"
-        class="btn-primary highlight-stop-btn" 
-        style="width: 100%; margin-top: 0; background: linear-gradient(135deg, #ef4444, #dc2626);"
-        bindtap="onStopHighlightReplay" 
-        hover-class="btn-hover"
-      >
-        <text class="btn-icon">📺</text>
-        <text>矢量切回直播画面 (红色 Wipe)</text>
-      </button>
-
-      <!-- 3. 历史高光切片点播列表 (点击任意一段精准点播) -->
-      <view style="margin-top: 8rpx; background: rgba(0,0,0,0.25); border-radius: 12rpx; padding: 14rpx;">
-        <view style="font-size: 22rpx; color: #8fa3b0; margin-bottom: 12rpx; display: flex; justify-content: space-between; align-items: center;">
-          <text style="font-weight: bold; color: #cbd5e1;">🎬 本场高光列表 (点击直接点播)：</text>
-          <view style="display: flex; align-items: center; gap: 16rpx;">
-            <text style="color: #00f0ff; font-weight: bold;">共 {{savedHighlightClips ? savedHighlightClips.length : 0}} 段</text>
-            <text wx:if="{{savedHighlightClips && savedHighlightClips.length > 0}}" style="color: #f87171; font-size: 22rpx; text-decoration: underline; padding: 4rpx 8rpx;" bindtap="onClearHighlightClips">清空</text>
+        <view class="team-card-header">
+          <view class="team-header-info">
+            <view class="color-indicator-dot" style="background: {{teamA.textColor || '#FFFFFF'}};"></view>
+            <text class="team-title" style="color: {{teamA.textColor || '#FFFFFF'}};">{{teamA.name || '主队'}}</text>
+          </view>
+          <view 
+            class="color-edit-tag" 
+            bindtap="onOpenColorPicker" 
+            data-target="teamA"
+            style="background: rgba(255,255,255,0.22); color: {{teamA.textColor || '#FFFFFF'}};"
+          >
+            🎨 改球衣
           </view>
         </view>
+
+        <view 
+          class="score-display" 
+          style="color: {{teamA.textColor || '#FFFFFF'}};"
+          bindlongpress="onOpenColorPicker"
+          data-target="teamA"
+        >
+          {{teamA.score}}
+        </view>
+
+        <view class="score-btns-grid">
+          <button class="score-btn" style="color: {{teamA.textColor || '#FFFFFF'}};" bindtap="onScoreChange" data-target="teamA" data-delta="1" hover-class="btn-hover">+1</button>
+          <button class="score-btn" style="color: {{teamA.textColor || '#FFFFFF'}};" bindtap="onScoreChange" data-target="teamA" data-delta="2" hover-class="btn-hover">+2</button>
+          <button class="score-btn" style="color: {{teamA.textColor || '#FFFFFF'}};" bindtap="onScoreChange" data-target="teamA" data-delta="3" hover-class="btn-hover">+3</button>
+          <button class="score-btn btn-sub" style="color: {{teamA.textColor || '#FFFFFF'}};" bindtap="onScoreChange" data-target="teamA" data-delta="-1" hover-class="btn-hover">-1</button>
+        </view>
+      </view>
+
+      <!-- 客队控板 -->
+      <view 
+        class="team-control-card away-card"
+        style="background: {{teamB.color || '#007AFF'}}; color: {{teamB.textColor || '#FFFFFF'}}; box-shadow: 0 8rpx 24rpx {{teamB.color || '#007AFF'}}40;"
+        bindlongpress="onOpenColorPicker"
+        data-target="teamB"
+      >
+        <view class="team-card-header">
+          <view class="team-header-info">
+            <view class="color-indicator-dot" style="background: {{teamB.textColor || '#FFFFFF'}};"></view>
+            <text class="team-title" style="color: {{teamB.textColor || '#FFFFFF'}};">{{teamB.name || '客队'}}</text>
+          </view>
+          <view 
+            class="color-edit-tag" 
+            bindtap="onOpenColorPicker" 
+            data-target="teamB"
+            style="background: rgba(255,255,255,0.22); color: {{teamB.textColor || '#FFFFFF'}};"
+          >
+            🎨 改球衣
+          </view>
+        </view>
+
+        <view 
+          class="score-display" 
+          style="color: {{teamB.textColor || '#FFFFFF'}};"
+          bindlongpress="onOpenColorPicker"
+          data-target="teamB"
+        >
+          {{teamB.score}}
+        </view>
+
+        <view class="score-btns-grid">
+          <button class="score-btn" style="color: {{teamB.textColor || '#FFFFFF'}};" bindtap="onScoreChange" data-target="teamB" data-delta="1" hover-class="btn-hover">+1</button>
+          <button class="score-btn" style="color: {{teamB.textColor || '#FFFFFF'}};" bindtap="onScoreChange" data-target="teamB" data-delta="2" hover-class="btn-hover">+2</button>
+          <button class="score-btn" style="color: {{teamB.textColor || '#FFFFFF'}};" bindtap="onScoreChange" data-target="teamB" data-delta="3" hover-class="btn-hover">+3</button>
+          <button class="score-btn btn-sub" style="color: {{teamB.textColor || '#FFFFFF'}};" bindtap="onScoreChange" data-target="teamB" data-delta="-1" hover-class="btn-hover">-1</button>
+        </view>
+      </view>
+    </view>
+
+    <!-- 3. 节次控制胶囊栏 -->
+    <view class="card auxiliary-card">
+      <view class="card-header">
+        <text class="card-icon">⏱️</text>
+        <text class="card-title">节次控制</text>
+      </view>
+      <view class="period-pills-grid">
+        <view 
+          class="period-pill {{period === item.val ? 'active' : ''}} {{item.val === 6 ? 'finished-pill' : ''}}" 
+          wx:for="{{periodList}}" 
+          wx:key="val" 
+          bindtap="onSelectPeriod" 
+          data-val="{{item.val}}"
+        >
+          {{item.label}}
+        </view>
+      </view>
+    </view>
+
+    <!-- 4. 赛场高光回放控制 -->
+    <view class="card highlight-replay-card">
+      <view class="card-header flex-between">
+        <view class="header-left">
+          <text class="card-icon">🎬</text>
+          <text class="card-title">赛场精彩高光</text>
+        </view>
+        <view class="ws-status-tag {{isHighlightReplaying ? 'connected' : ''}}" style="padding: 4rpx 14rpx; font-size: 20rpx;">
+          <view class="status-dot"></view>
+          <text>{{isHighlightReplaying ? '高光回放中' : '实时直播中'}}</text>
+        </view>
+      </view>
+
+      <view class="highlight-action-btns">
+        <button 
+          class="save-highlight-btn" 
+          bindtap="onTriggerSaveHighlight" 
+          disabled="{{isSaveOperating}}"
+          hover-class="btn-hover"
+        >
+          <text class="btn-icon">💾</text>
+          <text>{{isSaveOperating ? '正在保存高光...' : '触发 OBS 保存精彩高光片段'}}</text>
+        </button>
+
+        <button 
+          wx:if="{{isHighlightReplaying}}"
+          class="btn-primary highlight-stop-btn" 
+          bindtap="onStopHighlightReplay" 
+          hover-class="btn-hover"
+        >
+          <text class="btn-icon">📺</text>
+          <text>立即中断回放，切回直播 (红色转场)</text>
+        </button>
+      </view>
+
+      <!-- 历史高光切片点播列表 -->
+      <view class="clips-container">
+        <view class="clips-header flex-between">
+          <text class="clips-title">本场切片 (共 {{savedHighlightClips ? savedHighlightClips.length : 0}} 段)：</text>
+          <text wx:if="{{savedHighlightClips && savedHighlightClips.length > 0}}" class="clips-clear-btn" bindtap="onClearHighlightClips">清空</text>
+        </view>
         
-        <view wx:if="{{savedHighlightClips.length > 0}}" class="clips-list">
+        <view wx:if="{{savedHighlightClips && savedHighlightClips.length > 0}}" class="clips-list">
           <view 
             wx:for="{{savedHighlightClips}}" 
             wx:key="id" 
             class="clip-card"
-            style="display: flex; align-items: center; justify-content: space-between; padding: 16rpx 20rpx; background: rgba(255,255,255,0.06); border-radius: 12rpx; margin-bottom: 12rpx; border: 1rpx solid rgba(255,255,255,0.08);"
           >
-            <view style="display: flex; flex-direction: column;">
-              <view style="display: flex; align-items: center; gap: 12rpx;">
-                <text style="font-size: 26rpx; font-weight: bold; color: #00f0ff;">🎬 第 {{index + 1}} 段高光</text>
-                <text style="font-size: 20rpx; color: #94a3b8;">{{item.time}}</text>
-              </view>
+            <view class="clip-info">
+              <text class="clip-name">🎬 第 {{index + 1}} 段高光</text>
+              <text class="clip-time">{{item.time}}</text>
             </view>
             <button 
-              size="mini" 
-              style="margin: 0; padding: 0 24rpx; height: 56rpx; line-height: 56rpx; font-size: 24rpx; background: {{operatingClipIndex === index ? '#64748b' : '#00f0ff'}}; color: {{operatingClipIndex === index ? '#fff' : '#000'}}; font-weight: bold; border-radius: 10rpx; opacity: {{operatingClipIndex === index ? 0.7 : 1}};"
+              class="clip-play-btn"
               bindtap="onPlaySpecificClip" 
               disabled="{{isReplayOperating && operatingClipIndex === index}}"
               data-index="{{index}}"
             >
-              {{operatingClipIndex === index ? '▶ 启动中...' : '▶ 播放第 ' + (index + 1) + ' 段'}}
+              {{operatingClipIndex === index ? '启动中...' : '▶ 播放此段'}}
             </button>
           </view>
         </view>
-
-        <view wx:else style="padding: 24rpx; text-align: center; color: #64748b; font-size: 22rpx;">
-          暂无已捕获切片，点击上方【💾 触发 OBS 保存】即可捕获一段高光
+        <view wx:else class="clips-empty">
+          暂无捕获切片，点击上方【💾 保存高光】即可生成精彩切片
         </view>
       </view>
     </view>
 
-    <text class="obs-tip">💡 高光回放说明：点击任意一段高光的【▶ 播放此段】，网页将触发广播级转场并播放该视频！播放中可随时点击【立即中断回放】提前切回现场直播。</text>
-  </view>
-
-  <!-- 3.3 直播版权署名卡片 (获取微信昵称用于"韦伯 现场实拍") -->
-  <view class="card broadcaster-card">
-    <view class="card-header flex-between">
-      <view class="header-left">
-        <text class="card-icon">🎙️</text>
-        <text class="card-title">直播版权署名</text>
+    <!-- 5. 防盗播飘动欢迎文案 -->
+    <view class="card marquee-card">
+      <view class="card-header flex-between">
+        <view class="header-left">
+          <text class="card-icon">🎉</text>
+          <text class="card-title">防盗播欢迎横幅</text>
+        </view>
+        <view class="ws-status-tag {{isWelcomeMarqueeVisible ? 'connected' : ''}}" style="padding: 4rpx 14rpx; font-size: 20rpx;">
+          <view class="status-dot"></view>
+          <text>{{isWelcomeMarqueeVisible ? '横幅飘动中' : '已关闭'}}</text>
+        </view>
       </view>
-      <view wx:if="{{broadcasterNickname}}" style="background: rgba(255,215,0,0.15); border: 1rpx solid rgba(255,215,0,0.5); border-radius: 20rpx; padding: 4rpx 16rpx;">
-        <text style="color: #FFD700; font-size: 22rpx; font-weight: bold;">{{broadcasterNickname}}</text>
+
+      <view class="marquee-preview-box">
+        <text class="marquee-text-preview">{{welcomeMarqueeText}}</text>
       </view>
-    </view>
-
-    <view style="padding: 6rpx 0 16rpx;">
-      <text style="font-size: 24rpx; color: #8fa3b0; line-height: 1.6;">网页展示预览：</text>
-      <text style="font-size: 24rpx; color: #cbd5e1;">本地民间篮球赛・</text>
-      <text style="color: {{broadcasterNickname ? '#FFD700' : '#94a3b8'}}; font-size: 26rpx; font-weight: bold;">{{broadcasterNickname || '本人'}}</text>
-      <text style="font-size: 24rpx; color: #8fa3b0;"> 现场实拍</text>
-    </view>
-
-    <view style="display: flex; gap: 14rpx; flex-wrap: wrap;">
-      <button
-        class="btn-primary"
-        style="flex: 1.2; min-width: 260rpx; background: linear-gradient(135deg, #1d4ed8, #3b82f6); border-radius: 12rpx; height: 76rpx; line-height: 76rpx; margin: 0;"
-        bindtap="onEditBroadcasterNickname"
-        hover-class="btn-hover"
-      >
-        <text class="btn-icon">✏️</text>
-        <text>{{broadcasterNickname ? '修改主播名 / 抖音号' : '设置主播名 / 抖音号'}}</text>
-      </button>
 
       <button
-        class="btn-secondary"
-        style="flex: 1; min-width: 220rpx; background: rgba(34, 197, 94, 0.2); border: 1rpx solid rgba(34, 197, 94, 0.5); border-radius: 12rpx; height: 76rpx; line-height: 76rpx; color: #4ade80; font-size: 26rpx; font-weight: bold; margin: 0;"
-        bindtap="onSyncBroadcasterToWeb"
+        class="btn-primary {{isWelcomeMarqueeVisible ? 'marquee-btn-stop' : 'marquee-btn-start'}}"
+        bindtap="{{isWelcomeMarqueeVisible ? 'onHideWelcomeMarquee' : 'onShowWelcomeMarquee'}}"
         hover-class="btn-hover"
       >
-        <text class="btn-icon">📡</text>
-        <text>下发署名到网页</text>
+        <text class="btn-icon">{{isWelcomeMarqueeVisible ? '🔕' : '🎉'}}</text>
+        <text>{{isWelcomeMarqueeVisible ? '关闭欢迎文案 (开赛前关闭)' : '开启欢迎文案飘动 (节间休息)'}}</text>
       </button>
     </view>
-    <text class="obs-tip" style="margin-top: 12rpx;">💡 登录后已自动关联您的昵称；可点击修改为抖音号（如"韦伯"），点击【下发署名到网页】即可强制刷新网页端版权声明与欢迎文案。</text>
   </view>
 
-  <!-- 3.4 防盗播飘动欢迎文案控制卡片 -->
-  <view class="card marquee-card">
-    <view class="card-header flex-between">
-      <view class="header-left">
-        <text class="card-icon">🎉</text>
-        <text class="card-title">防盗播欢迎文案</text>
-      </view>
-      <view class="ws-status-tag {{isWelcomeMarqueeVisible ? 'connected' : ''}}" style="padding: 4rpx 14rpx; font-size: 20rpx;">
-        <view class="status-dot"></view>
-        <text>{{isWelcomeMarqueeVisible ? '飘动中' : '已关闭'}}</text>
-      </view>
-    </view>
-
-    <view style="background: rgba(0,0,0,0.25); border-radius: 12rpx; padding: 16rpx; margin-bottom: 16rpx;">
-      <text style="font-size: 22rpx; color: #94a3b8;">当前文案：</text>
-      <text style="font-size: 24rpx; color: #e2e8f0; line-height: 1.6;">{{welcomeMarqueeText}}</text>
-    </view>
-
-    <button
-      wx:if="{{!isWelcomeMarqueeVisible}}"
-      class="btn-primary"
-      style="width: 100%; background: linear-gradient(135deg, #059669, #10b981); border-radius: 12rpx; height: 80rpx; line-height: 80rpx;"
-      bindtap="onShowWelcomeMarquee"
-      hover-class="btn-hover"
-    >
-      <text class="btn-icon">🎉</text>
-      <text>触发欢迎文案飘动 (节间休息用)</text>
-    </button>
-
-    <button
-      wx:else
-      class="btn-primary"
-      style="width: 100%; background: linear-gradient(135deg, #dc2626, #ef4444); border-radius: 12rpx; height: 80rpx; line-height: 80rpx;"
-      bindtap="onHideWelcomeMarquee"
-      hover-class="btn-hover"
-    >
-      <text class="btn-icon">🔕</text>
-      <text>关闭欢迎文案 (开赛前关闭)</text>
-    </button>
-
-    <text class="obs-tip" style="margin-top: 12rpx;">💡 节间休息时触发，5 条文案交错高度、不同速度慢速飘过画面，防止盗播遮挡。开赛前点击【关闭】即可。</text>
-  </view>
-
-  <!-- 4. 主客队比分控板 (背景为球衣颜色，得分自动选择高对比度文本色，长按或点击色标可修改球衣颜色) -->
-  <view class="score-control-section">
-    <!-- 主队控板 -->
-    <view 
-      class="team-control-card home-card"
-      style="background: {{teamA.color || '#FF2D55'}}; color: {{teamA.textColor || '#FFFFFF'}}; box-shadow: 0 8rpx 24rpx {{teamA.color || '#FF2D55'}}40;"
-      bindlongpress="onOpenColorPicker"
-      data-target="teamA"
-    >
-      <view class="team-card-header">
-        <view class="team-header-info">
-          <view class="color-indicator-dot" style="background: {{teamA.textColor || '#FFFFFF'}};"></view>
-          <text class="team-title" style="color: {{teamA.textColor || '#FFFFFF'}};">{{teamA.name || '主队'}}</text>
+  <!-- ==================== TAB 2: 推流与设置 ==================== -->
+  <view class="tab-content" wx:if="{{activeTab === 'settings'}}">
+    <!-- 1. OBS 专属主播固定房间链接卡片 -->
+    <view class="card obs-link-card">
+      <view class="card-header flex-between">
+        <view class="header-left">
+          <text class="card-icon">🌐</text>
+          <text class="card-title">OBS 网页素材与专属房间</text>
         </view>
-        <view 
-          class="color-edit-tag" 
-          bindtap="onOpenColorPicker" 
-          data-target="teamA"
-          style="background: rgba(255,255,255,0.22); color: {{teamA.textColor || '#FFFFFF'}};"
+        <text class="fixed-tag">固定不换链接</text>
+      </view>
+
+      <view class="room-id-row flex-between">
+        <view class="room-id-info" bindtap="onCopyRoomCode" hover-class="btn-hover" title="点击复制房间码">
+          <text class="label">专属房间号：</text>
+          <text class="room-id-code">{{roomId}}</text>
+          <text class="copy-hint">[点击复制]</text>
+        </view>
+        <button class="sub-copy-btn" bindtap="onGenerateNewRoomId" hover-class="btn-hover">
+          <text>🎲 换专属号</text>
+        </button>
+      </view>
+
+      <view class="url-box" bindtap="onCopyCleanObsUrl" hover-class="btn-hover" title="点击复制纯链接">
+        <text class="url-text">https://api.mx.server.ndcoo.com/obs-overlay/index.html</text>
+      </view>
+
+      <view class="obs-copy-btns-group">
+        <button class="btn-primary copy-btn main-copy" bindtap="onCopyRoomCode" hover-class="btn-hover">
+          <text class="btn-icon">📋</text>
+          <text>一键复制 6 位房间码 ({{roomId}})</text>
+        </button>
+        <view class="sub-copy-row">
+          <button class="sub-copy-btn" bindtap="onCopyCleanObsUrl" hover-class="btn-hover">
+            <text>🌐 复制 OBS 纯网页链接</text>
+          </button>
+          <button class="sub-copy-btn" bindtap="onCopyObsUrl" hover-class="btn-hover">
+            <text>🔗 复制带参数直连链接</text>
+          </button>
+        </view>
+      </view>
+      <text class="obs-tip">在 OBS 浏览器源中填入上述链接即可。如需重设房间，请点击【换专属号】并同步更新 OBS 链接。</text>
+    </view>
+
+    <!-- 2. 赛场时间切图设备联动卡片 (输入采集端房间号控制) -->
+    <view class="card time-sync-card">
+      <view class="card-header flex-between">
+        <view class="header-left">
+          <text class="card-icon">⏱️</text>
+          <text class="card-title">时间设备联动 (大表切图)</text>
+        </view>
+        <view class="ws-status-tag {{isTimeDeviceConnected ? 'connected' : ''}}" style="padding: 4rpx 14rpx; font-size: 20rpx;">
+          <view class="status-dot"></view>
+          <text>{{isTimeDeviceConnected ? '已连通 (' + connectedTimeRoomId + ')' : '未连接'}}</text>
+        </view>
+      </view>
+
+      <view class="time-input-row">
+        <input 
+          class="time-room-input {{isTimeDeviceConnected ? 'input--disabled' : ''}}" 
+          type="number" 
+          maxlength="6" 
+          placeholder="输入拍摄大表手机的 6 位房间码" 
+          value="{{timeDeviceRoomId}}"
+          disabled="{{isTimeDeviceConnected}}"
+          bindinput="onTimeDeviceRoomInput"
+        />
+      </view>
+
+      <view class="time-action-btns-row" style="margin-top: 16rpx;">
+        <button 
+          wx:if="{{!isTimeDeviceConnected}}"
+          class="btn-primary time-connect-btn" 
+          bindtap="onConnectTimeDevice" 
+          hover-class="btn-hover"
         >
-          🎨 改球衣
-        </view>
-      </view>
-
-      <view 
-        class="score-display" 
-        style="color: {{teamA.textColor || '#FFFFFF'}};"
-        bindlongpress="onOpenColorPicker"
-        data-target="teamA"
-      >
-        {{teamA.score}}
-      </view>
-
-      <view class="score-btns-grid">
-        <button class="score-btn" style="color: {{teamA.textColor || '#FFFFFF'}};" bindtap="onScoreChange" data-target="teamA" data-delta="1" hover-class="btn-hover">+1</button>
-        <button class="score-btn" style="color: {{teamA.textColor || '#FFFFFF'}};" bindtap="onScoreChange" data-target="teamA" data-delta="2" hover-class="btn-hover">+2</button>
-        <button class="score-btn" style="color: {{teamA.textColor || '#FFFFFF'}};" bindtap="onScoreChange" data-target="teamA" data-delta="3" hover-class="btn-hover">+3</button>
-        <button class="score-btn btn-sub" style="color: {{teamA.textColor || '#FFFFFF'}};" bindtap="onScoreChange" data-target="teamA" data-delta="-1" hover-class="btn-hover">-1</button>
-      </view>
-    </view>
-
-    <!-- 客队控板 -->
-    <view 
-      class="team-control-card away-card"
-      style="background: {{teamB.color || '#007AFF'}}; color: {{teamB.textColor || '#FFFFFF'}}; box-shadow: 0 8rpx 24rpx {{teamB.color || '#007AFF'}}40;"
-      bindlongpress="onOpenColorPicker"
-      data-target="teamB"
-    >
-      <view class="team-card-header">
-        <view class="team-header-info">
-          <view class="color-indicator-dot" style="background: {{teamB.textColor || '#FFFFFF'}};"></view>
-          <text class="team-title" style="color: {{teamB.textColor || '#FFFFFF'}};">{{teamB.name || '客队'}}</text>
-        </view>
-        <view 
-          class="color-edit-tag" 
-          bindtap="onOpenColorPicker" 
-          data-target="teamB"
-          style="background: rgba(255,255,255,0.22); color: {{teamB.textColor || '#FFFFFF'}};"
+          <text class="btn-icon">🔗</text>
+          <text>连接大表设备并通知网页端</text>
+        </button>
+        <button 
+          wx:else
+          class="btn-primary time-disconnect-btn" 
+          bindtap="onDisconnectTimeDevice" 
+          hover-class="btn-hover"
         >
-          🎨 改球衣
+          <text class="btn-icon">🔌</text>
+          <text>断开大表设备 (通知网页端撤下)</text>
+        </button>
+      </view>
+      <text class="obs-tip">在拍摄大表的手机上开启【时间切图采集】，在此输入 6 位房间码即可联动大表时间。</text>
+    </view>
+
+    <!-- 3. 直播版权署名卡片 -->
+    <view class="card broadcaster-card">
+      <view class="card-header flex-between">
+        <view class="header-left">
+          <text class="card-icon">🎙️</text>
+          <text class="card-title">直播版权署名</text>
+        </view>
+        <view wx:if="{{broadcasterNickname}}" class="nick-badge">
+          <text>{{broadcasterNickname}}</text>
         </view>
       </view>
 
-      <view 
-        class="score-display" 
-        style="color: {{teamB.textColor || '#FFFFFF'}};"
-        bindlongpress="onOpenColorPicker"
-        data-target="teamB"
-      >
-        {{teamB.score}}
+      <view class="broadcaster-preview-box">
+        <text class="preview-label">网页水印预览：</text>
+        <text class="preview-fixed">本地民间篮球赛・</text>
+        <text class="preview-nick">{{broadcasterNickname || '本人'}}</text>
+        <text class="preview-fixed"> 现场实拍</text>
       </view>
 
-      <view class="score-btns-grid">
-        <button class="score-btn" style="color: {{teamB.textColor || '#FFFFFF'}};" bindtap="onScoreChange" data-target="teamB" data-delta="1" hover-class="btn-hover">+1</button>
-        <button class="score-btn" style="color: {{teamB.textColor || '#FFFFFF'}};" bindtap="onScoreChange" data-target="teamB" data-delta="2" hover-class="btn-hover">+2</button>
-        <button class="score-btn" style="color: {{teamB.textColor || '#FFFFFF'}};" bindtap="onScoreChange" data-target="teamB" data-delta="3" hover-class="btn-hover">+3</button>
-        <button class="score-btn btn-sub" style="color: {{teamB.textColor || '#FFFFFF'}};" bindtap="onScoreChange" data-target="teamB" data-delta="-1" hover-class="btn-hover">-1</button>
+      <view class="broadcaster-actions">
+        <button
+          class="btn-secondary sync-nick-btn"
+          bindtap="onSyncBroadcasterToWeb"
+          hover-class="btn-hover"
+        >
+          <text class="btn-icon">📡</text>
+          <text>下发署名到网页端</text>
+        </button>
       </view>
+      <text class="obs-tip">💡 主播署名已关联您的微信昵称；如需修改，请前往【我的】个人资料页修改。</text>
     </view>
-  </view>
-
-  <!-- 5. 节次控制面板 -->
-  <view class="card auxiliary-card">
-    <view class="card-header">
-      <text class="card-icon">⏱️</text>
-      <text class="card-title">节次控制</text>
-    </view>
-
-    <view class="period-pills-grid">
-      <view 
-        class="period-pill {{period === item.val ? 'active' : ''}} {{item.val === 6 ? 'finished-pill' : ''}}" 
-        wx:for="{{periodList}}" 
-        wx:key="val" 
-        bindtap="onSelectPeriod" 
-        data-val="{{item.val}}"
-      >
-        {{item.label}}
-      </view>
-    </view>
-  </view>
-
-  <!-- 6. 🛠️ 真机调试日志中控台 -->
-  <view class="card debug-card">
-    <view class="card-header flex-between">
-      <view class="header-left">
-        <text class="card-icon">🛠️</text>
-        <text class="card-title">真机实时调试日志</text>
-      </view>
-      <view class="debug-actions">
-        <button class="mini-btn" bindtap="onForceSync" hover-class="btn-hover">强制推送广播</button>
-        <button class="mini-btn btn-outline" bindtap="onClearLogs" hover-class="btn-hover">清空日志</button>
-      </view>
-    </view>
-    
-    <scroll-view scroll-y class="debug-logs-box">
-      <view class="log-line" wx:for="{{debugLogs}}" wx:key="index">
-        <text class="log-time">[{{item.time}}]</text>
-        <text class="log-msg {{item.type}}">{{item.msg}}</text>
-      </view>
-      <view class="log-empty" wx:if="{{debugLogs.length === 0}}">暂无调试日志，尝试操作加分看日志输出...</view>
-    </scroll-view>
   </view>
 
   <!-- ===== 🎨 球衣颜色选择器浮层 ===== -->

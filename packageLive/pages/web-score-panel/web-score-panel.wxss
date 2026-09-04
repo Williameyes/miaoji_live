@@ -80,10 +80,48 @@
   background-color: currentColor;
 }
 
+/* 选项卡分段控制器 (Segmented Tabs) */
+.tab-nav-bar {
+  display: flex;
+  background: #E2E8F0;
+  margin: 20rpx 32rpx 8rpx;
+  padding: 6rpx;
+  border-radius: 20rpx;
+  gap: 8rpx;
+}
+
+.tab-item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10rpx;
+  padding: 18rpx 0;
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #64748B;
+  border-radius: 16rpx;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.tab-item.active {
+  background: #FFFFFF;
+  color: #0F172A;
+  box-shadow: 0 4rpx 14rpx rgba(15, 23, 42, 0.08);
+}
+
+.tab-icon {
+  font-size: 30rpx;
+}
+
+.tab-label {
+  letter-spacing: 0.5rpx;
+}
+
 /* 卡片通用基础 */
 .card {
-  margin: 24rpx 32rpx;
-  padding: 32rpx;
+  margin: 20rpx 32rpx;
+  padding: 28rpx;
   background: #FFFFFF;
   border: 1rpx solid #E2E8F0;
   border-radius: 24rpx;
@@ -94,7 +132,7 @@
   display: flex;
   align-items: center;
   gap: 12rpx;
-  margin-bottom: 24rpx;
+  margin-bottom: 20rpx;
 }
 
 .card-icon {
@@ -107,7 +145,6 @@
   color: #1E293B;
 }
 
-/* 1. 场次直接选择器卡片 */
 .flex-between {
   display: flex;
   align-items: center;
@@ -121,11 +158,12 @@
   gap: 12rpx;
 }
 
+/* 1. 场次选择器卡片 */
 .match-picker-btn {
   display: flex;
   align-items: center;
   gap: 6rpx;
-  padding: 10rpx 20rpx;
+  padding: 8rpx 18rpx;
   background: #EFF6FF;
   border: 1rpx solid #BFDBFE;
   border-radius: 30rpx;
@@ -138,30 +176,15 @@
   font-size: 20rpx;
 }
 
-.match-preview-box {
-  background: #F8FAFC;
-  border: 1rpx solid #F1F5F9;
-  padding: 24rpx;
-  border-radius: 16rpx;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16rpx;
-}
-
-.match-title-tag {
-  font-size: 22rpx;
-  font-weight: 600;
-  color: #64748B;
-  background: #E2E8F0;
-  padding: 4rpx 16rpx;
-  border-radius: 20rpx;
-}
-
 .teams-preview-row {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 24rpx;
+  background: #F8FAFC;
+  border: 1rpx solid #F1F5F9;
+  padding: 16rpx 20rpx;
+  border-radius: 16rpx;
 }
 
 .team-item {
@@ -177,7 +200,7 @@
 }
 
 .team-name {
-  font-size: 30rpx;
+  font-size: 28rpx;
   font-weight: 700;
   color: #0F172A;
 }
@@ -189,150 +212,12 @@
   font-style: italic;
 }
 
-/* 2. OBS 链接卡片 */
-.room-id-row {
-  display: flex;
-  align-items: center;
-  margin-bottom: 16rpx;
-  font-size: 26rpx;
-}
-
-.room-id-row .label {
-  color: #64748B;
-}
-
-.room-id-code {
-  font-weight: 800;
-  color: #D97706;
-  font-family: monospace;
-  font-size: 30rpx;
-}
-
-.url-box {
-  background: #F1F5F9;
-  border: 1rpx solid #E2E8F0;
-  padding: 20rpx;
-  border-radius: 12rpx;
-  word-break: break-all;
-  margin-bottom: 24rpx;
-}
-
-.url-text {
-  font-size: 22rpx;
-  color: #0284C7;
-  font-family: monospace;
-}
-
-.btn-primary {
-  background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
-  color: #FFFFFF;
-  border-radius: 16rpx;
-  font-size: 28rpx;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12rpx;
-  padding: 22rpx 0;
-  box-shadow: 0 4rpx 14rpx rgba(37, 99, 235, 0.25);
-}
-
-.obs-copy-btns-group {
-  display: flex;
-  flex-direction: column;
-  gap: 14rpx;
-  width: 100%;
-}
-
-.sub-copy-row {
-  display: flex;
-  gap: 12rpx;
-  width: 100%;
-}
-
-.sub-copy-btn {
-  flex: 1;
-  background: #F1F5F9;
-  color: #334155;
-  border: 1rpx solid #E2E8F0;
-  border-radius: 14rpx;
-  font-size: 21rpx;
-  font-weight: 600;
-  padding: 14rpx 6rpx;
-  line-height: 1.3;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-}
-
-.obs-tip {
-  display: block;
-  margin-top: 16rpx;
-  font-size: 22rpx;
-  color: #94A3B8;
-  line-height: 1.4;
-}
-
-/* 1.5. 【开始记分卡片】样式 */
-.start-action-card {
-  background: #F8FAFC;
-  border: 2rpx dashed #CBD5E1;
-  padding: 24rpx 32rpx;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.start-score-btn {
-  width: 100%;
-  background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%);
-  color: #FFFFFF;
-  border-radius: 20rpx;
-  font-size: 30rpx;
-  font-weight: 800;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12rpx;
-  padding: 24rpx 0;
-  box-shadow: 0 6rpx 20rpx rgba(217, 119, 6, 0.3);
-  transition: all 0.3s ease;
-}
-
-.start-score-btn.active {
-  background: linear-gradient(135deg, #10B981 0%, #059669 100%);
-  box-shadow: 0 6rpx 20rpx rgba(16, 185, 129, 0.3);
-}
-
-.start-btn-icon {
-  font-size: 32rpx;
-}
-
-.start-tip {
-  margin-top: 16rpx;
-  font-size: 22rpx;
-  color: #64748B;
-  text-align: center;
-  line-height: 1.4;
-}
-
-.fixed-tag {
-  font-size: 20rpx;
-  color: #10B981;
-  background: #ECFDF5;
-  border: 1rpx solid #A7F3D0;
-  padding: 4rpx 12rpx;
-  border-radius: 10rpx;
-  font-weight: 700;
-}
-
-/* 3. 比分控板网格 */
+/* 2. 比分控板网格 (黄金核心区域) */
 .score-control-section {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 24rpx;
-  margin: 24rpx 32rpx;
+  gap: 20rpx;
+  margin: 20rpx 32rpx;
 }
 
 .team-control-card {
@@ -391,7 +276,7 @@
   font-size: 96rpx;
   font-weight: 900;
   font-family: "Impact", -apple-system, sans-serif;
-  margin: 12rpx 0;
+  margin: 10rpx 0;
   text-shadow: 0 4rpx 16rpx rgba(0, 0, 0, 0.25);
   cursor: pointer;
   user-select: none;
@@ -422,7 +307,7 @@
   border-color: rgba(0, 0, 0, 0.25);
 }
 
-/* 4. 节次与按键区 */
+/* 3. 节次控制胶囊栏 */
 .period-pills-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -454,74 +339,267 @@
   font-weight: 800;
 }
 
-.btn-hover {
-  opacity: 0.75;
-}
-
-/* 5. 真机调试面板样式 */
-.debug-actions {
+/* 4. 高光回放控制 */
+.highlight-action-btns {
   display: flex;
-  gap: 12rpx;
+  flex-direction: column;
+  gap: 14rpx;
+  margin-bottom: 20rpx;
 }
 
-.mini-btn {
-  margin: 0;
-  padding: 8rpx 16rpx;
+.save-highlight-btn {
+  width: 100% !important;
+  background: linear-gradient(135deg, #8B5CF6 0%, #6D28D9 100%) !important;
+  color: #FFFFFF !important;
+  font-size: 28rpx !important;
+  font-weight: 800 !important;
+  border-radius: 16rpx !important;
+  padding: 20rpx 0 !important;
+  box-shadow: 0 4rpx 14rpx rgba(139, 92, 246, 0.3) !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10rpx;
+}
+
+.highlight-stop-btn {
+  width: 100% !important;
+  background: linear-gradient(135deg, #EF4444 0%, #B91C1C 100%) !important;
+  color: #FFFFFF !important;
+  font-size: 28rpx !important;
+  font-weight: 800 !important;
+  border-radius: 16rpx !important;
+  padding: 20rpx 0 !important;
+}
+
+.clips-container {
+  background: #F8FAFC;
+  border: 1rpx solid #E2E8F0;
+  border-radius: 16rpx;
+  padding: 18rpx;
+}
+
+.clips-header {
+  margin-bottom: 12rpx;
+}
+
+.clips-title {
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #475569;
+}
+
+.clips-clear-btn {
   font-size: 22rpx;
-  font-weight: 600;
+  color: #94A3B8;
+  padding: 4rpx 12rpx;
+}
+
+.clips-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10rpx;
+}
+
+.clip-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #FFFFFF;
+  border: 1rpx solid #E2E8F0;
   border-radius: 12rpx;
-  background: #2563EB;
-  color: #FFFFFF;
-  line-height: 1.4;
+  padding: 12rpx 16rpx;
 }
 
-.mini-btn.btn-outline {
-  background: #F1F5F9;
+.clip-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.clip-name {
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #0F172A;
+}
+
+.clip-time {
+  font-size: 20rpx;
   color: #64748B;
-  border: 1rpx solid #CBD5E1;
 }
 
-.debug-logs-box {
-  height: 240rpx;
+.clip-play-btn {
+  margin: 0 !important;
+  padding: 8rpx 18rpx !important;
+  font-size: 22rpx !important;
+  font-weight: 700 !important;
+  background: #2563EB !important;
+  color: #FFFFFF !important;
+  border-radius: 10rpx !important;
+  line-height: 1.4 !important;
+}
+
+.clips-empty {
+  font-size: 22rpx;
+  color: #94A3B8;
+  text-align: center;
+  padding: 24rpx 12rpx;
+}
+
+/* 5. 防盗播欢迎文案 */
+.marquee-preview-box {
   background: #0F172A;
   border-radius: 14rpx;
-  padding: 16rpx;
-  box-sizing: border-box;
+  padding: 16rpx 20rpx;
+  margin-bottom: 16rpx;
+  overflow: hidden;
+}
+
+.marquee-text-preview {
+  font-size: 24rpx;
+  color: #FCD34D;
+  font-weight: 700;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  display: block;
+}
+
+.marquee-btn-start {
+  width: 100% !important;
+  background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%) !important;
+  color: #FFFFFF !important;
+  font-size: 28rpx !important;
+  font-weight: 800 !important;
+  border-radius: 16rpx !important;
+  padding: 20rpx 0 !important;
+  box-shadow: 0 4rpx 14rpx rgba(245, 158, 11, 0.3) !important;
+}
+
+.marquee-btn-stop {
+  width: 100% !important;
+  background: #475569 !important;
+  color: #FFFFFF !important;
+  font-size: 28rpx !important;
+  font-weight: 800 !important;
+  border-radius: 16rpx !important;
+  padding: 20rpx 0 !important;
+}
+
+/* 6. OBS 链接与房间设置 */
+.room-id-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 16rpx;
+  font-size: 26rpx;
+}
+
+.room-id-info {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.room-id-row .label {
+  color: #64748B;
+}
+
+.room-id-code {
+  font-weight: 800;
+  color: #D97706;
+  font-family: monospace;
+  font-size: 30rpx;
+}
+
+.copy-hint {
+  font-size: 20rpx;
+  color: #2563EB;
+  margin-left: 8rpx;
+  font-weight: 600;
+}
+
+.url-box {
+  background: #F1F5F9;
+  border: 1rpx solid #E2E8F0;
+  padding: 20rpx;
+  border-radius: 12rpx;
+  word-break: break-all;
+  margin-bottom: 20rpx;
+}
+
+.url-text {
+  font-size: 22rpx;
+  color: #0284C7;
   font-family: monospace;
 }
 
-.log-line {
-  font-size: 20rpx;
-  line-height: 1.5;
+.btn-primary {
+  background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+  color: #FFFFFF;
+  border-radius: 16rpx;
+  font-size: 28rpx;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12rpx;
+  padding: 22rpx 0;
+  box-shadow: 0 4rpx 14rpx rgba(37, 99, 235, 0.25);
+}
+
+.main-copy {
+  background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%) !important;
+  font-size: 26rpx !important;
+  padding: 20rpx 0 !important;
+}
+
+.obs-copy-btns-group {
+  display: flex;
+  flex-direction: column;
+  gap: 14rpx;
+  width: 100%;
+}
+
+.sub-copy-row {
   display: flex;
   gap: 12rpx;
+  width: 100%;
 }
 
-.log-time {
-  color: #64748B;
-}
-
-.log-msg {
-  color: #38BDF8;
-  word-break: break-all;
-}
-
-.log-msg.error {
-  color: #F87171;
-}
-
-.log-msg.success {
-  color: #4ADE80;
-}
-
-.log-empty {
-  color: #475569;
-  font-size: 22rpx;
+.sub-copy-btn {
+  flex: 1;
+  background: #F1F5F9;
+  color: #334155;
+  border: 1rpx solid #E2E8F0;
+  border-radius: 14rpx;
+  font-size: 21rpx;
+  font-weight: 600;
+  padding: 14rpx 6rpx;
+  line-height: 1.3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   text-align: center;
-  margin-top: 80rpx;
 }
 
-/* 时间采集设备联动卡片专属样式 */
+.fixed-tag {
+  font-size: 20rpx;
+  color: #10B981;
+  background: #ECFDF5;
+  border: 1rpx solid #A7F3D0;
+  padding: 4rpx 12rpx;
+  border-radius: 10rpx;
+  font-weight: 700;
+}
+
+.obs-tip {
+  display: block;
+  margin-top: 16rpx;
+  font-size: 22rpx;
+  color: #94A3B8;
+  line-height: 1.4;
+}
+
+/* 7. 时间切图联动 */
 .time-input-row {
   width: 100%;
 }
@@ -556,6 +634,60 @@
   width: 100% !important;
   background: linear-gradient(135deg, #EF4444 0%, #DC2626 100%) !important;
   box-shadow: 0 4rpx 14rpx rgba(239, 68, 68, 0.3) !important;
+}
+
+/* 8. 直播版权署名 */
+.broadcaster-preview-box {
+  background: #F8FAFC;
+  border: 1rpx solid #E2E8F0;
+  border-radius: 14rpx;
+  padding: 18rpx 20rpx;
+  margin-bottom: 16rpx;
+  font-size: 24rpx;
+}
+
+.preview-label {
+  color: #64748B;
+  margin-right: 8rpx;
+}
+
+.preview-fixed {
+  color: #334155;
+  font-weight: 600;
+}
+
+.preview-nick {
+  color: #2563EB;
+  font-weight: 800;
+}
+
+.nick-badge {
+  background: #EFF6FF;
+  color: #2563EB;
+  border: 1rpx solid #BFDBFE;
+  font-size: 22rpx;
+  font-weight: 700;
+  padding: 4rpx 14rpx;
+  border-radius: 20rpx;
+}
+
+.sync-nick-btn {
+  width: 100% !important;
+  background: #F1F5F9 !important;
+  border: 1rpx solid #CBD5E1 !important;
+  color: #1E293B !important;
+  font-size: 26rpx !important;
+  font-weight: 700 !important;
+  border-radius: 14rpx !important;
+  padding: 18rpx 0 !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10rpx;
+}
+
+.btn-hover {
+  opacity: 0.75;
 }
 
 /* ─────────────────────────────────────
@@ -600,11 +732,10 @@
 }
 
 .close-icon {
-  font-size: 44rpx;
+  font-size: 40rpx;
   color: #94A3B8;
-  padding: 6rpx 12rpx;
   line-height: 1;
-  cursor: pointer;
+  padding: 8rpx;
 }
 
 .picker-presets-label {
@@ -716,4 +847,3 @@
   opacity: 0.9;
   transform: scale(0.98);
 }
-

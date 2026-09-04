@@ -148,6 +148,7 @@ function buildObsOverlayUrl(roomId, extraQuery) {
 Page({
   data: {
     statusBarHeight: 20,
+    activeTab: 'scoring', // 'scoring' (赛场记分) | 'settings' (推流与设置)
     roomId: '313251',
     matchId: '',
     matchTitle: '常规赛',
@@ -236,16 +237,12 @@ Page({
     this.setData({ debugLogs: logs });
   },
 
-  onClearLogs: function () {
-    this.setData({ debugLogs: [] });
-  },
-
-  onForceSync: function () {
-    this._loadBroadcasterNickname();
-    var nick = this._broadcasterNickname || '';
-    this._addLog('🚀 手动触发全量强制同步(比分/队伍/署名: ' + (nick || '本人') + ')...', 'success');
-    this._broadcastMatchInfo();
-    wx.showToast({ title: '全量同步已下发', icon: 'success' });
+  // 选项卡切换: 'scoring' (赛场记分) | 'settings' (推流与设置)
+  onSwitchTab: function (e) {
+    var tab = (e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.tab) || 'scoring';
+    if (tab !== this.data.activeTab) {
+      this.setData({ activeTab: tab });
+    }
   },
 
   /**
@@ -291,72 +288,6 @@ Page({
       return cachedNick;
     }
     return '';
-  },
-
-  /**
-   * 手动设置/修改播主昵称（如输入"韦伯"，清空则恢复"本人"）
-   */
-  onEditBroadcasterNickname: function () {
-    var self = this;
-    var current = this.data.broadcasterNickname || '';
-    wx.showModal({
-      title: '设置主播昵称 / 抖音号',
-      content: current,
-      editable: true,
-      placeholderText: '例如: 韦伯（留空则默认用"本人"）',
-      confirmText: '保存并同步',
-      success: function (res) {
-        if (!res.confirm) return;
-        var newNick = (res.content || '').trim();
-        if (newNick === '微信用户' || newNick === 'WeChat User') {
-          newNick = '';
-        }
-        self._broadcasterNickname = newNick;
-        try {
-          if (newNick) {
-            wx.setStorageSync('MIAOXIE_BROADCASTER_NICKNAME', newNick);
-          } else {
-            wx.removeStorageSync('MIAOXIE_BROADCASTER_NICKNAME');
-          }
-        } catch (e) {}
-        self.setData({ broadcasterNickname: newNick });
-        self._updateWelcomeMarqueeText(newNick);
-        self._addLog(newNick ? ('✅ 署名已更新为: ' + newNick) : 'ℹ️ 署名已恢复默认「本人」', 'success');
-        wx.showToast({ title: newNick ? ('已更新: ' + newNick) : '已恢复默认', icon: 'success' });
-        // 立即广播更新至网页记分牌
-        self._broadcastMatchInfo();
-      }
-    });
-  },
-
-  /**
-   * 点击「获取昵称授权」按钮时触发（兼容辅助）
-   */
-  onGetUserProfile: function () {
-    var self = this;
-    wx.getUserProfile({
-      desc: '用于在直播版权声明中显示您的昵称',
-      success: function (res) {
-        var nickName = (res.userInfo && res.userInfo.nickName) || '';
-        var isDefault = !nickName || nickName === '微信用户' || nickName === 'WeChat User';
-        if (!isDefault) {
-          self._broadcasterNickname = nickName;
-          try { wx.setStorageSync('MIAOXIE_BROADCASTER_NICKNAME', nickName); } catch (e) {}
-          self.setData({ broadcasterNickname: nickName });
-          self._updateWelcomeMarqueeText(nickName);
-          self._addLog('✅ 已获取昵称: ' + nickName + '，版权署名已更新', 'success');
-          wx.showToast({ title: '昵称已更新: ' + nickName, icon: 'success' });
-          self._broadcastMatchInfo();
-        } else {
-          self._addLog('⚠️ 微信返回默认占位昵称，请点击按钮手动输入', '');
-          self.onEditBroadcasterNickname();
-        }
-      },
-      fail: function () {
-        self._addLog('⚠️ 微信未授权，可直接手动设置昵称', '');
-        self.onEditBroadcasterNickname();
-      }
-    });
   },
 
   /** 根据直播者昵称更新欢迎文案 */
@@ -597,38 +528,27 @@ Page({
     this._connectWs(digits);
   },
 
-  // 点击状态栏弹出快捷面板（核对房间、切换房间、立即重连）
+  // 点击状态栏提示网络状态与房间信息
   onTapWsStatus: function () {
     var self = this;
     var currentRoom = this.data.roomId || '313251';
-    var isOnline = this.data.wsConnected;
-    var statusTitle = isOnline ? ('🟢 当前已连通房间: ' + currentRoom) : ('🔴 当前未连通房间: ' + currentRoom);
-    
-    wx.showActionSheet({
-      itemList: [
-        '🔄 立即刷新长连接 (当前房间 ' + currentRoom + ')',
-        '✏️ 手动输入修改房间号',
-        '⚡ 快捷切到 313251 (当前测试房)',
-        '⚡ 快捷切到 178884 (备用测试房)',
-        '🚀 发送双端互通测试指令 (推送比分+横幅)'
-      ],
-      success: function (res) {
-        if (res.tapIndex === 0) {
-          self._manualClosed = false;
-          self._reconnectAttempt = 0;
-          self._connectWs(currentRoom);
-          wx.showToast({ title: '已刷新: ' + currentRoom, icon: 'none' });
-        } else if (res.tapIndex === 1) {
-          self.onEditRoomId();
-        } else if (res.tapIndex === 2) {
-          self._switchDirectRoom('313251');
-        } else if (res.tapIndex === 3) {
-          self._switchDirectRoom('178884');
-        } else if (res.tapIndex === 4) {
-          self.onTestPingOBS();
+    var isOnline = (this._wsConnected || this.data.wsConnected);
+    if (isOnline) {
+      wx.showToast({ title: '已连通房间 ' + currentRoom, icon: 'success' });
+    } else {
+      wx.showLoading({ title: '正在重新建立连接...' });
+      this._manualClosed = false;
+      this._reconnectAttempt = 0;
+      this._connectWs(currentRoom);
+      setTimeout(function () {
+        wx.hideLoading();
+        if (self._wsConnected || self.data.wsConnected) {
+          wx.showToast({ title: '重连成功', icon: 'success' });
+        } else {
+          wx.showToast({ title: '连接建立中...', icon: 'none' });
         }
-      }
-    });
+      }, 800);
+    }
   },
 
   // 调度自动重连 (退避重试)
@@ -849,38 +769,6 @@ Page({
       clearInterval(this._heartbeatTimer);
       this._heartbeatTimer = null;
     }
-  },
-
-  // 手动修改主播专属房间号（支持 313251 / 178884 测试或任意自定义）
-  onEditRoomId: function () {
-    var self = this;
-    var current = this.data.roomId || '313251';
-    wx.showModal({
-      title: '设置主播房间号 (6位纯数字)',
-      content: current,
-      editable: true,
-      placeholderText: '例如: 313251',
-      confirmText: '保存并切换',
-      success: function (res) {
-        if (!res.confirm) return;
-        var digits = String(res.content || '').replace(/\D/g, '').slice(0, 6);
-        if (digits.length !== 6) {
-          wx.showToast({ title: '请输入 6 位纯数字', icon: 'none' });
-          return;
-        }
-        wx.setStorageSync(FIXED_ROOM_KEY, digits);
-        var newObsUrl = buildObsOverlayUrl(digits);
-        self.setData({
-          roomId: digits,
-          obsUrl: newObsUrl,
-          wsConnected: false,
-          wsStatusText: '重连中...'
-        });
-        self._addLog('🔑 专属房间号已切换为: ' + digits + '，正在重新建立连接...', 'success');
-        wx.showToast({ title: '已切换至房间 ' + digits, icon: 'success' });
-        self._connectWs(digits);
-      }
-    });
   },
 
   // 一键生成全新专属独立房间号 (防止多人共用)
@@ -1331,47 +1219,6 @@ Page({
         self._connectWs(self.data.roomId);
       }
     });
-  },
-
-  // 🚀 测试双端互通功能：向当前房间主动发送即时测试指令（比分+欢迎横幅）
-  onTestPingOBS: function () {
-    var self = this;
-    var currentRoom = this.data.roomId || '313251';
-
-    if (!this.data.wsConnected || !this._socketTask) {
-      wx.showToast({ title: '长连接正在建立 (房间:' + currentRoom + ')', icon: 'none' });
-      this._addLog('🔑 正在尝试为房间 ' + currentRoom + ' 建立长连接...', '');
-      this._connectWs(currentRoom);
-      return;
-    }
-
-    wx.showLoading({ title: '正在下发测试指令...' });
-    // 1. 发送比分更新包
-    this._sendUpdatePacket('SCORE', {
-      pingTest: Date.now()
-    });
-
-    // 2. 发送欢迎横幅指令
-    var nick = this._broadcasterNickname || '现场实拍';
-    var testText = '🏀 妙计记分牌连接成功！' + this.data.matchTitle + ' [' + this.data.teamA.name + ' VS ' + this.data.teamB.name + '] 实时互通正常';
-    this._sendUpdatePacket('SHOW_WELCOME_MARQUEE', {
-      welcomeText: testText,
-      marqueeText: testText,
-      text: testText,
-      broadcaster: nick,
-      timestamp: Date.now()
-    });
-
-    setTimeout(function () {
-      wx.hideLoading();
-      wx.showModal({
-        title: '✅ 测试指令已下发',
-        content: '已成功向房间【' + currentRoom + '】下发比分与欢迎横幅指令！\n\n请核对 OBS 页面中的房间号是否为【' + currentRoom + '】。如果一致，OBS 记分牌将立即响应更新并飘动横幅！',
-        showCancel: false,
-        confirmText: '我知道了'
-      });
-      self._addLog('🚀 已主动向房间【' + currentRoom + '】下发测试比分与欢迎横幅指令', 'success');
-    }, 400);
   },
 
   _broadcastMatchInfo: function () {

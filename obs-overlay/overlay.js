@@ -472,7 +472,7 @@
     // 如果未传文本，或者文本是旧格式/未带当前主播名，则按规范自动生成
     if (!baseText || baseText.indexOf('希望大家关注') >= 0 || (broadcaster && baseText.indexOf(broadcaster) === -1)) {
       if (broadcaster) {
-        baseText = '欢迎来到 ' + broadcaster + ' 直播间，关注 ' + broadcaster + ' 一起看球！';
+        baseText = '欢迎来到直播间，关注 ' + broadcaster + ' 一起看球！';
       } else {
         baseText = '欢迎来到直播间，关注主播一起看球！';
       }
