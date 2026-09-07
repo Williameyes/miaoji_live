@@ -1,5 +1,9 @@
 /* packagePromo 公共浅色卡片样式（与 radar-lab common 对齐，分包内独立副本） */
 
+page {
+  background-color: #f8fafc;
+}
+
 .rl-root {
   min-height: 100vh;
   background: #f8fafc;

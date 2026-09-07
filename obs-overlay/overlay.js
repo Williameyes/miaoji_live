@@ -459,7 +459,7 @@
   /**
   /**
    * 构造标准欢迎文案并高亮主播名
-   * 规范格式：欢迎来到***直播间，关注 *** 一起看球！
+   * 规范格式：欢迎来到 *** 的直播间，点个免费的关注一起看球！
    */
   function buildWelcomeMarqueeHtml(customText) {
     var broadcaster = (_currentBroadcasterName || _cachedBroadcaster || '').trim();
@@ -472,9 +472,9 @@
     // 如果未传文本，或者文本是旧格式/未带当前主播名，则按规范自动生成
     if (!baseText || baseText.indexOf('希望大家关注') >= 0 || (broadcaster && baseText.indexOf(broadcaster) === -1)) {
       if (broadcaster) {
-        baseText = '欢迎来到直播间，关注 ' + broadcaster + ' 一起看球！';
+        baseText = '欢迎来到 ' + broadcaster + ' 的直播间，点个免费的关注一起看球！';
       } else {
-        baseText = '欢迎来到直播间，关注主播一起看球！';
+        baseText = '欢迎来到直播间，点个免费的关注一起看球！';
       }
     }
 

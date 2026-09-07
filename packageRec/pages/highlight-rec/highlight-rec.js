@@ -1456,7 +1456,7 @@ Page({
     } else {
       if (this.data.roomId.length !== 6) {
         wx.showToast({
-          title: '请输入6位房间号',
+          title: '请输入6位控制码',
           icon: 'none'
         });
         return;

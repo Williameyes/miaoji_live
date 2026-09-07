@@ -1,5 +1,6 @@
 {
-  "navigationBarTitleText": "直播雷达",
+  "navigationStyle": "default",
+  "navigationBarTitleText": "比赛管理",
   "navigationBarBackgroundColor": "#ffffff",
   "navigationBarTextStyle": "black",
   "backgroundColor": "#f8fafc"

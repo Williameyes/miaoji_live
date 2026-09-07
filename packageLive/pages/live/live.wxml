@@ -554,7 +554,7 @@
             class="live-ble-input live-ble-input--compact"
             type="number"
             maxlength="6"
-            placeholder="6位房间号"
+            placeholder="6位控制码"
             value="{{liveWsRoomId}}"
             bindinput="onLiveWsRoomIdInput"
           />
@@ -584,7 +584,7 @@
             class="live-ble-input live-ble-input--compact"
             type="number"
             maxlength="6"
-            placeholder="6位房间号 (如 666888)"
+            placeholder="6位控制码 (如 666888)"
             value="{{radarBoostRoomId}}"
             bindinput="onRadarBoostRoomIdInput"
           />
@@ -631,7 +631,7 @@
                   class="live-rec-mode-room-input"
                   type="number"
                   maxlength="6"
-                  placeholder="6位房间号"
+                  placeholder="6位控制码"
                   value="{{recSyncRoomIdDraft}}"
                   bindinput="onRecSyncRoomIdInput"
                 />

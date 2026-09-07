@@ -1,5 +1,9 @@
 /* radar-lab 公共样式 — 对齐 sync-lab / mine 浅色卡片 */
 
+page {
+  background-color: #f8fafc;
+}
+
 .rl-root {
   min-height: 100vh;
   background: #f8fafc;

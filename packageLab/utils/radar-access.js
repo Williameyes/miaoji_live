@@ -47,20 +47,20 @@ function ensureRadarLabAccess(opts) {
   const options = opts || {};
   const token = getToken();
   if (!token) {
-    wx.showToast({ title: '请先登录', icon: 'none' });
+    wx.showToast({ title: '请先登录后使用管理功能', icon: 'none', duration: 1500 });
     if (options.redirectBack) {
       setTimeout(function () {
         wx.navigateBack({ delta: 1 });
-      }, 600);
+      }, 1000);
     }
     return false;
   }
   if (!checkSyncLabWhitelist()) {
-    wx.showToast({ title: '暂无使用权限', icon: 'none' });
+    wx.showToast({ title: '该功能仅对内测白名单用户开放', icon: 'none', duration: 1500 });
     if (options.redirectBack) {
       setTimeout(function () {
         wx.navigateBack({ delta: 1 });
-      }, 600);
+      }, 1000);
     }
     return false;
   }

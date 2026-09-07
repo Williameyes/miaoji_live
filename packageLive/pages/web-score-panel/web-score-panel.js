@@ -216,7 +216,7 @@ Page({
 
     // 防盗播飘动欢迎文案
     isWelcomeMarqueeVisible: false,
-    welcomeMarqueeText: '欢迎来到直播间，关注主播一起看球！'
+    welcomeMarqueeText: '欢迎来到直播间，点个免费的关注一起看球！'
   },
 
   _socketTask: null,
@@ -295,9 +295,9 @@ Page({
     var n = (typeof nick === 'string' ? nick.trim() : '');
     var text = '';
     if (n && n !== '微信用户' && n !== 'WeChat User') {
-      text = '欢迎来到 ' + n + ' 直播间，关注 ' + n + ' 一起看球！';
+      text = '欢迎来到 ' + n + ' 的直播间，点个免费的关注一起看球！';
     } else {
-      text = '欢迎来到直播间，关注主播一起看球！';
+      text = '欢迎来到直播间，点个免费的关注一起看球！';
     }
     this.setData({ welcomeMarqueeText: text });
     return text;

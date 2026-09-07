@@ -170,6 +170,8 @@
   color: #2563EB;
   font-size: 24rpx;
   font-weight: 700;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .picker-arrow {

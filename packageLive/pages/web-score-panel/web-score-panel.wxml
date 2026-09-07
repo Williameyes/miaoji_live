@@ -51,7 +51,7 @@
           range-key="displayTitle"
         >
           <view class="match-picker-btn" hover-class="btn-hover">
-            <text class="picker-label">切换场次</text>
+            <text class="picker-label">切换</text>
             <text class="picker-arrow">▾</text>
           </view>
         </picker>
@@ -191,7 +191,7 @@
           hover-class="btn-hover"
         >
           <text class="btn-icon">💾</text>
-          <text>{{isSaveOperating ? '正在保存高光...' : '触发 OBS 保存精彩高光片段'}}</text>
+          <text>{{isSaveOperating ? '正在保存高光...' : '保存精彩高光片段'}}</text>
         </button>
 
         <button 
@@ -243,7 +243,7 @@
       <view class="card-header flex-between">
         <view class="header-left">
           <text class="card-icon">🎉</text>
-          <text class="card-title">防盗播欢迎横幅</text>
+          <text class="card-title">欢迎横幅</text>
         </view>
         <view class="ws-status-tag {{isWelcomeMarqueeVisible ? 'connected' : ''}}" style="padding: 4rpx 14rpx; font-size: 20rpx;">
           <view class="status-dot"></view>
@@ -273,7 +273,7 @@
       <view class="card-header flex-between">
         <view class="header-left">
           <text class="card-icon">🌐</text>
-          <text class="card-title">OBS 网页素材与专属房间</text>
+          <text class="card-title">网页记分牌链接</text>
         </view>
         <text class="fixed-tag">固定不换链接</text>
       </view>
@@ -300,7 +300,7 @@
         </button>
         <view class="sub-copy-row">
           <button class="sub-copy-btn" bindtap="onCopyCleanObsUrl" hover-class="btn-hover">
-            <text>🌐 复制 OBS 纯网页链接</text>
+            <text>🌐 复制纯网页链接</text>
           </button>
           <button class="sub-copy-btn" bindtap="onCopyObsUrl" hover-class="btn-hover">
             <text>🔗 复制带参数直连链接</text>

@@ -1,4 +1,8 @@
 {
+  "navigationStyle": "default",
   "navigationBarTitleText": "直播预热",
+  "navigationBarBackgroundColor": "#ffffff",
+  "navigationBarTextStyle": "black",
+  "backgroundColor": "#f8fafc",
   "usingComponents": {}
 }

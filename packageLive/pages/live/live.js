@@ -16763,7 +16763,7 @@ onLoad: function (options) {
       ? String(this.data.recSyncRoomIdDraft || '')
       : String(this.data.recSyncRoomId || '');
     if (roomId.length !== 6) {
-      this._showLightHint('请输入6位房间号');
+      this._showLightHint('请输入6位控制码');
       return;
     }
     this._recSyncWsConnect();
