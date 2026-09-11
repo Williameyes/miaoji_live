@@ -13,7 +13,8 @@ const {
   clearAuthStorage,
   STORAGE_TOKEN_KEY,
   STORAGE_USER_INFO_KEY,
-  getToken
+  getToken,
+  setToken
 } = require('../../utils/request.js');
 
 /** 与首页、Live 一致的全局分享卡片（5:4 PNG） */
@@ -244,7 +245,7 @@ Page({
   },
 
   onLoad: function () {
-    const sys = wx.getSystemInfoSync();
+    const sys = typeof wx.getWindowInfo === 'function' ? wx.getWindowInfo() : (wx.getSystemInfoSync ? wx.getSystemInfoSync() : {});
     this.setData({ statusBarHeight: sys.statusBarHeight || 0 });
     this.syncUserState();
   },
@@ -488,10 +489,13 @@ Page({
 
     const info = rawInfo ? normalizeUserInfo(/** @type {Record<string, unknown>} */ (rawInfo)) : null;
     if (info && token) {
+      const prevInfo = app.globalData.userInfo;
       app.globalData.userInfo = info;
-      try {
-        wx.setStorageSync(STORAGE_USER_INFO_KEY, info);
-      } catch (e) {}
+      if (!prevInfo || JSON.stringify(prevInfo) !== JSON.stringify(info)) {
+        try {
+          wx.setStorageSync(STORAGE_USER_INFO_KEY, info);
+        } catch (e) {}
+      }
     }
 
     const loggedIn = !!token;
@@ -599,7 +603,7 @@ Page({
                   return;
                 }
 
-                wx.setStorageSync(STORAGE_TOKEN_KEY, token);
+                setToken(token);
 
                 const normalized = normalizeUserInfo(
                   /** @type {Record<string, unknown>} */ (userInfoRaw)

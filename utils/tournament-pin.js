@@ -27,20 +27,27 @@ function checkIsLoggedIn() {
   return false;
 }
 
+let _cachedPinnedIds = null;
+
 /**
- * 获取本地已置顶的赛事 ID 列表 (数组)
+ * 获取本地已置顶的赛事 ID 列表（优先读取内存一级缓存）
  * @returns {string[]}
  */
 function getPinnedTournamentIds() {
+  if (_cachedPinnedIds !== null) {
+    return _cachedPinnedIds;
+  }
   try {
     const list = wx.getStorageSync(PINNED_TOURNAMENTS_KEY);
     if (Array.isArray(list)) {
-      return list.map(String);
+      _cachedPinnedIds = list.map(String);
+      return _cachedPinnedIds;
     }
   } catch (e) {
     // ignore
   }
-  return [];
+  _cachedPinnedIds = [];
+  return _cachedPinnedIds;
 }
 
 /**
@@ -62,7 +69,7 @@ function isTournamentPinned(tournamentId) {
 function toggleTournamentPin(tournamentId) {
   if (!tournamentId) return false;
   const tid = String(tournamentId);
-  let list = getPinnedTournamentIds();
+  let list = getPinnedTournamentIds().slice();
   const index = list.indexOf(tid);
   let isPinned = false;
 
@@ -76,6 +83,7 @@ function toggleTournamentPin(tournamentId) {
     isPinned = true;
   }
 
+  _cachedPinnedIds = list;
   try {
     wx.setStorageSync(PINNED_TOURNAMENTS_KEY, list);
   } catch (e) {

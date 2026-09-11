@@ -13,13 +13,34 @@ const STORAGE_USER_INFO_KEY = 'userInfo';
 /** 401 后回退的首页（不依赖尚未注册的「我的」页） */
 const UNAUTH_FALLBACK_URL = '/pages/index/index';
 
+let _cachedToken = null;
+
 /**
- * 读取本地 token。
+ * 设置并持久化本地 token（同步更新内存缓存）
+ * @param {string} token
+ */
+function setToken(token) {
+  _cachedToken = typeof token === 'string' ? token : '';
+  try {
+    wx.setStorageSync(STORAGE_TOKEN_KEY, _cachedToken);
+  } catch (e) {}
+}
+
+/**
+ * 读取本地 token（优先读取内存一级缓存，避免重复 getStorageSync 阻塞主线程）。
  * @returns {string}
  */
 function getToken() {
-  const t = wx.getStorageSync(STORAGE_TOKEN_KEY);
-  return typeof t === 'string' ? t : '';
+  if (_cachedToken !== null) {
+    return _cachedToken;
+  }
+  try {
+    const t = wx.getStorageSync(STORAGE_TOKEN_KEY);
+    _cachedToken = typeof t === 'string' ? t : '';
+  } catch (e) {
+    _cachedToken = '';
+  }
+  return _cachedToken;
 }
 
 /**
@@ -39,15 +60,20 @@ function isTokenInvalidPayload(data) {
  * @returns {void}
  */
 function clearAuthStorage() {
+  _cachedToken = '';
   try {
     wx.removeStorageSync(STORAGE_TOKEN_KEY);
   } catch (e) {
-    wx.setStorageSync(STORAGE_TOKEN_KEY, '');
+    try {
+      wx.setStorageSync(STORAGE_TOKEN_KEY, '');
+    } catch (e2) {}
   }
   try {
     wx.removeStorageSync(STORAGE_USER_INFO_KEY);
   } catch (e) {
-    wx.setStorageSync(STORAGE_USER_INFO_KEY, null);
+    try {
+      wx.setStorageSync(STORAGE_USER_INFO_KEY, null);
+    } catch (e2) {}
   }
   try {
     const app = getApp();
@@ -309,6 +335,7 @@ module.exports = {
   STORAGE_TOKEN_KEY,
   STORAGE_USER_INFO_KEY,
   getToken,
+  setToken,
   clearAuthStorage,
   request,
   get,

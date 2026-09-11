@@ -23,7 +23,41 @@ Component({
     ]
   },
 
+  lifetimes: {
+    attached() {
+      this.updateSelectedFromCurrentRoute();
+    }
+  },
+
+  pageLifetimes: {
+    show() {
+      this.updateSelectedFromCurrentRoute();
+    }
+  },
+
   methods: {
+    /**
+     * 根据当前页面路由对齐 selected 状态，首帧消除闪烁
+     */
+    updateSelectedFromCurrentRoute() {
+      try {
+        const pages = getCurrentPages();
+        if (!pages || !pages.length) return;
+        const curPage = pages[pages.length - 1];
+        if (!curPage || !curPage.route) return;
+        const curRoute = '/' + curPage.route;
+        const list = this.data.list;
+        for (let i = 0; i < list.length; i++) {
+          if (list[i].pagePath === curRoute) {
+            if (this.data.selected !== i) {
+              this.setData({ selected: i });
+            }
+            break;
+          }
+        }
+      } catch (e) {}
+    },
+
     /**
      * 切换 Tab 页面
      * @param {WechatMiniprogram.TouchEvent} e

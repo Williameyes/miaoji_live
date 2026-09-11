@@ -522,8 +522,8 @@ Page({
     generatingPoster: false,
     posterLogs: [],
     posterLogText: '',
-    posterMatchLocation: (wx.getStorageSync && wx.getStorageSync('MIAOXIE_LAST_POSTER_LOCATION')) || '',
-    posterLiveAccount: (wx.getStorageSync && wx.getStorageSync('MIAOXIE_LAST_POSTER_LIVE_ACCOUNT')) || ''
+    posterMatchLocation: '',
+    posterLiveAccount: ''
   },
 
   /**
@@ -532,7 +532,7 @@ Page({
    * @returns {void}
    */
   onLoad(options) {
-    const sys = wx.getSystemInfoSync();
+    const sys = typeof wx.getWindowInfo === 'function' ? wx.getWindowInfo() : (wx.getSystemInfoSync ? wx.getSystemInfoSync() : {});
     this.setData({ statusBarHeight: sys.statusBarHeight || 0 });
 
     const matchId = resolvePromoTargetMatchId(
@@ -562,8 +562,8 @@ Page({
     } catch (e) {
       // 低版本基础库忽略
     }
-    this.loadMatches();
-    this.loadHighlights();
+    const rawMatches = this.loadMatches();
+    this.loadHighlights(rawMatches);
     this.setData({
       isWebScoreWhitelisted: checkSyncLabWhitelist()
     });
@@ -679,9 +679,11 @@ Page({
   loadMatches() {
     const raw = wx.getStorageSync(STORAGE_KEY);
     const list = Array.isArray(raw) ? raw : [];
+    this._rawMatchesCache = list;
     const matches = sortMatchesForList(list).map((m) => enrichMatchForList(m));
     this.setData({ matches });
     this._updateWsoTitle(matches);
+    return list;
   },
 
   /**
@@ -1713,7 +1715,7 @@ Page({
   /**
    * 从 Storage 读取高光列表并按比赛场次分组
    */
-  loadHighlights() {
+  loadHighlights(matchesList) {
     const rawClipsMap = clipsStorage.readClipsMapSafe();
     if (rawClipsMap === null) {
       wx.showToast({ title: '高光索引数据异常', icon: 'none', duration: 2500 });
@@ -1726,7 +1728,9 @@ Page({
       }
     }
     clipsStorage.pruneUnplayableLegacyList();
-    const rawMatches = wx.getStorageSync(STORAGE_KEY) || [];
+    const rawMatches = Array.isArray(matchesList)
+      ? matchesList
+      : (this._rawMatchesCache || wx.getStorageSync(STORAGE_KEY) || []);
     const legacyClips = wx.getStorageSync('highlight_list') || [];
     const groupedList = [];
 
@@ -2976,11 +2980,25 @@ Page({
   onGeneratePosterFromModal() {
     const match = this.data.currentLongPressMatch;
     if (!match) return;
+    let loc = this.data.posterMatchLocation;
+    let live = this.data.posterLiveAccount;
+    if (!loc) {
+      try {
+        loc = (wx.getStorageSync && wx.getStorageSync('MIAOXIE_LAST_POSTER_LOCATION')) || '';
+      } catch (e) {}
+    }
+    if (!live) {
+      try {
+        live = (wx.getStorageSync && wx.getStorageSync('MIAOXIE_LAST_POSTER_LIVE_ACCOUNT')) || '';
+      } catch (e) {}
+    }
     this.setData({
       showDouyinModal: false,
       showPosterModal: true,
       posterImagePath: '',
-      generatingPoster: true
+      generatingPoster: true,
+      posterMatchLocation: loc,
+      posterLiveAccount: live
     });
     this.generateUniquePoster(match);
   },

@@ -7,7 +7,7 @@ const {
   isTournamentPinned,
   toggleTournamentPin
 } = require('../../../utils/tournament-pin.js');
-const { post, STORAGE_TOKEN_KEY, STORAGE_USER_INFO_KEY } = require('../../../utils/request.js');
+const { post, STORAGE_TOKEN_KEY, STORAGE_USER_INFO_KEY, setToken } = require('../../../utils/request.js');
 const { checkSyncLabWhitelist } = require('../../../utils/sync-lab-whitelist.js');
 
 /**
@@ -485,7 +485,7 @@ Page({
                   const userInfoRaw = data.userInfo;
 
                   if (token) {
-                    wx.setStorageSync(STORAGE_TOKEN_KEY, token);
+                    setToken(token);
                   }
 
                   if (userInfoRaw && typeof userInfoRaw === 'object') {

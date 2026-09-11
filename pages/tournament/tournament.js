@@ -12,14 +12,23 @@ const CARD_THEME_PALETTE = [
 ];
 const STORAGE_KEY = 'TN_CARD_THEME_MAP_V3';
 
+let _cachedThemeMap = null;
+
+function getThemeMap() {
+  if (_cachedThemeMap !== null) {
+    return _cachedThemeMap;
+  }
+  try {
+    _cachedThemeMap = wx.getStorageSync(STORAGE_KEY) || {};
+  } catch (e) {
+    _cachedThemeMap = {};
+  }
+  return _cachedThemeMap;
+}
+
 function getOrAssignCardTheme(tournamentId, usedThemes) {
   if (!tournamentId) return CARD_THEME_PALETTE[0];
-  let themeMap = {};
-  try {
-    themeMap = wx.getStorageSync(STORAGE_KEY) || {};
-  } catch (e) {
-    themeMap = {};
-  }
+  const themeMap = getThemeMap();
 
   if (themeMap[tournamentId] && CARD_THEME_PALETTE.indexOf(themeMap[tournamentId]) !== -1) {
     if (usedThemes) usedThemes.push(themeMap[tournamentId]);
@@ -52,7 +61,7 @@ Page({
 
   onLoad: function () {
     try {
-      const sys = wx.getSystemInfoSync ? wx.getSystemInfoSync() : {};
+      const sys = typeof wx.getWindowInfo === 'function' ? wx.getWindowInfo() : (wx.getSystemInfoSync ? wx.getSystemInfoSync() : {});
       this.setData({ statusBarHeight: sys.statusBarHeight || 20 });
     } catch (e) {
       // fallback
