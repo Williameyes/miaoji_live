@@ -30,9 +30,7 @@ wxsClockMainText: '00:00',
     /** WXS 回写的 24 秒整秒 */
 wxsClockShotSec: 24,
     /** 24 秒 ≤5 时高亮警示 */
-wxsClockShotWarn: false,
-    /** 采集端是否同步比分（sync_score=1）；false 时自动模式下仍可手动改分 */
-liveWsScoreSyncEnabled: false,
+    wxsClockShotWarn: false,
     /** 直播送礼实时打出卡片数据 */
     liveBoostItem: null,
     /** 控制打出卡片 CSS 硬件加速显隐动画 */
@@ -378,20 +376,6 @@ _liveWsOnSocketMessage: function (raw) {
   }
 },
 
-  onTimeSyncModeSelect: function (e) {
-    var mode = (e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.mode) || 'ocr';
-    try {
-      wx.setStorageSync('HOOPS_TIME_SYNC_MODE', mode);
-    } catch (err) { /* ignore */ }
-    this.setData({
-      timeSyncMode: mode
-    });
-    wx.showToast({
-      title: mode === 'crop_image' ? '已切为: 切图同步' : '已切为: OCR记分',
-      icon: 'none'
-    });
-  },
-
   _consumeCropFrameSync: function (payload) {
     if (!payload || !payload.time_img || payload.act === 'CLEAR') {
       this.setData({ hasCropFrameImage: false });
@@ -431,12 +415,6 @@ _liveWsOnSocketMessage: function (raw) {
     var sd = {};
     if (!this.data.hasCropFrameImage) {
       sd.hasCropFrameImage = true;
-    }
-    if (this.data.timeSyncMode !== 'crop_image') {
-      sd.timeSyncMode = 'crop_image';
-    }
-    if (this.data.liveWsScoreSyncEnabled !== false) {
-      sd.liveWsScoreSyncEnabled = false;
     }
     if (Object.keys(sd).length > 0) {
       this.setData(sd, function () {
@@ -584,7 +562,6 @@ _liveWsApplyDisconnectedUiPatch: function () {
     liveWsPanelOpen: false,
     liveWsQuickBusy: false,
     liveWsStatusText: '',
-    liveWsScoreSyncEnabled: false,
     /** 直播送礼实时打出卡片数据 */
     liveBoostItem: null,
     /** 控制打出卡片 CSS 硬件加速显隐动画 */
@@ -909,8 +886,6 @@ _liveWsFlushScorePersist: function () {
         });
       }
     }
-    /* [OCR功能已注释/移除] 仅保留切图同步方案；比分同步统一由直播端手动加减分控制 */
-    patch.liveWsScoreSyncEnabled = false;
     if (Object.keys(patch).length) {
       var selfTick = this;
       this.setData(patch, function () {

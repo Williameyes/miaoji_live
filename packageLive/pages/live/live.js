@@ -1138,8 +1138,6 @@ Page({
     hasCropFrameImage: false,
     cropFrameBase64: '',
     cropTimeBoxStyle: '',
-    /** 采集端 sync_score=1 时自动跟分；false 时自动模式下仍可手动改分 */
-    liveWsScoreSyncEnabled: false,
     /** 云端 WSS 已连接（角标） */
     liveWsConnected: false,
     /** 是否展开 Live 内云端连房面板 */
@@ -6446,13 +6444,12 @@ onCameraInit: function (e) {
     const enhanceBetaWhitelisted = false;
     const autoSyncWhitelisted = checkSyncLabWhitelist();
     const enhanceVkSupported = false;
-    const currentSyncMode = wx.getStorageSync('HOOPS_TIME_SYNC_MODE') || 'crop_image';
-    if (this.data.enhanceBetaWhitelisted !== enhanceBetaWhitelisted || this.data.enhanceVkSupported !== enhanceVkSupported || this.data.autoSyncWhitelisted !== autoSyncWhitelisted || this.data.timeSyncMode !== currentSyncMode) {
+    if (this.data.enhanceBetaWhitelisted !== enhanceBetaWhitelisted || this.data.enhanceVkSupported !== enhanceVkSupported || this.data.autoSyncWhitelisted !== autoSyncWhitelisted) {
       const patch = {
         enhanceBetaWhitelisted: enhanceBetaWhitelisted,
         enhanceVkSupported: enhanceVkSupported,
         autoSyncWhitelisted: autoSyncWhitelisted,
-        timeSyncMode: currentSyncMode
+        timeSyncMode: 'crop_image'
       };
       if (!autoSyncWhitelisted && this.data.isAutoMode) {
         patch.isAutoMode = false;
