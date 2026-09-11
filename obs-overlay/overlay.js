@@ -1614,26 +1614,35 @@
   var lastPolledCursor = 0;
   var lastPolledTime = 0;
 
-  function formatFilePath(filePath) {
+  function toRawDiskPath(filePath) {
     if (!filePath || typeof filePath !== 'string') return '';
-    var path = String(filePath).trim();
-
-    // 彻底清除之前遗留的历史 proxy 字符串 (如 video?path= 或 http://127.0.0.1:8085/video?path=)
+    var path = decodeURIComponent(filePath).trim();
     if (path.indexOf('video?path=') !== -1) {
       path = path.substring(path.indexOf('video?path=') + 11);
     }
-    path = decodeURIComponent(path).replace(/\\/g, '/');
-    var cleanPath = path.replace(/^file:\/\/\//, '/').replace(/^file:\/\//, '');
+    path = path.replace(/^file:\/\/\//i, '').replace(/^file:\/\//i, '').replace(/^file:\//i, '');
+    path = path.replace(/\\/g, '/');
+    if (/^\/?[a-zA-Z]:\//.test(path)) {
+      path = path.replace(/^\/+/, '');
+    } else if (!path.startsWith('/')) {
+      path = '/' + path;
+    }
+    return path;
+  }
 
+  function formatFilePath(filePath) {
+    if (!filePath || typeof filePath !== 'string') return '';
+    var rawPath = toRawDiskPath(filePath);
+    if (!rawPath) return '';
     // Windows 磁盘路径: C:/Users/... -> file:///C:/Users/...
-    if (/^[a-zA-Z]:\//.test(cleanPath)) {
-      return 'file:///' + encodeURI(cleanPath);
+    if (/^[a-zA-Z]:\//.test(rawPath)) {
+      return 'file:///' + encodeURI(rawPath);
     }
     // macOS / Linux 磁盘路径: /Users/... -> file:///Users/...
-    if (cleanPath.startsWith('/')) {
-      return 'file://' + encodeURI(cleanPath);
+    if (rawPath.startsWith('/')) {
+      return 'file://' + encodeURI(rawPath);
     }
-    return 'file:///' + encodeURI(cleanPath);
+    return 'file:///' + encodeURI(rawPath);
   }
 
   // 提取文件名中的时间戳数字串（如 Replay_2026-08-30_13-05-12.mp4 -> 20260830130512）
@@ -1734,11 +1743,10 @@
     }
 
     if (action === 'PLAY' && filePath) {
-      var rawDiskPath = String(filePath).replace(/^file:\/\/\//, '/').replace(/^file:\/\//, '');
-      rawDiskPath = decodeURIComponent(rawDiskPath);
+      var rawDiskPath = toRawDiskPath(filePath);
       console.log('[OBS Overlay] Setting OBS Media Source [' + obsMediaSourceName + '] to:', rawDiskPath);
 
-      // 1. 设置媒体源的文件路径
+      // 1. 设置媒体源的文件路径 (跨平台标准绝对路径)
       obsNativeWs.send(JSON.stringify({
         op: 6,
         d: {
@@ -1845,7 +1853,8 @@
                   op: 1,
                   d: {
                     rpcVersion: 1,
-                    authentication: authSecret
+                    authentication: authSecret,
+                    eventSubscriptions: 1023
                   }
                 }));
               }).catch(function (err) {
@@ -1854,12 +1863,33 @@
             } else {
               obsNativeWs.send(JSON.stringify({
                 op: 1,
-                d: { rpcVersion: 1 }
+                d: {
+                  rpcVersion: 1,
+                  eventSubscriptions: 1023
+                }
               }));
             }
           } else if (msg.op === 2) {
-            console.log('[OBS Overlay] OBS Native WebSocket Identified successfully!');
+            console.log('[OBS Overlay] OBS Native WebSocket Identified successfully with full eventSubscriptions (1023)!');
             alertBanner('🟢 已连通 OBS 原生 WebSocket (端口: ' + obsWsPort + ')');
+
+            // 1. 自动自愈恢复：向 OBS 主动查询最近一次保存的高光重放切片
+            obsNativeWs.send(JSON.stringify({
+              op: 6,
+              d: {
+                requestType: 'GetLastReplayBufferReplay',
+                requestId: 'req_get_last_replay'
+              }
+            }));
+
+            // 2. 智能探测：查询 OBS 中所有输入源，自动自适应匹配媒体源名称
+            obsNativeWs.send(JSON.stringify({
+              op: 6,
+              d: {
+                requestType: 'GetInputList',
+                requestId: 'req_get_input_list'
+              }
+            }));
           } else if (msg.op === 5 && msg.d) {
             var evtType = msg.d.eventType;
             // 捕获 OBS 录像切片保存事件
@@ -1875,7 +1905,7 @@
             else if (evtType === 'MediaInputPlaybackEnded') {
               var inputName = msg.d.eventData && msg.d.eventData.inputName;
               var elapsed = Date.now() - (actualPlaybackStartedAt || replayClipStartedAt || 0);
-              if (isReplayPlaying && inputName === obsMediaSourceName && elapsed > 1200) {
+              if (isReplayPlaying && (inputName === obsMediaSourceName || !inputName) && elapsed > 1200) {
                 console.log('[OBS Overlay] OBS MediaInputPlaybackEnded event received for [' + inputName + '] after ' + elapsed + 'ms -> advanceOrStopReplay');
                 advanceOrStopReplay();
               }
@@ -1883,7 +1913,42 @@
           } else if (msg.op === 7 && msg.d) {
             // 处理场景查询与显示/隐藏控制响应
             var reqId = msg.d.requestId || '';
-            if (reqId === 'req_scene_for_play' || reqId === 'req_scene_for_stop') {
+            if (reqId === 'req_get_last_replay') {
+              var lastSavedPath = msg.d.responseData && msg.d.responseData.savedReplayPath;
+              if (lastSavedPath) {
+                console.log('[OBS Overlay] Auto-recovered last replay buffer clip from OBS:', lastSavedPath);
+                addHighlightFile(lastSavedPath);
+              }
+            } else if (reqId === 'req_get_input_list') {
+              var inputList = (msg.d.responseData && msg.d.responseData.inputs) || [];
+              var exactMatch = false;
+              for (var i = 0; i < inputList.length; i++) {
+                var item = inputList[i];
+                var iName = item.inputName || item.name || '';
+                if (iName === obsMediaSourceName) {
+                  exactMatch = true;
+                  break;
+                }
+              }
+              if (!exactMatch) {
+                for (var j = 0; j < inputList.length; j++) {
+                  var itemCandidate = inputList[j];
+                  var cName = itemCandidate.inputName || itemCandidate.name || '';
+                  var cKind = itemCandidate.inputKind || itemCandidate.unversionedInputKind || '';
+                  if (cKind === 'ffmpeg_source' || cName.indexOf('高光') !== -1 || cName.toLowerCase().indexOf('replay') !== -1 || cName.indexOf('媒体源') !== -1) {
+                    console.log('[OBS Overlay] Auto-matched OBS replay media source name to [' + cName + '] (kind: ' + cKind + ')');
+                    obsMediaSourceName = cName;
+                    exactMatch = true;
+                    break;
+                  }
+                }
+              }
+              if (exactMatch) {
+                console.log('[OBS Overlay] Verified OBS replay media source name:', obsMediaSourceName);
+              } else {
+                console.warn('[OBS Overlay] Warning: Media source [' + obsMediaSourceName + '] not found in OBS inputs. Please ensure a Media Source named [' + obsMediaSourceName + '] exists in your OBS scene.');
+              }
+            } else if (reqId === 'req_scene_for_play' || reqId === 'req_scene_for_stop') {
               var scName = msg.d.responseData && (msg.d.responseData.currentProgramSceneName || msg.d.responseData.sceneName);
               if (scName) {
                 currentObsSceneName = scName;

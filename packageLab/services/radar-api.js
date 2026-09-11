@@ -396,8 +396,24 @@ function sendWarmup(payload) {
  * @param {string} jobId
  * @returns {Promise<Record<string, unknown>>}
  */
-function fetchWarmupStatus(jobId) {
-  return get('/api/app/match/warmup_status', { job_id: jobId })
+/**
+ * 查询直播间预热进度或场次历史战报。
+ * @param {string|{job_id?: string, jobId?: string, match_id?: number|string, matchId?: number|string}} paramsOrJobId
+ * @returns {Promise<Record<string, unknown>>}
+ */
+function fetchWarmupStatus(paramsOrJobId) {
+  let query = {};
+  if (typeof paramsOrJobId === 'string') {
+    query = { job_id: paramsOrJobId };
+  } else if (paramsOrJobId && typeof paramsOrJobId === 'object') {
+    if (paramsOrJobId.job_id || paramsOrJobId.jobId) {
+      query.job_id = paramsOrJobId.job_id || paramsOrJobId.jobId;
+    }
+    if (paramsOrJobId.match_id || paramsOrJobId.matchId) {
+      query.match_id = paramsOrJobId.match_id || paramsOrJobId.matchId;
+    }
+  }
+  return get('/api/app/match/warmup_status', query)
     .then(parseRadarAppResponse)
     .catch(function (err) {
       throw normalizeRadarAppError(err);

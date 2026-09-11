@@ -13,58 +13,93 @@ const STATUS_DISPLAY = {
   interrupted: { label: '已中断', cls: 'rl-badge-warn' }
 };
 
+const WARMUP_STATUS_LABELS = {
+  pending: '排队中',
+  running: '运行中',
+  completed: '已完成',
+  partial_failed: '部分失败',
+  failed: '已失败'
+};
+
+const RESULT_STATUS_LABELS = {
+  success: '成功',
+  failed: '失败',
+  running: '进行中',
+  pending: '等待中',
+  cookie_invalid: 'Cookie失效',
+  like_failed: '点赞失败',
+  comment_failed: '评论失败',
+  pool_too_small: '词库不足',
+  room_serialized_skip: '串行跳过'
+};
+
 Page({
   data: {
-    // 列表模式
+    // 列表模式与筛选 Tab
+    listStatusTab: 'all', // 'all' | 'monitoring' | 'ended'
+    directMatchIdInput: '',
     activeMatches: [],
     loading: false,
 
-    // 配置与预热模式
+    // 当前选中的场次
     selectedMatchId: '',
     selectedMatchTitle: '',
     boundAnchors: [],
     submitting: false,
 
+    // 战报与配置界面切换
+    showConfigForm: false,
+    reportLoading: false,
+
+    // 历史交单战报数据
+    warmupJobId: '',
+    warmupStatus: '',
+    warmupStatusLabel: '',
+    warmupAccountCount: 3,
+    warmupCompletedCount: 0,
+    warmupProgressPercent: 0,
+    warmupEnqueuedCount: 0,
+    warmupResults: [],
+    warmupReport: null,
+    hasInvalidAccounts: false,
+    invalidAccounts: [],
+
     // 预热表单字段
     warmupSourceMode: 'select',
     warmupInputText: '',
     warmupLiveUrl: '',
-    warmupAccountCount: 3,
     warmupDurationMin: 45,
     warmupCommentsText: '',
 
-    // 新增调度参数与预览
+    // 调度参数与预览
     useTiledPlan: true,
-    totalShowDurationMin: 120,
+    totalShowDurationMin: 60,
     overlapRatio: 0.45,
     maxConcurrentPerRoom: 2,
     previewPlan: {
       sessionDurationMin: 0,
       overlapMin: 0,
       staggerDelayMin: 0
-    },
-
-    // 预热进度与轮询字段
-    warmupJobId: '',
-    warmupEnqueuedCount: 0,
-    warmupStatus: '',
-    warmupStatusLabel: '',
-    warmupCompletedCount: 0,
-    warmupResults: [],
-    warmupProgressPercent: 0
+    }
   },
 
   /** @type {number | null} */
   _warmupPollTimer: null,
 
-  onLoad: function () {
+  onLoad: function (options) {
     if (!ensureRadarLabAccess({ redirectBack: true })) return;
-    this.loadActiveMatches();
     this.updatePlanPreview();
+
+    const targetMatchId = options && (options.match_id || options.id);
+    if (targetMatchId) {
+      this.onSelectMatchById(targetMatchId);
+    } else {
+      this.loadActiveMatches();
+    }
   },
 
   onShow: function () {
-    if (this.data.warmupJobId && !this._warmupPollTimer) {
+    if (this.data.warmupJobId && (this.data.warmupStatus === 'running' || this.data.warmupStatus === 'pending') && !this._warmupPollTimer) {
       this._startWarmupPolling();
     }
   },
@@ -78,14 +113,64 @@ Page({
   },
 
   /**
-   * 加载监测中的场次列表
+   * 切换场次状态 Tab
+   */
+  onSwitchListTab: function (e) {
+    const tab = e.currentTarget.dataset.tab;
+    if (tab === this.data.listStatusTab) return;
+    this.setData({ listStatusTab: tab });
+    this.loadActiveMatches();
+  },
+
+  /**
+   * 输入直接跳转的场次 ID
+   */
+  onDirectMatchIdInput: function (e) {
+    this.setData({ directMatchIdInput: e.detail.value });
+  },
+
+  /**
+   * 按直接输入的场次 ID 进入预热
+   */
+  onGoDirectMatch: function () {
+    const id = String(this.data.directMatchIdInput || '').trim();
+    if (!id) {
+      wx.showToast({ title: '请输入场次 ID', icon: 'none' });
+      return;
+    }
+    this.onSelectMatchById(id);
+  },
+
+  /**
+   * 前往场次维护创建场次
+   */
+  onGoOam: function () {
+    wx.navigateTo({ url: '/packageLab/pages/radar-lab/oam/oam' });
+  },
+
+  /**
+   * 前往雷达挂载启动监控
+   */
+  onGoMount: function () {
+    wx.navigateTo({ url: '/packageLab/pages/radar-lab/mount/index' });
+  },
+
+  /**
+   * 加载场次列表
    */
   loadActiveMatches: function () {
     const self = this;
     this.setData({ loading: true });
-    
-    // 只拉取监控中/准备监控的场次
-    fetchMatchList({ status: 'monitoring,waiting_radar' })
+
+    const query = {};
+    const tab = this.data.listStatusTab;
+    if (tab === 'monitoring') {
+      query.status = 'monitoring,waiting_radar';
+    } else if (tab === 'ended') {
+      query.status = 'ended';
+    }
+
+    fetchMatchList(query)
       .then(function (list) {
         const matches = (list || []).map(function (item) {
           const status = item.matchStatus || 'monitoring';
@@ -118,46 +203,191 @@ Page({
   },
 
   /**
-   * 选择场次并加载详情
+   * 列表点击选择场次
    */
   onSelectMatch: function (e) {
     const matchId = e.currentTarget.dataset.id;
     if (!matchId) return;
+    this.onSelectMatchById(matchId);
+  },
 
+  /**
+   * 按 ID 选中场次并加载详情与历史战报
+   */
+  onSelectMatchById: function (matchId) {
     const match = this.data.activeMatches.find(function (item) {
       return String(item.id) === String(matchId);
     });
 
     const self = this;
-    wx.showLoading({ title: '加载场次详情…', mask: true });
+    wx.showLoading({ title: '加载场次战报…', mask: true });
     
     fetchMatchDetail(matchId)
       .then(function (detail) {
-        wx.hideLoading();
         const anchors = detail && detail.boundAnchors ? detail.boundAnchors : [];
+        const title = (detail && detail.teamA && detail.teamB)
+          ? (detail.teamA + ' vs ' + detail.teamB)
+          : (match ? (match.teamA + ' vs ' + match.teamB) : '场次 #' + matchId);
+
         self.setData({
           selectedMatchId: String(matchId),
-          selectedMatchTitle: match ? (match.teamA + ' vs ' + match.teamB) : '场次 #' + matchId,
+          selectedMatchTitle: title,
           boundAnchors: anchors,
           warmupSourceMode: anchors.length > 0 ? 'select' : 'input',
           warmupInputText: '',
           warmupLiveUrl: anchors.length > 0 ? anchors[0].liveUrl : '',
           warmupAccountCount: 3,
           warmupCommentsText: '',
-          warmupJobId: '',
-          warmupEnqueuedCount: 0,
-          warmupStatus: '',
-          warmupStatusLabel: '',
-          warmupCompletedCount: 0,
-          warmupResults: [],
-          warmupProgressPercent: 0
+          showConfigForm: false
         });
         self.updatePlanPreview();
+        return self._loadMatchWarmupReport(matchId);
+      })
+      .then(function () {
+        wx.hideLoading();
       })
       .catch(function (err) {
         wx.hideLoading();
         wx.showToast({ title: err.message || '加载详情失败', icon: 'none' });
       });
+  },
+
+  /**
+   * 按 matchId 加载最新一条预热交单战报
+   */
+  _loadMatchWarmupReport: function (matchId, isPolling) {
+    const self = this;
+    if (!isPolling) {
+      this.setData({ reportLoading: true });
+    }
+
+    return fetchWarmupStatus({ match_id: matchId })
+      .then(function (res) {
+        self.setData({ reportLoading: false });
+        if (res && res.job_id) {
+          const status = res.status || 'running';
+          const accountCount = Number(res.account_count || self.data.warmupAccountCount || 3);
+          const completedCount = Number(res.completed_count || 0);
+          const rawResults = Array.isArray(res.results) ? res.results : [];
+          
+          let totalLikes = 0;
+          let totalDurationSec = 0;
+          let commentsSentCount = 0;
+
+          const results = rawResults.map(function (item) {
+            const itemStatus = item.status || 'pending';
+            totalLikes += (item.likes_done || 0);
+            totalDurationSec += (item.duration_sec || 0);
+            if (item.comment_sent) {
+              commentsSentCount += 1;
+            }
+            return Object.assign({}, item, {
+              statusLabel: RESULT_STATUS_LABELS[itemStatus] || itemStatus
+            });
+          });
+
+          const percent = Math.min(100, Math.floor((completedCount / accountCount) * 100));
+          const invalidAccounts = res.invalid_accounts || (res.summary ? res.summary.invalid_accounts : []) || [];
+          const hasInvalid = Array.isArray(invalidAccounts) && invalidAccounts.length > 0;
+
+          const reportSummary = {
+            totalLikes: res.summary ? res.summary.total_likes : totalLikes,
+            totalDurationMin: Math.round(((res.summary ? res.summary.total_duration_sec : totalDurationSec) / 60) * 10) / 10,
+            commentsSentCount: res.summary ? res.summary.comments_sent_count : commentsSentCount,
+            completedCount: completedCount,
+            accountCount: accountCount,
+            createdAtText: res.created_at ? res.created_at.replace('T', ' ').slice(0, 19) : ''
+          };
+
+          self.setData({
+            warmupJobId: res.job_id,
+            warmupStatus: status,
+            warmupStatusLabel: WARMUP_STATUS_LABELS[status] || status,
+            warmupAccountCount: accountCount,
+            warmupCompletedCount: completedCount,
+            warmupProgressPercent: percent,
+            warmupResults: results,
+            warmupReport: Object.assign({}, res, { summaryDisplay: reportSummary }),
+            hasInvalidAccounts: hasInvalid,
+            invalidAccounts: invalidAccounts,
+            showConfigForm: false
+          });
+
+          if (status === 'running' || status === 'pending') {
+            self._startWarmupPolling();
+          } else {
+            self._stopWarmupPolling();
+          }
+        } else {
+          // 暂无预热记录，直接打开配置下发表单
+          self.setData({
+            warmupJobId: '',
+            warmupReport: null,
+            hasInvalidAccounts: false,
+            invalidAccounts: [],
+            showConfigForm: true
+          });
+        }
+      })
+      .catch(function (err) {
+        self.setData({ reportLoading: false });
+        console.warn('[WarmupIndex] loadMatchWarmupReport fail', err);
+        // 查询报错时默认展示配置面板
+        self.setData({ showConfigForm: true });
+      });
+  },
+
+  /**
+   * 手动刷新战报
+   */
+  onRefreshReport: function () {
+    const matchId = this.data.selectedMatchId;
+    if (!matchId) return;
+    wx.showLoading({ title: '刷新中…', mask: true });
+    this._loadMatchWarmupReport(matchId, false)
+      .then(function () {
+        wx.hideLoading();
+        wx.showToast({ title: '战报已更新', icon: 'success' });
+      })
+      .catch(function () {
+        wx.hideLoading();
+      });
+  },
+
+  /**
+   * 复制重新登录命令
+   */
+  onCopyLoginCommand: function (e) {
+    const account = e.currentTarget.dataset.account || '';
+    const cmd = 'python capture_login.py --account ' + account;
+    wx.setClipboardData({
+      data: cmd,
+      success: function () {
+        wx.showToast({ title: '已复制登录命令', icon: 'success' });
+      }
+    });
+  },
+
+  /**
+   * 展开预热配置面板
+   */
+  onShowConfigForm: function () {
+    this.setData({
+      showConfigForm: true
+    });
+  },
+
+  /**
+   * 隐藏预热配置面板，返回战报
+   */
+  onHideConfigForm: function () {
+    if (this.data.warmupJobId) {
+      this.setData({
+        showConfigForm: false
+      });
+    } else {
+      this.onBackToList();
+    }
   },
 
   /**
@@ -316,8 +546,8 @@ Page({
       payload.warmup_duration_sec = Math.round(this.data.previewPlan.sessionDurationMin * 60);
     } else {
       payload.warmup_duration_sec = this.data.warmupDurationMin * 60;
-      payload.like_budget_min = 1300;
-      payload.like_budget_max = 1700;
+      payload.like_budget_min = 2600;
+      payload.like_budget_max = 3200;
       payload.stagger_min_sec = 60;
       payload.stagger_max_sec = 120;
     }
@@ -345,7 +575,8 @@ Page({
             warmupStatus: 'running',
             warmupStatusLabel: '运行中',
             warmupCompletedCount: 0,
-            warmupProgressPercent: 0
+            warmupProgressPercent: 0,
+            showConfigForm: false
           });
           wx.showToast({ title: '下发预热成功', icon: 'success' });
           self._startWarmupPolling();
@@ -394,65 +625,13 @@ Page({
    */
   _pollWarmupStatus: function () {
     const self = this;
-    const jobId = this.data.warmupJobId;
-    if (!jobId) {
+    const matchId = this.data.selectedMatchId;
+    if (!matchId) {
       this._stopWarmupPolling();
       return;
     }
 
-    fetchWarmupStatus(jobId)
-      .then(function (res) {
-        if (!res || res.job_id !== self.data.warmupJobId) return;
-
-        const status = res.status || 'running';
-        const accountCount = Number(res.account_count || self.data.warmupAccountCount || 3);
-        const completedCount = Number(res.completed_count || 0);
-
-        const WARMUP_STATUS_LABELS = {
-          pending: '排队中',
-          running: '运行中',
-          completed: '已完成',
-          partial_failed: '部分失败',
-          failed: '已失败'
-        };
-
-        const RESULT_STATUS_LABELS = {
-          success: '成功',
-          failed: '失败',
-          running: '进行中',
-          pending: '等待中',
-          room_serialized_skip: '串行跳过'
-        };
-
-        const rawResults = Array.isArray(res.results) ? res.results : [];
-        const results = rawResults.map(function (item) {
-          const itemStatus = item.status || 'pending';
-          return Object.assign({}, item, {
-            statusLabel: RESULT_STATUS_LABELS[itemStatus] || itemStatus
-          });
-        });
-
-        const percent = Math.min(100, Math.floor((completedCount / accountCount) * 100));
-
-        self.setData({
-          warmupStatus: status,
-          warmupStatusLabel: WARMUP_STATUS_LABELS[status] || status,
-          warmupCompletedCount: completedCount,
-          warmupResults: results,
-          warmupProgressPercent: percent
-        });
-
-        if (status === 'completed' || status === 'partial_failed' || status === 'failed') {
-          self._stopWarmupPolling();
-          wx.showToast({
-            title: '预热已结束',
-            icon: 'none'
-          });
-        }
-      })
-      .catch(function (err) {
-        console.warn('[WarmupIndex] poll warmup status fail', err);
-      });
+    this._loadMatchWarmupReport(matchId, true);
   },
 
   /**
@@ -464,6 +643,7 @@ Page({
       selectedMatchId: '',
       selectedMatchTitle: '',
       boundAnchors: [],
+      showConfigForm: false,
       warmupSourceMode: 'select',
       warmupInputText: '',
       warmupLiveUrl: '',
@@ -473,7 +653,10 @@ Page({
       warmupStatusLabel: '',
       warmupCompletedCount: 0,
       warmupResults: [],
-      warmupProgressPercent: 0
+      warmupProgressPercent: 0,
+      warmupReport: null,
+      hasInvalidAccounts: false,
+      invalidAccounts: []
     });
     this.loadActiveMatches();
   },
@@ -483,15 +666,7 @@ Page({
    */
   onResetWarmup: function () {
     this.setData({
-      warmupSourceMode: 'select',
-      warmupInputText: '',
-      warmupJobId: '',
-      warmupEnqueuedCount: 0,
-      warmupStatus: '',
-      warmupStatusLabel: '',
-      warmupCompletedCount: 0,
-      warmupResults: [],
-      warmupProgressPercent: 0
+      showConfigForm: true
     });
   }
 });

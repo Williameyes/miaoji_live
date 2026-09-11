@@ -1,16 +1,36 @@
 <view class="rl-root">
 
-  <!-- ==================== Step 1: 监测中场次列表 ==================== -->
+  <!-- ==================== Step 1: 场次列表与快捷入口 ==================== -->
   <block wx:if="{{!selectedMatchId}}">
     <view class="rl-header">
       <view class="rl-kicker">雷达实验 · 直播预热</view>
       <view class="rl-title">选择预热场次</view>
-      <view class="rl-sub">点击进行中/监测中的场次，下发自动点赞与评论预热任务</view>
+      <view class="rl-sub">点击下方场次或直接输入场次 ID，查看交单战报与下发预热</view>
+    </view>
+
+    <!-- 快捷按 ID 直达栏 -->
+    <view class="direct-match-bar">
+      <input
+        class="direct-match-input"
+        type="number"
+        placeholder="直接输入场次 ID (如 1001)"
+        value="{{directMatchIdInput}}"
+        bindinput="onDirectMatchIdInput"
+        bindconfirm="onGoDirectMatch"
+      />
+      <button class="direct-match-btn" bindtap="onGoDirectMatch">进入预热</button>
+    </view>
+
+    <!-- 分类筛选 Tab -->
+    <view class="match-filter-tabs">
+      <view class="match-filter-tab {{listStatusTab === 'all' ? 'active' : ''}}" bindtap="onSwitchListTab" data-tab="all">全部场次</view>
+      <view class="match-filter-tab {{listStatusTab === 'monitoring' ? 'active' : ''}}" bindtap="onSwitchListTab" data-tab="monitoring">监测中/待采集</view>
+      <view class="match-filter-tab {{listStatusTab === 'ended' ? 'active' : ''}}" bindtap="onSwitchListTab" data-tab="ended">已结赛</view>
     </view>
 
     <!-- 加载中 -->
     <view class="rl-empty" wx:if="{{loading}}">
-      <text>加载中…</text>
+      <text>加载场次中…</text>
     </view>
 
     <!-- 列表展现 -->
@@ -34,17 +54,130 @@
       </block>
     </view>
 
-    <!-- 空态 -->
-    <view class="rl-empty" wx:else>
-      <text>暂无进行中的监测场次</text>
-      <text class="rl-empty-sub">直播间预热需要先在「雷达挂载」中启动场次监控</text>
+    <!-- 空态与快捷入口 -->
+    <view class="rl-card" wx:else>
+      <view class="rl-empty" style="padding: 48rpx 24rpx;">
+        <text style="font-size: 28rpx; font-weight: 700; color: #334155;">暂无匹配的场次</text>
+        <text class="rl-empty-sub" style="margin-top: 12rpx; margin-bottom: 24rpx;">
+          可以通过上方输入框直接输入场次 ID，或前往创建新场次 / 启动监控
+        </text>
+        <view class="empty-action-btns">
+          <button class="rl-btn rl-btn-primary empty-btn" bindtap="onGoMount">前往雷达挂载</button>
+          <button class="rl-btn rl-btn-secondary empty-btn" bindtap="onGoOam">前往场次维护</button>
+        </view>
+      </view>
     </view>
   </block>
 
-  <!-- ==================== Step 2: 预热配置与下发 ==================== -->
-  <block wx:elif="{{selectedMatchId && !warmupJobId}}">
+  <!-- ==================== Step 2: 预热战报 (常驻展示) ==================== -->
+  <block wx:elif="{{selectedMatchId && warmupJobId && !showConfigForm}}">
     <view class="rl-header">
-      <view class="rl-kicker">雷达实验 · 直播预热</view>
+      <view class="rl-kicker">雷达实验 · 预热交单战报</view>
+      <view class="rl-title">{{selectedMatchTitle}}</view>
+      <view class="rl-sub">批次 ID: {{warmupJobId}} · 场次 ID: {{selectedMatchId}}</view>
+    </view>
+
+    <!-- 战报汇总卡片 -->
+    <view class="rl-card">
+      <view class="rl-card-inner">
+        <view class="report-hero">
+          <view class="report-hero-main">
+            <text class="report-hero-val">{{warmupReport.summaryDisplay.totalLikes || 0}}</text>
+            <text class="report-hero-lbl">🔥 累计完成点赞量 (次)</text>
+          </view>
+          <view class="report-hero-badge">
+            <text class="warmup-status-badge status-{{warmupStatus}}">{{warmupStatusLabel}}</text>
+          </view>
+        </view>
+
+        <!-- 四宫格指标 -->
+        <view class="report-grid">
+          <view class="report-grid-item">
+            <text class="report-grid-val">{{warmupCompletedCount}} / {{warmupAccountCount}}</text>
+            <text class="report-grid-lbl">完成账号</text>
+          </view>
+          <view class="report-grid-item">
+            <text class="report-grid-val">{{warmupReport.summaryDisplay.totalDurationMin || 0}}m</text>
+            <text class="report-grid-lbl">累计挂房时长</text>
+          </view>
+          <view class="report-grid-item">
+            <text class="report-grid-val">{{warmupReport.summaryDisplay.commentsSentCount || 0}}条</text>
+            <text class="report-grid-lbl">已发弹幕</text>
+          </view>
+          <view class="report-grid-item">
+            <text class="report-grid-val">{{warmupReport.warmup_mode || 'presence_light'}}</text>
+            <text class="report-grid-lbl">预热模式</text>
+          </view>
+        </view>
+
+        <!-- 进度条（仅运行中显示） -->
+        <view class="warmup-progress-box" wx:if="{{warmupStatus === 'running' || warmupStatus === 'pending'}}">
+          <view class="warmup-progress-label">
+            <text>任务实时执行进度 ({{warmupCompletedCount}} / {{warmupAccountCount}})</text>
+            <text class="warmup-progress-num">{{warmupProgressPercent}}%</text>
+          </view>
+          <view class="warmup-progress-bar-bg">
+            <view class="warmup-progress-bar-fill" style="width: {{warmupProgressPercent}}%;"></view>
+          </view>
+        </view>
+
+        <!-- 🚨 失效账号醒目告警栏 (标红高亮) -->
+        <view class="invalid-alert-box" wx:if="{{hasInvalidAccounts}}">
+          <view class="invalid-alert-title">
+            <text class="invalid-alert-icon">⚠️</text>
+            <text class="invalid-alert-text">检测到 {{invalidAccounts.length}} 个账号 Cookie 失效已自动隔离</text>
+          </view>
+          <view class="invalid-account-tags">
+            <view class="invalid-tag" wx:for="{{invalidAccounts}}" wx:key="account_name" bindtap="onCopyLoginCommand" data-account="{{item.account_name}}">
+              <text class="invalid-tag-name">🔒 {{item.account_name}}</text>
+              <text class="invalid-tag-action">点此复制登录命令</text>
+            </view>
+          </view>
+          <view class="invalid-alert-tip">
+            💡 提示：失效账号已被雷达安全隔离。请在雷达机器终端执行：
+            <text class="code-snippet">python capture_login.py --account 账号名</text> 重新扫码登录，完成后即可恢复！
+          </view>
+        </view>
+
+        <!-- 各账号执行详情列表 -->
+        <view class="warmup-results-title" style="margin-top: 24rpx;">📋 各账号预热执行明细</view>
+        <view class="warmup-results-list" wx:if="{{warmupResults && warmupResults.length > 0}}">
+          <view class="warmup-result-item {{item.status === 'cookie_invalid' ? 'item-invalid' : ''}}" wx:for="{{warmupResults}}" wx:key="sequence_index">
+            <view class="warmup-result-row">
+              <view class="warmup-result-name-box">
+                <text class="warmup-result-name">{{item.account_name || '账号 #' + (item.sequence_index + 1)}}</text>
+                <text class="warmup-result-seq">#{{item.sequence_index + 1}}</text>
+              </view>
+              <text class="warmup-result-status status-{{item.status}}">{{item.statusLabel}}</text>
+            </view>
+            <view class="warmup-result-comment" wx:if="{{item.comment_text}}">
+              💬 {{item.comment_text}}
+            </view>
+            <view class="warmup-result-meta">
+              <text>点赞: {{item.likes_done || 0}} / {{item.like_budget || 0}}</text>
+              <text style="margin-left: 20rpx;">时长: {{item.duration_sec ? item.duration_sec + '秒' : '—'}}</text>
+              <text style="margin-left: 20rpx;" wx:if="{{item.worker_id}}">节点: {{item.worker_id}}</text>
+            </view>
+            <view class="warmup-result-error" wx:if="{{item.error_message}}">
+              ⚠️ 详情: {{item.error_message}}
+            </view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 底部操作按钮 -->
+    <view class="mon-actions">
+      <button class="rl-btn rl-btn-primary" bindtap="onRefreshReport">🔄 刷新最新战报</button>
+      <button class="rl-btn rl-btn-secondary" bindtap="onShowConfigForm">⚡ 重新发起 / 调整预热</button>
+      <button class="rl-btn rl-btn-secondary" bindtap="onBackToList">返回场次列表</button>
+    </view>
+  </block>
+
+  <!-- ==================== Step 3: 预热配置与下发面板 ==================== -->
+  <block wx:else>
+    <view class="rl-header">
+      <view class="rl-kicker">雷达实验 · 直播预热配置</view>
       <view class="rl-title">{{selectedMatchTitle}}</view>
       <view class="rl-sub">场次 ID: {{selectedMatchId}}</view>
     </view>
@@ -214,65 +347,8 @@
 
     <view class="mon-actions">
       <button class="rl-btn rl-btn-primary" disabled="{{submitting || (warmupSourceMode === 'select' && !warmupLiveUrl) || (warmupSourceMode === 'input' && !warmupInputText)}}" bindtap="onSubmitWarmup">下发预热任务</button>
-      <button class="rl-btn rl-btn-secondary" bindtap="onBackToList">返回列表</button>
-    </view>
-  </block>
-
-  <!-- ==================== Step 3: 进度监测轮询 ==================== -->
-  <block wx:else>
-    <view class="rl-header">
-      <view class="rl-kicker">雷达实验 · 正在预热</view>
-      <view class="rl-title">{{selectedMatchTitle}}</view>
-      <view class="rl-sub">Job ID: {{warmupJobId}}</view>
-    </view>
-
-    <view class="rl-card">
-      <view class="rl-card-inner">
-        <view class="warmup-job-header">
-          <text class="warmup-job-title">已下发 {{warmupEnqueuedCount}} 个预热任务</text>
-          <text class="warmup-job-sub">直播间: {{warmupLiveUrl}}</text>
-        </view>
-
-        <!-- 进度条 -->
-        <view class="warmup-progress-box">
-          <view class="warmup-progress-label">
-            <text>任务进度 ({{warmupCompletedCount}} / {{warmupAccountCount}})</text>
-            <text class="warmup-status-badge status-{{warmupStatus}}">{{warmupStatusLabel}}</text>
-          </view>
-          <view class="warmup-progress-bar-bg">
-            <view class="warmup-progress-bar-fill" style="width: {{warmupProgressPercent}}%;"></view>
-          </view>
-        </view>
-
-        <!-- 结果列表 -->
-        <view class="warmup-results-title">任务列表 (每 3 秒刷新)</view>
-        <view class="warmup-results-list" wx:if="{{warmupResults && warmupResults.length > 0}}">
-          <view class="warmup-result-item" wx:for="{{warmupResults}}" wx:key="sequence_index">
-            <view class="warmup-result-row">
-              <text class="warmup-result-name">{{item.account_name || '账号 ' + (item.sequence_index + 1)}}</text>
-              <text class="warmup-result-status status-{{item.status}}">{{item.statusLabel}}</text>
-            </view>
-            <view class="warmup-result-comment" wx:if="{{item.comment_text}}">
-              💬 {{item.comment_text}}
-            </view>
-            <view class="warmup-result-meta">
-              <text>点赞数: {{item.likes_done || 0}} / {{item.like_budget || 0}}</text>
-              <text style="margin-left: 20rpx;">时长: {{item.duration_sec ? item.duration_sec + '秒' : '—'}}</text>
-            </view>
-            <view class="warmup-result-error" wx:if="{{item.error_message}}">
-              ⚠️ 错误: {{item.error_message}}
-            </view>
-          </view>
-        </view>
-        <view class="rl-empty" style="padding: 48rpx 0;" wx:else>
-          正在初始化预热任务...
-        </view>
-      </view>
-    </view>
-
-    <view class="mon-actions">
-      <button class="rl-btn rl-btn-secondary" bindtap="onBackToList">返回列表</button>
-      <button class="rl-btn rl-btn-primary" wx:if="{{warmupStatus === 'completed' || warmupStatus === 'partial_failed' || warmupStatus === 'failed'}}" bindtap="onResetWarmup">重新预热</button>
+      <button class="rl-btn rl-btn-secondary" wx:if="{{warmupJobId}}" bindtap="onHideConfigForm">查看最新战报</button>
+      <button class="rl-btn rl-btn-secondary" bindtap="onBackToList">返回场次列表</button>
     </view>
   </block>
 

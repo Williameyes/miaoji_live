@@ -1,5 +1,65 @@
 @import '../common/common.wxss';
 
+/* 快捷输入场次 ID 栏 */
+.direct-match-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 16rpx;
+  margin-bottom: 24rpx;
+}
+
+.direct-match-input {
+  flex: 1;
+  background: #ffffff;
+  border: 2rpx solid #cbd5e1;
+  border-radius: 16rpx;
+  height: 84rpx;
+  padding: 0 24rpx;
+  font-size: 26rpx;
+  color: #0f172a;
+}
+
+.direct-match-btn {
+  width: 180rpx !important;
+  height: 84rpx;
+  line-height: 84rpx;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 26rpx;
+  font-weight: 700;
+  border-radius: 16rpx;
+  padding: 0;
+  margin: 0;
+}
+
+/* 场次状态筛选 Tab */
+.match-filter-tabs {
+  display: flex;
+  flex-direction: row;
+  background: #f1f5f9;
+  border-radius: 14rpx;
+  padding: 6rpx;
+  margin-bottom: 24rpx;
+}
+
+.match-filter-tab {
+  flex: 1;
+  text-align: center;
+  padding: 12rpx 0;
+  font-size: 24rpx;
+  color: #64748b;
+  font-weight: 600;
+  border-radius: 10rpx;
+  transition: all 0.2s ease;
+}
+
+.match-filter-tab.active {
+  background: #ffffff;
+  color: #2563eb;
+  box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.05);
+}
+
 /* 正在监测场次列表样式 */
 .active-match-item {
   display: flex;
@@ -28,6 +88,22 @@
 .active-match-badge-wrap {
   flex-shrink: 0;
   margin-left: 16rpx;
+}
+
+/* 空态快捷按钮 */
+.empty-action-btns {
+  display: flex;
+  flex-direction: row;
+  gap: 20rpx;
+  width: 100%;
+  justify-content: center;
+}
+
+.empty-btn {
+  font-size: 24rpx !important;
+  height: 72rpx !important;
+  line-height: 72rpx !important;
+  padding: 0 28rpx !important;
 }
 
 /* 主播单选列表 */
@@ -109,30 +185,152 @@
   margin-bottom: 0;
 }
 
-/* 监测视图中的样式 */
-.warmup-job-header {
+/* ================== 战报视图样式 ================== */
+.report-hero {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+  border: 1rpx solid #bfdbfe;
+  padding: 30rpx 28rpx;
+  border-radius: 20rpx;
   margin-bottom: 24rpx;
-  border-bottom: 1rpx dashed #e2e8f0;
-  padding-bottom: 16rpx;
 }
 
-.warmup-job-title {
-  font-size: 28rpx;
+.report-hero-main {
+  display: flex;
+  flex-direction: column;
+}
+
+.report-hero-val {
+  font-size: 52rpx;
+  font-weight: 800;
+  color: #1d4ed8;
+  line-height: 1.1;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.report-hero-lbl {
+  font-size: 22rpx;
+  font-weight: 600;
+  color: #3b82f6;
+  margin-top: 8rpx;
+}
+
+.report-hero-badge {
+  flex-shrink: 0;
+}
+
+.report-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12rpx;
+  margin-bottom: 24rpx;
+}
+
+.report-grid-item {
+  background: #f8fafc;
+  border: 1rpx solid #e2e8f0;
+  border-radius: 14rpx;
+  padding: 16rpx 10rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.report-grid-val {
+  font-size: 26rpx;
   font-weight: 700;
   color: #0f172a;
 }
 
-.warmup-job-sub {
-  font-size: 22rpx;
+.report-grid-lbl {
+  font-size: 18rpx;
   color: #64748b;
-  margin-top: 6rpx;
-  word-break: break-all;
+  margin-top: 4rpx;
 }
 
+/* 🚨 标红失效账号警示栏 */
+.invalid-alert-box {
+  background: #fef2f2;
+  border: 2rpx solid #f87171;
+  border-radius: 16rpx;
+  padding: 24rpx;
+  margin-bottom: 24rpx;
+  box-shadow: 0 4rpx 12rpx rgba(239, 68, 68, 0.08);
+}
+
+.invalid-alert-title {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  margin-bottom: 16rpx;
+}
+
+.invalid-alert-icon {
+  font-size: 28rpx;
+  margin-right: 8rpx;
+}
+
+.invalid-alert-text {
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #b91c1c;
+}
+
+.invalid-account-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+  margin-bottom: 16rpx;
+}
+
+.invalid-tag {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  background: #fee2e2;
+  border: 1rpx solid #fca5a5;
+  border-radius: 10rpx;
+  padding: 8rpx 16rpx;
+}
+
+.invalid-tag-name {
+  font-size: 22rpx;
+  font-weight: 700;
+  color: #991b1b;
+}
+
+.invalid-tag-action {
+  font-size: 18rpx;
+  color: #dc2626;
+  margin-left: 10rpx;
+  text-decoration: underline;
+}
+
+.invalid-alert-tip {
+  font-size: 20rpx;
+  color: #7f1d1d;
+  line-height: 1.5;
+  border-top: 1rpx dashed #fca5a5;
+  padding-top: 12rpx;
+}
+
+.code-snippet {
+  font-family: monospace;
+  background: #ffffff;
+  padding: 2rpx 8rpx;
+  border-radius: 6rpx;
+  border: 1rpx solid #f87171;
+  color: #991b1b;
+  font-weight: 600;
+}
+
+/* 进度条 */
 .warmup-progress-box {
-  margin-bottom: 32rpx;
+  margin-bottom: 24rpx;
 }
 
 .warmup-progress-label {
@@ -140,17 +338,37 @@
   flex-direction: row;
   justify-content: space-between;
   align-items: center;
-  font-size: 24rpx;
+  font-size: 22rpx;
   color: #475569;
   font-weight: 600;
-  margin-bottom: 12rpx;
+  margin-bottom: 10rpx;
 }
 
+.warmup-progress-num {
+  color: #2563eb;
+  font-weight: 700;
+}
+
+.warmup-progress-bar-bg {
+  height: 12rpx;
+  background: #e2e8f0;
+  border-radius: 6rpx;
+  overflow: hidden;
+}
+
+.warmup-progress-bar-fill {
+  height: 100%;
+  background: #2563eb;
+  border-radius: 6rpx;
+  transition: width 0.3s ease;
+}
+
+/* 状态 Badge */
 .warmup-status-badge {
   font-size: 20rpx;
-  padding: 4rpx 12rpx;
+  padding: 6rpx 16rpx;
   border-radius: 20rpx;
-  font-weight: normal;
+  font-weight: 600;
 }
 
 .warmup-status-badge.status-pending {
@@ -178,18 +396,10 @@
   color: #dc2626;
 }
 
-.warmup-progress-bar-bg {
-  height: 12rpx;
-  background: #e2e8f0;
-  border-radius: 6rpx;
-  overflow: hidden;
-}
-
-.warmup-progress-bar-fill {
-  height: 100%;
-  background: #2563eb;
-  border-radius: 6rpx;
-  transition: width 0.3s ease;
+.warmup-status-badge.status-room_serialized_skip {
+  background: #f1f5f9;
+  color: #94a3b8;
+  border: 1rpx solid #cbd5e1;
 }
 
 .warmup-results-title {
@@ -209,7 +419,13 @@
   background: #f8fafc;
   padding: 20rpx 24rpx;
   border-radius: 16rpx;
-  border: 1rpx solid #f1f5f9;
+  border: 1rpx solid #e2e8f0;
+  transition: all 0.2s ease;
+}
+
+.warmup-result-item.item-invalid {
+  background: #fff1f2;
+  border-color: #fecdd3;
 }
 
 .warmup-result-row {
@@ -220,36 +436,65 @@
   margin-bottom: 12rpx;
 }
 
+.warmup-result-name-box {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+}
+
 .warmup-result-name {
   font-size: 24rpx;
-  font-weight: 600;
-  color: #334155;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.warmup-result-seq {
+  font-size: 18rpx;
+  color: #94a3b8;
+  background: #e2e8f0;
+  padding: 2rpx 8rpx;
+  border-radius: 6rpx;
+  margin-left: 8rpx;
 }
 
 .warmup-result-status {
   font-size: 20rpx;
-  font-weight: 600;
+  font-weight: 700;
+  padding: 4rpx 10rpx;
+  border-radius: 8rpx;
 }
 
 .warmup-result-status.status-success {
-  color: #16a34a;
+  color: #15803d;
+  background: #dcfce7;
 }
 
-.warmup-result-status.status-failed {
-  color: #dc2626;
+.warmup-result-status.status-failed,
+.warmup-result-status.status-cookie_invalid,
+.warmup-result-status.status-like_failed,
+.warmup-result-status.status-comment_failed {
+  color: #b91c1c;
+  background: #fee2e2;
 }
 
 .warmup-result-status.status-running {
-  color: #2563eb;
+  color: #1d4ed8;
+  background: #dbeafe;
 }
 
 .warmup-result-status.status-pending {
+  color: #475569;
+  background: #f1f5f9;
+}
+
+.warmup-result-status.status-room_serialized_skip {
   color: #64748b;
+  background: #f1f5f9;
 }
 
 .warmup-result-comment {
   font-size: 22rpx;
-  color: #475569;
+  color: #334155;
   background: #ffffff;
   padding: 12rpx 16rpx;
   border-radius: 8rpx;
@@ -262,13 +507,17 @@
   display: flex;
   flex-direction: row;
   font-size: 20rpx;
-  color: #94a3b8;
+  color: #64748b;
 }
 
 .warmup-result-error {
   font-size: 20rpx;
   color: #dc2626;
   margin-top: 8rpx;
+  background: #fef2f2;
+  padding: 8rpx 12rpx;
+  border-radius: 6rpx;
+  word-break: break-all;
 }
 
 .mon-actions {
@@ -363,14 +612,4 @@
   line-height: 1.4;
   border-top: 1rpx dashed #bae6fd;
   padding-top: 12rpx;
-}
-
-/* 被串行跳过的状态样式 */
-.warmup-status-badge.status-room_serialized_skip {
-  background: #f1f5f9;
-  color: #94a3b8;
-  border: 1rpx solid #cbd5e1;
-}
-.warmup-result-status.status-room_serialized_skip {
-  color: #94a3b8;
 }
