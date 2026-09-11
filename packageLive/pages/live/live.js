@@ -2331,8 +2331,8 @@ buildVipGateStateFromCheckStatus: function (body) {
   _highlightMaterializeCurrentId: '',
   /** 存储水位级别：0/70/85/95。 */
   storageWatermarkLevel: 0,
-  /** 高光实体最大保留条数（>=30 条实战需求；超出淘汰最旧项）。 */
-  highlightsMaxCount: 100,
+  /** 高光实体最大保留条数（单场上限 30 条；超出淘汰本场最旧项）。 */
+  highlightsMaxCount: 30,
   /** 紧急清理时全局至少保留的高光条数（720p 大分段下 30 条会占满沙盒，故下调）。 */
   highlightsEmergencyMinKeepCount: 5,
   /** persist 失败且需突破 minKeep 时的硬下限（条数 ≤ 该值时不再删高光，仅清 rolling）。 */
@@ -7030,14 +7030,17 @@ maybeToastFileStoragePressureFromGlobal: function () {
     if (!hint || hint.level === 'ok') {
       return;
     }
-    if (hint.level === 'severe') {
+    // 入场 (kickoff) 时，只要存储达到 severe 或 warn（高光≥50MB 或沙盒≥100MB，空间不足以支撑20个新高光），即弹窗提醒清理
+    if (hint.level === 'severe' || hint.level === 'warn') {
       if (trigger !== 'kickoff') return;
       if (this._liveStorageEntryModalShown) return;
       this._liveStorageEntryModalShown = true;
       const self = this;
       let text = typeof hint.hintText === 'string' ? hint.hintText.trim() : '';
       if (!text) {
-        text = '本机小程序存储占用过高，保存极易失败，请尽快「下载至相册并清空」或删除旧片段';
+        text = hint.level === 'severe'
+          ? '本机小程序存储占用过高，保存极易失败，请尽快「下载至相册并清空」或删除旧片段'
+          : `本地高光占用约 ${hint.clipMb || 0}MB，小程序文件约 ${hint.totalMb || 0}MB（空间较紧张）。为避免直播中高光保存失败，建议先导出至相册并清理。`;
       }
       if (this._liveStorageSevereModalTimer) {
         clearTimeout(this._liveStorageSevereModalTimer);
@@ -7051,7 +7054,8 @@ maybeToastFileStoragePressureFromGlobal: function () {
         }
         try {
           self.appendHealthLog('live_storage_severe_modal_show', {
-            trigger: trigger || ''
+            trigger: trigger || '',
+            level: hint.level
           });
         } catch (eLog) {}
         self.setData({
@@ -10947,7 +10951,7 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
     const clipsMap = clipsStorage.readClipsMapSafe();
     if (!clipsMap) return;
     const list = Array.isArray(clipsMap[key]) ? clipsMap[key] : [];
-    const maxCount = this.highlightsMaxCount || 100;
+    const maxCount = this.highlightsMaxCount || 30;
     if (list.length <= maxCount) return;
     const sorted = list.slice().sort((a, b) => this.resolveHighlightCreatedAt(/** @type {Record<string, unknown>} */b) - this.resolveHighlightCreatedAt(/** @type {Record<string, unknown>} */a));
     const removed = sorted.slice(maxCount);
@@ -11842,6 +11846,19 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
         icon: 'none',
         duration: 2800
       });
+      return;
+    }
+    const curClips = this.getHighlightList(currentMatchId) || [];
+    const maxMatchClips = this.highlightsMaxCount || 30;
+    if (curClips.length >= maxMatchClips) {
+      this._showLightHint(`本场高光已达${maxMatchClips}个上限，请先导出或删除`);
+      try {
+        this.appendHealthLog('highlight_skip_match_limit', {
+          matchId: currentMatchId,
+          count: curClips.length,
+          maxCount: maxMatchClips
+        });
+      } catch (eLim) {}
       return;
     }
     const now = Date.now();

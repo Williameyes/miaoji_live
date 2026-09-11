@@ -406,6 +406,7 @@ _liveWsOnSocketMessage: function (raw) {
     var prevSeq = this._lastCropSeq || 0;
     var isSeqGap = prevSeq > 0 && seq > prevSeq + 1;
     this._lastCropSeq = seq;
+    var delayMs = payload.ts ? Math.max(0, Date.now() - payload.ts) : 0;
 
     // 弱化高频切图日志：抽样每 30 帧（约 30 秒）记录一次，或出现跳包丢帧时记录，避免刷屏挤掉直播诊断日志
     if (seq % 30 === 0 || isSeqGap) {
@@ -413,10 +414,19 @@ _liveWsOnSocketMessage: function (raw) {
         seq: seq,
         session: String(payload.session_id || '').slice(0, 20),
         size_kb: (payload.time_img.length / 1024).toFixed(1),
-        delay_ms: payload.ts ? Math.max(0, Date.now() - payload.ts) : 0,
+        delay_ms: delayMs,
         seq_gap: isSeqGap ? (seq - prevSeq - 1) : 0
       });
     }
+
+    // 防堆积优化：若网络拥塞恢复后涌入严重滞后的历史帧（delay > 1500ms 且最近刚渲染过），跳过耗费性能的重绘
+    var nowMs = Date.now();
+    var isStaleBurst = delayMs > 1500 && this._lastCropRenderAt && (nowMs - this._lastCropRenderAt < 1000);
+    if (isStaleBurst) {
+      return;
+    }
+    this._lastCropRenderAt = nowMs;
+
     var self = this;
     var sd = {};
     if (!this.data.hasCropFrameImage) {
