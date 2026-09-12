@@ -183,6 +183,45 @@ function removeTournamentCollaborator(tournamentId, openid) {
     });
 }
 
+/**
+ * 创建赛事移交口令（创建人发起移交）
+ * @param {number|string} tournamentId
+ * @returns {Promise<{tournament_id: number, tournament_name: string, transfer_code: string, expire_at: string, expires_in_seconds: number}>}
+ */
+function createTournamentTransfer(tournamentId) {
+  return post('/api/app/tournament/transfer/create', { tournament_id: Number(tournamentId) })
+    .then(parseAppApiResponse)
+    .catch(function (err) {
+      throw normalizeAppApiError(err);
+    });
+}
+
+/**
+ * 查询赛事移交口令摘要（接收方核对）
+ * @param {string} transferCode
+ * @returns {Promise<{valid: boolean, tournament_id: number, tournament_name: string, start_date: string, end_date: string, match_count: number, expire_at: string, created_by: string}>}
+ */
+function fetchTournamentTransferInfo(transferCode) {
+  return get('/api/app/tournament/transfer/info', { transfer_code: String(transferCode || '').trim() })
+    .then(parseAppApiResponse)
+    .catch(function (err) {
+      throw normalizeAppApiError(err);
+    });
+}
+
+/**
+ * 接收方通过口令认领赛事管理权
+ * @param {string} transferCode
+ * @returns {Promise<{success: boolean, tournament_id: number, tournament_name: string}>}
+ */
+function claimTournamentTransfer(transferCode) {
+  return post('/api/app/tournament/transfer/claim', { transfer_code: String(transferCode || '').trim() })
+    .then(parseAppApiResponse)
+    .catch(function (err) {
+      throw normalizeAppApiError(err);
+    });
+}
+
 module.exports = {
   parseTournamentList,
   fetchTournamentList,
@@ -191,6 +230,10 @@ module.exports = {
   createTournamentInvite,
   acceptTournamentInvite,
   fetchTournamentCollaborators,
-  removeTournamentCollaborator
+  removeTournamentCollaborator,
+  createTournamentTransfer,
+  fetchTournamentTransferInfo,
+  claimTournamentTransfer
 };
+
 

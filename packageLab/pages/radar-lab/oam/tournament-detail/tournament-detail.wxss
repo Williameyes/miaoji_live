@@ -603,3 +603,181 @@
 .tour-btn-confirm::after {
   display: none;
 }
+
+/* ───── 赛事所有权移交卡片 ───── */
+.td-transfer-header {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20rpx;
+}
+
+.td-transfer-action-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 28rpx !important;
+  height: 64rpx;
+  line-height: 64rpx;
+  border-radius: 32rpx;
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #ffffff !important;
+  background: linear-gradient(135deg, #f59e0b, #d97706) !important;
+  box-shadow: 0 8rpx 20rpx rgba(217, 119, 6, 0.28);
+  margin: 0 !important;
+}
+
+.td-transfer-action-btn::after {
+  border: none;
+}
+
+/* ───── 移交弹窗 ───── */
+.transfer-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(10px);
+  padding: 40rpx;
+  box-sizing: border-box;
+}
+
+.transfer-modal-card {
+  width: 100%;
+  max-width: 600rpx;
+  padding: 48rpx 40rpx 36rpx;
+  box-sizing: border-box;
+  border-radius: 32rpx;
+  background: #ffffff;
+  box-shadow: 0 32rpx 80rpx rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.transfer-modal-title {
+  font-size: 36rpx;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 12rpx;
+  text-align: center;
+}
+
+.transfer-modal-sub {
+  font-size: 26rpx;
+  color: #64748b;
+  line-height: 1.5;
+  text-align: center;
+  margin-bottom: 32rpx;
+}
+
+.transfer-loading-box {
+  padding: 40rpx 0;
+  font-size: 28rpx;
+  color: #94a3b8;
+  text-align: center;
+}
+
+.transfer-code-box {
+  width: 100%;
+  background: #f8fafc;
+  border: 2rpx dashed #cbd5e1;
+  border-radius: 20rpx;
+  padding: 28rpx 20rpx;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 36rpx;
+}
+
+.transfer-code-kicker {
+  font-size: 22rpx;
+  color: #94a3b8;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  margin-bottom: 12rpx;
+}
+
+.transfer-code-digits {
+  font-size: 64rpx;
+  font-weight: 800;
+  letter-spacing: 0.25em;
+  color: #0f172a;
+  font-family: monospace;
+  margin-bottom: 12rpx;
+  padding-left: 0.25em;
+}
+
+.transfer-code-tip {
+  font-size: 22rpx;
+  color: #f59e0b;
+  font-weight: 500;
+}
+
+.transfer-modal-actions {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  gap: 16rpx;
+  margin-bottom: 20rpx;
+}
+
+.transfer-btn {
+  flex: 1;
+  height: 80rpx;
+  line-height: 80rpx;
+  border-radius: 40rpx;
+  font-size: 26rpx;
+  font-weight: 600;
+  text-align: center;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.transfer-btn::after {
+  border: none;
+}
+
+.transfer-btn--copy {
+  color: #ffffff !important;
+  background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
+  box-shadow: 0 8rpx 24rpx rgba(37, 99, 235, 0.25);
+}
+
+.transfer-btn--refresh {
+  color: #475569 !important;
+  background: #f1f5f9 !important;
+  border: 1rpx solid #e2e8f0 !important;
+}
+
+.transfer-modal-close-wrap {
+  width: 100%;
+}
+
+.transfer-close-btn {
+  width: 100% !important;
+  height: 68rpx;
+  line-height: 68rpx;
+  border-radius: 34rpx;
+  font-size: 26rpx;
+  color: #94a3b8 !important;
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.transfer-close-btn::after {
+  border: none;
+}
+

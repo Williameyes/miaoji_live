@@ -22,6 +22,13 @@
       </view>
       <text class="rl-list-arrow">›</text>
     </view>
+    <view class="rl-list-item" bindtap="onGoClaimTransfer" hover-class="rl-list-item-hover">
+      <view class="rl-list-main">
+        <view class="rl-list-title">🔑 接收赛事</view>
+        <view class="rl-list-desc">输入 6 位口令，接收他人移交的赛事管理权</view>
+      </view>
+      <text class="rl-list-arrow">›</text>
+    </view>
   </view>
 
   <view class="rl-notice" wx:if="{{isWhitelist}}">

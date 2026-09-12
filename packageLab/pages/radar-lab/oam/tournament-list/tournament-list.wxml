@@ -1,9 +1,12 @@
 <view class="rl-root tour-root">
 
-  <view class="rl-header">
-    <view class="rl-kicker">OAM · 赛事维护</view>
-    <view class="rl-title">赛事列表</view>
-    <view class="rl-sub">创建或编辑赛事，场次需归属到具体赛事</view>
+  <view class="tour-header-wrap">
+    <view class="rl-header" style="margin-bottom: 0;">
+      <view class="rl-kicker">OAM · 赛事维护</view>
+      <view class="rl-title">赛事列表</view>
+      <view class="rl-sub">创建或编辑赛事，场次需归属到具体赛事</view>
+    </view>
+    <button class="tour-claim-top-btn" bindtap="onOpenClaimInputModal">🔑 接收赛事</button>
   </view>
 
   <view class="rl-empty" wx:if="{{loading}}">
@@ -73,6 +76,52 @@
       <view class="tour-modal-actions">
         <button class="tour-btn tour-btn-cancel" bindtap="onCloseInitialsModal">取消</button>
         <button class="tour-btn tour-btn-confirm" disabled="{{submittingInitials}}" bindtap="onSaveInitialsFromCsv">一键保存基准积分</button>
+      </view>
+    </view>
+  </view>
+
+  <!-- 🔑 移交口令手动输入弹窗 -->
+  <view class="claim-modal-overlay" wx:if="{{showClaimInputModal}}" catchtouchmove="stopModalMove" bindtap="onCloseClaimInputModal">
+    <view class="claim-modal-card" catchtap="stopModalBubble">
+      <view class="claim-modal-title">接收赛事管理权</view>
+      <view class="claim-modal-sub">请输入客服或原创建人提供的 6 位移交口令</view>
+      
+      <input
+        class="claim-code-input"
+        type="number"
+        maxlength="6"
+        placeholder="请输入 6 位数字口令"
+        value="{{claimCodeInput}}"
+        bindinput="onClaimCodeInput"
+      />
+
+      <view class="claim-modal-actions">
+        <button class="claim-btn claim-btn--cancel" bindtap="onCloseClaimInputModal">取消</button>
+        <button class="claim-btn claim-btn--confirm" bindtap="onSubmitClaimCode">核验并接收</button>
+      </view>
+    </view>
+  </view>
+
+  <!-- 🔑 接收赛事确认弹窗 (剪贴板自动唤起或手动查出后展示) -->
+  <view class="claim-modal-overlay" wx:if="{{showClaimConfirmModal}}" catchtouchmove="stopModalMove" bindtap="onCloseClaimConfirmModal">
+    <view class="claim-modal-card" catchtap="stopModalBubble">
+      <view class="claim-modal-title">发现待接收赛事</view>
+      <view class="claim-modal-sub">请确认赛事信息，接收后您将成为该赛事的主管理员</view>
+
+      <view class="claim-info-card" wx:if="{{claimInfo}}">
+        <view class="claim-info-title">{{claimInfo.tournament_name}}</view>
+        <view class="claim-info-meta">
+          <text class="claim-meta-item">📅 {{claimInfo.start_date}} ~ {{claimInfo.end_date}}</text>
+          <text class="claim-meta-item">📋 包含场次：{{claimInfo.match_count}} 场</text>
+        </view>
+        <view class="claim-info-notice">💡 接收后，该赛事及其全部场次的所有权将转移至您的当前账号名下。</view>
+      </view>
+
+      <view class="claim-modal-actions">
+        <button class="claim-btn claim-btn--cancel" bindtap="onCloseClaimConfirmModal">拒绝</button>
+        <button class="claim-btn claim-btn--confirm" disabled="{{claiming}}" bindtap="onConfirmClaim">
+          {{claiming ? '正在接收…' : '接收'}}
+        </button>
       </view>
     </view>
   </view>

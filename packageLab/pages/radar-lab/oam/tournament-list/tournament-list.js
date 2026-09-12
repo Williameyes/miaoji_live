@@ -1,5 +1,6 @@
 const { ensureMatchManageAccess, ensureRadarLabAccess, isRadarWhitelistUser } = require('../../../../utils/radar-access.js');
 const { fetchTournamentList, oamUpsert } = require('../../../../services/radar-api.js');
+const { fetchTournamentTransferInfo, claimTournamentTransfer } = require('../../../../../services/tournament-api.js');
 const { getRadarListScope } = require('../../../../utils/radar-list-scope.js');
 
 /**
@@ -79,14 +80,26 @@ Page({
     targetTournamentName: '',
     pastedCsvText: '',
     submittingInitials: false,
-    isWhitelist: false
+    isWhitelist: false,
+
+    // 移交认领相关
+    showClaimInputModal: false,
+    showClaimConfirmModal: false,
+    claimCodeInput: '',
+    claimInfo: null,
+    claiming: false
   },
 
   /**
    * @returns {void}
    */
-  onLoad: function () {
+  onLoad: function (options) {
     if (!ensureMatchManageAccess({ redirectBack: true })) return;
+    if (options && options.claim_code) {
+      this._verifyAndShowClaim(options.claim_code, true);
+    } else if (options && options.action === 'claim') {
+      this.setData({ showClaimInputModal: true });
+    }
   },
 
   /**
@@ -97,6 +110,7 @@ Page({
       isWhitelist: isRadarWhitelistUser()
     });
     this._reloadList();
+    this._checkClipboardForTransfer();
   },
 
   /**
@@ -315,5 +329,104 @@ CSV 表头格式（第一行为表头）：
       .finally(function () {
         self.setData({ submittingInitials: false });
       });
-  }
+  },
+
+  // ───── 赛事移交口令接收与认领 ─────
+  _checkClipboardForTransfer: function () {
+    const self = this;
+    if (this.data.showClaimConfirmModal || this.data.showClaimInputModal) return;
+    wx.getClipboardData({
+      success: function (res) {
+        const text = String(res.data || '').trim();
+        if (!text) return;
+        let matchedCode = '';
+        const matchRegex = /(?:移交口令|口令)[：:\s]*([0-9]{6})/i;
+        const m = text.match(matchRegex);
+        if (m && m[1]) {
+          matchedCode = m[1];
+        } else if (/^\d{6}$/.test(text)) {
+          matchedCode = text;
+        }
+        if (!matchedCode) return;
+        if (self._lastPromptedTransferCode === matchedCode) return;
+        self._lastPromptedTransferCode = matchedCode;
+        self._verifyAndShowClaim(matchedCode, false);
+      },
+      fail: function () {}
+    });
+  },
+
+  _verifyAndShowClaim: function (code, isManual) {
+    const self = this;
+    wx.showLoading({ title: '核验口令中…' });
+    fetchTournamentTransferInfo(code)
+      .then(function (info) {
+        wx.hideLoading();
+        if (info && info.valid) {
+          self.setData({
+            claimInfo: info,
+            claimCodeInput: code,
+            showClaimConfirmModal: true,
+            showClaimInputModal: false
+          });
+        }
+      })
+      .catch(function (err) {
+        wx.hideLoading();
+        if (isManual) {
+          wx.showToast({ title: err.message || '核验失败', icon: 'none' });
+        }
+      });
+  },
+
+  onOpenClaimInputModal: function () {
+    this.setData({
+      showClaimInputModal: true,
+      claimCodeInput: ''
+    });
+  },
+
+  onCloseClaimInputModal: function () {
+    this.setData({ showClaimInputModal: false });
+  },
+
+  onClaimCodeInput: function (e) {
+    this.setData({ claimCodeInput: String(e.detail.value || '').trim() });
+  },
+
+  onSubmitClaimCode: function () {
+    const code = String(this.data.claimCodeInput || '').trim();
+    if (!code || !/^\d{6}$/.test(code)) {
+      wx.showToast({ title: '请输入 6 位数字口令', icon: 'none' });
+      return;
+    }
+    this._verifyAndShowClaim(code, true);
+  },
+
+  onCloseClaimConfirmModal: function () {
+    this.setData({ showClaimConfirmModal: false, claimInfo: null });
+  },
+
+  onConfirmClaim: function () {
+    const self = this;
+    const info = this.data.claimInfo;
+    const code = this.data.claimCodeInput;
+    if (!info || !code) return;
+
+    this.setData({ claiming: true });
+    claimTournamentTransfer(code)
+      .then(function () {
+        self.setData({ claiming: false, showClaimConfirmModal: false, claimInfo: null });
+        wx.setClipboardData({ data: '' });
+        wx.showToast({ title: '接收成功！您已成为管理员', icon: 'success' });
+        self._reloadList(true);
+      })
+      .catch(function (err) {
+        self.setData({ claiming: false });
+        wx.showToast({ title: err.message || '接收失败', icon: 'none' });
+      });
+  },
+
+  stopModalBubble: function () {},
+  stopModalMove: function () {}
 });

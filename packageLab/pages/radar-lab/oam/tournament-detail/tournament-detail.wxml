@@ -173,6 +173,23 @@
         </view>
       </view>
     </view>
+
+    <!-- 4. 赛事管理权移交卡片 (仅创建人可见) -->
+    <view class="rl-card" wx:if="{{isOwner}}">
+      <view class="rl-card-inner">
+        <view class="td-transfer-header">
+          <view class="td-collab-title-wrap">
+            <view class="rl-section-title" style="margin-bottom: 0;">🔄 赛事管理权移交</view>
+            <view class="td-collab-sub">生成 6 位移交口令发给客户，对方在小程序内一键认领（2小时有效 · 单次使用）</view>
+          </view>
+          <button
+            class="td-transfer-action-btn"
+            bindtap="onOpenTransferModal"
+            hover-class="td-invite-btn-hover"
+          >移交赛事</button>
+        </view>
+      </view>
+    </view>
   </block>
 
   <!-- 📊 初始基准积分 AI 导入与维护 Modal -->
@@ -219,6 +236,35 @@
       <view class="tour-modal-actions">
         <button class="tour-btn-cancel" bindtap="onCloseInitialsModal">取消</button>
         <button class="tour-btn-confirm" bindtap="onSaveInitials">保存初始基准</button>
+      </view>
+    </view>
+  </view>
+
+  <!-- 🔄 赛事所有权移交弹窗 -->
+  <view class="transfer-modal-overlay" wx:if="{{showTransferModal}}" catchtouchmove="stopTransferModalMove" bindtap="onCloseTransferModal">
+    <view class="transfer-modal-card" catchtap="stopTransferModalBubble">
+      <view class="transfer-modal-title">赛事管理权移交</view>
+      <view class="transfer-modal-sub">将下方 6 位口令或完整文案发送给接收人，对方打开小程序「比赛管理」即可一键认领。</view>
+
+      <view class="transfer-loading-box" wx:if="{{transferLoading}}">
+        <text>正在生成移交口令…</text>
+      </view>
+
+      <block wx:else>
+        <view class="transfer-code-box">
+          <view class="transfer-code-kicker">6位移交口令</view>
+          <view class="transfer-code-digits">{{transferCode}}</view>
+          <view class="transfer-code-tip">有效期约 2 小时 · 仅限一人接收使用一次</view>
+        </view>
+
+        <view class="transfer-modal-actions">
+          <button class="transfer-btn transfer-btn--copy" bindtap="onCopyTransferText">📋 复制移交文案</button>
+          <button class="transfer-btn transfer-btn--refresh" bindtap="onGenerateTransferCode">🔄 刷新口令</button>
+        </view>
+      </block>
+
+      <view class="transfer-modal-close-wrap">
+        <button class="transfer-close-btn" bindtap="onCloseTransferModal">关闭</button>
       </view>
     </view>
   </view>

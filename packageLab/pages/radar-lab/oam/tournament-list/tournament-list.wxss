@@ -216,3 +216,171 @@
 .tour-btn::after { border: none; }
 .tour-btn-cancel { background: #F1F5F9; color: #64748B; }
 .tour-btn-confirm { background: #2563EB; color: #FFFFFF; }
+
+/* ───── 顶部接收赛事入口 ───── */
+.tour-header-wrap {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16rpx;
+  margin-bottom: 40rpx;
+}
+
+.tour-header-wrap .rl-header {
+  flex: 1;
+}
+
+.tour-claim-top-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 24rpx !important;
+  height: 64rpx;
+  line-height: 64rpx;
+  border-radius: 32rpx;
+  font-size: 24rpx;
+  font-weight: 600;
+  color: #2563eb !important;
+  background: #eff6ff !important;
+  border: 1rpx solid #bfdbfe !important;
+  margin-top: 10rpx !important;
+}
+
+.tour-claim-top-btn::after {
+  border: none;
+}
+
+/* ───── 移交口令与认领弹窗 ───── */
+.claim-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(10px);
+  padding: 40rpx;
+  box-sizing: border-box;
+}
+
+.claim-modal-card {
+  width: 100%;
+  max-width: 600rpx;
+  padding: 44rpx 36rpx 36rpx;
+  box-sizing: border-box;
+  border-radius: 32rpx;
+  background: #ffffff;
+  box-shadow: 0 32rpx 80rpx rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.claim-modal-title {
+  font-size: 34rpx;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 12rpx;
+  text-align: center;
+}
+
+.claim-modal-sub {
+  font-size: 24rpx;
+  color: #64748b;
+  line-height: 1.5;
+  text-align: center;
+  margin-bottom: 30rpx;
+}
+
+.claim-code-input {
+  width: 100%;
+  height: 96rpx;
+  border-radius: 20rpx;
+  background: #f8fafc;
+  border: 2rpx solid #cbd5e1;
+  font-size: 44rpx;
+  font-weight: 800;
+  letter-spacing: 0.25em;
+  text-align: center;
+  color: #0f172a;
+  margin-bottom: 32rpx;
+  box-sizing: border-box;
+}
+
+.claim-info-card {
+  width: 100%;
+  background: #f8fafc;
+  border: 1rpx solid #e2e8f0;
+  border-radius: 20rpx;
+  padding: 24rpx 20rpx;
+  box-sizing: border-box;
+  margin-bottom: 32rpx;
+}
+
+.claim-info-title {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: #1e293b;
+  margin-bottom: 12rpx;
+}
+
+.claim-info-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+  margin-bottom: 16rpx;
+}
+
+.claim-meta-item {
+  font-size: 24rpx;
+  color: #64748b;
+}
+
+.claim-info-notice {
+  font-size: 22rpx;
+  color: #f59e0b;
+  line-height: 1.5;
+  padding-top: 12rpx;
+  border-top: 1rpx dashed #e2e8f0;
+}
+
+.claim-modal-actions {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  gap: 16rpx;
+}
+
+.claim-btn {
+  flex: 1;
+  height: 80rpx;
+  line-height: 80rpx;
+  border-radius: 40rpx;
+  font-size: 26rpx;
+  font-weight: 600;
+  text-align: center;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.claim-btn::after {
+  border: none;
+}
+
+.claim-btn--cancel {
+  color: #64748b !important;
+  background: #f1f5f9 !important;
+}
+
+.claim-btn--confirm {
+  color: #ffffff !important;
+  background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
+  box-shadow: 0 8rpx 24rpx rgba(37, 99, 235, 0.25);
+}
+

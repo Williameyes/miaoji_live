@@ -7,6 +7,7 @@ const {
   fetchTournamentCollaborators,
   createTournamentInvite,
   removeTournamentCollaborator,
+  createTournamentTransfer,
   oamUpsert
 } = require('../../../../../services/tournament-api.js');
 const { isRadarWhitelistUser } = require('../../../../utils/radar-access.js');
@@ -23,7 +24,13 @@ Page({
 
     // 初始基准积分 Modal 相关
     showInitialsModal: false,
-    initialGroups: []
+    initialGroups: [],
+
+    // 移交赛事管理权 Modal 相关
+    showTransferModal: false,
+    transferLoading: false,
+    transferCode: '',
+    transferData: null
   },
 
   onLoad: function (options) {
@@ -521,5 +528,70 @@ Page({
         wx.hideLoading();
         wx.showToast({ title: err.message || '保存失败', icon: 'none' });
       });
+  },
+
+  // ───── 赛事所有权移交逻辑 ─────
+  onOpenTransferModal: function () {
+    this.setData({ showTransferModal: true });
+    if (!this.data.transferCode) {
+      this.onGenerateTransferCode();
+    }
+  },
+
+  onCloseTransferModal: function () {
+    this.setData({ showTransferModal: false });
+  },
+
+  stopTransferModalBubble: function () {},
+
+  stopTransferModalMove: function () {},
+
+  onGenerateTransferCode: function () {
+    const self = this;
+    const tourId = this.tournamentId || this.data.tournamentId;
+    if (!tourId) return;
+
+    this.setData({ transferLoading: true });
+    createTournamentTransfer(tourId)
+      .then(function (res) {
+        if (!res || !res.transfer_code) {
+          throw new Error('未能生成有效口令');
+        }
+        self.setData({
+          transferLoading: false,
+          transferCode: res.transfer_code,
+          transferData: res
+        });
+      })
+      .catch(function (err) {
+        self.setData({ transferLoading: false });
+        wx.showToast({ title: err.message || '生成口令失败', icon: 'none' });
+      });
+  },
+
+  onCopyTransferText: function () {
+    const detail = this.data.detail || {};
+    const tourName =
+      detail.tournament_name ||
+      detail.name ||
+      (this.data.transferData && this.data.transferData.tournament_name) ||
+      '赛事管理';
+    const code = this.data.transferCode;
+    if (!code) {
+      wx.showToast({ title: '口令未生成', icon: 'none' });
+      return;
+    }
+    const text =
+      '【高光记分赛事移交】\n' +
+      '赛事名称：' + tourName + '\n' +
+      '移交口令：' + code + '\n' +
+      '有效期：2小时内有效（单次使用）\n' +
+      '请打开「高光记分」微信小程序，进入「我的 - 比赛管理」页面即可一键接收赛事管理权。';
+    wx.setClipboardData({
+      data: text,
+      success: function () {
+        wx.showToast({ title: '移交文案已复制', icon: 'success' });
+      }
+    });
   }
 });
