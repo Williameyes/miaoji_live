@@ -773,12 +773,16 @@ Page({
   },
 
   /**
-   * 「副机记分」遥控端入口
+   * 实验功能「副机记分」遥控端入口：仅白名单用户可进入。
    * @returns {void}
    */
   onSubScorePanelTap: function () {
     if (!this.data.loggedIn) {
       wx.showToast({ title: '请先登录', icon: 'none' });
+      return;
+    }
+    if (!checkSyncLabWhitelist()) {
+      wx.showToast({ title: '暂无使用权限', icon: 'none' });
       return;
     }
     wx.navigateTo({ url: '/packageLive/pages/sub-score-panel/sub-score-panel' });

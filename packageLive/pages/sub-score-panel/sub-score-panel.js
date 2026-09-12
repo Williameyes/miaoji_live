@@ -1,4 +1,5 @@
 const { fetchWsToken } = require('../../../utils/ws-token-request.js');
+const { checkSyncLabWhitelist } = require('../../../utils/sync-lab-whitelist.js');
 const API = require('../../../config/api.js');
 const recSync = require('../../../services/rec-sync-ws-client.js');
 
@@ -75,6 +76,22 @@ Page({
   },
 
   onLoad: function (options) {
+    if (!checkSyncLabWhitelist()) {
+      wx.showModal({
+        title: '提示',
+        content: '副机记分功能目前仅对实验白名单用户开放',
+        showCancel: false,
+        success: function () {
+          wx.navigateBack({
+            fail: function () {
+              wx.switchTab({ url: '/pages/index/index' });
+            }
+          });
+        }
+      });
+      return;
+    }
+
     this._sessionId = Date.now() + '_' + Math.random().toString(36).slice(2, 8);
 
     // 1. 获取胶囊安全区尺寸
@@ -134,6 +151,10 @@ Page({
   },
 
   onConnectTap: function () {
+    if (!checkSyncLabWhitelist()) {
+      wx.showToast({ title: '暂无使用权限', icon: 'none' });
+      return;
+    }
     var rid = this.data.inputRoomId.trim();
     if (rid.length !== 6) {
       wx.showToast({ title: '请输入6位房间码', icon: 'none' });
