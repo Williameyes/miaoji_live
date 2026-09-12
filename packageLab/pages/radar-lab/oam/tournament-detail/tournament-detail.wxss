@@ -1,0 +1,567 @@
+@import '../../common/common.wxss';
+
+.td-root {
+  padding-bottom: calc(160rpx + env(safe-area-inset-bottom));
+}
+
+.td-date-range {
+  font-size: 24rpx;
+  color: #64748b;
+}
+
+.td-spinner {
+  width: 48rpx;
+  height: 48rpx;
+  border: 4rpx solid #e2e8f0;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: td-spin 0.8s linear infinite;
+  margin: 40rpx auto 20rpx;
+}
+
+@keyframes td-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.td-fail-empty {
+  padding: 60rpx 40rpx;
+  background: #ffffff;
+  border-radius: 24rpx;
+  box-shadow: 0 4rpx 20rpx rgba(0, 0, 0, 0.04);
+}
+
+.td-fail-text {
+  font-size: 26rpx;
+  color: #64748b;
+  margin-bottom: 24rpx;
+}
+
+.td-retry-btn {
+  width: 240rpx;
+  height: 68rpx;
+  line-height: 68rpx;
+  font-size: 26rpx;
+  font-weight: 600;
+  background: #2563eb;
+  color: #ffffff;
+  border-radius: 999rpx;
+  border: none;
+}
+
+.td-retry-btn::after {
+  display: none;
+}
+
+
+/* 1. 概览卡片 */
+.td-tags-row {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 12rpx;
+  margin-bottom: 28rpx;
+}
+
+.td-pill {
+  font-size: 22rpx;
+  padding: 6rpx 16rpx;
+  border-radius: 999rpx;
+  font-weight: 600;
+}
+
+.td-pill-sport {
+  background: #f1f5f9;
+  color: #334155;
+}
+
+.td-pill-format {
+  background: #e0f2fe;
+  color: #0284c7;
+}
+
+.td-pill-public {
+  background: rgba(16, 185, 129, 0.1);
+  color: #059669;
+}
+
+.td-pill-hidden {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+}
+
+.td-pill-role {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+.td-pill-role.is-owner {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.td-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  background: #f8fafc;
+  border-radius: 18rpx;
+  padding: 24rpx 16rpx;
+  gap: 12rpx;
+}
+
+.td-stat-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.td-stat-num {
+  font-size: 38rpx;
+  font-weight: 800;
+  color: #0f172a;
+  line-height: 1.2;
+}
+
+.td-stat-num.stat-monitored {
+  color: #2563eb;
+}
+
+.td-stat-num.stat-influence {
+  color: #f59e0b;
+}
+
+.td-stat-label {
+  font-size: 20rpx;
+  color: #64748b;
+  margin-top: 8rpx;
+}
+
+/* 2. 快捷业务操作 */
+.td-action-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+.td-action-item {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 22rpx 24rpx;
+  background: #f8fafc;
+  border-radius: 18rpx;
+  border: 1rpx solid #edf2f7;
+  transition: all 0.15s ease;
+}
+
+.td-action-item-hover {
+  background: #f1f5f9;
+  transform: translateY(1rpx);
+}
+
+.td-action-icon-wrap {
+  width: 72rpx;
+  height: 72rpx;
+  border-radius: 16rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32rpx;
+  margin-right: 20rpx;
+  flex-shrink: 0;
+}
+
+.bg-blue {
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.bg-amber {
+  background: #fffbeb;
+  color: #d97706;
+}
+
+.bg-purple {
+  background: #faf5ff;
+  color: #7e22ce;
+}
+
+.bg-emerald {
+  background: #ecfdf5;
+  color: #059669;
+}
+
+.td-action-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.td-action-title {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #1e293b;
+  margin-bottom: 4rpx;
+}
+
+.td-action-desc {
+  font-size: 22rpx;
+  color: #64748b;
+}
+
+.td-action-arrow {
+  font-size: 36rpx;
+  color: #cbd5e1;
+  font-weight: 300;
+  margin-left: 12rpx;
+}
+
+/* 3. 副管理员团队协作 */
+.td-collab-header {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20rpx;
+}
+
+.td-collab-title-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.td-collab-sub {
+  font-size: 22rpx;
+  color: #94a3b8;
+  margin-top: 6rpx;
+}
+
+.td-invite-btn {
+  margin: 0;
+  padding: 0 24rpx;
+  height: 64rpx;
+  line-height: 64rpx;
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  color: #ffffff;
+  font-size: 24rpx;
+  font-weight: 600;
+  border-radius: 999rpx;
+  box-shadow: 0 4rpx 14rpx rgba(37, 99, 235, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+}
+
+.td-invite-btn::after {
+  display: none;
+}
+
+.td-invite-btn-hover {
+  opacity: 0.9;
+  transform: scale(0.98);
+}
+
+.td-invite-icon {
+  font-size: 28rpx;
+  margin-right: 6rpx;
+  line-height: 1;
+}
+
+.td-tip-banner {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  background: #f0fdf4;
+  border: 1rpx solid #bbf7d0;
+  border-radius: 16rpx;
+  padding: 16rpx 20rpx;
+  margin-bottom: 24rpx;
+}
+
+.td-tip-icon {
+  font-size: 26rpx;
+  margin-right: 12rpx;
+  margin-top: 2rpx;
+}
+
+.td-tip-text {
+  flex: 1;
+  font-size: 22rpx;
+  color: #166534;
+  line-height: 1.5;
+}
+
+.td-collab-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.td-collab-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 20rpx 0;
+  border-bottom: 1rpx solid #f1f5f9;
+}
+
+.td-collab-row:last-child {
+  border-bottom: none;
+}
+
+.td-collab-avatar-wrap {
+  width: 76rpx;
+  height: 76rpx;
+  border-radius: 50%;
+  overflow: hidden;
+  margin-right: 20rpx;
+  background: #e2e8f0;
+  flex-shrink: 0;
+}
+
+.td-collab-avatar {
+  width: 100%;
+  height: 100%;
+}
+
+.td-collab-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.td-collab-name-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.td-collab-name {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #1e293b;
+  max-width: 280rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.td-collab-badge {
+  font-size: 20rpx;
+  background: #eff6ff;
+  color: #2563eb;
+  padding: 2rpx 10rpx;
+  border-radius: 6rpx;
+  font-weight: 500;
+}
+
+.td-collab-time {
+  font-size: 22rpx;
+  color: #94a3b8;
+  margin-top: 6rpx;
+}
+
+.td-remove-btn {
+  margin: 0;
+  padding: 0 20rpx;
+  height: 52rpx;
+  line-height: 50rpx;
+  background: #fff;
+  border: 1rpx solid #fee2e2;
+  color: #ef4444;
+  font-size: 22rpx;
+  border-radius: 12rpx;
+  font-weight: 500;
+}
+
+.td-remove-btn::after {
+  display: none;
+}
+
+.td-collab-empty {
+  text-align: center;
+  padding: 40rpx 20rpx 20rpx;
+}
+
+.td-empty-emoji {
+  font-size: 64rpx;
+  display: block;
+  margin-bottom: 12rpx;
+}
+
+.td-empty-h {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #475569;
+  margin-bottom: 8rpx;
+}
+
+.td-empty-p {
+  font-size: 24rpx;
+  color: #94a3b8;
+  line-height: 1.5;
+  max-width: 480rpx;
+  margin: 0 auto;
+}
+
+/* 初始基准积分 Modal */
+.tour-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40rpx;
+  box-sizing: border-box;
+}
+
+.tour-modal-card {
+  width: 100%;
+  max-height: 85vh;
+  background: #ffffff;
+  border-radius: 28rpx;
+  padding: 36rpx 32rpx;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+}
+
+.tour-modal-title {
+  font-size: 32rpx;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.tour-modal-sub {
+  font-size: 24rpx;
+  color: #64748b;
+  margin-top: 8rpx;
+  margin-bottom: 24rpx;
+}
+
+.tour-ai-action-bar {
+  display: flex;
+  flex-direction: row;
+  gap: 16rpx;
+  margin-bottom: 24rpx;
+}
+
+.tour-ai-btn {
+  flex: 1;
+  font-size: 24rpx;
+  padding: 16rpx 0;
+  background: #f1f5f9;
+  color: #334155;
+  border-radius: 16rpx;
+  text-align: center;
+  border: none;
+  font-weight: 600;
+}
+
+.tour-ai-btn::after {
+  display: none;
+}
+
+.tour-ai-btn-primary {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.tour-initials-scroll {
+  max-height: 48vh;
+  margin-bottom: 24rpx;
+}
+
+.tour-initial-group {
+  margin-bottom: 24rpx;
+  background: #f8fafc;
+  border-radius: 16rpx;
+  padding: 20rpx;
+}
+
+.tour-group-title {
+  font-size: 26rpx;
+  font-weight: 700;
+  color: #1e293b;
+  margin-bottom: 16rpx;
+}
+
+.tour-team-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12rpx;
+  margin-bottom: 12rpx;
+}
+
+.tour-team-code {
+  width: 70rpx;
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #2563eb;
+}
+
+.tour-team-input {
+  flex: 1;
+  height: 64rpx;
+  background: #ffffff;
+  border: 1rpx solid #e2e8f0;
+  border-radius: 12rpx;
+  padding: 0 16rpx;
+  font-size: 24rpx;
+}
+
+.tour-points-input {
+  width: 120rpx;
+  height: 64rpx;
+  background: #ffffff;
+  border: 1rpx solid #e2e8f0;
+  border-radius: 12rpx;
+  padding: 0 16rpx;
+  font-size: 24rpx;
+  text-align: center;
+}
+
+.tour-modal-actions {
+  display: flex;
+  flex-direction: row;
+  gap: 16rpx;
+  padding-top: 12rpx;
+}
+
+.tour-btn-cancel {
+  flex: 1;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 28rpx;
+  border-radius: 16rpx;
+  height: 80rpx;
+  line-height: 80rpx;
+  border: none;
+}
+
+.tour-btn-cancel::after {
+  display: none;
+}
+
+.tour-btn-confirm {
+  flex: 1;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 28rpx;
+  font-weight: 600;
+  border-radius: 16rpx;
+  height: 80rpx;
+  line-height: 80rpx;
+  border: none;
+}
+
+.tour-btn-confirm::after {
+  display: none;
+}

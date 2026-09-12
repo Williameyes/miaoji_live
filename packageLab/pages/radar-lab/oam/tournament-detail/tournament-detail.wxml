@@ -1,0 +1,214 @@
+<view class="rl-root td-root">
+
+  <view class="rl-header">
+    <view class="rl-kicker">OAM · 赛事管理看板</view>
+    <view class="rl-title">{{detail.name || '赛事详情'}}</view>
+    <view class="rl-sub">
+      <text class="td-date-range">📅 {{detail.startDate || '—'}} ~ {{detail.endDate || '—'}}</text>
+    </view>
+  </view>
+
+  <view class="rl-empty" wx:if="{{loading}}">
+    <view class="td-spinner"></view>
+    <text>正在加载赛事管理看板…</text>
+  </view>
+
+  <view class="rl-empty td-fail-empty" wx:elif="{{!detail}}">
+    <view class="td-fail-text">赛事数据加载异常或无权查看</view>
+    <button class="td-retry-btn" bindtap="onRetryLoad">重新加载</button>
+  </view>
+
+  <block wx:elif="{{detail}}">
+    <!-- 1. 赛事概览统计卡片 -->
+    <view class="rl-card td-overview-card">
+      <view class="rl-card-inner">
+        <view class="td-tags-row">
+          <view class="td-pill td-pill-sport">
+            <text>{{detail.sportType === 'soccer' ? '⚽ 足球' : '🏀 篮球'}}</text>
+          </view>
+          <view class="td-pill td-pill-format">
+            <text>{{detail.format === 'CUP' ? '赛会制' : '联赛制'}}</text>
+          </view>
+          <view class="td-pill {{detail.isPublic ? 'td-pill-public' : 'td-pill-hidden'}}">
+            <text>{{detail.isPublic ? '🌐 公开' : '🔒 隐藏'}}</text>
+          </view>
+          <view class="td-pill td-pill-role {{isOwner ? 'is-owner' : ''}}">
+            <text>{{isOwner ? '👑 赛事创建人' : '🤝 协作者/副管理员'}}</text>
+          </view>
+        </view>
+
+        <view class="td-stats-grid">
+          <view class="td-stat-box">
+            <view class="td-stat-num">{{detail.scheduledCount}}</view>
+            <view class="td-stat-label">排期总场次</view>
+          </view>
+          <view class="td-stat-box">
+            <view class="td-stat-num stat-monitored">{{detail.monitoredCount}}</view>
+            <view class="td-stat-label">已监控场次</view>
+          </view>
+          <view class="td-stat-box">
+            <view class="td-stat-num stat-influence">{{detail.influenceScore || 0}}</view>
+            <view class="td-stat-label">赛事影响力</view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 2. 快捷业务操作卡片 -->
+    <view class="rl-card">
+      <view class="rl-card-inner">
+        <view class="rl-section-title">⚡ 快捷业务操作</view>
+        <view class="td-action-grid">
+          <view class="td-action-item" bindtap="onGoToMatches" hover-class="td-action-item-hover">
+            <view class="td-action-icon-wrap bg-blue">📋</view>
+            <view class="td-action-info">
+              <view class="td-action-title">场次列表与排期</view>
+              <view class="td-action-desc">管理并排期所有关联比赛场次</view>
+            </view>
+            <text class="td-action-arrow">›</text>
+          </view>
+
+          <view class="td-action-item" wx:if="{{isOwner}}" bindtap="onEditTournamentInfo" hover-class="td-action-item-hover">
+            <view class="td-action-icon-wrap bg-amber">✏️</view>
+            <view class="td-action-info">
+              <view class="td-action-title">编辑赛事基本信息</view>
+              <view class="td-action-desc">修改赛事名称、举办日期及规则</view>
+            </view>
+            <text class="td-action-arrow">›</text>
+          </view>
+
+          <view class="td-action-item" wx:if="{{isOwner && isWhitelist}}" bindtap="onOpenInitialsModal" hover-class="td-action-item-hover">
+            <view class="td-action-icon-wrap bg-purple">📊</view>
+            <view class="td-action-info">
+              <view class="td-action-title">基准积分维护</view>
+              <view class="td-action-desc">中途接入赛事各小组积分修正</view>
+            </view>
+            <text class="td-action-arrow">›</text>
+          </view>
+
+          <view class="td-action-item" bindtap="onPreviewPublicBoard" hover-class="td-action-item-hover">
+            <view class="td-action-icon-wrap bg-emerald">👁️</view>
+            <view class="td-action-info">
+              <view class="td-action-title">C端公开看板</view>
+              <view class="td-action-desc">前往赛事资讯预览赛程与排行榜</view>
+            </view>
+            <text class="td-action-arrow">›</text>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 3. 副管理员团队协作卡片 -->
+    <view class="rl-card">
+      <view class="rl-card-inner">
+        <view class="td-collab-header">
+          <view class="td-collab-title-wrap">
+            <view class="rl-section-title" style="margin-bottom: 0;">👥 副管理员 ({{collaborators.length}}人)</view>
+            <view class="td-collab-sub">协助录入比分、修改时间与比赛场地</view>
+          </view>
+
+          <button
+            wx:if="{{isOwner}}"
+            class="td-invite-btn"
+            open-type="share"
+            hover-class="td-invite-btn-hover"
+          >
+            <text class="td-invite-icon">＋</text> 邀请副管理员
+          </button>
+        </view>
+
+        <!-- 业务提示条 -->
+        <view class="td-tip-banner">
+          <text class="td-tip-icon">💡</text>
+          <text class="td-tip-text">副管理员在底栏「赛事资讯」进入本赛事详情后，长按赛程表中任意比赛行即可直接修改开赛时间、场地，并录入完赛比分。</text>
+        </view>
+
+        <!-- 副管理员列表 -->
+        <view class="td-collab-list" wx:if="{{collaborators.length}}">
+          <block wx:for="{{collaborators}}" wx:key="id">
+            <view class="td-collab-row">
+              <view class="td-collab-avatar-wrap">
+                <image
+                  class="td-collab-avatar"
+                  src="{{item.avatar_url || 'https://mmbiz.qpic.cn/mmbiz/icTdbqWNOwNRna42FI242Lcia07ZaiewO2mb4547dETxV2yElHbL744Py6kEI7LqE26AicT1iaSiauibLkNia8s0icia8QQ/0'}}"
+                  mode="aspectFill"
+                />
+              </view>
+              <view class="td-collab-meta">
+                <view class="td-collab-name-row">
+                  <text class="td-collab-name">{{item.nickname || '副管理员'}}</text>
+                  <text class="td-collab-badge">副管理员</text>
+                </view>
+                <view class="td-collab-time">加入时间：{{item.created_at || '—'}}</view>
+              </view>
+              <view class="td-collab-action" wx:if="{{isOwner}}">
+                <button
+                  class="td-remove-btn"
+                  bindtap="onRemoveCollaborator"
+                  data-openid="{{item.openid}}"
+                  data-name="{{item.nickname || '该用户'}}"
+                >移除</button>
+              </view>
+            </view>
+          </block>
+        </view>
+
+        <!-- 空状态 -->
+        <view class="td-collab-empty" wx:else>
+          <text class="td-empty-emoji">🤝</text>
+          <view class="td-empty-h">暂未添加副管理员</view>
+          <view class="td-empty-p">点击上方右上角「邀请副管理员」，直接通过微信卡片将邀请转发给好友或工作人员</view>
+        </view>
+      </view>
+    </view>
+  </block>
+
+  <!-- 📊 初始基准积分 AI 导入与维护 Modal -->
+  <view class="tour-modal-overlay" wx:if="{{showInitialsModal}}">
+    <view class="tour-modal-card">
+      <view class="tour-modal-title">📊 设置赛事初始基准积分</view>
+      <view class="tour-modal-sub">针对【{{detail.name}}】中途接入修正</view>
+
+      <view class="tour-ai-action-bar">
+        <button class="tour-ai-btn" bindtap="onCopyAiPrompt">📋 复制 AI 整理提示词</button>
+        <button class="tour-ai-btn tour-ai-btn-primary" bindtap="onPasteAiJson">📥 粘贴 AI 文本导入</button>
+      </view>
+
+      <scroll-view scroll-y class="tour-initials-scroll">
+        <block wx:for="{{initialGroups}}" wx:key="stageId" wx:for-item="grp">
+          <view class="tour-initial-group">
+            <view class="tour-group-title">{{grp.stageName}} ({{grp.stageId}})</view>
+            <block wx:for="{{grp.teams}}" wx:key="teamCode" wx:for-item="tm">
+              <view class="tour-team-row">
+                <text class="tour-team-code">{{tm.teamCode}}</text>
+                <input
+                  class="tour-team-input"
+                  placeholder="真实队名 (如: 战狼队)"
+                  value="{{tm.actualName}}"
+                  data-stage="{{grp.stageId}}"
+                  data-code="{{tm.teamCode}}"
+                  bindinput="onTeamNameInput"
+                />
+                <input
+                  class="tour-points-input"
+                  type="number"
+                  placeholder="积分"
+                  value="{{tm.basePoints}}"
+                  data-stage="{{grp.stageId}}"
+                  data-code="{{tm.teamCode}}"
+                  bindinput="onTeamPointsInput"
+                />
+              </view>
+            </block>
+          </view>
+        </block>
+      </scroll-view>
+
+      <view class="tour-modal-actions">
+        <button class="tour-btn-cancel" bindtap="onCloseInitialsModal">取消</button>
+        <button class="tour-btn-confirm" bindtap="onSaveInitials">保存初始基准</button>
+      </view>
+    </view>
+  </view>
+
+</view>

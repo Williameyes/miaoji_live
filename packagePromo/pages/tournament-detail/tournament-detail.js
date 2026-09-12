@@ -1,7 +1,11 @@
 /**
  * @fileoverview C端赛事详情与排行榜页面 (包含赛程与所有者比分修改)
  */
-const { fetchTournamentDetail, oamUpsert } = require('../../../services/tournament-api.js');
+const {
+  fetchTournamentDetail,
+  oamUpsert,
+  acceptTournamentInvite
+} = require('../../../services/tournament-api.js');
 const {
   checkIsLoggedIn,
   isTournamentPinned,
@@ -274,7 +278,8 @@ Page({
       });
     }
 
-    const id = query && query.id ? String(query.id) : '';
+    const id = query && (query.id || query.tournament_id) ? String(query.id || query.tournament_id) : '';
+    const inviteCode = query && query.invite_code ? String(query.invite_code).trim() : '';
     const initialTab = (query && query.tab === 'standings') ? 'standings' : 'schedule';
     const initialStage = query && query.stage ? query.stage : 'all';
 
@@ -284,7 +289,12 @@ Page({
         activeTab: initialTab,
         selectedStageId: initialStage
       });
-      this.loadDetail(id);
+      const self = this;
+      this.loadDetail(id).then(function () {
+        if (inviteCode) {
+          self._handleInviteCode(id, inviteCode);
+        }
+      });
     }
   },
 
@@ -399,6 +409,58 @@ Page({
         self.setData({ loading: false });
         wx.showToast({ title: err.message || '加载详情失败', icon: 'none' });
       });
+  },
+
+  /**
+   * 处理受邀成为赛事副管理员逻辑
+   */
+  _handleInviteCode: function (tournamentId, inviteCode) {
+    const self = this;
+    const tourName = (this.data.detail && (this.data.detail.tournament_name || this.data.detail.name)) || '本赛事';
+
+    // 如果当前已经是管理员/创建人
+    if (this.data.detail && this.data.detail.can_manage) {
+      wx.showToast({
+        title: '您已拥有该赛事管理权限',
+        icon: 'success'
+      });
+      return;
+    }
+
+    wx.showModal({
+      title: '赛事副管理员邀请',
+      content: '诚邀您成为【' + tourName + '】的副管理员，可协助录入比赛比分、修改开赛时间与场地。是否接受邀请？',
+      confirmText: '接受邀请',
+      cancelText: '暂不接受',
+      confirmColor: '#2563eb',
+      success: function (res) {
+        if (res.confirm) {
+          wx.showLoading({ title: '正在加入…' });
+          let userInfo = {};
+          try {
+            const cached = wx.getStorageSync(STORAGE_USER_INFO_KEY);
+            if (cached) {
+              userInfo = {
+                nickname: cached.nickname || cached.nickName || '',
+                avatar_url: cached.avatar_url || cached.avatarUrl || ''
+              };
+            }
+          } catch (e) {}
+
+          acceptTournamentInvite(tournamentId, inviteCode, userInfo)
+            .then(function (result) {
+              wx.hideLoading();
+              wx.showToast({ title: '已成功成为副管理员！', icon: 'success' });
+              // 重新加载赛事详情以更新 can_manage 权限
+              self.loadDetail(tournamentId);
+            })
+            .catch(function (err) {
+              wx.hideLoading();
+              wx.showToast({ title: err.message || '接受邀请失败或已失效', icon: 'none' });
+            });
+        }
+      }
+    });
   },
 
   /**

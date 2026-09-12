@@ -13,7 +13,7 @@
   <view class="rl-card" wx:elif="{{tournamentRows.length}}">
     <block wx:for="{{tournamentRows}}" wx:key="id">
       <view class="tour-item" hover-class="rl-list-item-hover">
-        <view class="tour-item-main" bindtap="onEditTournament" data-id="{{item.id}}">
+        <view class="tour-item-main" bindtap="onViewTournamentDetail" data-id="{{item.id}}">
           <view class="rl-list-title">{{item.name}}</view>
           <view class="rl-list-desc">{{item.dateRange}}</view>
           <view class="tour-item-meta">

@@ -17,8 +17,9 @@ function parseTournamentItem(raw) {
     startDate: String(o.start_date || o.startDate || ''),
     endDate: String(o.end_date || o.endDate || ''),
     influenceScore: Number(o.influence_score ?? o.influenceScore ?? 0) || 0,
-    scheduledCount: Number(o.total_scheduled_matches ?? o.totalScheduledMatches ?? 0) || 0,
+    scheduledCount: Number(o.total_scheduled_matches ?? o.totalScheduledMatches ?? (Array.isArray(o.matches) ? o.matches.length : 0)) || 0,
     monitoredCount: Number(o.total_monitored_matches ?? o.totalMonitoredMatches ?? 0) || 0,
+    isPublic: o.is_public !== false && o.isPublic !== false,
     canManage: o.can_manage !== false && o.canManage !== false,
     sportType: String(rawSportType || 'basketball'),
     format: String(rawFormat || 'LEAGUE'),
@@ -117,9 +118,79 @@ function oamUpsert(payload) {
     });
 }
 
+/**
+ * 赛事创建人生成副管理员邀请码
+ * @param {number|string} tournamentId
+ * @returns {Promise<{tournament_id: number, invite_code: string, expire_at: string}>}
+ */
+function createTournamentInvite(tournamentId) {
+  return post('/api/app/tournament/invite/create', { tournament_id: Number(tournamentId) })
+    .then(parseAppApiResponse)
+    .catch(function (err) {
+      throw normalizeAppApiError(err);
+    });
+}
+
+/**
+ * 受邀人接受邀请成为副管理员
+ * @param {number|string} tournamentId
+ * @param {string} inviteCode
+ * @param {Object} [userInfo]
+ * @returns {Promise<{success: boolean, tournament_id: number, role: string, is_owner?: boolean}>}
+ */
+function acceptTournamentInvite(tournamentId, inviteCode, userInfo) {
+  const payload = Object.assign(
+    {
+      tournament_id: Number(tournamentId),
+      invite_code: String(inviteCode || '').trim()
+    },
+    userInfo || {}
+  );
+  return post('/api/app/tournament/invite/accept', payload)
+    .then(parseAppApiResponse)
+    .catch(function (err) {
+      throw normalizeAppApiError(err);
+    });
+}
+
+/**
+ * 获取赛事副管理员列表
+ * @param {number|string} tournamentId
+ * @returns {Promise<{tournament_id: number, is_owner: boolean, collaborators: Array}>}
+ */
+function fetchTournamentCollaborators(tournamentId) {
+  return get('/api/app/tournament/collaborators', { tournament_id: Number(tournamentId) })
+    .then(parseAppApiResponse)
+    .catch(function (err) {
+      throw normalizeAppApiError(err);
+    });
+}
+
+/**
+ * 移除赛事副管理员
+ * @param {number|string} tournamentId
+ * @param {string} openid
+ * @returns {Promise<{success: boolean, tournament_id: number}>}
+ */
+function removeTournamentCollaborator(tournamentId, openid) {
+  return post('/api/app/tournament/collaborator/remove', {
+    tournament_id: Number(tournamentId),
+    openid: String(openid || '').trim()
+  })
+    .then(parseAppApiResponse)
+    .catch(function (err) {
+      throw normalizeAppApiError(err);
+    });
+}
+
 module.exports = {
   parseTournamentList,
   fetchTournamentList,
   fetchTournamentDetail,
-  oamUpsert
+  oamUpsert,
+  createTournamentInvite,
+  acceptTournamentInvite,
+  fetchTournamentCollaborators,
+  removeTournamentCollaborator
 };
+

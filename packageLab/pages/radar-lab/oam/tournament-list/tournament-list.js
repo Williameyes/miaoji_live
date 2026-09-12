@@ -165,6 +165,28 @@ Page({
   },
 
   /**
+   * 查看赛事详情看板（预览模式）。
+   * @param {WechatMiniprogram.BaseEvent} e
+   * @returns {void}
+   */
+  onViewTournamentDetail: function (e) {
+    const id = e.currentTarget.dataset.id;
+    if (!id) return;
+    const row = this.data.tournamentRows.find(function (r) {
+      return String(r.id) === String(id);
+    });
+    if (row && row.canManage === false) {
+      wx.showToast({ title: '无权操作该赛事', icon: 'none' });
+      return;
+    }
+    wx.navigateTo({
+      url:
+        '/packageLab/pages/radar-lab/oam/tournament-detail/tournament-detail?id=' +
+        encodeURIComponent(id)
+    });
+  },
+
+  /**
    * 编辑赛事。
    * @param {WechatMiniprogram.BaseEvent} e
    * @returns {void}
