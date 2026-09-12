@@ -59,6 +59,13 @@
           </div>
         </div>
 
+        <!-- 实时排查日志操作栏 -->
+        <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;">
+          <button id="modal-btn-open-debug" type="button" class="dbg-btn" style="flex: 1; padding: 7px 10px; text-align: center; white-space: nowrap;">🛠️ 实时排查控制台 (D键)</button>
+          <button id="modal-btn-copy-logs" type="button" class="dbg-btn" style="padding: 7px 12px; text-align: center; white-space: nowrap;">📋 一键复制日志</button>
+          <button id="modal-btn-export-logs" type="button" class="dbg-btn" style="padding: 7px 12px; text-align: center; white-space: nowrap;">📥 导出日志文件</button>
+        </div>
+
         <!-- 图层显隐管理模块 (解决版权说明隐藏后无法恢复的问题) -->
         <div class="modal-layers-section" style="margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.1);">
           <div class="modal-section-title" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
@@ -225,6 +232,8 @@
       
       <!-- 快捷调试操作按钮 -->
       <div class="debug-actions">
+        <button class="dbg-btn" id="dbg-btn-copy-logs">📋 复制排查日志</button>
+        <button class="dbg-btn" id="dbg-btn-export-logs">📥 导出日志文件</button>
         <button class="dbg-btn dbg-btn-danger" id="dbg-btn-stop">⏹ 立即中断切回直播</button>
         <button class="dbg-btn" id="dbg-btn-clear-queue">🗑️ 清空切片历史</button>
       </div>
@@ -247,7 +256,7 @@
     </div>
   </div>
 
-  <script src="./config.js?v=20260904_12"></script>
-  <script src="./overlay.js?v=20260904_12"></script>
+  <script src="./config.js?v=20260912_15"></script>
+  <script src="./overlay.js?v=20260912_15"></script>
 </body>
 </html>

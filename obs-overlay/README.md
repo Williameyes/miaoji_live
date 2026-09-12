@@ -4,18 +4,18 @@
 
 ---
 
-## 🚀 1. 一键部署与上传指令
+## 🚀 1. 云端生产服务器部署指令 (SCP)
 
-在项目根目录下，使用以下 `scp` 命令直接将最新前端代码推送到云端生产服务器：
+在项目根目录下，直接使用以下 `scp` 命令将最新前端代码推送到云端生产服务器（无需任何部署脚本）：
 
 ```bash
-# 推荐全量上传命令（在项目根目录运行）：
-scp ./obs-overlay/* ubuntu@49.235.145.123:/var/www/gaoguang-obs-overlay/
+# 推荐：一键上传所有网页记分牌资源（在项目根目录运行）：
+scp obs-overlay/index.html obs-overlay/overlay.js obs-overlay/style.css obs-overlay/config.js ubuntu@49.235.145.123:/var/www/gaoguang-obs-overlay/
 ```
 
-或者单独上传核心三件套：
+若仅更新逻辑脚本（例如本次高光修复）：
 ```bash
-scp ./obs-overlay/index.html ./obs-overlay/style.css ./obs-overlay/overlay.js ubuntu@49.235.145.123:/var/www/gaoguang-obs-overlay/
+scp obs-overlay/overlay.js ubuntu@49.235.145.123:/var/www/gaoguang-obs-overlay/
 ```
 
 > **线上访问地址**：

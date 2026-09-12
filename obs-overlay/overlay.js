@@ -105,6 +105,109 @@
 
   var isObsBrowser = typeof window.obsstudio !== 'undefined';
 
+  // ──────────────────────────────────────────────
+  // 🛠️ 全局排查诊断日志管理器 (内存队列 + 控制台拦截 + 现场还原)
+  // ──────────────────────────────────────────────
+  var debugLogHistory = [];
+  var MAX_DEBUG_LOGS = 500;
+  var domDbgLogsBox = null;
+
+  // 尝试恢复上一次运行的历史日志（保留前次崩溃/退场现场）
+  try {
+    var cachedLogs = localStorage.getItem('obs_debug_log_cache');
+    if (cachedLogs) {
+      var parsedLogs = JSON.parse(cachedLogs);
+      if (Array.isArray(parsedLogs)) {
+        debugLogHistory = parsedLogs.slice(0, 50);
+      }
+    }
+  } catch (eCache) {}
+
+  function dbgLog(msg, color, level) {
+    level = level || 'INFO';
+    var now = new Date();
+    var t = (now.getHours() < 10 ? '0' : '') + now.getHours() + ':' +
+            (now.getMinutes() < 10 ? '0' : '') + now.getMinutes() + ':' +
+            (now.getSeconds() < 10 ? '0' : '') + now.getSeconds() + '.' +
+            ('00' + now.getMilliseconds()).slice(-3);
+    var fullTimeStr = now.getFullYear() + '-' +
+            ('0' + (now.getMonth() + 1)).slice(-2) + '-' +
+            ('0' + now.getDate()).slice(-2) + ' ' + t;
+
+    var logEntry = {
+      timestamp: Date.now(),
+      timeStr: t,
+      fullTime: fullTimeStr,
+      level: level,
+      msg: String(msg || ''),
+      color: color || '#e2e8f0'
+    };
+
+    debugLogHistory.unshift(logEntry);
+    if (debugLogHistory.length > MAX_DEBUG_LOGS) {
+      debugLogHistory.pop();
+    }
+
+    if (!domDbgLogsBox && typeof document !== 'undefined') {
+      domDbgLogsBox = document.getElementById('dbg-logs-box');
+    }
+    if (domDbgLogsBox) {
+      var item = document.createElement('div');
+      item.className = 'dbg-log-item';
+      if (color) item.style.color = color;
+      item.textContent = '[' + t + '] ' + msg;
+      domDbgLogsBox.insertBefore(item, domDbgLogsBox.firstChild);
+      if (domDbgLogsBox.children.length > 200) {
+        domDbgLogsBox.removeChild(domDbgLogsBox.lastChild);
+      }
+    }
+
+    try {
+      if (debugLogHistory.length % 5 === 0 || level === 'ERROR' || level === 'WARN') {
+        localStorage.setItem('obs_debug_log_cache', JSON.stringify(debugLogHistory.slice(0, 60)));
+      }
+    } catch (eSaveLog) {}
+  }
+
+  // 自动包装与捕获系统及控制台日志流
+  (function () {
+    var rawLog = console.log;
+    var rawWarn = console.warn;
+    var rawError = console.error;
+
+    console.log = function () {
+      rawLog.apply(console, arguments);
+      try {
+        var text = Array.prototype.slice.call(arguments).map(function (a) {
+          return (typeof a === 'object') ? JSON.stringify(a) : String(a);
+        }).join(' ');
+        if (text.indexOf('[OBS Overlay]') !== -1) {
+          dbgLog(text.replace('[OBS Overlay] ', ''), '#38bdf8', 'INFO');
+        }
+      } catch (eLog) {}
+    };
+
+    console.warn = function () {
+      rawWarn.apply(console, arguments);
+      try {
+        var text = Array.prototype.slice.call(arguments).map(function (a) {
+          return (typeof a === 'object') ? JSON.stringify(a) : String(a);
+        }).join(' ');
+        dbgLog('⚠️ ' + text.replace('[OBS Overlay] ', ''), '#fbbf24', 'WARN');
+      } catch (eWarn) {}
+    };
+
+    console.error = function () {
+      rawError.apply(console, arguments);
+      try {
+        var text = Array.prototype.slice.call(arguments).map(function (a) {
+          return (typeof a === 'object') ? JSON.stringify(a) : String(a);
+        }).join(' ');
+        dbgLog('❌ ' + text.replace('[OBS Overlay] ', ''), '#f87171', 'ERROR');
+      } catch (eErr) {}
+    };
+  })();
+
   // 智能提取房间号：query / hash / 完整 href，兼容 OBS 丢失 search
   var rawRoomId = urlParams.get('roomId') || urlParams.get('roomid') || urlParams.get('roomld') || urlParams.get('room1d') || urlParams.get('room_id') || urlParams.get('room') || urlParams.get('matchCode') || urlParams.get('matchId') || urlParams.get('id') || '';
   if (!rawRoomId) {
@@ -963,7 +1066,7 @@
       if (actType.indexOf('START_HIGHLIGHT_REPLAY_') === 0) {
         extractedFromAct = parseInt(actType.replace('START_HIGHLIGHT_REPLAY_', ''), 10) || 0;
       }
-      var finalTargetIndex = (extractedFromAct > 0) ? extractedFromAct : (d.targetIndex || (decoded && decoded.targetIndex) || (d.clipIndex !== undefined ? (d.clipIndex + 1) : 1));
+      var finalTargetIndex = (extractedFromAct > 0) ? extractedFromAct : (d.targetIndex || (decoded && decoded.targetIndex) || (decoded && decoded.ci) || (d.clipIndex !== undefined ? (d.clipIndex + 1) : 1));
       var mergedOptions = Object.assign({}, d, {
         targetIndex: finalTargetIndex,
         clipIndex: finalTargetIndex - 1
@@ -1616,7 +1719,12 @@
 
   function toRawDiskPath(filePath) {
     if (!filePath || typeof filePath !== 'string') return '';
-    var path = decodeURIComponent(filePath).trim();
+    var path = filePath;
+    try {
+      path = decodeURIComponent(filePath).trim();
+    } catch (e) {
+      path = String(filePath).trim();
+    }
     if (path.indexOf('video?path=') !== -1) {
       path = path.substring(path.indexOf('video?path=') + 11);
     }
@@ -1634,25 +1742,34 @@
     if (!filePath || typeof filePath !== 'string') return '';
     var rawPath = toRawDiskPath(filePath);
     if (!rawPath) return '';
-    // Windows 磁盘路径: C:/Users/... -> file:///C:/Users/...
-    if (/^[a-zA-Z]:\//.test(rawPath)) {
+    try {
+      // Windows 磁盘路径: C:/Users/... -> file:///C:/Users/...
+      if (/^[a-zA-Z]:\//.test(rawPath)) {
+        return 'file:///' + encodeURI(rawPath);
+      }
+      // macOS / Linux 磁盘路径: /Users/... -> file:///Users/...
+      if (rawPath.startsWith('/')) {
+        return 'file://' + encodeURI(rawPath);
+      }
       return 'file:///' + encodeURI(rawPath);
+    } catch (e) {
+      return 'file:///' + rawPath;
     }
-    // macOS / Linux 磁盘路径: /Users/... -> file:///Users/...
-    if (rawPath.startsWith('/')) {
-      return 'file://' + encodeURI(rawPath);
-    }
-    return 'file:///' + encodeURI(rawPath);
   }
 
-  // 提取文件名中的时间戳数字串（如 Replay_2026-08-30_13-05-12.mp4 -> 20260830130512）
+  // 提取文件名中的时间戳数字串（如 Replay_2026-08-30_13-05-12.mp4 / .mkv -> 20260830130512）
   function extractClipTimestamp(filePath) {
     if (!filePath || typeof filePath !== 'string') return 0;
-    var fName = decodeURIComponent(filePath).split('/').pop().split('\\').pop();
-    var digits = fName.replace(/\D/g, '');
-    if (digits.length >= 14) {
-      return parseInt(digits.slice(0, 14), 10) || 0;
-    }
+    try {
+      var fName = decodeURIComponent(filePath).split('/').pop().split('\\').pop();
+      var digits = fName.replace(/\D/g, '');
+      if (digits.length >= 14) {
+        return parseInt(digits.slice(0, 14), 10) || 0;
+      }
+      if (digits.length >= 6) {
+        return parseInt(digits, 10) || 0;
+      }
+    } catch (e) {}
     return 0;
   }
 
@@ -1680,14 +1797,14 @@
     return unique;
   }
 
-  // 恢复并清洗本地存储的高光切片路径历史（仅保留有效 mp4 录像切片）
+  // 恢复并清洗本地存储的高光切片路径历史（兼容 mp4, mkv, mov, ts, flv 等 OBS 常见录制格式）
   try {
     var storedQueue = localStorage.getItem('obs_highlight_queue');
     if (storedQueue) {
       var parsed = JSON.parse(storedQueue);
       if (Array.isArray(parsed)) {
         highlightQueue = parsed.map(formatFilePath).filter(function (p) {
-          return p && p.toLowerCase().indexOf('.mp4') !== -1;
+          return p && /\.(mp4|mkv|mov|ts|flv|m4v|webm)$/i.test(p.split('?')[0]);
         });
         highlightQueue = getSortedHighlightQueue();
       }
@@ -1734,6 +1851,9 @@
 
   var obsMediaSourceName = urlParams.get('obsMedia') || urlParams.get('mediaSource') || '高光回放';
   var currentObsSceneName = '';
+  var currentObsSceneItems = [];
+  var cachedMediaSceneItemId = null;
+  var cachedBrowserSceneItemId = null;
 
   // 发送 OBS 原生媒体源控制指令 (播放 / 停止 / 显示 / 隐藏)
   function obsControlMediaSource(action, filePath) {
@@ -1745,6 +1865,7 @@
     if (action === 'PLAY' && filePath) {
       var rawDiskPath = toRawDiskPath(filePath);
       console.log('[OBS Overlay] Setting OBS Media Source [' + obsMediaSourceName + '] to:', rawDiskPath);
+      dbgLog('🎬 设置 OBS 媒体源 [' + obsMediaSourceName + '] 播放切片: ' + rawDiskPath.split('/').pop().split('\\').pop(), '#38bdf8', 'INFO');
 
       // 1. 设置媒体源的文件路径 (跨平台标准绝对路径)
       obsNativeWs.send(JSON.stringify({
@@ -1764,7 +1885,7 @@
         }
       }));
 
-      // 2. 获取当前场景并显示媒体源
+      // 2. 获取当前场景，自适应检查并智能置顶图层层级与显示状态
       obsNativeWs.send(JSON.stringify({
         op: 6,
         d: {
@@ -1787,6 +1908,8 @@
       }));
     } else if (action === 'STOP') {
       console.log('[OBS Overlay] Stopping OBS Media Source [' + obsMediaSourceName + ']');
+      dbgLog('⏹ 停止 OBS 媒体源 [' + obsMediaSourceName + ']', '#94a3b8', 'INFO');
+
       // 1. 立即停止媒体源播放
       obsNativeWs.send(JSON.stringify({
         op: 6,
@@ -1816,7 +1939,23 @@
         }
       }));
 
-      // 3. 隐藏媒体源图层
+      // 3. 若已知图层 ID，立即发送隐藏指令 (0ms 极速响应)
+      if (cachedMediaSceneItemId && currentObsSceneName) {
+        obsNativeWs.send(JSON.stringify({
+          op: 6,
+          d: {
+            requestType: 'SetSceneItemEnabled',
+            requestId: 'req_quick_disable_' + Date.now(),
+            requestData: {
+              sceneName: currentObsSceneName,
+              sceneItemId: cachedMediaSceneItemId,
+              sceneItemEnabled: false
+            }
+          }
+        }));
+      }
+
+      // 4. 查询当前场景，确保场景同步并隐藏图层
       obsNativeWs.send(JSON.stringify({
         op: 6,
         d: {
@@ -1890,6 +2029,15 @@
                 requestId: 'req_get_input_list'
               }
             }));
+
+            // 3. 初始场景与图层智能探测：获取当前激活场景及图层堆叠结构
+            obsNativeWs.send(JSON.stringify({
+              op: 6,
+              d: {
+                requestType: 'GetCurrentProgramScene',
+                requestId: 'req_init_scene_check'
+              }
+            }));
           } else if (msg.op === 5 && msg.d) {
             var evtType = msg.d.eventType;
             // 捕获 OBS 录像切片保存事件
@@ -1898,14 +2046,34 @@
               if (savedPath) {
                 addHighlightFile(savedPath);
                 var fileName = decodeURIComponent(String(savedPath).split('/').pop().split('\\').pop());
-                alertBanner('⚡ OBS 成功推送到新高光: ' + fileName);
+                alertBanner('⚡成功保存高光片段: ' + fileName);
+              }
+            }
+            // 捕获 OBS 当前场景切换事件
+            else if (evtType === 'CurrentProgramSceneChanged') {
+              var newScene = msg.d.eventData && msg.d.eventData.sceneName;
+              if (newScene) {
+                currentObsSceneName = newScene;
+                console.log('[OBS Overlay] OBS Program Scene changed to:', newScene);
+                dbgLog('🎬 OBS 当前场景切换为: ' + newScene, '#38bdf8', 'INFO');
+                if (obsNativeWs && obsNativeWs.readyState === WebSocket.OPEN) {
+                  obsNativeWs.send(JSON.stringify({
+                    op: 6,
+                    d: {
+                      requestType: 'GetSceneItemList',
+                      requestId: 'req_scene_items_cache',
+                      requestData: { sceneName: newScene }
+                    }
+                  }));
+                }
               }
             }
             // 捕获 OBS 原生媒体源播放结束事件
             else if (evtType === 'MediaInputPlaybackEnded') {
               var inputName = msg.d.eventData && msg.d.eventData.inputName;
               var elapsed = Date.now() - (actualPlaybackStartedAt || replayClipStartedAt || 0);
-              if (isReplayPlaying && (inputName === obsMediaSourceName || !inputName) && elapsed > 1200) {
+              // 关键修复：确保真正开始解码播放过 (hasMediaStartedPlaying)，且过滤掉旧媒体残留结束信号
+              if (isReplayPlaying && hasMediaStartedPlaying && (inputName === obsMediaSourceName || !inputName) && elapsed > 800) {
                 console.log('[OBS Overlay] OBS MediaInputPlaybackEnded event received for [' + inputName + '] after ' + elapsed + 'ms -> advanceOrStopReplay');
                 advanceOrStopReplay();
               }
@@ -1922,6 +2090,8 @@
             } else if (reqId === 'req_get_input_list') {
               var inputList = (msg.d.responseData && msg.d.responseData.inputs) || [];
               var exactMatch = false;
+
+              // 1. 第一优先级：精确匹配当前配置或默认的媒体源名称 (如 "高光回放")
               for (var i = 0; i < inputList.length; i++) {
                 var item = inputList[i];
                 var iName = item.inputName || item.name || '';
@@ -1930,12 +2100,15 @@
                   break;
                 }
               }
+
+              // 2. 第二优先级：名称中含有强高光/回放意图关键字的媒体源 (如 "高光", "回放", "replay", "highlight")
               if (!exactMatch) {
                 for (var j = 0; j < inputList.length; j++) {
                   var itemCandidate = inputList[j];
                   var cName = itemCandidate.inputName || itemCandidate.name || '';
                   var cKind = itemCandidate.inputKind || itemCandidate.unversionedInputKind || '';
-                  if (cKind === 'ffmpeg_source' || cName.indexOf('高光') !== -1 || cName.toLowerCase().indexOf('replay') !== -1 || cName.indexOf('媒体源') !== -1) {
+                  var lowerName = cName.toLowerCase();
+                  if (cKind === 'ffmpeg_source' && (cName.indexOf('高光') !== -1 || cName.indexOf('回放') !== -1 || lowerName.indexOf('replay') !== -1 || lowerName.indexOf('highlight') !== -1)) {
                     console.log('[OBS Overlay] Auto-matched OBS replay media source name to [' + cName + '] (kind: ' + cKind + ')');
                     obsMediaSourceName = cName;
                     exactMatch = true;
@@ -1943,44 +2116,205 @@
                   }
                 }
               }
+
+              // 3. 第三优先级：名称含有 "媒体源" 或 "media source"，且明确排除音频/背景音乐/开场/片头片尾等干扰项
+              if (!exactMatch) {
+                for (var k = 0; k < inputList.length; k++) {
+                  var itemCandidate2 = inputList[k];
+                  var cName2 = itemCandidate2.inputName || itemCandidate2.name || '';
+                  var cKind2 = itemCandidate2.inputKind || itemCandidate2.unversionedInputKind || '';
+                  var lowerName2 = cName2.toLowerCase();
+                  var isExcluded = (lowerName2.indexOf('bgm') !== -1 || lowerName2.indexOf('music') !== -1 || cName2.indexOf('音乐') !== -1 || cName2.indexOf('音频') !== -1 || cName2.indexOf('开场') !== -1 || cName2.indexOf('片头') !== -1 || cName2.indexOf('片尾') !== -1 || cName2.indexOf('转场') !== -1);
+                  if (cKind2 === 'ffmpeg_source' && !isExcluded && (cName2.indexOf('媒体源') !== -1 || lowerName2.indexOf('media source') !== -1)) {
+                    console.log('[OBS Overlay] Auto-matched OBS replay media source name to fallback [' + cName2 + '] (kind: ' + cKind2 + ')');
+                    obsMediaSourceName = cName2;
+                    exactMatch = true;
+                    break;
+                  }
+                }
+              }
+
               if (exactMatch) {
                 console.log('[OBS Overlay] Verified OBS replay media source name:', obsMediaSourceName);
               } else {
-                console.warn('[OBS Overlay] Warning: Media source [' + obsMediaSourceName + '] not found in OBS inputs. Please ensure a Media Source named [' + obsMediaSourceName + '] exists in your OBS scene.');
+                console.warn('[OBS Overlay] Warning: Media source [' + obsMediaSourceName + '] not found in OBS inputs. Keeping default [' + obsMediaSourceName + '].');
+              }
+            } else if (reqId === 'req_init_scene_check') {
+              var initScName = msg.d.responseData && (msg.d.responseData.currentProgramSceneName || msg.d.responseData.sceneName);
+              if (initScName) {
+                currentObsSceneName = initScName;
+                console.log('[OBS Overlay] Initial OBS Program Scene:', initScName);
+                obsNativeWs.send(JSON.stringify({
+                  op: 6,
+                  d: {
+                    requestType: 'GetSceneItemList',
+                    requestId: 'req_scene_items_cache',
+                    requestData: { sceneName: initScName }
+                  }
+                }));
               }
             } else if (reqId === 'req_scene_for_play' || reqId === 'req_scene_for_stop') {
               var scName = msg.d.responseData && (msg.d.responseData.currentProgramSceneName || msg.d.responseData.sceneName);
               if (scName) {
                 currentObsSceneName = scName;
                 var willEnable = (reqId === 'req_scene_for_play');
+                // 关键升级：向 OBS 查询该场景所有图层列表，以进行智能层级置顶和显隐控制
                 obsNativeWs.send(JSON.stringify({
                   op: 6,
                   d: {
-                    requestType: 'GetSceneItemId',
-                    requestId: willEnable ? 'req_enable_item_id' : 'req_disable_item_id',
+                    requestType: 'GetSceneItemList',
+                    requestId: willEnable ? 'req_scene_items_for_play' : 'req_scene_items_for_stop',
                     requestData: {
-                      sceneName: scName,
-                      sourceName: obsMediaSourceName
+                      sceneName: scName
                     }
                   }
                 }));
               }
-            } else if (reqId === 'req_enable_item_id' || reqId === 'req_disable_item_id') {
-              var sItemId = msg.d.responseData && msg.d.responseData.sceneItemId;
-              if (sItemId && currentObsSceneName) {
-                var enableState = (reqId === 'req_enable_item_id');
-                obsNativeWs.send(JSON.stringify({
-                  op: 6,
-                  d: {
-                    requestType: 'SetSceneItemEnabled',
-                    requestId: 'req_set_item_enabled_' + Date.now(),
-                    requestData: {
-                      sceneName: currentObsSceneName,
-                      sceneItemId: sItemId,
-                      sceneItemEnabled: enableState
+            } else if (reqId === 'req_scene_items_for_play' || reqId === 'req_scene_items_for_stop' || reqId === 'req_scene_items_cache') {
+              var isPlay = (reqId === 'req_scene_items_for_play');
+              var isStop = (reqId === 'req_scene_items_for_stop');
+              var scItems = (msg.d.responseData && msg.d.responseData.sceneItems) || [];
+              currentObsSceneItems = scItems;
+
+              var targetMediaItem = null;
+              var targetBrowserItem = null;
+              var maxOtherIndex = -1;
+
+              for (var si = 0; si < scItems.length; si++) {
+                var it = scItems[si];
+                var sName = it.sourceName || '';
+                var sKind = it.inputKind || '';
+                if (sName === obsMediaSourceName) {
+                  targetMediaItem = it;
+                } else if (sKind === 'browser_source' || sName.indexOf('浏览器') !== -1 || sName.toLowerCase().indexOf('overlay') !== -1) {
+                  targetBrowserItem = it;
+                } else {
+                  if (it.sceneItemIndex > maxOtherIndex) {
+                    maxOtherIndex = it.sceneItemIndex;
+                  }
+                }
+              }
+
+              // 备用兜底：若按精确名称未匹配到，寻找含有高光/回放的 ffmpeg_source
+              if (!targetMediaItem) {
+                for (var si2 = 0; si2 < scItems.length; si2++) {
+                  var it2 = scItems[si2];
+                  var itKind = it2.inputKind || '';
+                  var itName = it2.sourceName || '';
+                  if (itKind === 'ffmpeg_source' && (itName.indexOf('高光') !== -1 || itName.indexOf('回放') !== -1)) {
+                    targetMediaItem = it2;
+                    obsMediaSourceName = itName;
+                    break;
+                  }
+                }
+              }
+
+              if (targetMediaItem && currentObsSceneName) {
+                cachedMediaSceneItemId = targetMediaItem.sceneItemId;
+                if (targetBrowserItem) {
+                  cachedBrowserSceneItemId = targetBrowserItem.sceneItemId;
+                }
+
+                if (isPlay) {
+                  // 1. 智能图层层级提拔与重排：
+                  // 高光回放图层必须排在所有实时相机/SRT/采集卡之上，且位于记分牌网页图层正下方！
+                  var totalCount = scItems.length;
+                  var idealMediaIndex = Math.max(0, totalCount - 1);
+
+                  if (targetBrowserItem) {
+                    // 若记分牌处于较高层，高光回放排在记分牌正下方
+                    if (targetBrowserItem.sceneItemIndex >= targetMediaItem.sceneItemIndex) {
+                      idealMediaIndex = Math.max(0, targetBrowserItem.sceneItemIndex - 1);
+                    } else {
+                      idealMediaIndex = Math.max(0, totalCount - 2);
                     }
                   }
-                }));
+
+                  if (targetMediaItem.sceneItemIndex < idealMediaIndex || (maxOtherIndex >= 0 && targetMediaItem.sceneItemIndex < maxOtherIndex)) {
+                    console.log('[OBS Overlay] Auto-promoting media source [' + obsMediaSourceName + '] layer index from ' + targetMediaItem.sceneItemIndex + ' to ' + idealMediaIndex);
+                    dbgLog('🚀 智能置顶高光图层: 从第 ' + (targetMediaItem.sceneItemIndex + 1) + ' 层提升至第 ' + (idealMediaIndex + 1) + ' 层 (覆盖现场直播画面)', '#38bdf8', 'INFO');
+                    obsNativeWs.send(JSON.stringify({
+                      op: 6,
+                      d: {
+                        requestType: 'SetSceneItemIndex',
+                        requestId: 'req_set_media_index_' + Date.now(),
+                        requestData: {
+                          sceneName: currentObsSceneName,
+                          sceneItemId: targetMediaItem.sceneItemId,
+                          sceneItemIndex: idealMediaIndex
+                        }
+                      }
+                    }));
+                  }
+
+                  // 2. 自适应画布全屏缩放：确保 1920x1080 满屏无缝贴合 (OBS_BOUNDS_SCALE_INNER)
+                  obsNativeWs.send(JSON.stringify({
+                    op: 6,
+                    d: {
+                      requestType: 'SetSceneItemTransform',
+                      requestId: 'req_set_media_transform_' + Date.now(),
+                      requestData: {
+                        sceneName: currentObsSceneName,
+                        sceneItemId: targetMediaItem.sceneItemId,
+                        sceneItemTransform: {
+                          boundsType: 'OBS_BOUNDS_SCALE_INNER',
+                          boundsWidth: 1920,
+                          boundsHeight: 1080,
+                          boundsAlignment: 0,
+                          positionX: 0,
+                          positionY: 0,
+                          alignment: 5
+                        }
+                      }
+                    }
+                  }));
+
+                  // 3. 显式开启图层显示 (开启眼睛)
+                  obsNativeWs.send(JSON.stringify({
+                    op: 6,
+                    d: {
+                      requestType: 'SetSceneItemEnabled',
+                      requestId: 'req_enable_media_layer_' + Date.now(),
+                      requestData: {
+                        sceneName: currentObsSceneName,
+                        sceneItemId: targetMediaItem.sceneItemId,
+                        sceneItemEnabled: true
+                      }
+                    }
+                  }));
+                  dbgLog('👁️ 已激活高光回放图层显示 (ID: ' + targetMediaItem.sceneItemId + ')', '#34d399', 'INFO');
+
+                  // 4. 补发一次 RESTART 播放信号，确保渲染就绪
+                  obsNativeWs.send(JSON.stringify({
+                    op: 6,
+                    d: {
+                      requestType: 'TriggerMediaInputAction',
+                      requestId: 'req_media_restart_confirm',
+                      requestData: {
+                        inputName: obsMediaSourceName,
+                        mediaAction: 'OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART'
+                      }
+                    }
+                  }));
+                } else if (isStop) {
+                  // STOP: 隐藏图层
+                  obsNativeWs.send(JSON.stringify({
+                    op: 6,
+                    d: {
+                      requestType: 'SetSceneItemEnabled',
+                      requestId: 'req_disable_media_layer_' + Date.now(),
+                      requestData: {
+                        sceneName: currentObsSceneName,
+                        sceneItemId: targetMediaItem.sceneItemId,
+                        sceneItemEnabled: false
+                      }
+                    }
+                  }));
+                  dbgLog('⏹ 已隐藏高光图层 (ID: ' + targetMediaItem.sceneItemId + ')，切回现场直播', '#94a3b8', 'INFO');
+                }
+              } else if (!targetMediaItem && currentObsSceneName && isPlay) {
+                console.warn('[OBS Overlay] Media source [' + obsMediaSourceName + '] not found in scene [' + currentObsSceneName + ']');
+                dbgLog('⚠️ 未在当前场景 [' + currentObsSceneName + '] 中找到媒体源 [' + obsMediaSourceName + ']', '#f87171', 'WARN');
               }
             } else if (reqId === 'req_media_poll_status') {
               var resp = msg.d.responseData || {};
@@ -2041,6 +2375,11 @@
                 // 4. 超时安全强制兜底 (设为换算时长 + 15s 或 120 秒，杜绝硬切)
                 else if (elapsedFromStart >= (expectedWallDuration > 0 ? expectedWallDuration + 15000 : 120000)) {
                   console.log('[OBS Overlay] Replay clip finished via max safety timeout');
+                  isEnded = true;
+                }
+                // 5. 若媒体指令下发超过 8 秒且始终未能成功解码播放（如文件缺失或源未就绪），自动结束回放释放画面
+                else if (!hasMediaStartedPlaying && (now - replayClipStartedAt) > 8000) {
+                  console.warn('[OBS Overlay] Replay media failed to start playing within 8s timeout, advancing/stopping replay');
                   isEnded = true;
                 }
 
@@ -2130,6 +2469,16 @@
       if (typeof dbgLog === 'function') {
         dbgLog('⚠️ 播放失败: 队列中没有高光切片', '#f87171');
       }
+      // 紧急自愈机会：主动向 OBS 请求最近一次保存的高光切片
+      if (obsNativeWs && obsNativeWs.readyState === WebSocket.OPEN) {
+        obsNativeWs.send(JSON.stringify({
+          op: 6,
+          d: {
+            requestType: 'GetLastReplayBufferReplay',
+            requestId: 'req_get_last_replay'
+          }
+        }));
+      }
       stopHighlightReplay(true);
       return;
     }
@@ -2154,7 +2503,13 @@
       }
     }
 
-    // 边界安全钳位
+    // 边界安全钳位与对齐提示
+    if (opt.targetIndex && opt.targetIndex > sortedQueue.length) {
+      console.warn('[OBS Overlay] Requested clip #' + opt.targetIndex + ' exceeds current queue length (' + sortedQueue.length + '), clamped to #' + (targetIdx + 1));
+      if (typeof dbgLog === 'function') {
+        dbgLog('⚠️ 点播第 ' + opt.targetIndex + ' 段超出网页端捕获数(' + sortedQueue.length + '段)，播放第 ' + (targetIdx + 1) + ' 段', '#fbbf24');
+      }
+    }
     if (targetIdx < 0) targetIdx = 0;
     if (targetIdx >= sortedQueue.length) targetIdx = sortedQueue.length - 1;
 
@@ -2608,21 +2963,151 @@
   var domDbgStop = document.getElementById('dbg-btn-stop');
   var domDbgClearQueue = document.getElementById('dbg-btn-clear-queue');
 
-  function dbgLog(msg, color) {
-    if (!domDbgLogsBox) return;
+  var domDbgCopyLogs = document.getElementById('dbg-btn-copy-logs');
+  var domDbgExportLogs = document.getElementById('dbg-btn-export-logs');
+  var domModalBtnOpenDebug = document.getElementById('modal-btn-open-debug');
+  var domModalBtnCopyLogs = document.getElementById('modal-btn-copy-logs');
+  var domModalBtnExportLogs = document.getElementById('modal-btn-export-logs');
+
+  /** 生成包含系统状态、OBS连接、切片队列与详细时序事件的完整排查报告 */
+  function generateDebugReportText() {
     var now = new Date();
-    var t = (now.getHours() < 10 ? '0' : '') + now.getHours() + ':' +
-            (now.getMinutes() < 10 ? '0' : '') + now.getMinutes() + ':' +
-            (now.getSeconds() < 10 ? '0' : '') + now.getSeconds();
-    var item = document.createElement('div');
-    item.className = 'dbg-log-item';
-    if (color) item.style.color = color;
-    item.textContent = '[' + t + '] ' + msg;
-    domDbgLogsBox.insertBefore(item, domDbgLogsBox.firstChild);
-    if (domDbgLogsBox.children.length > 50) {
-      domDbgLogsBox.removeChild(domDbgLogsBox.lastChild);
+    var lines = [];
+    lines.push('================================================================');
+    lines.push('  MIAOJI OBS OVERLAY 排查诊断日志报告');
+    lines.push('  导出时间: ' + now.toLocaleString());
+    lines.push('================================================================');
+    lines.push('');
+    lines.push('【系统与运行环境】');
+    lines.push('- 页面地址: ' + window.location.href);
+    lines.push('- UserAgent: ' + navigator.userAgent);
+    lines.push('- 屏幕分辨率: ' + window.innerWidth + 'x' + window.innerHeight + ' (DPR: ' + (window.devicePixelRatio || 1) + ')');
+    lines.push('');
+    lines.push('【连接与服务状态】');
+    lines.push('- 房间号 (roomId): ' + (roomId || '未设置'));
+    lines.push('- 主记分网关 WebSocket: ' + (mainWs ? (mainWs.readyState === WebSocket.OPEN ? '🟢 OPEN (已连接)' : '🔴 readyState=' + mainWs.readyState) : '未初始化'));
+    lines.push('- OBS 本地 WebSocket: ' + (obsNativeWs ? (obsNativeWs.readyState === WebSocket.OPEN ? '🟢 OPEN (端口 ' + obsWsPort + ' 已连接)' : '🔴 readyState=' + obsNativeWs.readyState) : '未初始化'));
+    lines.push('- 媒体源名称 (obsMediaSourceName): ' + obsMediaSourceName);
+    lines.push('- 当前 OBS 场景名 (currentObsSceneName): ' + (currentObsSceneName || '未获取'));
+    lines.push('- 已缓存媒体源图层 ID (cachedMediaSceneItemId): ' + (cachedMediaSceneItemId != null ? cachedMediaSceneItemId : '未捕获'));
+    lines.push('');
+    lines.push('【OBS 场景图层堆叠结构 (由底至顶，共 ' + currentObsSceneItems.length + ' 层)】');
+    if (currentObsSceneItems.length === 0) {
+      lines.push('  (未获取到场景图层信息，请确认 OBS WebSocket 已连接且存在图层)');
+    } else {
+      for (var s = 0; s < currentObsSceneItems.length; s++) {
+        var itm = currentObsSceneItems[s];
+        var isMedia = (itm.sourceName === obsMediaSourceName);
+        var isBrowser = (itm.inputKind === 'browser_source');
+        var mark = isMedia ? ' 🎬 [高光回放目标源]' : (isBrowser ? ' 🌐 [记分牌网页图层]' : '');
+        lines.push('  [第 ' + (itm.sceneItemIndex + 1) + ' 层 / Index ' + itm.sceneItemIndex + '] ' + itm.sourceName + ' (类型: ' + (itm.inputKind || itm.sourceType) + ', 显示: ' + (itm.sceneItemEnabled ? '开' : '关') + ')' + mark);
+      }
+    }
+    lines.push('');
+    lines.push('【高光切片队列 (共 ' + highlightQueue.length + ' 段)】');
+    if (highlightQueue.length === 0) {
+      lines.push('  (暂无高光切片，请确认 OBS 重放缓冲区是否已开启并成功保存)');
+    } else {
+      for (var i = 0; i < highlightQueue.length; i++) {
+        var qPath = highlightQueue[i];
+        lines.push('  [' + (i + 1) + '] ' + qPath + ' -> 磁盘路径: ' + toRawDiskPath(qPath));
+      }
+    }
+    lines.push('');
+    lines.push('【当前回放状态】');
+    lines.push('- 是否回放中 (isReplayPlaying): ' + isReplayPlaying);
+    lines.push('- 当前播放切片索引: ' + currentReplayIndex);
+    lines.push('- 媒体是否真正开始解码 (hasMediaStartedPlaying): ' + hasMediaStartedPlaying);
+    lines.push('- 记录的时长 (currentClipDuration): ' + currentClipDuration + 'ms');
+    lines.push('- 测算播放倍速 (detectedReplaySpeed): ' + (detectedReplaySpeed ? detectedReplaySpeed.toFixed(2) : '未测得'));
+    lines.push('');
+    lines.push('【详细时序事件日志 (最近 ' + debugLogHistory.length + ' 条)】');
+    lines.push('----------------------------------------------------------------');
+    var chronological = debugLogHistory.slice().reverse();
+    for (var j = 0; j < chronological.length; j++) {
+      var item = chronological[j];
+      lines.push('[' + item.fullTime + '] [' + item.level + '] ' + item.msg);
+    }
+    lines.push('');
+    lines.push('============================ 报告结束 ============================');
+    return lines.join('\n');
+  }
+
+  function copyDebugLogs() {
+    var text = generateDebugReportText();
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        alertBanner('📋 排查日志已成功复制到剪贴板！请直接粘贴发送');
+      }).catch(function () {
+        fallbackCopyText(text);
+      });
+    } else {
+      fallbackCopyText(text);
     }
   }
+
+  function fallbackCopyText(text) {
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      ta.style.top = '-9999px';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      var res = document.execCommand('copy');
+      document.body.removeChild(ta);
+      if (res) {
+        alertBanner('📋 排查日志已成功复制到剪贴板！请直接粘贴发送');
+      } else {
+        window.prompt('请按 Ctrl+C 复制以下排查日志：', text);
+      }
+    } catch (eCopy) {
+      window.prompt('请按 Ctrl+C 复制以下排查日志：', text);
+    }
+  }
+
+  function exportDebugLogs() {
+    try {
+      var text = generateDebugReportText();
+      var blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      var now = new Date();
+      var dateStr = now.getFullYear() +
+                    ('0' + (now.getMonth() + 1)).slice(-2) +
+                    ('0' + now.getDate()).slice(-2) + '_' +
+                    ('0' + now.getHours()).slice(-2) +
+                    ('0' + now.getMinutes()).slice(-2) +
+                    ('0' + now.getSeconds()).slice(-2);
+      var fileName = 'obs_overlay_logs_' + (roomId || 'default') + '_' + dateStr + '.txt';
+
+      if (window.navigator && window.navigator.msSaveOrOpenBlob) {
+        window.navigator.msSaveOrOpenBlob(blob, fileName);
+      } else {
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+      }
+      alertBanner('📥 已下载排查日志: ' + fileName);
+    } catch (eExp) {
+      console.error('[OBS Overlay] Export log failed:', eExp);
+      copyDebugLogs();
+    }
+  }
+
+  window.__copyDebugLogs = copyDebugLogs;
+  window.__exportDebugLogs = exportDebugLogs;
+  window.__getDebugReport = generateDebugReportText;
+  window.__openDebugPanel = function () {
+    if (domDebugPanel) {
+      domDebugPanel.style.display = 'flex';
+      updateDebugUI();
+    }
+  };
 
   function updateDebugUI() {
     if (domDbgRoomStatus) {
@@ -2630,7 +3115,7 @@
       domDbgRoomStatus.style.color = (mainWs && mainWs.readyState === WebSocket.OPEN) ? '#4ade80' : '#f87171';
     }
     if (domDbgObsStatus) {
-      domDbgObsStatus.textContent = (obsNativeWs && obsNativeWs.readyState === WebSocket.OPEN) ? ('🟢 已连通 (端口 ' + obsWsPort + ')') : '🔴 未连接';
+      domDbgObsStatus.textContent = (obsNativeWs && obsNativeWs.readyState === WebSocket.OPEN) ? ('🟢 已连通 (端口 ' + obsWsPort + ' | ' + obsMediaSourceName + ')') : '🔴 未连接';
       domDbgObsStatus.style.color = (obsNativeWs && obsNativeWs.readyState === WebSocket.OPEN) ? '#4ade80' : '#f87171';
     }
     if (domDbgQueueCount) {
@@ -2682,6 +3167,7 @@
         var isShow = (domDebugPanel.style.display !== 'none');
         domDebugPanel.style.display = isShow ? 'none' : 'flex';
         dbgLog('调试面板切换: ' + (isShow ? '隐藏' : '显示'), '#38bdf8');
+        if (!isShow) updateDebugUI();
       }
     }
   });
@@ -2707,6 +3193,25 @@
       updateDebugUI();
       alertBanner('🗑️ 高光队列已清空');
     });
+  }
+
+  if (domDbgCopyLogs) {
+    domDbgCopyLogs.addEventListener('click', copyDebugLogs);
+  }
+  if (domDbgExportLogs) {
+    domDbgExportLogs.addEventListener('click', exportDebugLogs);
+  }
+  if (domModalBtnOpenDebug) {
+    domModalBtnOpenDebug.addEventListener('click', function () {
+      if (domDebugPanel) domDebugPanel.style.display = 'flex';
+      updateDebugUI();
+    });
+  }
+  if (domModalBtnCopyLogs) {
+    domModalBtnCopyLogs.addEventListener('click', copyDebugLogs);
+  }
+  if (domModalBtnExportLogs) {
+    domModalBtnExportLogs.addEventListener('click', exportDebugLogs);
   }
 
   // 初始默认高对比度应用
