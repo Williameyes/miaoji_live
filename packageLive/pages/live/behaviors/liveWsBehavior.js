@@ -1016,6 +1016,17 @@ _liveWsFlushScorePersist: function () {
 
     // ──────── 遥控指令消费：副机保存高光 ────────
     if (payload.act === 'TRIGGER_SAVE_HIGHLIGHT' || payload.act === 'REC_TRIGGER') {
+      // 1. 若主机连入了拍摄副机信道 (channel=rec)，无条件向下游拍摄副机中继下发
+      if (this._recSyncWs && typeof this._recSyncWs.sendTrigger === 'function' && this._recSyncWs.isConnected && this._recSyncWs.isConnected()) {
+        try {
+          var triggerMeta = typeof this.getRecSyncMatchMeta === 'function' ? this.getRecSyncMatchMeta() : null;
+          var tId = this._recSyncWs.sendTrigger(triggerMeta);
+          console.log('[Live][WS] Relayed TRIGGER_SAVE_HIGHLIGHT to recSyncWs, triggerId:', tId);
+        } catch (eTrig) {
+          console.warn('[Live][WS] relay to recSyncWs fail:', eTrig);
+        }
+      }
+      // 2. 主机本地尝试执行高光捕获 (若主机自身也在录制)
       if (typeof this.requestHighlightCapture === 'function') {
         this.requestHighlightCapture();
       }

@@ -1,5 +1,6 @@
 const { fetchWsToken } = require('../../../utils/ws-token-request.js');
 const API = require('../../../config/api.js');
+const recSync = require('../../../services/rec-sync-ws-client.js');
 
 const WS_BASE_URL = 'wss://api.mx.server.ndcoo.com';
 const WS_SOCKET_PATH = '/gaoguang-ws';
@@ -15,6 +16,7 @@ Page({
     roomId: '',
     inputRoomId: '',
     wsConnected: false,
+    recSyncConnected: false,
     wsBusy: false,
     wsStatusText: '',
 
@@ -50,6 +52,7 @@ Page({
 
   _socketTask: null,
   _socketGen: 0,
+  _recSyncClient: null,
   _sessionId: '',
   _seq: 0,
   _heartbeatTimer: null,
@@ -104,7 +107,7 @@ Page({
     this._addLog('🚀 遥控器已载入 (Session: ' + this._sessionId + ')', 'success');
 
     if (lastRoomId.length === 6) {
-      this._addLog('恢复缓存控制码 #' + lastRoomId + '，自动发起连接', '');
+      this._addLog('恢复缓存控制码 #' + lastRoomId + '，自动发起双通道连接', '');
       this.doConnect(lastRoomId);
     }
   },
@@ -187,7 +190,7 @@ Page({
     wx.showToast({ title: '日志已清空', icon: 'none' });
   },
 
-  // ──────── 核心网络流：HTTP 获取 Token → WSS 长连接握手 ────────
+  // ──────── 核心网络流：双通道并发连接 (主计分通道 + 拍摄副机通道) ────────
   doConnect: function (roomId) {
     var safeRoomId = String(roomId).replace(/\D/g, '').slice(0, 6);
     if (safeRoomId.length !== 6) return;
@@ -200,7 +203,31 @@ Page({
       wsStatusText: '获取 Token…'
     });
 
+    // 1. 连接计分主通道 (控分 / 直播主机联动)
     this._startSocketFlow(safeRoomId);
+    // 2. 连接拍摄副机专属通道 (channel=rec，用于直控拍摄端截取高光)
+    this._connectRecSync(safeRoomId);
+  },
+
+  _connectRecSync: function (roomId) {
+    if (this._recSyncClient) {
+      try { this._recSyncClient.destroy(); } catch (e) {}
+      this._recSyncClient = null;
+    }
+    var self = this;
+    this._recSyncClient = recSync.createRecSyncWsClient({
+      onOpen: function () {
+        self.setData({ recSyncConnected: true });
+        self._addLog('🎬 拍摄副机同步信道已就绪 (channel=rec)', 'success');
+      },
+      onClose: function () {
+        self.setData({ recSyncConnected: false });
+      },
+      onError: function (err) {
+        self.setData({ recSyncConnected: false });
+      }
+    });
+    this._recSyncClient.connect(roomId, 'controller');
   },
 
   _startSocketFlow: function (roomId) {
@@ -376,6 +403,7 @@ Page({
       self._reconnectTimer = null;
       if (self._manualClose || !this.data.roomId) return;
       self._startSocketFlow(self.data.roomId);
+      self._connectRecSync(self.data.roomId);
     }, delay);
   },
 
@@ -478,8 +506,13 @@ Page({
       } catch (e) {}
       this._socketTask = null;
     }
+    if (this._recSyncClient) {
+      try { this._recSyncClient.destroy(); } catch (e) {}
+      this._recSyncClient = null;
+    }
     this.setData({
       wsConnected: false,
+      recSyncConnected: false,
       wsBusy: false,
       wsStatusText: ''
     });
@@ -596,9 +629,9 @@ Page({
     });
   },
 
-  // ──────── 遥控功能 2：保存高光 (8秒截取) ────────
+  // ──────── 遥控功能 2：保存高光 (8秒截取) - 双通道全链路直达 ────────
   onSaveHighlightTap: function () {
-    if (!this.data.wsConnected) {
+    if (!this.data.wsConnected && !this.data.recSyncConnected) {
       wx.showToast({ title: '请先连接主机房间', icon: 'none' });
       return;
     }
@@ -607,15 +640,28 @@ Page({
     }
 
     this._vibrate('medium');
-    this._addLog('⚡ 发送保存高光指令 (前8秒)', 'success');
+    this._addLog('⚡ 触发保存高光指令 (直达拍摄副机与主机)', 'success');
 
-    this._sendUpdatePacket('TRIGGER_SAVE_HIGHLIGHT', {
-      type: 'COLLECTOR_UPDATE',
-      act: 'TRIGGER_SAVE_HIGHLIGHT'
-    });
+    // 1. 直发给拍摄副机 (channel=rec 专属通道，0 延迟直达，不受主机相机门禁制约)
+    if (this._recSyncClient && this._recSyncClient.isConnected()) {
+      try {
+        var trigId = this._recSyncClient.sendTrigger();
+        this._addLog('🎬 已直发拍摄副机高光捕获信令 (ID: ' + String(trigId || '').slice(0, 8) + ')', 'success');
+      } catch (eTrig) {
+        this._addLog('⚠️ 直发拍摄副机失败: ' + (eTrig.message || String(eTrig)), 'warn');
+      }
+    }
+
+    // 2. 发送给直播主机 (计分主通道，触发主机本地录制保存)
+    if (this.data.wsConnected) {
+      this._sendUpdatePacket('TRIGGER_SAVE_HIGHLIGHT', {
+        type: 'COLLECTOR_UPDATE',
+        act: 'TRIGGER_SAVE_HIGHLIGHT'
+      });
+    }
 
     wx.showToast({
-      title: '⚡ 已通知主机保存高光',
+      title: '⚡ 已发送高光保存指令',
       icon: 'none',
       duration: 1800
     });

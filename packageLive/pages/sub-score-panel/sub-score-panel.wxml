@@ -153,8 +153,13 @@
           <text class="card-icon">🎬</text>
           <text class="card-title">高光片段控制</text>
         </view>
-        <view class="highlight-count-tag" wx:if="{{highlightCount > 0}}">
-          <text>本场累计: {{highlightCount}} 个</text>
+        <view class="flex-gap">
+          <view class="highlight-count-tag" wx:if="{{recSyncConnected}}">
+            <text>📷 拍摄端就绪</text>
+          </view>
+          <view class="highlight-count-tag" wx:if="{{highlightCount > 0}}">
+            <text>本场: {{highlightCount}} 个</text>
+          </view>
         </view>
       </view>
 
