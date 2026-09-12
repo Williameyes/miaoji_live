@@ -444,21 +444,6 @@ Page({
     const self = this;
     const tourName = (this.data.detail && (this.data.detail.tournament_name || this.data.detail.name)) || '本赛事';
 
-    // 如果当前已经是管理员/创建人
-    if (this.data.detail && this.data.detail.can_manage) {
-      wx.showModal({
-        title: '您已拥有管理权限',
-        content:
-          '您当前已拥有【' +
-          tourName +
-          '】的赛事管理与比分修改权限，无需重复接受邀请。\n\n【测试提示】：微信邀请卡片是发给「其他协作者」的。请将卡片转发给其他需要协助改分的微信好友/工作人员进行测试。',
-        showCancel: false,
-        confirmText: '我知道了',
-        confirmColor: '#2563eb'
-      });
-      return;
-    }
-
     const doAccept = function () {
       wx.showModal({
         title: '赛事副管理员邀请',
@@ -483,6 +468,20 @@ Page({
             acceptTournamentInvite(tournamentId, inviteCode, userInfo)
               .then(function (result) {
                 wx.hideLoading();
+                if (result && result.is_owner) {
+                  wx.showModal({
+                    title: '您是该赛事的创建人',
+                    content:
+                      '您是【' +
+                      tourName +
+                      '】的创建人本尊，已拥有最高管理与改分权限，无需作为副管理员重复加入。\n\n请将该邀请卡片分享给其他需要协助改分的微信好友或裁判员进行测试。',
+                    showCancel: false,
+                    confirmText: '我知道了',
+                    confirmColor: '#2563eb'
+                  });
+                  return;
+                }
+
                 wx.showModal({
                   title: '🎉 加入成功',
                   content:
