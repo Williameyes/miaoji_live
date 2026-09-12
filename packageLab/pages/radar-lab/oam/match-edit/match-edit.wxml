@@ -2,7 +2,12 @@
 
   <view class="rl-header">
     <view class="rl-title">{{isEdit ? '编辑场次' : '新增场次'}}</view>
-    <view class="rl-sub">选择赛事、队名与开赛时间，无需填写 ID</view>
+    <view class="rl-sub">
+      <text>选择赛事、队名与开赛时间，无需填写 ID</text>
+      <block wx:if="{{!isEdit}}">
+        <text>（如需批量导入，请 </text><text class="rl-link" bindtap="onOpenContactModal">联系客服</text><text> 支持）</text>
+      </block>
+    </view>
   </view>
 
   <view class="rl-empty" wx:if="{{loading}}">加载中…</view>
@@ -68,6 +73,20 @@
         </view>
       </block>
       <button class="rl-btn rl-btn-primary" disabled="{{submitting || !tournaments.length}}" bindtap="onSave">保存场次</button>
+    </view>
+  </view>
+
+  <!-- 联系客服弹窗 -->
+  <view class="contact-overlay" wx:if="{{showContactModal}}" catchtouchmove="onContactModalCatchMove" bindtap="closeContactModal">
+    <view class="contact-card" catchtap="stopContactModalBubble">
+      <view class="contact-title">批量导入场次</view>
+      <view class="contact-content">
+        <text class="contact-text">如需批量导入比赛场次，请联系客服发送您的赛程表或对阵信息，我们将协助您快速完成导入。</text>
+      </view>
+      <view class="contact-actions">
+        <button class="contact-btn contact-cancel-btn" bindtap="closeContactModal">关闭</button>
+        <button class="contact-btn contact-confirm-btn" open-type="contact" session-from="match_batch_import" bindtap="closeContactModal">咨询客服</button>
+      </view>
     </view>
   </view>
 

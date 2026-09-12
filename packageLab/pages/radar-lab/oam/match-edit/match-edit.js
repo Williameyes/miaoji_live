@@ -35,7 +35,8 @@ Page({
     minViewers: '',
     isWhitelist: false,
     submitting: false,
-    loading: true
+    loading: true,
+    showContactModal: false
   },
 
   /**
@@ -317,5 +318,33 @@ Page({
       .finally(function () {
         self.setData({ submitting: false });
       });
-  }
+  },
+
+  /**
+   * 打开联系客服对话框
+   * @returns {void}
+   */
+  onOpenContactModal: function () {
+    this.setData({ showContactModal: true });
+  },
+
+  /**
+   * 关闭联系客服对话框
+   * @returns {void}
+   */
+  closeContactModal: function () {
+    this.setData({ showContactModal: false });
+  },
+
+  /**
+   * 阻止弹窗内容冒泡
+   * @returns {void}
+   */
+  stopContactModalBubble: function () {},
+
+  /**
+   * 阻止遮罩层滚动穿透
+   * @returns {void}
+   */
+  onContactModalCatchMove: function () {}
 });
