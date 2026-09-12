@@ -237,6 +237,13 @@
   margin-top: 6rpx;
 }
 
+.td-collab-btns {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12rpx;
+}
+
 .td-invite-btn {
   margin: 0;
   padding: 0 24rpx;
@@ -252,6 +259,14 @@
   align-items: center;
   justify-content: center;
   border: none;
+}
+
+.td-invite-copy-btn {
+  background: #f1f5f9;
+  color: #2563eb;
+  border: 1rpx solid #bfdbfe;
+  box-shadow: none;
+  font-weight: 600;
 }
 
 .td-invite-btn::after {

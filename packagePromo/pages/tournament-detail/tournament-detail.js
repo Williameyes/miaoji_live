@@ -283,6 +283,8 @@ Page({
     const initialTab = (query && query.tab === 'standings') ? 'standings' : 'schedule';
     const initialStage = query && query.stage ? query.stage : 'all';
 
+    console.log('[tournament-detail onLoad] 接收到路由参数 query=', query, 'id=', id, 'inviteCode=', inviteCode);
+
     if (id) {
       this.setData({
         tournamentId: id,
@@ -420,9 +422,12 @@ Page({
 
     // 如果当前已经是管理员/创建人
     if (this.data.detail && this.data.detail.can_manage) {
-      wx.showToast({
-        title: '您已拥有该赛事管理权限',
-        icon: 'success'
+      wx.showModal({
+        title: '提示',
+        content: '您当前已拥有【' + tourName + '】的赛事管理与改分权限，无需重复接受邀请。此邀请卡片请转发给其他需要协作改分的微信好友/工作人员。',
+        showCancel: false,
+        confirmText: '我知道了',
+        confirmColor: '#2563eb'
       });
       return;
     }

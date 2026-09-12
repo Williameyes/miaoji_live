@@ -107,14 +107,20 @@
             <view class="td-collab-sub">协助录入比分、修改时间与比赛场地</view>
           </view>
 
-          <button
-            wx:if="{{isOwner}}"
-            class="td-invite-btn"
-            open-type="share"
-            hover-class="td-invite-btn-hover"
-          >
-            <text class="td-invite-icon">＋</text> 邀请副管理员
-          </button>
+          <view class="td-collab-btns" wx:if="{{isOwner}}">
+            <button
+              class="td-invite-btn td-invite-copy-btn"
+              bindtap="onCopyInviteLink"
+              hover-class="td-invite-btn-hover"
+            >📋 复制链接</button>
+            <button
+              class="td-invite-btn"
+              open-type="share"
+              hover-class="td-invite-btn-hover"
+            >
+              <text class="td-invite-icon">＋</text> 微信邀请
+            </button>
+          </view>
         </view>
 
         <!-- 业务提示条 -->

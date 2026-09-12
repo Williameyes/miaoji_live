@@ -32,6 +32,7 @@ Page({
       const tourId = Number(id);
       this.tournamentId = tourId;
       this.setData({ tournamentId: tourId });
+      this._prepareInviteCode(tourId);
       this._loadTournamentData(tourId);
     }
   },
@@ -198,11 +199,59 @@ Page({
     });
   },
 
-  // 5. 微信转发分享生成邀请卡片
+  // 5. 复制邀请链接与参数（方便开发调试及微信粘贴）
+  onCopyInviteLink: function () {
+    const self = this;
+    const tournamentId = this.tournamentId || this.data.tournamentId;
+    if (!tournamentId) return;
+
+    const tourName = (this.data.detail && (this.data.detail.tournament_name || this.data.detail.name)) || '赛事';
+    const doCopy = function (code) {
+      const sharePath =
+        '/packagePromo/pages/tournament-detail/tournament-detail?id=' +
+        encodeURIComponent(tournamentId) +
+        '&invite_code=' +
+        encodeURIComponent(code);
+
+      wx.setClipboardData({
+        data: sharePath,
+        success: function () {
+          wx.showModal({
+            title: '邀请链接已复制',
+            content: '已复制以下邀请路径：\n\n' + sharePath + '\n\n可直接在开发者工具「自定义编译模式」中粘贴启动参数：\nid=' + tournamentId + '&invite_code=' + code + '\n或在聊天中发送给协作者测试。',
+            showCancel: false,
+            confirmText: '好的'
+          });
+        }
+      });
+    };
+
+    if (this.data.currentInviteCode) {
+      doCopy(this.data.currentInviteCode);
+    } else {
+      wx.showLoading({ title: '正在获取邀请码…' });
+      createTournamentInvite(tournamentId)
+        .then(function (res) {
+          wx.hideLoading();
+          if (res && res.invite_code) {
+            self.setData({ currentInviteCode: res.invite_code });
+            doCopy(res.invite_code);
+          } else {
+            wx.showToast({ title: '生成邀请码失败', icon: 'none' });
+          }
+        })
+        .catch(function (err) {
+          wx.hideLoading();
+          wx.showToast({ title: err.message || '生成失败', icon: 'none' });
+        });
+    }
+  },
+
+  // 6. 微信转发分享生成邀请卡片
   onShareAppMessage: function () {
     const self = this;
-    const tournamentId = this.data.tournamentId;
-    const tourName = (this.data.detail && this.data.detail.name) || '赛事';
+    const tournamentId = this.tournamentId || this.data.tournamentId;
+    const tourName = (this.data.detail && (this.data.detail.tournament_name || this.data.detail.name)) || '赛事';
     const inviteCode = this.data.currentInviteCode;
 
     let sharePath =
@@ -213,9 +262,11 @@ Page({
       sharePath += '&invite_code=' + encodeURIComponent(inviteCode);
     }
 
+    console.log('[onShareAppMessage] 生成副管理员邀请卡片, path=', sharePath, 'inviteCode=', inviteCode);
+
     // 分享后刷新下一个邀请码凭证
     setTimeout(function () {
-      self._prepareInviteCode();
+      self._prepareInviteCode(tournamentId);
     }, 1000);
 
     return {
