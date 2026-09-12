@@ -422,9 +422,19 @@ Page({
         self._filterStageData(stageId, resolvedMatches, standings);
       })
       .catch(function (err) {
-        self.setData({ loading: false });
+        console.error('[loadDetail error]', err);
+        self.setData({
+          loading: false,
+          loadError: err.message || '加载详情失败，请重试'
+        });
         wx.showToast({ title: err.message || '加载详情失败', icon: 'none' });
       });
+  },
+
+  onRetryDetail: function () {
+    if (this.data.tournamentId) {
+      this.loadDetail(this.data.tournamentId);
+    }
   },
 
   /**

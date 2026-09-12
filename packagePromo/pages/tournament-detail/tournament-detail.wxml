@@ -196,9 +196,16 @@
             </block>
           </view>
         </block>
-      </block>
     </view>
   </block>
+
+  <!-- 3. 加载异常或空数据兜底状态 -->
+  <view class="td-fail-state" wx:else>
+    <view class="td-fail-icon">⚠️</view>
+    <view class="td-fail-title">未能加载到赛事详情</view>
+    <view class="td-fail-desc">{{loadError || '未找到该赛事数据或网络异常，请重试'}}</view>
+    <button class="td-fail-retry-btn" bindtap="onRetryDetail">重新加载</button>
+  </view>
 
   <!-- 比赛信息编辑 Modal (所有者权限) -->
   <view class="td-modal-overlay" wx:if="{{showScoreModal}}">
