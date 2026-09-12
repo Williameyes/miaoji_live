@@ -412,7 +412,54 @@
   color: #EF4444;
 }
 
-/* ──────── 6. 高光与回放卡片 ──────── */
+/* ──────── 6. 节次切换卡片 ──────── */
+.current-period-pill {
+  font-size: 22rpx;
+  font-weight: 600;
+  color: #2563EB;
+  background: #EFF6FF;
+  padding: 6rpx 16rpx;
+  border-radius: 20rpx;
+}
+
+.periods-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+}
+
+.period-pill {
+  flex: 1 1 calc(25% - 12rpx);
+  min-width: 140rpx;
+  height: 68rpx;
+  background: #F1F5F9;
+  border-radius: 16rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1rpx solid #E2E8F0;
+  box-sizing: border-box;
+  transition: all 0.15s ease;
+}
+
+.period-text {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #475569;
+}
+
+.period-pill--active {
+  background: linear-gradient(135deg, #2563EB, #1D4ED8);
+  border-color: #1D4ED8;
+  box-shadow: 0 4rpx 12rpx rgba(37, 99, 235, 0.25);
+}
+
+.period-pill--active .period-text {
+  color: #FFFFFF;
+  font-weight: 700;
+}
+
+/* ──────── 7. 高光与回放卡片 ──────── */
 .highlight-count-tag {
   font-size: 22rpx;
   font-weight: 600;

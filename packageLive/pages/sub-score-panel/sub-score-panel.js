@@ -44,6 +44,10 @@ Page({
     lastActionTeam: '',
     lastActionDelta: 0,
 
+    // 节次枚举：0=热身, 1=第一节, 2=第二节, 3=第三节, 4=第四节, 5=加时, 6=完赛
+    period: 1,
+    periods: ['热身', '第一节', '第二节', '第三节', '第四节', '加时', '完赛'],
+
     // 高光状态
     highlightCount: 0,
     isReplaying: false,
@@ -465,9 +469,24 @@ Page({
           patch.highlightCount = msg.highlightCount;
         }
 
+        var pVal = typeof msg.period === 'number' ? msg.period : (typeof msg.p === 'number' ? msg.p : null);
+        if (pVal !== null && pVal >= 0 && pVal < this.data.periods.length) {
+          patch.period = pVal;
+        }
+
         if (Object.keys(patch).length > 0) {
           this.setData(patch);
           this._addLog('🔄 比赛信息同步: ' + (patch.matchTitle || this.data.matchTitle), 'success');
+        }
+        return;
+      }
+
+      // 消费节次切换广播
+      if (act === 'PERIOD') {
+        var pValDirect = typeof msg.period === 'number' ? msg.period : (typeof msg.p === 'number' ? msg.p : null);
+        if (pValDirect !== null && pValDirect >= 0 && pValDirect < this.data.periods.length) {
+          this.setData({ period: pValDirect });
+          this._addLog('⏱️ 节次已同步: ' + this.data.periods[pValDirect], 'success');
         }
         return;
       }
@@ -629,7 +648,43 @@ Page({
     });
   },
 
-  // ──────── 遥控功能 2：保存高光 (8秒截取) - 双通道全链路直达 ────────
+  // ──────── 遥控功能 2：切换节次 ────────
+  onPeriodSelect: function (e) {
+    if (!this.data.wsConnected) {
+      wx.showToast({ title: '请先连接主机房间', icon: 'none' });
+      return;
+    }
+    var idx = Number(e.currentTarget.dataset.index);
+    if (isNaN(idx) || idx < 0 || idx >= this.data.periods.length) return;
+    if (idx === this.data.period) return;
+
+    var periodName = this.data.periods[idx] || '第一节';
+    var now = new Date();
+    var timeStr = now.toTimeString().split(' ')[0];
+
+    this.setData({
+      period: idx,
+      lastActionText: '切至 ' + periodName,
+      lastActionTime: timeStr
+    });
+
+    this._vibrate('light');
+    this._addLog('⏱️ 遥控切节次: ' + periodName + ' [PERIOD p=' + idx + ']', 'success');
+
+    this._sendUpdatePacket('PERIOD', {
+      period: idx,
+      p: idx,
+      periodName: periodName
+    });
+
+    wx.showToast({
+      title: '已切至 ' + periodName,
+      icon: 'none',
+      duration: 1400
+    });
+  },
+
+  // ──────── 遥控功能 3：保存高光 (8秒截取) - 双通道全链路直达 ────────
   onSaveHighlightTap: function () {
     if (!this.data.wsConnected && !this.data.recSyncConnected) {
       wx.showToast({ title: '请先连接主机房间', icon: 'none' });

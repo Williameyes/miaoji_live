@@ -146,7 +146,33 @@
       </view>
     </view>
 
-    <!-- 5. 高光控制卡片 (立即截取 + 连续集锦回放) -->
+    <!-- 5. 比赛节次切换卡片 (全量 7 个枚举) -->
+    <view class="card period-card">
+      <view class="card-header flex-between">
+        <view class="header-left">
+          <text class="card-icon">⏱️</text>
+          <text class="card-title">比赛节次切换</text>
+        </view>
+        <view class="current-period-pill">
+          <text>当前: {{periods[period] || '第一节'}}</text>
+        </view>
+      </view>
+
+      <view class="periods-wrap">
+        <view 
+          wx:for="{{periods}}" 
+          wx:key="*this"
+          class="period-pill {{period === index ? 'period-pill--active' : ''}}"
+          bindtap="onPeriodSelect"
+          data-index="{{index}}"
+          hover-class="btn-hover"
+        >
+          <text class="period-text">{{item}}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 6. 高光控制卡片 (立即截取 + 连续集锦回放) -->
     <view class="card highlight-card">
       <view class="card-header flex-between">
         <view class="header-left">
