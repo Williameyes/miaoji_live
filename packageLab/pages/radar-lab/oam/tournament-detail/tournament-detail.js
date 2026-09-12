@@ -226,7 +226,7 @@ Page({
             content:
               '已复制测试启动参数到剪贴板：\n' +
               startupParams +
-              '\n\n【测试方法】：\n在微信开发者工具顶部，点击「pages/index/index ▼」下拉框 -> 点击底部「+ 添加编译模式」-> 在启动参数栏粘贴即可！',
+              '\n\n【说明】：此邀请链接有效期为 2 小时，且仅限一人接受使用一次。\n\n【测试方法】：\n在微信开发者工具顶部，点击「pages/index/index ▼」下拉框 -> 点击底部「+ 添加编译模式」-> 在启动参数栏粘贴即可！',
             showCancel: false,
             confirmText: '好的'
           });

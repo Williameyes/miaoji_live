@@ -104,7 +104,7 @@
         <view class="td-collab-header">
           <view class="td-collab-title-wrap">
             <view class="rl-section-title" style="margin-bottom: 0;">👥 副管理员 ({{collaborators.length}}人)</view>
-            <view class="td-collab-sub">协助录入比分、修改时间与比赛场地</view>
+            <view class="td-collab-sub">协助录入比分、修改时间与比赛场地（邀请凭证 2 小时有效 · 单次使用）</view>
           </view>
 
           <view class="td-collab-btns" wx:if="{{isOwner}}">
@@ -132,7 +132,7 @@
         <!-- 业务提示条 -->
         <view class="td-tip-banner">
           <text class="td-tip-icon">💡</text>
-          <text class="td-tip-text">副管理员在底栏「赛事资讯」进入本赛事详情后，长按赛程表中任意比赛行即可直接修改开赛时间、场地，并录入完赛比分。</text>
+          <text class="td-tip-text">副管理员在底栏「赛事资讯」进入本赛事详情后，长按赛程表中任意比赛行即可直接修改开赛时间、场地，并录入完赛比分。（生成的邀请卡片有效期为 2 小时，且仅限一人使用，使用后自动作废）</text>
         </view>
 
         <!-- 副管理员列表 -->
