@@ -112,7 +112,7 @@
               class="td-invite-btn td-invite-copy-btn"
               bindtap="onCopyInviteLink"
               hover-class="td-invite-btn-hover"
-            >📋 复制链接</button>
+            >📋 复制参数</button>
             <button
               class="td-invite-btn"
               open-type="share"
@@ -121,6 +121,12 @@
               <text class="td-invite-icon">＋</text> 微信邀请
             </button>
           </view>
+        </view>
+
+        <!-- 邀请码服务状态提示 -->
+        <view class="td-invite-err-box" wx:if="{{inviteError}}">
+          <text class="td-invite-err-icon">⚠️</text>
+          <text class="td-invite-err-msg">邀请功能提示：{{inviteError}}</text>
         </view>
 
         <!-- 业务提示条 -->

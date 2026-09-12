@@ -279,7 +279,14 @@ Page({
     }
 
     const id = query && (query.id || query.tournament_id) ? String(query.id || query.tournament_id) : '';
-    const inviteCode = query && query.invite_code ? String(query.invite_code).trim() : '';
+    let inviteCode = query && (query.invite_code || query.inviteCode || query.code) ? String(query.invite_code || query.inviteCode || query.code).trim() : '';
+    if (!inviteCode && query && query.scene) {
+      try {
+        const sceneStr = decodeURIComponent(query.scene);
+        const match = sceneStr.match(/(?:invite_code|code)=([^&]+)/);
+        if (match) inviteCode = match[1];
+      } catch (e) {}
+    }
     const initialTab = (query && query.tab === 'standings') ? 'standings' : 'schedule';
     const initialStage = query && query.stage ? query.stage : 'all';
 
@@ -292,11 +299,18 @@ Page({
         selectedStageId: initialStage
       });
       const self = this;
-      this.loadDetail(id).then(function () {
-        if (inviteCode) {
-          self._handleInviteCode(id, inviteCode);
-        }
-      });
+      this.loadDetail(id)
+        .then(function () {
+          if (inviteCode) {
+            self._handleInviteCode(id, inviteCode);
+          }
+        })
+        .catch(function (err) {
+          console.error('[loadDetail error]', err);
+          if (inviteCode) {
+            self._handleInviteCode(id, inviteCode);
+          }
+        });
     }
   },
 
@@ -423,8 +437,11 @@ Page({
     // 如果当前已经是管理员/创建人
     if (this.data.detail && this.data.detail.can_manage) {
       wx.showModal({
-        title: '提示',
-        content: '您当前已拥有【' + tourName + '】的赛事管理与改分权限，无需重复接受邀请。此邀请卡片请转发给其他需要协作改分的微信好友/工作人员。',
+        title: '您已拥有管理权限',
+        content:
+          '您当前已拥有【' +
+          tourName +
+          '】的赛事管理与比分修改权限，无需重复接受邀请。\n\n【测试提示】：微信邀请卡片是发给「其他协作者」的。请将卡片转发给其他需要协助改分的微信好友/工作人员进行测试。',
         showCancel: false,
         confirmText: '我知道了',
         confirmColor: '#2563eb'
@@ -432,40 +449,76 @@ Page({
       return;
     }
 
-    wx.showModal({
-      title: '赛事副管理员邀请',
-      content: '诚邀您成为【' + tourName + '】的副管理员，可协助录入比赛比分、修改开赛时间与场地。是否接受邀请？',
-      confirmText: '接受邀请',
-      cancelText: '暂不接受',
-      confirmColor: '#2563eb',
-      success: function (res) {
-        if (res.confirm) {
-          wx.showLoading({ title: '正在加入…' });
-          let userInfo = {};
-          try {
-            const cached = wx.getStorageSync(STORAGE_USER_INFO_KEY);
-            if (cached) {
-              userInfo = {
-                nickname: cached.nickname || cached.nickName || '',
-                avatar_url: cached.avatar_url || cached.avatarUrl || ''
-              };
-            }
-          } catch (e) {}
+    const doAccept = function () {
+      wx.showModal({
+        title: '赛事副管理员邀请',
+        content: '诚邀您成为【' + tourName + '】的副管理员，可协助录入比赛比分、修改开赛时间与场地。是否接受邀请？',
+        confirmText: '接受邀请',
+        cancelText: '暂不接受',
+        confirmColor: '#2563eb',
+        success: function (res) {
+          if (res.confirm) {
+            wx.showLoading({ title: '正在加入…' });
+            let userInfo = {};
+            try {
+              const cached = wx.getStorageSync(STORAGE_USER_INFO_KEY);
+              if (cached) {
+                userInfo = {
+                  nickname: cached.nickname || cached.nickName || '',
+                  avatar_url: cached.avatar_url || cached.avatarUrl || ''
+                };
+              }
+            } catch (e) {}
 
-          acceptTournamentInvite(tournamentId, inviteCode, userInfo)
-            .then(function (result) {
-              wx.hideLoading();
-              wx.showToast({ title: '已成功成为副管理员！', icon: 'success' });
-              // 重新加载赛事详情以更新 can_manage 权限
-              self.loadDetail(tournamentId);
-            })
-            .catch(function (err) {
-              wx.hideLoading();
-              wx.showToast({ title: err.message || '接受邀请失败或已失效', icon: 'none' });
-            });
+            acceptTournamentInvite(tournamentId, inviteCode, userInfo)
+              .then(function (result) {
+                wx.hideLoading();
+                wx.showModal({
+                  title: '🎉 加入成功',
+                  content:
+                    '您已成功成为【' +
+                    tourName +
+                    '】的副管理员！\n\n现在您可在下方赛程列表中长按任意比赛卡片，直接修改开赛时间、场地或录入完赛比分。',
+                  showCancel: false,
+                  confirmText: '我知道了',
+                  confirmColor: '#2563eb',
+                  success: function () {
+                    self.loadDetail(tournamentId);
+                  }
+                });
+              })
+              .catch(function (err) {
+                wx.hideLoading();
+                wx.showModal({
+                  title: '接受邀请失败',
+                  content: err.message || '邀请码可能已失效或已被使用，请联系赛事创建人重新发起邀请。',
+                  showCancel: false
+                });
+              });
+          }
         }
-      }
-    });
+      });
+    };
+
+    // 检查登录状态：若未登录则先引导快速授权登录
+    const isLoggedIn = checkIsLoggedIn();
+    if (!isLoggedIn) {
+      wx.showModal({
+        title: '需要微信授权',
+        content: '加入【' + tourName + '】副管理员需要先完成微信登录以绑定身份，是否立即登录？',
+        confirmText: '立即登录',
+        confirmColor: '#2563eb',
+        success: function (r) {
+          if (r.confirm) {
+            self._performQuickLogin('用于验证副管理员微信身份', function () {
+              doAccept();
+            });
+          }
+        }
+      });
+    } else {
+      doAccept();
+    }
   },
 
   /**

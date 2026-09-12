@@ -284,6 +284,29 @@
   line-height: 1;
 }
 
+.td-invite-err-box {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  background: #fef2f2;
+  border: 1rpx solid #fecaca;
+  border-radius: 14rpx;
+  padding: 14rpx 18rpx;
+  margin-bottom: 18rpx;
+}
+
+.td-invite-err-icon {
+  font-size: 26rpx;
+  margin-right: 10rpx;
+  flex-shrink: 0;
+}
+
+.td-invite-err-msg {
+  font-size: 22rpx;
+  color: #dc2626;
+  line-height: 1.4;
+}
+
 .td-tip-banner {
   display: flex;
   flex-direction: row;

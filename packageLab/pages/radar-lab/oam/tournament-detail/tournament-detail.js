@@ -124,14 +124,21 @@ Page({
     const tournamentId = tourId || this.tournamentId || this.data.tournamentId;
     if (!tournamentId) return;
 
+    this.setData({ inviteLoading: true, inviteError: '' });
     createTournamentInvite(tournamentId)
       .then(function (res) {
         if (res && res.invite_code) {
-          self.setData({ currentInviteCode: res.invite_code });
+          self.setData({ currentInviteCode: res.invite_code, inviteLoading: false, inviteError: '' });
+        } else {
+          self.setData({ inviteLoading: false, inviteError: '获取邀请码异常' });
         }
       })
       .catch(function (err) {
         console.warn('prepareInviteCode error:', err);
+        self.setData({
+          inviteLoading: false,
+          inviteError: err.message || '邀请码服务未响应，请检查服务端或数据库'
+        });
       });
   },
 
@@ -199,7 +206,7 @@ Page({
     });
   },
 
-  // 5. 复制邀请链接与参数（方便开发调试及微信粘贴）
+  // 5. 复制启动参数与邀请链接（方便开发者工具测试及微信调试）
   onCopyInviteLink: function () {
     const self = this;
     const tournamentId = this.tournamentId || this.data.tournamentId;
@@ -207,18 +214,19 @@ Page({
 
     const tourName = (this.data.detail && (this.data.detail.tournament_name || this.data.detail.name)) || '赛事';
     const doCopy = function (code) {
+      const startupParams = 'id=' + tournamentId + '&invite_code=' + code;
       const sharePath =
-        '/packagePromo/pages/tournament-detail/tournament-detail?id=' +
-        encodeURIComponent(tournamentId) +
-        '&invite_code=' +
-        encodeURIComponent(code);
+        '/packagePromo/pages/tournament-detail/tournament-detail?' + startupParams;
 
       wx.setClipboardData({
-        data: sharePath,
+        data: startupParams,
         success: function () {
           wx.showModal({
-            title: '邀请链接已复制',
-            content: '已复制以下邀请路径：\n\n' + sharePath + '\n\n可直接在开发者工具「自定义编译模式」中粘贴启动参数：\nid=' + tournamentId + '&invite_code=' + code + '\n或在聊天中发送给协作者测试。',
+            title: '启动参数已复制',
+            content:
+              '已复制测试启动参数到剪贴板：\n' +
+              startupParams +
+              '\n\n【测试方法】：\n在微信开发者工具顶部，点击「pages/index/index ▼」下拉框 -> 点击底部「+ 添加编译模式」-> 在启动参数栏粘贴即可！',
             showCancel: false,
             confirmText: '好的'
           });
@@ -234,15 +242,23 @@ Page({
         .then(function (res) {
           wx.hideLoading();
           if (res && res.invite_code) {
-            self.setData({ currentInviteCode: res.invite_code });
+            self.setData({ currentInviteCode: res.invite_code, inviteLoading: false, inviteError: '' });
             doCopy(res.invite_code);
           } else {
-            wx.showToast({ title: '生成邀请码失败', icon: 'none' });
+            wx.showModal({
+              title: '生成邀请码失败',
+              content: '未能获取到邀请码，请检查服务端是否已部署最新数据库迁移。',
+              showCancel: false
+            });
           }
         })
         .catch(function (err) {
           wx.hideLoading();
-          wx.showToast({ title: err.message || '生成失败', icon: 'none' });
+          wx.showModal({
+            title: '获取邀请码失败',
+            content: err.message || '请确认后端服务已运行且数据库表 tournament_invites 已创建',
+            showCancel: false
+          });
         });
     }
   },
@@ -260,6 +276,8 @@ Page({
 
     if (inviteCode) {
       sharePath += '&invite_code=' + encodeURIComponent(inviteCode);
+    } else {
+      console.warn('[onShareAppMessage] 警告：当前 inviteCode 为空，此卡片无协作凭证！');
     }
 
     console.log('[onShareAppMessage] 生成副管理员邀请卡片, path=', sharePath, 'inviteCode=', inviteCode);
