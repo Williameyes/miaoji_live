@@ -773,6 +773,18 @@ Page({
   },
 
   /**
+   * 「副机记分」遥控端入口
+   * @returns {void}
+   */
+  onSubScorePanelTap: function () {
+    if (!this.data.loggedIn) {
+      wx.showToast({ title: '请先登录', icon: 'none' });
+      return;
+    }
+    wx.navigateTo({ url: '/packageLive/pages/sub-score-panel/sub-score-panel' });
+  },
+
+  /**
    * 实验功能「直播雷达」入口：仅白名单用户可进入（与自动同步一致）。
    * @returns {void}
    */

@@ -117,6 +117,13 @@
       </view>
       <view class="list-divider"></view>
     </block>
+    <block wx:if="{{loggedIn}}">
+      <view class="list-item" hover-class="list-item-hover" bindtap="onSubScorePanelTap">
+        <text class="list-label">副机记分 <text class="list-label-badge" style="background:#3b82f6;">遥控</text></text>
+        <text class="list-arrow">›</text>
+      </view>
+      <view class="list-divider"></view>
+    </block>
     <view class="list-item" hover-class="list-item-hover" bindtap="onHelpTap">
       <text class="list-label">使用帮助</text>
       <text class="list-arrow">›</text>

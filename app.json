@@ -12,7 +12,8 @@
       "name": "packageLive",
       "pages": [
         "pages/live/live",
-        "pages/web-score-panel/web-score-panel"
+        "pages/web-score-panel/web-score-panel",
+        "pages/sub-score-panel/sub-score-panel"
       ]
     },
     {

@@ -239,15 +239,13 @@ _liveWsBuildClockDisplayPatch: function (bundle) {
  */
 _liveWsOnSocketOpen: function () {
   this._liveWsWaitingCollector = false;
+  var wasConnected = this.data.liveWsConnected;
   var patch = {
     liveWsConnected: true,
     liveWsQuickBusy: false,
     liveWsStatusText: '',
     liveWsPanelOpen: false
   };
-  if (this.data.autoSyncWhitelisted) {
-    patch.isAutoMode = true;
-  }
   var self = this;
   this.setData(patch, function () {
     if (patch.isAutoMode) {
@@ -255,11 +253,14 @@ _liveWsOnSocketOpen: function () {
       self._liveWsRefreshWxsClockDriver();
     }
   });
-  wx.showToast({
-    title: '云端已连接',
-    icon: 'success',
-    duration: 1400
-  });
+  if (!wasConnected && this._liveWsUserInitiatedToast) {
+    this._liveWsUserInitiatedToast = false;
+    wx.showToast({
+      title: '副机控制已开启',
+      icon: 'success',
+      duration: 1400
+    });
+  }
 },
     /**
  * WSS onClose：非主动断开时回退手动记分。
@@ -274,7 +275,7 @@ _liveWsOnSocketClose: function () {
       liveWsConnected: false
     });
   }
-  if (stillRetrying && this.data.isAutoMode) {
+  if (stillRetrying && this.data.isAutoMode && this.data.autoSyncWhitelisted) {
     this.setData({
       liveWsStatusText: this._liveWsWaitingCollector ? '等待采集端上线…' : '断线重连中…',
       liveWsQuickBusy: true
@@ -296,7 +297,9 @@ _liveWsOnSocketMessage: function (raw) {
     var msg = typeof raw === 'string' ? JSON.parse(raw) : raw;
     if (!msg || typeof msg !== 'object') return;
     if (msg.type === 'DEVICE_OFFLINE') {
-      this._liveWsHandleCollectorAbsent('offline');
+      if (this.data.isAutoMode && this.data.autoSyncWhitelisted) {
+        this._liveWsHandleCollectorAbsent('offline');
+      }
       return;
     }
     if (msg.type === 'COLLECTOR_EXIST') {
@@ -348,27 +351,24 @@ _liveWsOnSocketMessage: function (raw) {
       this._consumeCropFrameSync(msg.payload || msg);
       return;
     }
-    if (msg.type === 'DATA_BROADCAST' || msg.type === 'LIVE_BOOST' || msg.type === 'LIVE_BOOST_REALTIME' || msg.type === 'LIVE_BOOST_TARGETED') {
-      var nAct = (msg.payload && msg.payload.act) || msg.act || '';
+    // 防回环盾牌：直接在网关入口忽略来自主机自身的广播回声和 STATE_SYNC 快照
+    if (msg.sender === 'host' || (msg.payload && msg.payload.sender === 'host')) return;
+    var nAct = (msg.payload && msg.payload.act) || msg.act || '';
+    if (nAct === 'STATE_SYNC') return;
+
+    if (msg.type === 'DATA_BROADCAST' || msg.type === 'LIVE_BOOST' || msg.type === 'LIVE_BOOST_REALTIME' || msg.type === 'LIVE_BOOST_TARGETED' || msg.type === 'COLLECTOR_UPDATE' || msg.type === 'BROADCAST_JOIN') {
       if (nAct === 'LIVE_BOOST' || nAct === 'LIVE_BOOST_REALTIME' || nAct === 'LIVE_BOOST_TARGETED') {
         this._consumeLiveBoost(msg.payload || msg);
         return;
       }
-      var nested = msg.payload && typeof msg.payload === 'object' ? msg.payload : msg;
-      if (!nested || typeof nested.act !== 'string' || typeof nested.seq !== 'number') {
-        var nowIgnored = Date.now();
-        if (!this._liveWsLastIgnoredBroadcastLogAt || nowIgnored - this._liveWsLastIgnoredBroadcastLogAt > 10000) {
-          this._liveWsLastIgnoredBroadcastLogAt = nowIgnored;
-          this.appendHealthLog('ws_broadcast_ignored', {
-            type: nested && nested.type ? String(nested.type).slice(0, 40) : '',
-            keys: nested && typeof nested === 'object' ? Object.keys(nested).slice(0, 8).join(',') : ''
-          });
-        }
+      var nested = (msg.payload && typeof msg.payload === 'object') ? Object.assign({}, msg, msg.payload) : msg;
+      if (msg.type === 'BROADCAST_JOIN' && !nested.act) {
+        nested.act = 'REQ_STATE';
       }
       this._consumeWsBroadcast(nested);
       return;
     }
-    if (typeof msg.act === 'string' && typeof msg.seq === 'number') {
+    if (typeof msg.act === 'string') {
       this._consumeWsBroadcast(msg);
     }
   } catch (eParse) {
@@ -636,7 +636,9 @@ _liveWsSyncChipConnected: function () {
  * @returns {void}
  */
 _liveWsOpenPanelPrefilled: function () {
-  if (!this.data.autoSyncWhitelisted) return;
+  if (typeof this.closeAllDrawers === 'function') {
+    try { this.closeAllDrawers(); } catch (eDraw) {}
+  }
   var roomId = '';
   try {
     roomId = String(wx.getStorageSync(liveWsClientMod.STORAGE_LAST_ROOM_ID) || '');
@@ -653,7 +655,6 @@ _liveWsOpenPanelPrefilled: function () {
  * @returns {void}
  */
 onLiveWsChipTap: function () {
-  if (!this.data.autoSyncWhitelisted) return;
   this._liveWsSyncChipConnected();
   if (this.data.liveWsPanelOpen) {
     if (!this.data.liveWsQuickBusy) {
@@ -694,7 +695,7 @@ onLiveWsRoomIdInput: function (e) {
  */
 onLiveWsConnectRun: function () {
   var self = this;
-  if (!this.data.autoSyncWhitelisted || this.data.liveWsQuickBusy) return;
+  if (this.data.liveWsQuickBusy) return;
   var roomId = String(this.data.liveWsRoomId || '').replace(/\D/g, '');
   if (roomId.length !== 6) {
     wx.showToast({
@@ -703,14 +704,24 @@ onLiveWsConnectRun: function () {
     });
     return;
   }
-  this._liveWsEnsureClient();
+  this._liveWsUserInitiatedToast = true;
+  if (typeof this.closeAllDrawers === 'function') {
+    try { this.closeAllDrawers(); } catch (eDraw) {}
+  }
   this.setData({
     liveWsQuickBusy: true,
-    liveWsStatusText: '获取 Token…'
+    liveWsStatusText: '连接中…',
+    recSyncRoomId: roomId
   });
   try {
     wx.setStorageSync(liveWsClientMod.STORAGE_LAST_ROOM_ID, roomId);
+    wx.setStorageSync('rec_sync_room_id', roomId);
   } catch (eS) {/* ignore */}
+
+  if (typeof this._recSyncWsConnect === 'function') {
+    this._recSyncWsConnect({ roomId: roomId, mode: 'remote' });
+  }
+  this._liveWsEnsureClient();
   this._liveWsClient.connect(roomId);
 },
     /**
@@ -719,21 +730,20 @@ onLiveWsConnectRun: function () {
  */
 onLiveWsDisconnectTap: function () {
   var self = this;
-  if (!this.data.autoSyncWhitelisted) return;
   this._liveWsFlushScorePersist();
   this._liveWsPreferAutoAfterConnect = false;
-  this.setData({
-    liveWsQuickBusy: true,
-    isAutoMode: false
-  }, function () {
-    self.updateTeamGroupWidth(true);
-  });
+  if (typeof this._recSyncWsDisconnect === 'function') {
+    this._recSyncWsDisconnect();
+  }
   this._liveWsTeardownForManualMode();
   this.setData({
-    liveWsQuickBusy: false
+    liveWsConnected: false,
+    recSyncConnected: false,
+    liveWsQuickBusy: false,
+    liveWsStatusText: ''
   });
   wx.showToast({
-    title: '已断开云端',
+    title: '已断开副机控制',
     icon: 'none'
   });
 },
@@ -788,66 +798,8 @@ _liveWsFlushScorePersist: function () {
    */
   _consumeWsBroadcast: function (payload) {
     if (!payload || typeof payload.act !== 'string') return;
-    if (typeof payload.session_id === 'string' && payload.session_id && this._liveWsSessionId !== payload.session_id) {
-      console.log('[Live][WS] collector session changed %s -> %s, reset seq', this._liveWsSessionId || 'none', payload.session_id);
-      this._liveWsSessionId = payload.session_id;
-      this._liveWsCurrentSeq = 0;
-      this.setData({ hasCropFrameImage: false });
-      if (this._timeCropCanvasContext && this._timeCropCanvas) {
-        try {
-          this._timeCropCanvasContext.clearRect(0, 0, this._timeCropCanvas.width, this._timeCropCanvas.height);
-        } catch (eClear) { }
-      }
-      this.appendHealthLog('ws_collector_session_changed', {
-        session: String(payload.session_id || '').slice(0, 40)
-      });
-    }
-    var currentSeq = this._liveWsCurrentSeq || 0;
-    if (payload.seq <= currentSeq) return;
-    this._liveWsCurrentSeq = payload.seq;
-    var netLagMs = Date.now() - (Number(payload.sys_t) || Date.now());
-    if (netLagMs < 0) netLagMs = 0;
-    var rawSeconds = Math.max(0, Math.floor(Number(payload.t) || 0));
-    var targetSeconds = rawSeconds;
-    var nowMs = Date.now();
-    var mainAnchorMs = nowMs;
-    var prevBundle = this.data.wxsClockBundle || {};
-    var mainRunning = !!this._liveWsClockRunning;
-    var shotBaseSec = typeof prevBundle.shotBaseSec === 'number' ? prevBundle.shotBaseSec : 24;
-    var shotAnchorMs = typeof prevBundle.shotAnchorMs === 'number' ? prevBundle.shotAnchorMs : nowMs;
-    if (payload.act === 'START') {
-      var lagCompMs = Math.min(netLagMs, LIVE_WS_START_LAG_COMP_MAX_MS);
-      targetSeconds = rawSeconds;
-      mainAnchorMs = nowMs - lagCompMs;
-      mainRunning = true;
-      this._liveWsClockRunning = true;
-    } else if (payload.act === 'STOP') {
-      targetSeconds = rawSeconds;
-      mainRunning = false;
-      this._liveWsClockRunning = false;
-      this._liveWsStopClockTick();
-      if (prevBundle.mainRunning) {
-        var shotElapsed = (nowMs - shotAnchorMs) / 1000;
-        shotBaseSec = Math.max(0, Math.floor(shotBaseSec - shotElapsed));
-        shotAnchorMs = nowMs;
-      }
-    } else if (payload.act === 'SYNC') {
-      targetSeconds = rawSeconds;
-      mainRunning = !!this._liveWsClockRunning;
-      if (prevBundle.mainRunning && !mainRunning) {
-        var syncShotElapsed = (nowMs - shotAnchorMs) / 1000;
-        shotBaseSec = Math.max(0, Math.floor(shotBaseSec - syncShotElapsed));
-        shotAnchorMs = nowMs;
-      }
-    } else if (payload.act === 'S_RESET') {
-      targetSeconds = rawSeconds;
-      mainRunning = !!this._liveWsClockRunning;
-      var resetShot = Number(payload.sc);
-      if (!resetShot || resetShot <= 0) resetShot = 24;
-      shotBaseSec = Math.max(0, Math.min(24, Math.floor(resetShot)));
-      shotAnchorMs = nowMs;
-    }
-    var patch = {};
+    // 防回环盾牌：主机自身忽略 STATE_SYNC 及自身广播回声，杜绝自发自收导致新旧值来回跳动
+    if (payload.act === 'STATE_SYNC' || payload.sender === 'host') return;
     var timeActs = {
       START: 1,
       STOP: 1,
@@ -855,7 +807,72 @@ _liveWsFlushScorePersist: function () {
       S_RESET: 1
     };
     var hadTimeAct = !!timeActs[payload.act];
+
+    var patch = {};
     if (hadTimeAct) {
+      if (typeof payload.session_id === 'string' && payload.session_id && this._liveWsSessionId !== payload.session_id) {
+        console.log('[Live][WS] collector session changed %s -> %s, reset seq', this._liveWsSessionId || 'none', payload.session_id);
+        this._liveWsSessionId = payload.session_id;
+        this._liveWsCurrentSeq = 0;
+        this.setData({ hasCropFrameImage: false });
+        if (this._timeCropCanvasContext && this._timeCropCanvas) {
+          try {
+            this._timeCropCanvasContext.clearRect(0, 0, this._timeCropCanvas.width, this._timeCropCanvas.height);
+          } catch (eClear) { }
+        }
+        this.appendHealthLog('ws_collector_session_changed', {
+          session: String(payload.session_id || '').slice(0, 40)
+        });
+      }
+      var currentSeq = this._liveWsCurrentSeq || 0;
+      if (typeof payload.seq === 'number' && payload.seq <= currentSeq) return;
+      if (typeof payload.seq === 'number') {
+        this._liveWsCurrentSeq = payload.seq;
+      }
+
+      var netLagMs = Date.now() - (Number(payload.sys_t) || Date.now());
+      if (netLagMs < 0) netLagMs = 0;
+      var rawSeconds = Math.max(0, Math.floor(Number(payload.t) || 0));
+      var targetSeconds = rawSeconds;
+      var nowMs = Date.now();
+      var mainAnchorMs = nowMs;
+      var prevBundle = this.data.wxsClockBundle || {};
+      var mainRunning = !!this._liveWsClockRunning;
+      var shotBaseSec = typeof prevBundle.shotBaseSec === 'number' ? prevBundle.shotBaseSec : 24;
+      var shotAnchorMs = typeof prevBundle.shotAnchorMs === 'number' ? prevBundle.shotAnchorMs : nowMs;
+      if (payload.act === 'START') {
+        var lagCompMs = Math.min(netLagMs, LIVE_WS_START_LAG_COMP_MAX_MS);
+        targetSeconds = rawSeconds;
+        mainAnchorMs = nowMs - lagCompMs;
+        mainRunning = true;
+        this._liveWsClockRunning = true;
+      } else if (payload.act === 'STOP') {
+        targetSeconds = rawSeconds;
+        mainRunning = false;
+        this._liveWsClockRunning = false;
+        this._liveWsStopClockTick();
+        if (prevBundle.mainRunning) {
+          var shotElapsed = (nowMs - shotAnchorMs) / 1000;
+          shotBaseSec = Math.max(0, Math.floor(shotBaseSec - shotElapsed));
+          shotAnchorMs = nowMs;
+        }
+      } else if (payload.act === 'SYNC') {
+        targetSeconds = rawSeconds;
+        mainRunning = !!this._liveWsClockRunning;
+        if (prevBundle.mainRunning && !mainRunning) {
+          var syncShotElapsed = (nowMs - shotAnchorMs) / 1000;
+          shotBaseSec = Math.max(0, Math.floor(shotBaseSec - syncShotElapsed));
+          shotAnchorMs = nowMs;
+        }
+      } else if (payload.act === 'S_RESET') {
+        targetSeconds = rawSeconds;
+        mainRunning = !!this._liveWsClockRunning;
+        var resetShot = Number(payload.sc);
+        if (!resetShot || resetShot <= 0) resetShot = 24;
+        shotBaseSec = Math.max(0, Math.min(24, Math.floor(resetShot)));
+        shotAnchorMs = nowMs;
+      }
+
       var bundleToken = (prevBundle.token || 0) + 1;
       patch.wxsClockBundle = {
         token: bundleToken,
@@ -896,6 +913,209 @@ _liveWsFlushScorePersist: function () {
           selfTick._liveWsStopClockTick();
         }
       });
+    }
+
+    // ──────── 遥控指令消费：副机纯指令遥控改分（增量模式，零覆盖风险） ────────
+    var deltaA = 0;
+    var deltaB = 0;
+    var isDeltaScore = false;
+
+    if (payload.act === 'SCORE_A_PLUS_1') { deltaA = 1; isDeltaScore = true; }
+    else if (payload.act === 'SCORE_A_PLUS_2') { deltaA = 2; isDeltaScore = true; }
+    else if (payload.act === 'SCORE_A_PLUS_3') { deltaA = 3; isDeltaScore = true; }
+    else if (payload.act === 'SCORE_A_MINUS_1') { deltaA = -1; isDeltaScore = true; }
+    else if (payload.act === 'SCORE_B_PLUS_1') { deltaB = 1; isDeltaScore = true; }
+    else if (payload.act === 'SCORE_B_PLUS_2') { deltaB = 2; isDeltaScore = true; }
+    else if (payload.act === 'SCORE_B_PLUS_3') { deltaB = 3; isDeltaScore = true; }
+    else if (payload.act === 'SCORE_B_MINUS_1') { deltaB = -1; isDeltaScore = true; }
+    else if ((payload.act === 'SCORE' || payload.act === 'SCORE_DELTA') && typeof payload.delta === 'number' && payload.delta !== 0) {
+      if (payload.team === 'teamB') {
+        deltaB = payload.delta;
+      } else {
+        deltaA = payload.delta;
+      }
+      isDeltaScore = true;
+    }
+
+    if (isDeltaScore) {
+      if (this.data.matchConfig) {
+        var mcDelta = Object.assign({}, this.data.matchConfig);
+        if (!mcDelta.teamA) mcDelta.teamA = { name: '主队', score: 0 };
+        if (!mcDelta.teamB) mcDelta.teamB = { name: '客队', score: 0 };
+        var scChangedDelta = false;
+        if (deltaA !== 0) {
+          var curA = Number(mcDelta.teamA.score) || 0;
+          mcDelta.teamA = Object.assign({}, mcDelta.teamA, { score: Math.max(0, curA + deltaA) });
+          scChangedDelta = true;
+        }
+        if (deltaB !== 0) {
+          var curB = Number(mcDelta.teamB.score) || 0;
+          mcDelta.teamB = Object.assign({}, mcDelta.teamB, { score: Math.max(0, curB + deltaB) });
+          scChangedDelta = true;
+        }
+        if (scChangedDelta) {
+          this.setData({ matchConfig: mcDelta });
+          if (typeof this.persistConfig === 'function') {
+            this.persistConfig();
+          }
+          if (typeof this.vibrate === 'function') {
+            this.vibrate((deltaA > 0 || deltaB > 0) ? 'medium' : 'light');
+          }
+        }
+      }
+      return;
+    }
+
+    // ──────── 遥控指令消费：传统绝对值比分（兼容网页记分牌 web-score-panel） ────────
+    if (payload.act === 'SCORE') {
+      var scoreA = typeof payload.a === 'number' ? payload.a : (payload.team_a && typeof payload.team_a.score === 'number' ? payload.team_a.score : (payload.scoreA !== undefined ? payload.scoreA : null));
+      var scoreB = typeof payload.b === 'number' ? payload.b : (payload.team_b && typeof payload.team_b.score === 'number' ? payload.team_b.score : (payload.scoreB !== undefined ? payload.scoreB : null));
+      if (scoreA !== null || scoreB !== null) {
+        if (this.data.matchConfig) {
+          var mc = Object.assign({}, this.data.matchConfig);
+          if (!mc.teamA) mc.teamA = { name: '主队', score: 0 };
+          if (!mc.teamB) mc.teamB = { name: '客队', score: 0 };
+          var scChanged = false;
+          if (scoreA !== null && mc.teamA.score !== scoreA) {
+            mc.teamA = Object.assign({}, mc.teamA, { score: Math.max(0, scoreA) });
+            scChanged = true;
+          }
+          if (scoreB !== null && mc.teamB.score !== scoreB) {
+            mc.teamB = Object.assign({}, mc.teamB, { score: Math.max(0, scoreB) });
+            scChanged = true;
+          }
+          if (scChanged) {
+            this.setData({ matchConfig: mc });
+            if (typeof this.persistConfig === 'function') {
+              this.persistConfig();
+            }
+          }
+        }
+      }
+      return;
+    }
+
+    // ──────── 遥控指令消费：副机切换节次 ────────
+    if (payload.act === 'PERIOD') {
+      var pVal = typeof payload.p === 'number' ? payload.p : (typeof payload.period === 'number' ? payload.period : null);
+      if (pVal !== null && this.data.matchConfig) {
+        var mcPeriod = Object.assign({}, this.data.matchConfig);
+        if (mcPeriod.period !== pVal) {
+          mcPeriod.period = pVal;
+          this.setData({ matchConfig: mcPeriod });
+          if (typeof this.persistConfig === 'function') {
+            this.persistConfig();
+          }
+          if (typeof this.flashPeriod === 'function') {
+            this.flashPeriod();
+          }
+        }
+      }
+      return;
+    }
+
+    // ──────── 遥控指令消费：副机保存高光 ────────
+    if (payload.act === 'TRIGGER_SAVE_HIGHLIGHT' || payload.act === 'REC_TRIGGER') {
+      if (typeof this.requestHighlightCapture === 'function') {
+        this.requestHighlightCapture();
+      }
+    }
+
+    // ──────── 遥控指令消费：副机回放高光 ────────
+    if (payload.act === 'START_HIGHLIGHT_REPLAY' || (typeof payload.act === 'string' && payload.act.indexOf('START_HIGHLIGHT_REPLAY') === 0)) {
+      if (!this.data.isReplaying && typeof this.getHighlightList === 'function' && typeof this.startReplay === 'function') {
+        var curMIdReplay = wx.getStorageSync('currentMatchId') || (app.globalData && app.globalData.currentMatchId) || '';
+        var fullList = (this.getHighlightList(curMIdReplay) || []).filter(function (it) {
+          return it && !it.exportedToAlbum;
+        });
+        if (fullList && fullList.length > 0) {
+          var targetItem = fullList[0];
+          if (typeof payload.clipIndex === 'number' && fullList[payload.clipIndex]) {
+            targetItem = fullList[payload.clipIndex];
+          }
+          if (typeof this.closeAllDrawers === 'function') {
+            this.closeAllDrawers();
+          }
+          this.startReplay(targetItem);
+        } else {
+          wx.showToast({ title: '暂无可用高光', icon: 'none' });
+        }
+      }
+    }
+
+    // ──────── 遥控指令消费：副机中断回放切回直播 ────────
+    if (payload.act === 'STOP_HIGHLIGHT_REPLAY') {
+      if (this.data.isReplaying && typeof this.finishReplayToLive === 'function') {
+        this.finishReplayToLive(true);
+      }
+    }
+  },
+  /**
+   * 主机向房间广播当前比赛的完整状态，供副机记分端、副机录制端同步。
+   * @param {string} [reason]
+   */
+  _liveWsBroadcastState: function (reason) {
+    if (!this._liveWsClient || !this._liveWsClient.isConnected || !this._liveWsClient.isConnected()) return;
+    var now = Date.now();
+    // 300ms 广播节流，防止任何极端并发情况下产生广播风暴（比赛切换和主动请求状态除外）
+    if (this._lastBroadcastStateAt && (now - this._lastBroadcastStateAt < 300) && reason !== 'match_switch' && reason !== 'req_state') {
+      return;
+    }
+    this._lastBroadcastStateAt = now;
+    var mc = this.data.matchConfig || {};
+    var curMId = wx.getStorageSync('currentMatchId') || (app.globalData && app.globalData.currentMatchId) || mc.id || '';
+    var periods = this.data.periods || (app.globalData && app.globalData.periods) || ['热身', '第一节', '第二节', '第三节', '第四节', '加时', '完赛'];
+    var pIdx = typeof mc.period === 'number' ? mc.period : 0;
+    var pName = periods[pIdx] || '第一节';
+    var fullList = typeof this.getHighlightList === 'function' ? (this.getHighlightList(curMId) || []) : [];
+    var playableList = fullList.filter(function (it) { return it && !it.exportedToAlbum; });
+
+    var scoreA = (mc.teamA && typeof mc.teamA.score === 'number') ? mc.teamA.score : 0;
+    var scoreB = (mc.teamB && typeof mc.teamB.score === 'number') ? mc.teamB.score : 0;
+    var teamAName = (mc.teamA && mc.teamA.name) || '主队';
+    var teamBName = (mc.teamB && mc.teamB.name) || '客队';
+    var teamAColor = (mc.teamA && mc.teamA.bgColor) || '#E64340';
+    var teamBColor = (mc.teamB && mc.teamB.bgColor) || '#10AEFF';
+
+    var statePayload = {
+      type: 'COLLECTOR_UPDATE',
+      sender: 'host',
+      act: 'STATE_SYNC',
+      reason: reason || 'state_sync',
+      t: 600,
+      a: scoreA,
+      b: scoreB,
+      p: pIdx,
+      seq: (this._liveWsBroadcastSeq = (this._liveWsBroadcastSeq || 0) + 1),
+      sys_t: Date.now(),
+      matchId: String(curMId),
+      match_id: String(curMId),
+      matchTitle: mc.matchName || '比赛记分',
+      sportType: this.data.sportType || mc.sportType || 'basketball',
+      teamA: teamAName,
+      teamB: teamBName,
+      colorA: teamAColor,
+      colorB: teamBColor,
+      team_a: {
+        name: teamAName,
+        score: scoreA,
+        bgColor: teamAColor,
+        textColor: (mc.teamA && mc.teamA.textColor) || '#FFFFFF'
+      },
+      team_b: {
+        name: teamBName,
+        score: scoreB,
+        bgColor: teamBColor,
+        textColor: (mc.teamB && mc.teamB.textColor) || '#FFFFFF'
+      },
+      period: pIdx,
+      periodName: pName,
+      periods: periods,
+      highlightCount: playableList.length,
+      isReplaying: !!this.data.isReplaying
+    };
+    if (this._recSyncWs && this._recSyncWs.isConnected && this._recSyncWs.isConnected() && typeof this._recSyncWs.sendPayload === 'function') {
+      this._recSyncWs.sendPayload(statePayload);
     }
   },
   /**

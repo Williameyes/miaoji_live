@@ -1678,6 +1678,9 @@ _estimateProScoreboardWidthPx: function (areaW) {
       if (sportType === SPORT_FOOTBALL || sportType === SPORT_BADMINTON) {
         selfSwitch._initProScoreboardMovableLayout();
       }
+      if (typeof selfSwitch._liveWsBroadcastState === 'function') {
+        selfSwitch._liveWsBroadcastState('match_switch');
+      }
     });
     return true;
   },
@@ -8741,6 +8744,9 @@ updatePipelineHealth: function () {
     }, () => {
       this.refreshSportUiMeta();
       this.persistConfig();
+      if (typeof this._liveWsBroadcastState === 'function') {
+        this._liveWsBroadcastState('period_tap');
+      }
     });
     this.vibrate('light');
   },
@@ -8766,6 +8772,9 @@ updatePipelineHealth: function () {
       this.vibrate('light');
     }
     this.persistConfig();
+    if (typeof this._liveWsBroadcastState === 'function') {
+      this._liveWsBroadcastState('score_tap');
+    }
   },
   applyScoreChange: function (team, type) {
     const sport = normalizeSportType(this.data.sportType);
@@ -8895,6 +8904,9 @@ updatePipelineHealth: function () {
         longPressTimer: null
       });
       this.persistConfig();
+      if (typeof this._liveWsBroadcastState === 'function') {
+        this._liveWsBroadcastState('score_tap');
+      }
     }
     setTimeout(() => {
       this.suppressScoreTap = false;
@@ -14031,6 +14043,9 @@ pauseRollingForReplay: function (onPaused) {
         replaySlotBSrc: secondPath,
         replaySlotBInitialTime: secondInitialSec
       }, () => {
+        if (typeof this._liveWsBroadcastState === 'function') {
+          this._liveWsBroadcastState('replay_start');
+        }
         wx.nextTick(() => {
           try {
             const ctx = wx.createVideoContext('replayVideoA', this);
@@ -14185,6 +14200,9 @@ pauseRollingForReplay: function (onPaused) {
       replayMaskText: 'LIVE',
       replayMaskKind: 'live'
     });
+    if (typeof this._liveWsBroadcastState === 'function') {
+      this._liveWsBroadcastState('replay_stop');
+    }
     this._replayOutroTimer = setTimeout(() => {
       this._replayOutroTimer = null;
       this.setData({
@@ -16592,6 +16610,14 @@ onLoad: function (options) {
         self.setData({ recSyncConnected: true });
         self.updatePipelineHealth();
         self.appendHealthLog('rec_sync_ws_open', { roomId: recSyncRoomId });
+        if (typeof self._liveWsBroadcastState === 'function') {
+          self._liveWsBroadcastState('rec_sync_open');
+        }
+      },
+      onMessage: function (payload) {
+        if (typeof self._consumeWsBroadcast === 'function') {
+          self._consumeWsBroadcast(payload);
+        }
       },
       onClose: function () {
         self.setData({ recSyncConnected: false });
@@ -16690,6 +16716,19 @@ onLoad: function (options) {
       recordingModeDraft: appliedMode,
       recSyncRoomIdDraft: String(this.data.recSyncRoomId || '')
     });
+  },
+  onRemoteCtrlPanelToggle: function () {
+    if (this.data.liveWsPanelOpen) {
+      this.setData({
+        liveWsPanelOpen: false,
+        liveWsStatusText: ''
+      });
+      return;
+    }
+    this.closeAllDrawers();
+    if (typeof this._liveWsOpenPanelPrefilled === 'function') {
+      this._liveWsOpenPanelPrefilled();
+    }
   },
   onRecSyncPanelToggle: function () {
     if (!this.data.recSyncPanelOpen) {

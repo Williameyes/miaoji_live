@@ -260,7 +260,7 @@ function createRecSyncWsClient(handlers) {
 
           if (payload.type === 'REC_JOINED') {
             safeLog(logger, 'rec_joined_ack', { peerRole: payload.role });
-          } else if (payload.type === 'REC_TRIGGER') {
+          } else if (payload.type === 'REC_TRIGGER' || payload.act === 'TRIGGER_SAVE_HIGHLIGHT') {
             // 触发事件回调
             if (typeof cb.onTrigger === 'function') {
               cb.onTrigger({
@@ -276,6 +276,10 @@ function createRecSyncWsClient(handlers) {
             if (typeof cb.onError === 'function') {
               cb.onError(new Error('room_full'));
             }
+          }
+
+          if (typeof cb.onMessage === 'function') {
+            cb.onMessage(payload);
           }
         } catch (eParse) {
           console.warn('[RecSyncWS] message parse fail', eParse);
@@ -357,6 +361,22 @@ function createRecSyncWsClient(handlers) {
     return triggerId;
   }
 
+  function sendPayload(payload) {
+    if (!socketTask || manualClose) return false;
+    var packet = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    try {
+      socketTask.send({
+        data: packet,
+        fail: function (err) {
+          safeLog(logger, 'payload_send_fail', { errMsg: err && err.errMsg ? err.errMsg : 'send fail' });
+        }
+      });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   function isConnected() {
     return !!socketTask && openedAt > 0 && !connecting && !manualClose;
   }
@@ -373,6 +393,7 @@ function createRecSyncWsClient(handlers) {
     connect: connect,
     disconnect: disconnect,
     sendTrigger: sendTrigger,
+    sendPayload: sendPayload,
     isConnected: isConnected,
     getRoomId: getRoomId,
     destroy: destroy

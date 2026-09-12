@@ -36,11 +36,11 @@ const WS_RECONNECT_DELAYS_MS = [3000, 6000, 12000, 15000];
  * 新策略：基准 12s + 抖动（_getNextHeartbeatDelay），且心跳改成 BROADCAST_HEARTBEAT 业务包，
  * 让网关把它当成正常业务包识别。
  */
-const WS_HEARTBEAT_INTERVAL_MS = 12000;
+const WS_HEARTBEAT_INTERVAL_MS = 8000;
 /** @type {number} 心跳随机抖动幅度（毫秒），避免心跳与服务端 idle 边界形成稳定共振。 */
-const WS_HEARTBEAT_JITTER_MS = 1500;
+const WS_HEARTBEAT_JITTER_MS = 1000;
 /** @type {number} 紧急心跳（连续短命连接时启用），更激进地刷 idle。 */
-const WS_HEARTBEAT_EMERGENCY_MS = 7000;
+const WS_HEARTBEAT_EMERGENCY_MS = 6000;
 /** @type {number} open 后多久内被关算作短命；累计达阈值触发紧急心跳模式。 */
 const WS_SHORTLIVED_OPEN_MS = 30000;
 /** @type {number} 触发紧急心跳所需的连续短命次数。 */
@@ -66,13 +66,9 @@ const WS_ATTEMPT_CLEAR_AFTER_MS = 8000;
 const WS_TOKEN_FAIL_MIN_DELAY_MS = 2000;
 
 /**
- * @type {number} 视为「下行链路可疑（假死）」的看门狗阈值；超过即强制 close + 自动重连。
- *
- * 保活升级：服务端针对 BROADCAST_HEARTBEAT 会每 12s 回复 BROADCAST_PONG 刷新 lastRecvAt。
- * 针对切图模式（1Hz 下行）或 PONG 回波，下行静默超过 20 秒必为底层 TCP 静默假死（如 WiFi 切 5G 导致），
- * 缩短至 20 秒可确保假死后 20 秒内自动 Kick 重连，无需等待 90 秒卡死！
+ * @type {number} 视为「下行链路可疑（假死）」的看门狗阈值；放宽至 180 秒避免空闲房间误杀。
  */
-const WS_RECV_STALE_MS = 20000;
+const WS_RECV_STALE_MS = 180000;
 
 /** @type {string} 上次成功连入的房间号 Storage 键 */
 const STORAGE_LAST_ROOM_ID = 'live_ws_last_room_id';
@@ -807,6 +803,32 @@ function createLiveWsClient(handlers) {
   }
 
   /**
+   * 发送业务广播消息到房间。
+   * @param {string|object} payload
+   * @returns {boolean}
+   */
+  function sendBroadcast(payload) {
+    if (!socketTask || connecting || manualClose) return false;
+    var rawStr = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    try {
+      socketTask.send({
+        data: rawStr,
+        success: function () {
+          lastSendAt = Date.now();
+        },
+        fail: function (err) {
+          safeLog(logger, 'broadcast_send_fail', { err: (err && err.errMsg) || '' });
+          handleSendFailure('broadcast_fail');
+        }
+      });
+      return true;
+    } catch (e) {
+      handleSendFailure('broadcast_throw');
+      return false;
+    }
+  }
+
+  /**
    * 销毁实例：卸载网络监听 + 全部定时器。页面 onUnload 调用。
    * @returns {void}
    */
@@ -823,6 +845,7 @@ function createLiveWsClient(handlers) {
     signalTransientFailure: signalTransientFailure,
     isConnected: isConnected,
     getRoomId: getRoomId,
+    sendBroadcast: sendBroadcast,
     getDiagnosticSnapshot: getDiagnosticSnapshot,
     destroy: destroy
   };

@@ -1,0 +1,603 @@
+/* 页面整体背景与基础样式 - 对齐 miaoji_live 原生设计系统 */
+.sub-score-page {
+  min-height: 100vh;
+  background-color: #F8FAFC;
+  color: #0F172A;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+  box-sizing: border-box;
+}
+
+/* ──────── 1. 顶部自定义导航栏 ──────── */
+.custom-nav-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 999;
+  background: #FFFFFF;
+  border-bottom: 1rpx solid #E2E8F0;
+  box-shadow: 0 2rpx 10rpx rgba(0, 0, 0, 0.03);
+  box-sizing: border-box;
+}
+
+.nav-content {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding: 0 24rpx;
+  gap: 16rpx;
+}
+
+.nav-back-btn {
+  width: 64rpx;
+  height: 64rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #F1F5F9;
+  flex-shrink: 0;
+}
+
+.back-icon {
+  font-size: 40rpx;
+  color: #334155;
+  line-height: 1;
+  margin-top: -4rpx;
+}
+
+.nav-title-wrap {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-title-main {
+  font-size: 32rpx;
+  font-weight: 800;
+  color: #0F172A;
+  letter-spacing: 1rpx;
+}
+
+.brand-accent {
+  font-style: italic;
+  color: #2563EB;
+  margin: 0 2rpx;
+}
+
+/* ──────── 2. 页面主体容器 ──────── */
+.panel-body {
+  padding: 24rpx 32rpx calc(60rpx + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 24rpx;
+}
+
+/* ──────── 通用卡片容器 ──────── */
+.card {
+  background: #FFFFFF;
+  border-radius: 28rpx;
+  padding: 28rpx;
+  box-shadow: 0 4rpx 16rpx rgba(0, 0, 0, 0.03);
+  border: 1rpx solid #E2E8F0;
+  box-sizing: border-box;
+}
+
+.flex-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.card-header {
+  margin-bottom: 20rpx;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.card-icon {
+  font-size: 32rpx;
+}
+
+.card-title {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: #0F172A;
+}
+
+.card-tip-text {
+  font-size: 22rpx;
+  color: #64748B;
+  line-height: 1.5;
+  margin-top: 16rpx;
+}
+
+/* ──────── 3. 房间连接卡片 ──────── */
+.status-badge {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  padding: 6rpx 16rpx;
+  border-radius: 24rpx;
+  background: #FEF2F2;
+  border: 1rpx solid #FCA5A5;
+  font-size: 22rpx;
+  color: #EF4444;
+  font-weight: 600;
+}
+
+.status-badge--connected {
+  background: #F0FDF4;
+  border-color: #86EFAC;
+  color: #16A34A;
+}
+
+.status-badge--busy {
+  background: #EFF6FF;
+  border-color: #93C5FD;
+  color: #2563EB;
+}
+
+.status-dot {
+  width: 12rpx;
+  height: 12rpx;
+  border-radius: 50%;
+  background-color: currentColor;
+}
+
+.room-input-row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.input-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  background: #F1F5F9;
+  border-radius: 18rpx;
+  padding: 0 20rpx;
+  height: 84rpx;
+  border: 1rpx solid #CBD5E1;
+}
+
+.input-prefix {
+  font-size: 32rpx;
+  font-weight: 800;
+  color: #2563EB;
+  margin-right: 12rpx;
+}
+
+.room-input {
+  flex: 1;
+  font-size: 32rpx;
+  font-weight: 700;
+  color: #0F172A;
+  letter-spacing: 2rpx;
+}
+
+.input-ph {
+  color: #94A3B8;
+  font-weight: 400;
+  font-size: 26rpx;
+  letter-spacing: 0;
+}
+
+.connect-btn {
+  width: 160rpx;
+  height: 84rpx;
+  background: linear-gradient(135deg, #2563EB, #1D4ED8);
+  color: #FFFFFF;
+  border-radius: 18rpx;
+  font-size: 28rpx;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  box-shadow: 0 4rpx 12rpx rgba(37, 99, 235, 0.25);
+}
+
+.connected-info-row {
+  background: #F8FAFC;
+  border-radius: 18rpx;
+  padding: 16rpx 20rpx;
+  border: 1rpx solid #E2E8F0;
+}
+
+.connected-desc {
+  display: flex;
+  flex-direction: column;
+}
+
+.conn-label {
+  font-size: 22rpx;
+  color: #64748B;
+}
+
+.conn-val {
+  font-size: 32rpx;
+  font-weight: 800;
+  color: #2563EB;
+  letter-spacing: 2rpx;
+}
+
+.disconnect-btn {
+  background: #FFFFFF;
+  color: #EF4444;
+  border: 1rpx solid #FCA5A5;
+  border-radius: 16rpx;
+  font-size: 24rpx;
+  font-weight: 600;
+  padding: 10rpx 24rpx;
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* ──────── 4. 动态操作反馈横幅 ──────── */
+.action-feedback-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #F1F5F9;
+  border: 1rpx solid #E2E8F0;
+  border-radius: 20rpx;
+  padding: 16rpx 24rpx;
+  transition: all 0.2s ease;
+}
+
+.action-feedback-bar.active {
+  background: #ECFDF5;
+  border-color: #6EE7B7;
+}
+
+.feedback-left {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  flex: 1;
+}
+
+.feedback-icon {
+  font-size: 28rpx;
+}
+
+.feedback-text {
+  font-size: 24rpx;
+  color: #475569;
+  font-weight: 500;
+}
+
+.feedback-highlight {
+  font-weight: 800;
+  color: #059669;
+  font-size: 28rpx;
+}
+
+.feedback-time {
+  font-size: 22rpx;
+  color: #94A3B8;
+  font-family: monospace;
+}
+
+/* ──────── 5. 黄金比分遥控面板 ──────── */
+.remote-boards-container {
+  display: flex;
+  gap: 20rpx;
+}
+
+.remote-board {
+  flex: 1;
+  background: #FFFFFF;
+  border-radius: 28rpx;
+  overflow: hidden;
+  border: 1rpx solid #E2E8F0;
+  box-shadow: 0 4rpx 16rpx rgba(0, 0, 0, 0.04);
+  display: flex;
+  flex-direction: column;
+}
+
+.board-top-bar {
+  padding: 18rpx 20rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.team-title-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 8rpx;
+}
+
+.board-team-name {
+  font-size: 32rpx;
+  font-weight: 800;
+  max-width: 180rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-team-role {
+  font-size: 20rpx;
+  opacity: 0.85;
+}
+
+.board-desc-tag {
+  padding: 12rpx 0;
+  text-align: center;
+  font-size: 20rpx;
+  color: #94A3B8;
+  background: #F8FAFC;
+  border-bottom: 1rpx solid #F1F5F9;
+}
+
+.score-btn-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16rpx;
+  padding: 20rpx 16rpx 24rpx;
+}
+
+.score-action-btn {
+  height: 96rpx;
+  border-radius: 20rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12rpx;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.score-action-btn:active {
+  transform: scale(0.95);
+}
+
+.btn-plus {
+  background: #F8FAFC;
+  border: 2rpx solid #E2E8F0;
+  box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.02);
+}
+
+.btn-plus .btn-text {
+  font-size: 40rpx;
+  font-weight: 900;
+  color: #0F172A;
+  font-family: "SF Pro Rounded", "DIN Alternate", sans-serif;
+}
+
+.btn-plus .btn-sub {
+  font-size: 22rpx;
+  font-weight: 600;
+  color: #64748B;
+}
+
+.btn-highlight-2 {
+  background: #EFF6FF;
+  border-color: #BFDBFE;
+}
+
+.btn-highlight-2 .btn-text {
+  color: #1D4ED8;
+}
+
+.btn-highlight-2 .btn-sub {
+  color: #2563EB;
+}
+
+.btn-minus {
+  background: #FEF2F2;
+  border: 2rpx solid #FECACA;
+  height: 80rpx;
+}
+
+.btn-minus .btn-text {
+  font-size: 32rpx;
+  font-weight: 900;
+  color: #DC2626;
+  font-family: "SF Pro Rounded", "DIN Alternate", sans-serif;
+}
+
+.btn-minus .btn-sub {
+  font-size: 20rpx;
+  font-weight: 600;
+  color: #EF4444;
+}
+
+/* ──────── 6. 高光与回放卡片 ──────── */
+.highlight-count-tag {
+  font-size: 22rpx;
+  font-weight: 600;
+  color: #D97706;
+  background: #FEF3C7;
+  padding: 4rpx 14rpx;
+  border-radius: 20rpx;
+}
+
+.save-highlight-btn {
+  width: 100%;
+  height: 96rpx;
+  background: linear-gradient(135deg, #EF4444, #DC2626);
+  color: #FFFFFF;
+  border-radius: 22rpx;
+  font-size: 32rpx;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12rpx;
+  margin: 0;
+  box-shadow: 0 6rpx 20rpx rgba(239, 68, 68, 0.3);
+}
+
+.save-highlight-btn.btn-cooldown {
+  background: #94A3B8;
+  box-shadow: none;
+  opacity: 0.8;
+}
+
+.replay-control-section {
+  margin-top: 24rpx;
+  padding-top: 24rpx;
+  border-top: 1rpx solid #F1F5F9;
+}
+
+.replay-status-row {
+  margin-bottom: 16rpx;
+}
+
+.replay-status-label {
+  font-size: 24rpx;
+  color: #64748B;
+}
+
+.replay-state-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #16A34A;
+}
+
+.replay-state-indicator.active {
+  color: #DC2626;
+}
+
+.pulsing-dot {
+  width: 14rpx;
+  height: 14rpx;
+  border-radius: 50%;
+  background: #DC2626;
+  animation: pulse 1.2s infinite;
+}
+
+@keyframes pulse {
+  0% { transform: scale(0.9); opacity: 0.6; }
+  50% { transform: scale(1.3); opacity: 1; }
+  100% { transform: scale(0.9); opacity: 0.6; }
+}
+
+.replay-toggle-btn {
+  width: 100%;
+  height: 88rpx;
+  border-radius: 20rpx;
+  font-size: 28rpx;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10rpx;
+  margin: 0;
+}
+
+.btn-replay-start {
+  background: #F1F5F9;
+  color: #1E293B;
+  border: 1rpx solid #CBD5E1;
+}
+
+.btn-live-back {
+  background: #FEF2F2;
+  color: #DC2626;
+  border: 1rpx solid #FCA5A5;
+}
+
+/* ──────── 交互微动效 ──────── */
+.btn-hover {
+  opacity: 0.82;
+  transform: scale(0.98);
+}
+
+/* ──────── 7. 通信调试日志卡片 ──────── */
+.debug-card {
+  background: #0F172A;
+  color: #F8FAFC;
+  border-color: #1E293B;
+}
+
+.debug-card .card-title {
+  color: #F8FAFC;
+}
+
+.flex-gap {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.log-btn {
+  height: 52rpx;
+  line-height: 50rpx;
+  padding: 0 20rpx;
+  border-radius: 12rpx;
+  font-size: 22rpx;
+  font-weight: 600;
+  margin: 0;
+}
+
+.log-btn--copy {
+  background: #2563EB;
+  color: #FFFFFF;
+  border: none;
+}
+
+.log-btn--clear {
+  background: #334155;
+  color: #94A3B8;
+  border: none;
+}
+
+.log-console-box {
+  background: #020617;
+  border: 1rpx solid #1E293B;
+  border-radius: 16rpx;
+  padding: 16rpx;
+  min-height: 220rpx;
+  max-height: 380rpx;
+  font-family: monospace, SFMono-Regular, Menlo, Monaco, Consolas;
+}
+
+.log-scroll-area {
+  max-height: 340rpx;
+}
+
+.log-empty-text {
+  font-size: 22rpx;
+  color: #64748B;
+  text-align: center;
+  padding: 40rpx 0;
+}
+
+.log-line-item {
+  font-size: 20rpx;
+  line-height: 1.6;
+  color: #CBD5E1;
+  word-break: break-all;
+  margin-bottom: 6rpx;
+}
+
+.log-timestamp {
+  color: #64748B;
+  margin-right: 10rpx;
+}
+
+.log-item--success {
+  color: #4ADE80;
+}
+
+.log-item--error {
+  color: #F87171;
+}
+
+.log-item--warn {
+  color: #FBBF24;
+}

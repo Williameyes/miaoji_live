@@ -1,0 +1,230 @@
+<view class="sub-score-page">
+  <!-- 1. 自定义顶部导航栏 (带系统状态栏 + 胶囊安全区规避) -->
+  <view class="custom-nav-bar" style="padding-top: {{statusBarHeight}}px; height: {{navBarHeight}}px;">
+    <view class="nav-content" style="margin-right: {{capsuleWidth}}px;">
+      <view class="nav-back-btn" bindtap="onGoBack" hover-class="btn-hover">
+        <text class="back-icon">‹</text>
+      </view>
+      <view class="nav-title-wrap">
+        <text class="nav-title-main">副机<text class="brand-accent">记</text>分遥控器</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 占位垫高 -->
+  <view style="height: {{statusBarHeight + navBarHeight}}px;"></view>
+
+  <view class="panel-body">
+    <!-- 2. 房间连接 / 状态卡片 -->
+    <view class="card connection-card">
+      <view class="card-header flex-between">
+        <view class="header-left">
+          <text class="card-icon">📡</text>
+          <text class="card-title">主机房间连接</text>
+        </view>
+        <view class="status-badge {{wsConnected ? 'status-badge--connected' : (wsBusy ? 'status-badge--busy' : '')}}">
+          <view class="status-dot"></view>
+          <text class="status-text">{{wsConnected ? ('已连接 #' + roomId) : (wsBusy ? wsStatusText : '未连接')}}</text>
+        </view>
+      </view>
+
+      <!-- 未连接状态：输入框与连接按钮 -->
+      <view class="room-input-row" wx:if="{{!wsConnected}}">
+        <view class="input-wrap">
+          <text class="input-prefix">#</text>
+          <input 
+            class="room-input" 
+            type="number" 
+            maxlength="6" 
+            placeholder="输入6位主机控制码" 
+            placeholder-class="input-ph"
+            value="{{inputRoomId}}" 
+            bindinput="onRoomInput" 
+          />
+        </view>
+        <button 
+          class="connect-btn {{wsBusy ? 'btn-disabled' : ''}}" 
+          bindtap="onConnectTap" 
+          loading="{{wsBusy}}" 
+          hover-class="btn-hover"
+        >
+          连接
+        </button>
+      </view>
+      <view class="card-tip-text" wx:if="{{!wsConnected}}">
+        💡 提示：请在直播主机屏幕长按呼出的顶部设置栏中点击【副机控制】查看 6 位控制码。
+      </view>
+
+      <!-- 已连接状态：展示房间信息与断开按钮 -->
+      <view class="connected-info-row flex-between" wx:if="{{wsConnected}}">
+        <view class="connected-desc">
+          <text class="conn-label">当前控制房间</text>
+          <text class="conn-val">#{{roomId}}</text>
+        </view>
+        <button class="disconnect-btn" bindtap="onDisconnectTap" hover-class="btn-hover">
+          断开 / 切换
+        </button>
+      </view>
+    </view>
+
+    <!-- 3. 动态操作反馈横幅 (触控即时响应条) -->
+    <view class="action-feedback-bar {{lastActionText ? 'active' : ''}}">
+      <view class="feedback-left">
+        <text class="feedback-icon">{{lastActionText ? '⚡' : '🕹️'}}</text>
+        <text class="feedback-text" wx:if="{{lastActionText}}">刚刚发射：<text class="feedback-highlight">{{lastActionText}}</text></text>
+        <text class="feedback-text" wx:else>增量指令遥控：点击直接加减主机比分，永不覆盖归零</text>
+      </view>
+      <text class="feedback-time" wx:if="{{lastActionTime}}">{{lastActionTime}}</text>
+    </view>
+
+    <!-- 4. 黄金比分遥控面板 (双列大触控板) -->
+    <view class="remote-boards-container">
+      <!-- 主队遥控板 -->
+      <view class="remote-board home-board">
+        <view class="board-top-bar" style="background-color: {{teamA.bgColor || '#E64340'}};">
+          <view class="team-title-wrap">
+            <text class="board-team-name" style="color: {{teamA.textColor || '#FFFFFF'}};">{{teamA.name || '主队'}}</text>
+            <text class="board-team-role" style="color: {{teamA.textColor || '#FFFFFF'}};">(主队)</text>
+          </view>
+        </view>
+
+        <view class="board-desc-tag">
+          <text>点击直接向主机记分</text>
+        </view>
+
+        <view class="score-btn-grid">
+          <view class="score-action-btn btn-plus" bindtap="onScoreChange" data-team="teamA" data-delta="1" hover-class="btn-hover">
+            <text class="btn-text">+1</text>
+            <text class="btn-sub">罚球</text>
+          </view>
+          <view class="score-action-btn btn-plus btn-highlight-2" bindtap="onScoreChange" data-team="teamA" data-delta="2" hover-class="btn-hover">
+            <text class="btn-text">+2</text>
+            <text class="btn-sub">进球</text>
+          </view>
+          <view class="score-action-btn btn-plus" bindtap="onScoreChange" data-team="teamA" data-delta="3" hover-class="btn-hover">
+            <text class="btn-text">+3</text>
+            <text class="btn-sub">三分</text>
+          </view>
+          <view class="score-action-btn btn-minus" bindtap="onScoreChange" data-team="teamA" data-delta="-1" hover-class="btn-hover">
+            <text class="btn-text">-1</text>
+            <text class="btn-sub">纠错扣分</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 客队遥控板 -->
+      <view class="remote-board away-board">
+        <view class="board-top-bar" style="background-color: {{teamB.bgColor || '#10AEFF'}};">
+          <view class="team-title-wrap">
+            <text class="board-team-name" style="color: {{teamB.textColor || '#FFFFFF'}};">{{teamB.name || '客队'}}</text>
+            <text class="board-team-role" style="color: {{teamB.textColor || '#FFFFFF'}};">(客队)</text>
+          </view>
+        </view>
+
+        <view class="board-desc-tag">
+          <text>点击直接向主机记分</text>
+        </view>
+
+        <view class="score-btn-grid">
+          <view class="score-action-btn btn-plus" bindtap="onScoreChange" data-team="teamB" data-delta="1" hover-class="btn-hover">
+            <text class="btn-text">+1</text>
+            <text class="btn-sub">罚球</text>
+          </view>
+          <view class="score-action-btn btn-plus btn-highlight-2" bindtap="onScoreChange" data-team="teamB" data-delta="2" hover-class="btn-hover">
+            <text class="btn-text">+2</text>
+            <text class="btn-sub">进球</text>
+          </view>
+          <view class="score-action-btn btn-plus" bindtap="onScoreChange" data-team="teamB" data-delta="3" hover-class="btn-hover">
+            <text class="btn-text">+3</text>
+            <text class="btn-sub">三分</text>
+          </view>
+          <view class="score-action-btn btn-minus" bindtap="onScoreChange" data-team="teamB" data-delta="-1" hover-class="btn-hover">
+            <text class="btn-text">-1</text>
+            <text class="btn-sub">纠错扣分</text>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 5. 高光控制卡片 (立即截取 + 连续集锦回放) -->
+    <view class="card highlight-card">
+      <view class="card-header flex-between">
+        <view class="header-left">
+          <text class="card-icon">🎬</text>
+          <text class="card-title">高光片段控制</text>
+        </view>
+        <view class="highlight-count-tag" wx:if="{{highlightCount > 0}}">
+          <text>本场累计: {{highlightCount}} 个</text>
+        </view>
+      </view>
+
+      <!-- 立即保存高光大按钮 -->
+      <button 
+        class="save-highlight-btn {{saveHighlightCooldown > 0 ? 'btn-cooldown' : ''}}"
+        bindtap="onSaveHighlightTap"
+        hover-class="btn-hover"
+      >
+        <text class="btn-icon">⚡</text>
+        <text class="btn-label">{{saveHighlightCooldown > 0 ? ('已发送指令 (' + saveHighlightCooldown + 's)') : '立即保存高光 (前8秒)'}}</text>
+      </button>
+
+      <!-- 回放控制分界线与按钮 -->
+      <view class="replay-control-section">
+        <view class="replay-status-row flex-between">
+          <text class="replay-status-label">主机回放状态：</text>
+          <view class="replay-state-indicator {{isReplaying ? 'active' : ''}}">
+            <view class="pulsing-dot" wx:if="{{isReplaying}}"></view>
+            <text>{{isReplaying ? '🔴 正在高光集锦回放中…' : '🟢 实时直播中'}}</text>
+          </view>
+        </view>
+
+        <button 
+          class="replay-toggle-btn {{isReplaying ? 'btn-live-back' : 'btn-replay-start'}}"
+          bindtap="onReplayToggleTap"
+          hover-class="btn-hover"
+        >
+          <text class="btn-icon">{{isReplaying ? '📺' : '🎬'}}</text>
+          <text class="btn-label">{{isReplaying ? '立即切回实时直播' : '播放高光集锦 (连续播放)'}}</text>
+        </button>
+      </view>
+    </view>
+
+    <!-- 6. 运行通信调试日志 (带一键导出/复制功能) -->
+    <view class="card debug-card">
+      <view class="card-header flex-between">
+        <view class="header-left">
+          <text class="card-icon">🛠️</text>
+          <text class="card-title">通信调试日志 ({{debugLogs.length}})</text>
+        </view>
+        <view class="log-actions flex-gap">
+          <button class="log-btn log-btn--copy" bindtap="onCopyLogsTap" hover-class="btn-hover">
+            📋 导出/复制日志
+          </button>
+          <button class="log-btn log-btn--clear" bindtap="onClearLogsTap" hover-class="btn-hover">
+            清空
+          </button>
+        </view>
+      </view>
+
+      <view class="log-console-box">
+        <view wx:if="{{debugLogs.length === 0}}" class="log-empty-text">
+          暂无通信日志，点击【连接】或改比分开始排查...
+        </view>
+        <scroll-view scroll-y class="log-scroll-area">
+          <view 
+            wx:for="{{debugLogs}}" 
+            wx:key="time" 
+            class="log-line-item {{item.type ? ('log-item--' + item.type) : ''}}"
+          >
+            <text class="log-timestamp">[{{item.time}}]</text>
+            <text class="log-msg-text">{{item.msg}}</text>
+          </view>
+        </scroll-view>
+      </view>
+
+      <view class="card-tip-text">
+        💡 提示：如果连接异常或无法控制，请点击【📋 导出/复制日志】，然后长按粘贴发送给我们排查。
+      </view>
+    </view>
+  </view>
+</view>
