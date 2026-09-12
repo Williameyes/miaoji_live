@@ -33,6 +33,39 @@ const RESULT_STATUS_LABELS = {
   room_serialized_skip: '串行跳过'
 };
 
+const WARMUP_RECORDS_KEY = 'RADAR_WARMUP_RECORDS_MAP';
+
+/**
+ * 读取本地持久化的预热场次记录字典
+ * @returns {Record<string, { jobId?: string, status?: string, updatedAt?: number }>}
+ */
+function getWarmupRecordsMap() {
+  try {
+    const data = wx.getStorageSync(WARMUP_RECORDS_KEY);
+    return data && typeof data === 'object' ? data : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+/**
+ * 持久化记录某场次有预热任务
+ * @param {string|number} matchId
+ * @param {Record<string, unknown>} [info]
+ */
+function recordWarmupMatch(matchId, info) {
+  if (!matchId) return;
+  try {
+    const map = getWarmupRecordsMap();
+    map[String(matchId)] = Object.assign({}, map[String(matchId)] || {}, info || {}, {
+      updatedAt: Date.now()
+    });
+    wx.setStorageSync(WARMUP_RECORDS_KEY, map);
+  } catch (e) {
+    console.warn('[Warmup] recordWarmupMatch fail', e);
+  }
+}
+
 Page({
   data: {
     // 列表模式与筛选 Tab
@@ -40,6 +73,12 @@ Page({
     directMatchIdInput: '',
     activeMatches: [],
     loading: false,
+
+    // 新增预热弹窗相关状态
+    showNewWarmupModal: false,
+    newWarmupMatchId: '',
+    availableMatchOptions: [],
+    newWarmupPickerIndex: 0,
 
     // 当前选中的场次
     selectedMatchId: '',
@@ -170,26 +209,40 @@ Page({
       query.status = 'ended';
     }
 
+    const localWarmupMap = getWarmupRecordsMap();
+
     fetchMatchList(query)
       .then(function (list) {
-        const matches = (list || []).map(function (item) {
-          const status = item.matchStatus || 'monitoring';
-          const disp = STATUS_DISPLAY[status] || { label: '监控中', cls: 'rl-badge-ok' };
-          
-          let startTimeText = '';
-          if (item.startTime) {
-            const date = new Date(item.startTime);
-            startTimeText = (date.getMonth() + 1) + '/' + date.getDate() + ' ' + 
-              String(date.getHours()).padStart(2, '0') + ':' + 
-              String(date.getMinutes()).padStart(2, '0');
-          }
+        const matches = (list || [])
+          .filter(function (item) {
+            const hasWarmupLocal = Boolean(localWarmupMap[String(item.id)]);
+            const hasWarmupRemote = Boolean(item.warmupStatus || item.warmupJobId || item.hasWarmup);
+            return hasWarmupLocal || hasWarmupRemote;
+          })
+          .map(function (item) {
+            const status = item.matchStatus || 'monitoring';
+            const disp = STATUS_DISPLAY[status] || { label: '监控中', cls: 'rl-badge-ok' };
+            
+            const localInfo = localWarmupMap[String(item.id)] || {};
+            const warmupStatus = item.warmupStatus || localInfo.status || '';
+            const warmupBadgeLabel = WARMUP_STATUS_LABELS[warmupStatus] || (warmupStatus ? warmupStatus : '预热中');
 
-          return Object.assign({}, item, {
-            statusLabel: disp.label,
-            statusBadgeClass: disp.cls,
-            startTimeText: startTimeText
+            let startTimeText = '';
+            if (item.startTime) {
+              const date = new Date(item.startTime);
+              startTimeText = (date.getMonth() + 1) + '/' + date.getDate() + ' ' + 
+                String(date.getHours()).padStart(2, '0') + ':' + 
+                String(date.getMinutes()).padStart(2, '0');
+            }
+
+            return Object.assign({}, item, {
+              statusLabel: disp.label,
+              statusBadgeClass: disp.cls,
+              startTimeText: startTimeText,
+              warmupBadgeLabel: warmupBadgeLabel,
+              hasWarmupBadge: Boolean(warmupStatus)
+            });
           });
-        });
         self.setData({
           activeMatches: matches,
           loading: false
@@ -208,13 +261,15 @@ Page({
   onSelectMatch: function (e) {
     const matchId = e.currentTarget.dataset.id;
     if (!matchId) return;
-    this.onSelectMatchById(matchId);
+    this.onSelectMatchById(matchId, false);
   },
 
   /**
    * 按 ID 选中场次并加载详情与历史战报
+   * @param {string|number} matchId
+   * @param {boolean} [forceConfig] 是否强制打开预热配置表单
    */
-  onSelectMatchById: function (matchId) {
+  onSelectMatchById: function (matchId, forceConfig) {
     const match = this.data.activeMatches.find(function (item) {
       return String(item.id) === String(matchId);
     });
@@ -238,12 +293,15 @@ Page({
           warmupLiveUrl: anchors.length > 0 ? anchors[0].liveUrl : '',
           warmupAccountCount: 3,
           warmupCommentsText: '',
-          showConfigForm: false
+          showConfigForm: Boolean(forceConfig)
         });
         self.updatePlanPreview();
         return self._loadMatchWarmupReport(matchId);
       })
       .then(function () {
+        if (forceConfig) {
+          self.setData({ showConfigForm: true });
+        }
         wx.hideLoading();
       })
       .catch(function (err) {
@@ -311,6 +369,11 @@ Page({
             hasInvalidAccounts: hasInvalid,
             invalidAccounts: invalidAccounts,
             showConfigForm: false
+          });
+
+          recordWarmupMatch(matchId, {
+            jobId: res.job_id,
+            status: status
           });
 
           if (status === 'running' || status === 'pending') {
@@ -569,6 +632,10 @@ Page({
       .then(function (res) {
         wx.hideLoading();
         if (res && res.job_id) {
+          recordWarmupMatch(matchId, {
+            jobId: res.job_id,
+            status: 'running'
+          });
           self.setData({
             warmupJobId: res.job_id,
             warmupEnqueuedCount: Number(res.enqueued_count || payload.account_count),
@@ -668,5 +735,90 @@ Page({
     this.setData({
       showConfigForm: true
     });
+  },
+
+  /**
+   * 打开新增预热弹窗
+   */
+  onOpenNewWarmupModal: function () {
+    const self = this;
+    this.setData({
+      showNewWarmupModal: true,
+      newWarmupMatchId: '',
+      newWarmupPickerIndex: 0
+    });
+
+    // 异步拉取全部可用场次供用户快速选择
+    fetchMatchList({})
+      .then(function (list) {
+        const options = (list || []).map(function (m) {
+          const statusDisp = STATUS_DISPLAY[m.matchStatus] || { label: m.matchStatus || '待采集' };
+          const title = (m.teamA && m.teamB) ? (m.teamA + ' vs ' + m.teamB) : '未命名场次';
+          const seqText = m.matchSeq ? ('#' + m.matchSeq + ' ') : '';
+          return {
+            id: String(m.id),
+            label: seqText + title + ' (ID:' + m.id + ' · ' + statusDisp.label + ')'
+          };
+        });
+        self.setData({
+          availableMatchOptions: options
+        });
+      })
+      .catch(function (err) {
+        console.warn('[Warmup] fetch available matches failed', err);
+      });
+  },
+
+  /**
+   * 关闭新增预热弹窗
+   */
+  onCloseNewWarmupModal: function () {
+    this.setData({
+      showNewWarmupModal: false,
+      newWarmupMatchId: ''
+    });
+  },
+
+  /**
+   * 新增预热输入场次 ID
+   */
+  onNewWarmupInputId: function (e) {
+    this.setData({
+      newWarmupMatchId: e.detail.value
+    });
+  },
+
+  /**
+   * 新增预热选择场次
+   */
+  onNewWarmupPickerChange: function (e) {
+    const idx = Number(e.detail.value);
+    const options = this.data.availableMatchOptions || [];
+    const selected = options[idx];
+    this.setData({
+      newWarmupPickerIndex: idx,
+      newWarmupMatchId: selected ? selected.id : ''
+    });
+  },
+
+  /**
+   * 确认新增预热，跳转进入预热配置
+   */
+  onConfirmNewWarmup: function () {
+    let targetId = String(this.data.newWarmupMatchId || '').trim();
+    if (!targetId && this.data.availableMatchOptions && this.data.availableMatchOptions.length > 0) {
+      const selected = this.data.availableMatchOptions[this.data.newWarmupPickerIndex];
+      if (selected) {
+        targetId = selected.id;
+      }
+    }
+
+    if (!targetId) {
+      wx.showToast({ title: '请选择或输入场次 ID', icon: 'none' });
+      return;
+    }
+
+    this.setData({ showNewWarmupModal: false });
+    this.onSelectMatchById(targetId, true);
   }
 });

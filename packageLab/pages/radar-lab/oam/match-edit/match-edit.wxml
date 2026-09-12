@@ -19,6 +19,10 @@
         <text class="rl-notice-text">请先创建赛事后再新增场次</text>
       </view>
       <view class="rl-field">
+        <text class="rl-label">场次序号 / 场序</text>
+        <input class="rl-input" type="number" placeholder="如：1、2、39（选填）" value="{{matchSeq}}" bindinput="onMatchSeqInput" />
+      </view>
+      <view class="rl-field">
         <text class="rl-label">所属阶段/分组</text>
         <input class="rl-input" placeholder="如：A组、B组、常规赛" value="{{stageId}}" bindinput="onStageIdInput" />
       </view>
@@ -53,16 +57,17 @@
           <input class="rl-input" type="number" placeholder="客队比分" value="{{scoreB}}" bindinput="onScoreBInput" />
         </view>
       </view>
-      <view class="rl-field">
-        <text class="rl-label">广告奖池金额（元）</text>
-        <input class="rl-input" type="digit" placeholder="如 700" value="{{totalPool}}" bindinput="onTotalPoolInput" />
-      </view>
-      <view class="rl-field">
-        <text class="rl-label">推广分起征人数</text>
-        <input class="rl-input" type="number" placeholder="如 1000" value="{{minViewers}}" bindinput="onMinViewersInput" />
-      </view>
+      <block wx:if="{{isWhitelist}}">
+        <view class="rl-field">
+          <text class="rl-label">广告奖池金额（元）</text>
+          <input class="rl-input" type="digit" placeholder="如 700" value="{{totalPool}}" bindinput="onTotalPoolInput" />
+        </view>
+        <view class="rl-field">
+          <text class="rl-label">推广分起征人数</text>
+          <input class="rl-input" type="number" placeholder="如 1000" value="{{minViewers}}" bindinput="onMinViewersInput" />
+        </view>
+      </block>
       <button class="rl-btn rl-btn-primary" disabled="{{submitting || !tournaments.length}}" bindtap="onSave">保存场次</button>
-      <button class="rl-btn rl-btn-secondary" style="margin-top:16rpx;" disabled="{{submitting || !tournaments.length}}" bindtap="onSaveAndMonitor">保存并进入监控</button>
     </view>
   </view>
 

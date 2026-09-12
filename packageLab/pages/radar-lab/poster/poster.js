@@ -2,7 +2,7 @@
  * @fileoverview 赛事影响力战报海报（赛事列表来自服务端）。
  */
 
-const { ensureRadarLabAccess } = require('../../../utils/radar-access.js');
+const { ensureMatchManageAccess } = require('../../../utils/radar-access.js');
 const {
   fetchTournamentInfluence,
   fetchTournamentList
@@ -27,7 +27,7 @@ Page({
    * @returns {void}
    */
   onLoad: function () {
-    if (!ensureRadarLabAccess({ redirectBack: true })) return;
+    if (!ensureMatchManageAccess({ redirectBack: true })) return;
     const self = this;
     fetchTournamentList()
       .then(function (list) {

@@ -67,8 +67,40 @@ function ensureRadarLabAccess(opts) {
   return true;
 }
 
+/**
+ * 校验比赛管理基础权限（已登录用户即可使用）。
+ * @param {Object} [opts]
+ * @param {boolean} [opts.redirectBack] - 未登录提示后是否 navigateBack
+ * @returns {boolean}
+ */
+function ensureMatchManageAccess(opts) {
+  const options = opts || {};
+  const token = getToken();
+  if (!token) {
+    wx.showToast({ title: '请先登录后使用比赛管理功能', icon: 'none', duration: 1500 });
+    if (options.redirectBack) {
+      setTimeout(function () {
+        wx.navigateBack({ delta: 1 });
+      }, 1000);
+    }
+    return false;
+  }
+  return true;
+}
+
+/**
+ * 检查当前用户是否具备白名单特权（AI批量导入、监控挂载等）。
+ * @returns {boolean}
+ */
+function isRadarWhitelistUser() {
+  return checkSyncLabWhitelist();
+}
+
 module.exports = {
   isForbiddenError,
   handleRadarForbidden,
-  ensureRadarLabAccess
+  ensureRadarLabAccess,
+  ensureMatchManageAccess,
+  isRadarWhitelistUser
 };
+

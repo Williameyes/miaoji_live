@@ -613,3 +613,137 @@
   border-top: 1rpx dashed #bae6fd;
   padding-top: 12rpx;
 }
+
+/* 列表卡片与底部留白 */
+.warmup-list-card {
+  margin-bottom: 160rpx !important;
+}
+
+/* 场序 Badge */
+.oam-seq-badge {
+  display: inline-block;
+  font-size: 22rpx;
+  color: #2563eb;
+  background: #eff6ff;
+  border-radius: 6rpx;
+  padding: 2rpx 8rpx;
+  margin-right: 8rpx;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
+/* 预热状态 Tag */
+.warmup-badge-tag {
+  font-size: 20rpx;
+  color: #ea580c;
+  background: #fff7ed;
+  border: 1rpx solid #fed7aa;
+  border-radius: 8rpx;
+  padding: 2rpx 10rpx;
+  margin-top: 8rpx;
+  font-weight: 600;
+  text-align: right;
+  display: inline-block;
+}
+
+/* 底部悬浮操作按钮 (FAB) */
+.oam-fab {
+  position: fixed;
+  left: 40rpx;
+  right: 40rpx;
+  bottom: calc(40rpx + env(safe-area-inset-bottom));
+  height: 96rpx;
+  border-radius: 24rpx;
+  background: #2563eb;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8rpx 28rpx rgba(37, 99, 235, 0.35);
+  z-index: 50;
+}
+
+.oam-fab-hover {
+  opacity: 0.92;
+}
+
+.oam-fab-text {
+  color: #ffffff;
+  font-size: 32rpx;
+  font-weight: 700;
+}
+
+/* 新增预热 Modal 弹窗 */
+.warmup-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(4px);
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40rpx;
+}
+
+.warmup-modal-card {
+  width: 100%;
+  max-width: 640rpx;
+  background: #ffffff;
+  border-radius: 28rpx;
+  padding: 40rpx 32rpx 32rpx;
+  box-shadow: 0 20rpx 50rpx rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+}
+
+.warmup-modal-title {
+  font-size: 34rpx;
+  font-weight: 800;
+  color: #0f172a;
+  text-align: center;
+  margin-bottom: 8rpx;
+}
+
+.warmup-modal-sub {
+  font-size: 24rpx;
+  color: #64748b;
+  text-align: center;
+  margin-bottom: 32rpx;
+}
+
+.warmup-modal-actions {
+  display: flex;
+  flex-direction: row;
+  gap: 20rpx;
+  margin-top: 36rpx;
+}
+
+.warmup-modal-btn {
+  flex: 1;
+  height: 84rpx;
+  line-height: 84rpx;
+  font-size: 28rpx;
+  font-weight: 600;
+  border-radius: 16rpx;
+  text-align: center;
+  padding: 0;
+  margin: 0;
+}
+
+.warmup-modal-btn::after {
+  border: none;
+}
+
+.warmup-modal-btn.cancel-btn {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.warmup-modal-btn.confirm-btn {
+  background: #2563eb;
+  color: #ffffff;
+}
+

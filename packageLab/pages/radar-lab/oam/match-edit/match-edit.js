@@ -2,7 +2,7 @@
  * @fileoverview 场次新建/编辑（服务端拉取与保存）。
  */
 
-const { ensureRadarLabAccess, isForbiddenError, handleRadarForbidden } = require('../../../../utils/radar-access.js');
+const { ensureMatchManageAccess, isRadarWhitelistUser, isForbiddenError, handleRadarForbidden } = require('../../../../utils/radar-access.js');
 const {
   oamUpsert,
   fetchTournamentList,
@@ -19,6 +19,7 @@ Page({
   data: {
     isEdit: false,
     matchId: '',
+    matchSeq: '',
     tournaments: [],
     tournamentIndex: 0,
     tournamentId: '',
@@ -32,6 +33,7 @@ Page({
     startTime: '',
     totalPool: '',
     minViewers: '',
+    isWhitelist: false,
     submitting: false,
     loading: true
   },
@@ -47,17 +49,22 @@ Page({
    * @returns {void}
    */
   onLoad: function (query) {
-    if (!ensureRadarLabAccess({ redirectBack: true })) return;
+    if (!ensureMatchManageAccess({ redirectBack: true })) return;
     this._startTimeTouched = false;
     const now = Date.now();
     // 同步写入默认开赛时间，避免表单空值；异步回写时若用户已拨盘则不再覆盖
     this.setData({
+      isWhitelist: isRadarWhitelistUser(),
       startDate: timestampToDateStr(now),
       startTime: timestampToTimeStr(now)
     });
     const editId = query && query.id ? String(query.id) : '';
     const presetTournamentId = query && query.tournament_id ? String(query.tournament_id) : '';
     this._initPage(editId, presetTournamentId);
+  },
+
+  onShow: function () {
+    this.setData({ isWhitelist: isRadarWhitelistUser() });
   },
 
   /**
@@ -70,6 +77,7 @@ Page({
     fetchTournamentList()
       .then(function (tournaments) {
         let tournamentId = presetTournamentId;
+        let matchSeq = '';
         let teamA = '';
         let teamB = '';
         let stageId = '';
@@ -84,6 +92,7 @@ Page({
           ? fetchMatchDetail(editId).then(function (detail) {
               if (detail) {
                 tournamentId = detail.tournamentId || tournamentId;
+                matchSeq = detail.matchSeq != null ? String(detail.matchSeq) : '';
                 teamA = detail.teamA;
                 teamB = detail.teamB;
                 stageId = detail.stageId || '';
@@ -113,6 +122,7 @@ Page({
           const patch = {
             isEdit: !!editId,
             matchId: editId,
+            matchSeq: matchSeq,
             tournaments: tournaments,
             tournamentIndex: tournamentIndex,
             tournamentId: tournamentId,
@@ -150,6 +160,10 @@ Page({
 
   onTeamBInput: function (e) {
     this.setData({ teamB: e.detail.value });
+  },
+
+  onMatchSeqInput: function (e) {
+    this.setData({ matchSeq: e.detail.value.trim() });
   },
 
   onStageIdInput: function (e) {
@@ -217,6 +231,9 @@ Page({
   },
 
   _appendCommercialConfig: function (data) {
+    if (!this.data.isWhitelist) {
+      return data;
+    }
     const cfg = this._readCommercialConfig();
     if (!cfg) return null;
     if (String(this.data.totalPool || '').trim()) {
@@ -258,6 +275,11 @@ Page({
     if (d.matchId) {
       matchData.match_id = d.matchId;
     }
+    const seqText = String(d.matchSeq || '').trim();
+    const parsedSeq = Number(seqText);
+    if (!isNaN(parsedSeq) && parsedSeq > 0) {
+      matchData.match_seq = parsedSeq;
+    }
     return matchData;
   },
 
@@ -275,7 +297,7 @@ Page({
    */
   onSave: function () {
     const self = this;
-    if (!ensureRadarLabAccess()) return;
+    if (!ensureMatchManageAccess()) return;
     const matchData = this._buildMatchData();
     if (!matchData) return;
     this.setData({ submitting: true });
@@ -288,33 +310,6 @@ Page({
         setTimeout(function () {
           wx.navigateBack();
         }, 400);
-      })
-      .catch(function (err) {
-        wx.showToast({ title: err.message || '保存失败', icon: 'none' });
-      })
-      .finally(function () {
-        self.setData({ submitting: false });
-      });
-  },
-
-  /**
-   * @returns {void}
-   */
-  onSaveAndMonitor: function () {
-    const self = this;
-    if (!ensureRadarLabAccess()) return;
-    const matchData = this._buildMatchData();
-    if (!matchData) return;
-    this.setData({ submitting: true });
-    this._submitMatchUpsert({
-      action: 'upsert_match',
-      data: matchData
-    })
-      .then(function (res) {
-        const id = String(res.affected_id || self.data.matchId || '');
-        wx.redirectTo({
-          url: '/packageLab/pages/radar-lab/monitor/detail?match_id=' + encodeURIComponent(id)
-        });
       })
       .catch(function (err) {
         wx.showToast({ title: err.message || '保存失败', icon: 'none' });

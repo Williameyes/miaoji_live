@@ -32,7 +32,8 @@ interface AddMatchTaskRequest {
   };
 }
 
-interface PageData {
+interface MountPageData {
+  listStatusTab: string;
   showAddForm: boolean;
   activeMatches: any[];
   loading: boolean;
@@ -58,6 +59,7 @@ interface PageData {
 
 Page({
   data: {
+    listStatusTab: 'all',
     showAddForm: false,
     activeMatches: [],
     loading: false,
@@ -350,7 +352,17 @@ Page({
   },
 
   /**
-   * 加载正在采集和排队等待中的雷达监控场次。
+   * 切换分类筛选 Tab
+   */
+  onSwitchListTab: function (e: any) {
+    const tab = e.currentTarget.dataset.tab;
+    if (tab === this.data.listStatusTab) return;
+    this.setData({ listStatusTab: tab });
+    this._reloadActiveMatches();
+  },
+
+  /**
+   * 加载雷达监控场次。
    */
   _reloadActiveMatches: function () {
     const self = this;
@@ -370,15 +382,25 @@ Page({
       interrupted: '已中断'
     };
 
-    fetchMatchList({ status: 'monitoring,waiting_radar' })
+    const query: Record<string, string> = {};
+    const tab = this.data.listStatusTab;
+    if (tab === 'monitoring') {
+      query.status = 'monitoring,waiting_radar';
+    } else if (tab === 'ended') {
+      query.status = 'ended';
+    }
+
+    fetchMatchList(query)
       .then((matches: any[]) => {
         const activeMatches = matches
-          .filter((m: any) => m.boundAnchorCount > 0)
+          .filter((m: any) => (m.boundAnchorCount > 0) || (Array.isArray(m.boundAnchors) && m.boundAnchors.length > 0))
           .map((m: any) => {
             return {
               id: m.id,
+              matchSeq: m.matchSeq != null ? m.matchSeq : null,
               teamA: m.teamA,
               teamB: m.teamB,
+              boundAnchorCount: m.boundAnchorCount || (Array.isArray(m.boundAnchors) ? m.boundAnchors.length : 0),
               startTimeText: formatStartTimeDisplay(m.startTime),
               tournamentName: m.tournamentName || '—',
               statusLabel: STATUS_LABELS[m.matchStatus] || m.matchStatus || '未知',

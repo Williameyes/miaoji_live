@@ -2,7 +2,7 @@
  * @fileoverview 赛事新建/编辑（服务端拉取与保存）。
  */
 
-const { ensureRadarLabAccess } = require('../../../../utils/radar-access.js');
+const { ensureMatchManageAccess } = require('../../../../utils/radar-access.js');
 const { oamUpsert, fetchTournamentList } = require('../../../../services/radar-api.js');
 const { timestampToDateStr } = require('../../../../utils/radar-datetime.js');
 
@@ -36,7 +36,7 @@ Page({
    * @returns {void}
    */
   onLoad: function (query) {
-    if (!ensureRadarLabAccess({ redirectBack: true })) return;
+    if (!ensureMatchManageAccess({ redirectBack: true })) return;
     const editId = query && query.id ? String(query.id) : '';
     const forceNew = query && query.mode === 'new';
     const self = this;
@@ -178,7 +178,7 @@ Page({
    */
   onSave: function () {
     const self = this;
-    if (!ensureRadarLabAccess()) return;
+    if (!ensureMatchManageAccess()) return;
     const d = this.data;
     if (!d.tournamentName.trim() || !d.startDate || !d.endDate) {
       wx.showToast({ title: '请填写完整信息', icon: 'none' });

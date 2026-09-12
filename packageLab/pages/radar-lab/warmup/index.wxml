@@ -5,7 +5,7 @@
     <view class="rl-header">
       <view class="rl-kicker">雷达实验 · 直播预热</view>
       <view class="rl-title">选择预热场次</view>
-      <view class="rl-sub">点击下方场次或直接输入场次 ID，查看交单战报与下发预热</view>
+      <view class="rl-sub">仅展示已下发预热任务的场次，点击查看战报或下发新预热</view>
     </view>
 
     <!-- 快捷按 ID 直达栏 -->
@@ -34,7 +34,7 @@
     </view>
 
     <!-- 列表展现 -->
-    <view class="rl-card" wx:elif="{{activeMatches.length}}">
+    <view class="rl-card warmup-list-card" wx:elif="{{activeMatches.length}}">
       <block wx:for="{{activeMatches}}" wx:key="id">
         <view
           class="active-match-item"
@@ -43,29 +43,38 @@
           hover-class="rl-list-item-hover"
         >
           <view class="active-match-main">
-            <view class="rl-list-title">{{item.teamA}} vs {{item.teamB}}</view>
+            <view class="rl-list-title">
+              <text wx:if="{{item.matchSeq}}" class="oam-seq-badge">#{{item.matchSeq}}</text>
+              <text>{{item.teamA}} vs {{item.teamB}}</text>
+            </view>
             <view class="rl-list-desc">{{item.startTimeText}} · {{item.tournamentName}}</view>
             <view class="rl-list-desc active-match-id">场次 ID: {{item.id}}</view>
           </view>
           <view class="active-match-badge-wrap">
             <text class="rl-badge {{item.statusBadgeClass}}">{{item.statusLabel}}</text>
+            <view wx:if="{{item.hasWarmupBadge}}" class="warmup-badge-tag">🔥 {{item.warmupBadgeLabel}}</view>
           </view>
         </view>
       </block>
     </view>
 
     <!-- 空态与快捷入口 -->
-    <view class="rl-card" wx:else>
+    <view class="rl-card warmup-list-card" wx:else>
       <view class="rl-empty" style="padding: 48rpx 24rpx;">
-        <text style="font-size: 28rpx; font-weight: 700; color: #334155;">暂无匹配的场次</text>
+        <text style="font-size: 28rpx; font-weight: 700; color: #334155;">暂无已下发预热任务的场次</text>
         <text class="rl-empty-sub" style="margin-top: 12rpx; margin-bottom: 24rpx;">
-          可以通过上方输入框直接输入场次 ID，或前往创建新场次 / 启动监控
+          仅展示已配置并下发过直播间预热任务的场次；点击下方按钮即可为比赛下发预热。
         </text>
         <view class="empty-action-btns">
-          <button class="rl-btn rl-btn-primary empty-btn" bindtap="onGoMount">前往雷达挂载</button>
-          <button class="rl-btn rl-btn-secondary empty-btn" bindtap="onGoOam">前往场次维护</button>
+          <button class="rl-btn rl-btn-primary empty-btn" bindtap="onOpenNewWarmupModal">＋ 新增预热任务</button>
+          <button class="rl-btn rl-btn-secondary empty-btn" bindtap="onGoMount">前往雷达挂载</button>
         </view>
       </view>
+    </view>
+
+    <!-- 悬浮新增预热按钮 -->
+    <view class="oam-fab" bindtap="onOpenNewWarmupModal" hover-class="oam-fab-hover">
+      <text class="oam-fab-text">＋ 新增预热任务</text>
     </view>
   </block>
 
@@ -352,4 +361,48 @@
     </view>
   </block>
 
+  <!-- ==================== 新增预热 Modal 弹窗 ==================== -->
+  <view class="warmup-modal-overlay" wx:if="{{showNewWarmupModal}}">
+    <view class="warmup-modal-card">
+      <view class="warmup-modal-title">新增直播预热</view>
+      <view class="warmup-modal-sub">选择或输入需要下发预热任务的比赛场次</view>
+
+      <!-- 快速选择已有场次 -->
+      <view class="rl-field" wx:if="{{availableMatchOptions && availableMatchOptions.length > 0}}">
+        <text class="rl-label">从已有场次快速选择</text>
+        <picker
+          mode="selector"
+          range="{{availableMatchOptions}}"
+          range-key="label"
+          value="{{newWarmupPickerIndex}}"
+          bindchange="onNewWarmupPickerChange"
+        >
+          <view class="rl-input rl-picker-display">
+            {{availableMatchOptions[newWarmupPickerIndex].label}}
+          </view>
+        </picker>
+      </view>
+
+      <!-- 手动输入场次 ID -->
+      <view class="rl-field">
+        <text class="rl-label">{{availableMatchOptions && availableMatchOptions.length > 0 ? '或直接输入场次 ID' : '请输入场次 ID'}}</text>
+        <input
+          class="rl-input"
+          type="number"
+          placeholder="如 1001"
+          value="{{newWarmupMatchId}}"
+          bindinput="onNewWarmupInputId"
+          confirm-type="done"
+          bindconfirm="onConfirmNewWarmup"
+        />
+      </view>
+
+      <view class="warmup-modal-actions">
+        <button class="warmup-modal-btn cancel-btn" bindtap="onCloseNewWarmupModal">取消</button>
+        <button class="warmup-modal-btn confirm-btn" bindtap="onConfirmNewWarmup">下一步：配置预热</button>
+      </view>
+    </view>
+  </view>
+
 </view>
+

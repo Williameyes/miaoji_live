@@ -1,4 +1,4 @@
-const { ensureRadarLabAccess } = require('../../../../utils/radar-access.js');
+const { ensureMatchManageAccess, ensureRadarLabAccess, isRadarWhitelistUser } = require('../../../../utils/radar-access.js');
 const { fetchTournamentList, oamUpsert } = require('../../../../services/radar-api.js');
 const { getRadarListScope } = require('../../../../utils/radar-list-scope.js');
 
@@ -78,20 +78,24 @@ Page({
     targetTournamentId: '',
     targetTournamentName: '',
     pastedCsvText: '',
-    submittingInitials: false
+    submittingInitials: false,
+    isWhitelist: false
   },
 
   /**
    * @returns {void}
    */
   onLoad: function () {
-    if (!ensureRadarLabAccess({ redirectBack: true })) return;
+    if (!ensureMatchManageAccess({ redirectBack: true })) return;
   },
 
   /**
    * @returns {void}
    */
   onShow: function () {
+    this.setData({
+      isWhitelist: isRadarWhitelistUser()
+    });
     this._reloadList();
   },
 
@@ -154,7 +158,7 @@ Page({
    * @returns {void}
    */
   onNewTournament: function () {
-    if (!ensureRadarLabAccess()) return;
+    if (!ensureMatchManageAccess()) return;
     wx.navigateTo({
       url: '/packageLab/pages/radar-lab/oam/tournament-edit/tournament-edit?mode=new'
     });
@@ -186,6 +190,10 @@ Page({
   // 基准积分 AI 批量导入 Modal 逻辑
   // ----------------------------------------------------
   onOpenInitialsModal: function (e) {
+    if (!this.data.isWhitelist) {
+      wx.showToast({ title: '该功能仅对白名单用户开放', icon: 'none' });
+      return;
+    }
     const id = e.currentTarget.dataset.id;
     const name = e.currentTarget.dataset.name;
     if (!id) return;
@@ -212,6 +220,10 @@ Page({
   },
 
   onCopyAiPrompt: function () {
+    if (!this.data.isWhitelist) {
+      wx.showToast({ title: '该功能仅对白名单用户开放', icon: 'none' });
+      return;
+    }
     const promptText = `请你作为赛事基准积分格式化助手。以下是我收集到的积分榜历史战绩数据（可能为图片文本、公众号表格或聊天记录）：
 
 请将所有球队的初始基准数据整理成符合以下标准的 CSV 格式，并用 \`\`\`csv 代码块包裹输出。请勿包含其他解释性文字。

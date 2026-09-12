@@ -3,9 +3,16 @@
   <!-- ==================== 1. 正在监测的比赛列表 ==================== -->
   <block wx:if="{{!showAddForm}}">
     <view class="rl-header">
-      <view class="rl-kicker">雷达实验 · 正在监测</view>
-      <view class="rl-title">正在监测的比赛</view>
+      <view class="rl-kicker">雷达实验 · 挂载管理</view>
+      <view class="rl-title">雷达挂载的比赛</view>
       <view class="rl-sub">点击比赛卡片进入监控详情页；点击下方按钮新增挂载任务。</view>
+    </view>
+
+    <!-- 分类筛选 Tab -->
+    <view class="match-filter-tabs">
+      <view class="match-filter-tab {{listStatusTab === 'all' ? 'active' : ''}}" bindtap="onSwitchListTab" data-tab="all">全部</view>
+      <view class="match-filter-tab {{listStatusTab === 'monitoring' ? 'active' : ''}}" bindtap="onSwitchListTab" data-tab="monitoring">进行中</view>
+      <view class="match-filter-tab {{listStatusTab === 'ended' ? 'active' : ''}}" bindtap="onSwitchListTab" data-tab="ended">已结束</view>
     </view>
 
     <!-- 加载中 -->
@@ -14,7 +21,7 @@
     </view>
 
     <!-- 列表展现 -->
-    <view class="rl-card" wx:elif="{{activeMatches.length}}">
+    <view class="rl-card mount-list-card" wx:elif="{{activeMatches.length}}">
       <block wx:for="{{activeMatches}}" wx:key="id">
         <view
           class="active-match-item"
@@ -23,9 +30,12 @@
           hover-class="rl-list-item-hover"
         >
           <view class="active-match-main">
-            <view class="rl-list-title">{{item.teamA}} vs {{item.teamB}}</view>
+            <view class="rl-list-title">
+              <text wx:if="{{item.matchSeq}}" class="oam-seq-badge">#{{item.matchSeq}}</text>
+              <text>{{item.teamA}} vs {{item.teamB}}</text>
+            </view>
             <view class="rl-list-desc">{{item.startTimeText}} · {{item.tournamentName}}</view>
-            <view class="rl-list-desc active-match-id">比赛 ID: {{item.id}}</view>
+            <view class="rl-list-desc active-match-id">比赛 ID: {{item.id}} · 已挂载 {{item.boundAnchorCount}} 路直播</view>
           </view>
           <view class="active-match-badge-wrap">
             <text class="rl-badge {{item.statusBadgeClass}}">{{item.statusLabel}}</text>
@@ -36,8 +46,8 @@
 
     <!-- 空态 -->
     <view class="rl-empty" wx:else>
-      <text>暂无进行中的监测任务</text>
-      <text class="rl-empty-sub">点击下方「新增挂载」按钮启动一个赛事的雷达监控</text>
+      <text>暂无匹配的雷达挂载比赛</text>
+      <text class="rl-empty-sub">可切换上方分类 Tab 查看，或点击下方「新增挂载」按钮启动监控</text>
     </view>
 
     <!-- 悬浮新增按钮 -->

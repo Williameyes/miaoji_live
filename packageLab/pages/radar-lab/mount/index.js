@@ -7,6 +7,7 @@ const { fetchMatchDetail, fetchMatchList } = require('../../../services/radar-ap
 const { addMatchRadarTask } = require('../../../services/match-radar.service');
 Page({
     data: {
+        listStatusTab: 'all',
         showAddForm: false,
         activeMatches: [],
         loading: false,
@@ -299,7 +300,17 @@ Page({
         });
     },
     /**
-     * 加载正在采集和排队等待中的雷达监控场次。
+     * 切换分类筛选 Tab
+     */
+    onSwitchListTab: function (e) {
+        const tab = e.currentTarget.dataset.tab;
+        if (tab === this.data.listStatusTab)
+            return;
+        this.setData({ listStatusTab: tab });
+        this._reloadActiveMatches();
+    },
+    /**
+     * 加载雷达监控场次。
      */
     _reloadActiveMatches: function () {
         const self = this;
@@ -317,15 +328,24 @@ Page({
             ended: '已结赛',
             interrupted: '已中断'
         };
-        fetchMatchList({ status: 'monitoring,waiting_radar' })
+        const query = {};
+        const tab = this.data.listStatusTab;
+        if (tab === 'monitoring') {
+            query.status = 'monitoring,waiting_radar';
+        } else if (tab === 'ended') {
+            query.status = 'ended';
+        }
+        fetchMatchList(query)
             .then((matches) => {
             const activeMatches = matches
-                .filter((m) => m.boundAnchorCount > 0)
+                .filter((m) => (m.boundAnchorCount > 0) || (Array.isArray(m.boundAnchors) && m.boundAnchors.length > 0))
                 .map((m) => {
                 return {
                     id: m.id,
+                    matchSeq: m.matchSeq != null ? m.matchSeq : null,
                     teamA: m.teamA,
                     teamB: m.teamB,
+                    boundAnchorCount: m.boundAnchorCount || (Array.isArray(m.boundAnchors) ? m.boundAnchors.length : 0),
                     startTimeText: formatStartTimeDisplay(m.startTime),
                     tournamentName: m.tournamentName || '—',
                     statusLabel: STATUS_LABELS[m.matchStatus] || m.matchStatus || '未知',

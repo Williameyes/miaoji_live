@@ -2,7 +2,7 @@
  * @fileoverview 雷达 OAM 场次列表主页（数据来自服务端列表接口）。
  */
 
-const { ensureRadarLabAccess } = require('../../../utils/radar-access.js');
+const { ensureMatchManageAccess, ensureRadarLabAccess, isRadarWhitelistUser } = require('../../../utils/radar-access.js');
 const { getRadarListScope } = require('../../../utils/radar-list-scope.js');
 const {
   oamUpsert,
@@ -12,7 +12,7 @@ const {
   deleteMatch
 } = require('../../../services/radar-api.js');
 const { formatStartTimeDisplay } = require('../../../utils/radar-datetime.js');
-const { parseMatchExcelBuffer, parseMatchCsvText } = require('../../../utils/radar-excel-parser.js');
+const { parseMatchCsvText } = require('../../../utils/radar-excel-parser.js');
 
 /**
  * @param {import('../../../utils/radar-model.js').RadarMatchView} m
@@ -72,20 +72,24 @@ Page({
     selectedIdMap: {},
     selectedCount: 0,
     deletableCount: 0,
-    isAllSelected: false
+    isAllSelected: false,
+    isWhitelist: false
   },
 
   /**
    * @returns {void}
    */
   onLoad: function () {
-    if (!ensureRadarLabAccess({ redirectBack: true })) return;
+    if (!ensureMatchManageAccess({ redirectBack: true })) return;
   },
 
   /**
    * @returns {void}
    */
   onShow: function () {
+    this.setData({
+      isWhitelist: isRadarWhitelistUser()
+    });
     this._reloadList();
   },
 
@@ -120,6 +124,7 @@ Page({
             const delState = computeDeletableState(m);
             return {
               id: m.id,
+              matchSeq: m.matchSeq != null ? m.matchSeq : null,
               teamA: m.teamA,
               teamB: m.teamB,
               startTimeText: formatStartTimeDisplay(m.startTime),
@@ -389,19 +394,22 @@ Page({
    * @returns {void}
    */
   onPlusTap: function () {
+    if (!this.data.isWhitelist) {
+      // 普通用户只能单场新增
+      this.onNewMatch();
+      return;
+    }
     const self = this;
     wx.showActionSheet({
       itemList: [
         '新增单场',
-        '📁 微信文件(Excel/CSV)批量导入',
         '📝 粘贴 AI 整理文本/CSV 导入',
         '📋 复制 AI 整理提示词'
       ],
       success: function (res) {
         if (res.tapIndex === 0) self.onNewMatch();
-        else if (res.tapIndex === 1) self.onBatchImport();
-        else if (res.tapIndex === 2) self.onOpenPasteModal();
-        else if (res.tapIndex === 3) self.onCopyAiPrompt();
+        else if (res.tapIndex === 1) self.onOpenPasteModal();
+        else if (res.tapIndex === 2) self.onCopyAiPrompt();
       }
     });
   },
@@ -410,6 +418,10 @@ Page({
    * 复制大模型赛程整理提示词到剪贴板。
    */
   onCopyAiPrompt: function () {
+    if (!this.data.isWhitelist) {
+      wx.showToast({ title: '该功能仅对白名单用户开放', icon: 'none' });
+      return;
+    }
     const promptText = `请你作为赛程数据格式化助手。以下是我收集到的原始赛程信息（可能为聊天记录、文字公告或图片文本）：
 
 请将所有比赛场次整理成符合以下标准的 CSV 格式，并用 \`\`\`csv 代码块包裹输出。请勿包含其他解释性文字。
@@ -443,6 +455,10 @@ CSV 表头格式（第一行为表头）：
   },
 
   onOpenPasteModal: function () {
+    if (!this.data.isWhitelist) {
+      wx.showToast({ title: '该功能仅对白名单用户开放', icon: 'none' });
+      return;
+    }
     const tournamentId = this._resolveImportTournamentId();
     if (!tournamentId) {
       wx.showModal({
@@ -543,7 +559,7 @@ CSV 表头格式（第一行为表头）：
    * @returns {void}
    */
   onNewMatch: function () {
-    if (!ensureRadarLabAccess()) return;
+    if (!ensureMatchManageAccess()) return;
     const options = this.data.filterOptions.filter(function (o) {
       return o.id !== 'all';
     });
@@ -593,6 +609,7 @@ CSV 表头格式（第一行为表头）：
   },
 
   /**
+   * 点击场次主卡片：统一进入场次编辑（与监控解耦，专用于基础数据与赛程比分维护）。
    * @param {WechatMiniprogram.BaseEvent} e
    * @returns {void}
    */
@@ -600,7 +617,7 @@ CSV 表头格式（第一行为表头）：
     const id = e.currentTarget.dataset.id;
     if (!id) return;
     wx.navigateTo({
-      url: '/packageLab/pages/radar-lab/monitor/detail?match_id=' + encodeURIComponent(id)
+      url: '/packageLab/pages/radar-lab/oam/match-edit/match-edit?id=' + encodeURIComponent(id)
     });
   },
 
@@ -626,6 +643,10 @@ CSV 表头格式（第一行为表头）：
    * @returns {void}
    */
   onOpenPromo: function (e) {
+    if (!this.data.isWhitelist) {
+      wx.showToast({ title: '该功能仅对白名单用户开放', icon: 'none' });
+      return;
+    }
     const id = e.currentTarget.dataset.id;
     if (!id) return;
     const row = this.data.matchRows.find(function (r) {
@@ -640,104 +661,6 @@ CSV 表头格式（第一行为表头）：
         '/packageLab/pages/radar-lab/oam/promo-publish/promo-publish?match_id=' +
         encodeURIComponent(id)
     });
-  },
-
-  /**
-   * @returns {void}
-   */
-  onBatchImport: function () {
-    if (!ensureRadarLabAccess()) return;
-    const tournamentId = this._resolveImportTournamentId();
-    if (!tournamentId) {
-      wx.showModal({
-        title: '请选择导入赛事',
-        content: '请先在左侧筛选器选择要导入到的具体赛事（不可选「全部赛事」），再执行批量导入。',
-        showCancel: false,
-        confirmText: '知道了'
-      });
-      return;
-    }
-    this._chooseExcelAndImport(tournamentId);
-  },
-
-  /**
-   * @param {string} tournamentId
-   * @returns {void}
-   */
-  _chooseExcelAndImport: function (tournamentId) {
-    const self = this;
-    wx.chooseMessageFile({
-      count: 1,
-      type: 'file',
-      extension: ['xlsx', 'xls', 'csv'],
-      success: function (res) {
-        const file = res.tempFiles && res.tempFiles[0];
-        if (!file || !file.path) return;
-        wx.getFileSystemManager().readFile({
-          filePath: file.path,
-          success: function (readRes) {
-            self._importExcelBuffer(readRes.data, file.name, tournamentId);
-          },
-          fail: function () {
-            wx.showToast({ title: '读取文件失败', icon: 'none' });
-          }
-        });
-      }
-    });
-  },
-
-  /**
-   * @param {ArrayBuffer} buffer
-   * @param {string} fileName
-   * @param {string} tournamentId
-   * @returns {void}
-   */
-  _importExcelBuffer: function (buffer, fileName, tournamentId) {
-    const self = this;
-    wx.showLoading({ title: '解析表格…', mask: true });
-    let rows;
-    try {
-      rows = parseMatchExcelBuffer(buffer, fileName);
-    } catch (err) {
-      wx.hideLoading();
-      wx.showToast({ title: err.message || '解析失败', icon: 'none' });
-      return;
-    }
-    wx.hideLoading();
-    const tourName = self._currentFilterTournamentName();
-    wx.showModal({
-      title: '确认导入',
-      content: '将 ' + rows.length + ' 条场次导入到「' + tourName + '」，是否继续？',
-      success: function (modalRes) {
-        if (!modalRes.confirm) return;
-        self.setData({ submitting: true });
-        wx.showLoading({ title: '导入中…', mask: true });
-        oamUpsert({
-          action: 'batch_import_matches',
-          tournament_id: tournamentId,
-          matches_list: rows
-        })
-          .then(function () {
-            wx.hideLoading();
-            wx.showToast({ title: '已导入 ' + rows.length + ' 场', icon: 'success' });
-            const nextFilterIndex = self.data.filterOptions.findIndex(function (o) {
-              return o.id === tournamentId;
-            });
-            self.setData({
-                  filterIndex: nextFilterIndex >= 0 ? nextFilterIndex : 0,
-                  selectedTournamentId: tournamentId
-                });
-                return self._reloadList(true);
-              })
-              .catch(function (err) {
-                wx.hideLoading();
-                wx.showToast({ title: err.message || '导入失败', icon: 'none' });
-              })
-              .finally(function () {
-                self.setData({ submitting: false });
-              });
-          }
-        });
   },
 
   /**

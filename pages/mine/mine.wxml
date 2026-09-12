@@ -68,9 +68,9 @@
       </view>
       <view wx:if="{{hasPromoData}}" class="list-divider"></view>
     </block>
-    <block wx:if="{{loggedIn && isInWhitelist}}">
+    <block wx:if="{{loggedIn}}">
       <view class="list-item" hover-class="list-item-hover" bindtap="onRadarLabTap">
-        <text class="list-label">比赛管理 <text class="list-label-badge">实验</text></text>
+        <text class="list-label">比赛管理</text>
         <text class="list-arrow">›</text>
       </view>
       <view class="list-divider"></view>

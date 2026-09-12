@@ -3,7 +3,7 @@
   <view class="rl-header">
     <view class="rl-kicker">OAM · 场次维护</view>
     <view class="rl-title">场次列表</view>
-    <view class="rl-sub">挂载监控时后端会自动识别并入库主播，无需单独维护</view>
+    <view class="rl-sub">赛事与场次基础资产录入、赛程与比分信息维护</view>
   </view>
 
   <view class="oam-toolbar-row">
@@ -31,10 +31,6 @@
     </view>
   </view>
 
-  <view class="oam-ai-helper-bar">
-    <button class="oam-ai-btn" bindtap="onCopyAiPrompt">📋 复制 AI 整理提示词</button>
-    <button class="oam-ai-btn oam-ai-btn--primary" bindtap="onOpenPasteModal">📝 粘贴 AI 文本导入</button>
-  </view>
 
   <view class="rl-empty" wx:if="{{loading}}">
     <text>加载中…</text>
@@ -63,9 +59,12 @@
           bindtap="{{isBatchMode ? '' : 'onGoMonitorDetail'}}"
           data-id="{{item.id}}"
         >
-          <view class="rl-list-title">{{item.teamA}} vs {{item.teamB}}</view>
+          <view class="rl-list-title">
+            <text wx:if="{{item.matchSeq}}" class="oam-seq-badge">#{{item.matchSeq}}</text>
+            <text>{{item.teamA}} vs {{item.teamB}}</text>
+          </view>
           <view class="rl-list-desc">{{item.startTimeText}} · {{item.tournamentName}}</view>
-          <view class="rl-list-desc oam-commercial-desc">{{item.commercialText}}</view>
+          <view class="rl-list-desc oam-match-id">场次 ID: {{item.id}}</view>
         </view>
         <view class="oam-match-actions" wx:if="{{!isBatchMode}}">
           <button
@@ -75,17 +74,11 @@
             data-id="{{item.id}}"
           >编辑</button>
           <button
-            wx:if="{{!adminViewAll || item.canManage}}"
+            wx:if="{{isWhitelist && (!adminViewAll || item.canManage)}}"
             class="oam-action-btn oam-action-btn--ghost"
             bindtap="onOpenPromo"
             data-id="{{item.id}}"
           >推广</button>
-          <button
-            wx:if="{{!adminViewAll || item.canManage}}"
-            class="oam-action-btn oam-action-btn--ghost"
-            bindtap="onCopyMatchId"
-            data-id="{{item.id}}"
-          >复制ID</button>
           <button
             wx:if="{{(!adminViewAll || item.canManage) && item.settlementStatus !== 'settled'}}"
             class="oam-action-btn oam-action-btn--danger"

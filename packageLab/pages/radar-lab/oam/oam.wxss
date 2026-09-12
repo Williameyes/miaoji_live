@@ -130,6 +130,12 @@
   color: #64748b;
 }
 
+.oam-match-id {
+  font-size: 20rpx;
+  color: #94a3b8;
+  margin-top: 4rpx;
+}
+
 .rl-empty-sub {
   display: block;
   margin-top: 12rpx;
@@ -415,3 +421,16 @@
   box-shadow: none;
   opacity: 0.7;
 }
+
+.oam-seq-badge {
+  display: inline-block;
+  font-size: 22rpx;
+  color: #2563eb;
+  background: #eff6ff;
+  border-radius: 6rpx;
+  padding: 2rpx 8rpx;
+  margin-right: 8rpx;
+  font-weight: 700;
+  vertical-align: middle;
+}
+

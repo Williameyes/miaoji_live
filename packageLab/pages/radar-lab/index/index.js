@@ -2,17 +2,29 @@
  * @fileoverview 直播雷达实验室入口：赛事 / 场次维护、监控、战报。
  */
 
-const { ensureRadarLabAccess } = require('../../../utils/radar-access.js');
+const { ensureMatchManageAccess, isRadarWhitelistUser } = require('../../../utils/radar-access.js');
 
 Page({
-  data: {},
+  data: {
+    isWhitelist: false
+  },
 
   /**
-   * 页面加载：白名单校验。
+   * 页面加载：登录鉴权。
    * @returns {void}
    */
   onLoad: function () {
-    ensureRadarLabAccess({ redirectBack: true });
+    if (!ensureMatchManageAccess({ redirectBack: true })) return;
+  },
+
+  /**
+   * 页面展示：刷新白名单特权状态。
+   * @returns {void}
+   */
+  onShow: function () {
+    this.setData({
+      isWhitelist: isRadarWhitelistUser()
+    });
   },
 
   /**
@@ -20,7 +32,7 @@ Page({
    * @returns {void}
    */
   onGoOam: function () {
-    if (!ensureRadarLabAccess()) return;
+    if (!ensureMatchManageAccess()) return;
     wx.navigateTo({ url: '/packageLab/pages/radar-lab/oam/oam' });
   },
 
@@ -29,18 +41,7 @@ Page({
    * @returns {void}
    */
   onGoTournament: function () {
-    if (!ensureRadarLabAccess()) return;
+    if (!ensureMatchManageAccess()) return;
     wx.navigateTo({ url: '/packageLab/pages/radar-lab/oam/tournament-list/tournament-list' });
-  },
-
-
-
-  /**
-   * 跳转战报宣发页。
-   * @returns {void}
-   */
-  onGoPoster: function () {
-    if (!ensureRadarLabAccess()) return;
-    wx.navigateTo({ url: '/packageLab/pages/radar-lab/poster/poster' });
   }
 });

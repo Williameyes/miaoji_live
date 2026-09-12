@@ -25,6 +25,7 @@
         </view>
         <view class="tour-item-actions" wx:if="{{!adminViewAll || item.canManage}}">
           <button
+            wx:if="{{isWhitelist}}"
             class="tour-btn-initials"
             bindtap="onOpenInitialsModal"
             data-id="{{item.id}}"

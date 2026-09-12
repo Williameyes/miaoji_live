@@ -79,6 +79,11 @@ function normalizeMatch(raw) {
     id: String(id),
     tournamentId: String(o.tournament_id || o.tournamentId || ''),
     tournamentName: String(o.tournament_name || o.tournamentName || ''),
+    matchSeq: o.match_seq != null ? Number(o.match_seq) : (o.matchSeq != null ? Number(o.matchSeq) : null),
+    stageId: String(o.stage_id || o.stageId || ''),
+    venue: String(o.venue || o.location || ''),
+    scoreA: o.score_a != null ? Number(o.score_a) : (o.scoreA != null ? Number(o.scoreA) : null),
+    scoreB: o.score_b != null ? Number(o.score_b) : (o.scoreB != null ? Number(o.scoreB) : null),
     teamA: String(o.team_a || o.teamA || ''),
     teamB: String(o.team_b || o.teamB || ''),
     startTime: String(o.start_time || o.startTime || ''),
@@ -112,7 +117,10 @@ function normalizeMatch(raw) {
           };
         })
       : [],
-    boundAnchorCount: Number(o.bound_anchor_count ?? o.boundAnchorCount ?? (Array.isArray(o.bound_anchors || o.boundAnchors) ? (o.bound_anchors || o.boundAnchors).length : 0)) || 0
+    boundAnchorCount: Number(o.bound_anchor_count ?? o.boundAnchorCount ?? (Array.isArray(o.bound_anchors || o.boundAnchors) ? (o.bound_anchors || o.boundAnchors).length : 0)) || 0,
+    warmupJobId: String(o.warmup_job_id || o.warmupJobId || ''),
+    warmupStatus: String(o.warmup_status || o.warmupStatus || ''),
+    hasWarmup: Boolean(o.has_warmup || o.hasWarmup || o.warmup_job_id || o.warmupJobId || o.warmup_status || o.warmupStatus)
   };
 }
 
