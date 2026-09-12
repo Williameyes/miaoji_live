@@ -147,7 +147,12 @@ function normalizeTournament(raw) {
     isPublic: o.is_public !== false && o.isPublic !== false && o.is_public !== 0,
     canManage: o.can_manage !== false && o.canManage !== false,
     sportType: String(o.sport_type || o.sportType || 'basketball'),
-    format: String(o.format || o.tournament_format || o.tournamentFormat || 'LEAGUE')
+    format: (function () {
+      const raw = String(o.format || o.tournament_format || o.tournamentFormat || 'LEAGUE').trim().toUpperCase();
+      if (raw === '赛会制') return 'CUP';
+      if (raw === '联赛制') return 'LEAGUE';
+      return raw;
+    })()
   };
 }
 

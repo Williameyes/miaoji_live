@@ -10,6 +10,9 @@ function parseTournamentItem(raw) {
   const id = o.tournament_id || o.tournamentId || o.id;
   if (id == null || id === '') return null;
   const rawFormat = o.format || o.tournament_format || o.tournamentFormat;
+  let formatVal = String(rawFormat || 'LEAGUE').trim().toUpperCase();
+  if (formatVal === '赛会制') formatVal = 'CUP';
+  else if (formatVal === '联赛制') formatVal = 'LEAGUE';
   const rawSportType = o.sport_type || o.sportType;
   return {
     id: String(id),
@@ -22,7 +25,7 @@ function parseTournamentItem(raw) {
     isPublic: o.is_public !== false && o.isPublic !== false,
     canManage: o.can_manage !== false && o.canManage !== false,
     sportType: String(rawSportType || 'basketball'),
-    format: String(rawFormat || 'LEAGUE'),
+    format: formatVal,
     coverUrl: String(o.cover_url || o.coverUrl || o.cover || '')
   };
 }
