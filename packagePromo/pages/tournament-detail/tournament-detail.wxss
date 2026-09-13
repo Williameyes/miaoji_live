@@ -375,7 +375,7 @@ page {
    赛程表格专属列 (Schedule Table Columns - 支持文本自动换行不隐藏)
 ───────────────────────────────────── */
 .col-sch-group {
-  width: 95rpx;
+  width: 76rpx;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -446,7 +446,7 @@ page {
 }
 
 .col-sch-score {
-  width: 85rpx;
+  width: 78rpx;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -487,7 +487,7 @@ page {
 }
 
 .col-sch-time {
-  width: 95rpx;
+  width: 86rpx;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -511,7 +511,7 @@ page {
 }
 
 .col-sch-venue {
-  width: 125rpx;
+  width: 96rpx;
   font-size: 20rpx;
   color: #2563EB;
   text-align: center;
@@ -527,6 +527,14 @@ page {
   white-space: normal;
   display: inline-block;
   line-height: 1.25;
+}
+
+.col-sch-action {
+  width: 86rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
 .td-group-header-bar {
@@ -1029,71 +1037,42 @@ page {
 }
 
 /* ─────────────────────────────────────
-   赛程行左滑手势与「复制比赛」按钮样式
+   赛程行快捷复制到记分样式
 ───────────────────────────────────── */
-.td-swipe-row-wrapper {
-  position: relative;
-  overflow: hidden;
-  width: 100%;
-  border-bottom: 1rpx solid #F1F5F9;
-  background: #FFFFFF;
-}
-
-.td-swipe-row-wrapper:last-child {
-  border-bottom: none;
-}
-
-.td-swipe-row-wrapper .td-table-row {
-  border-bottom: none;
-  background: #FFFFFF;
-  position: relative;
-  z-index: 2;
-  transition: transform 0.22s cubic-bezier(0.2, 0.9, 0.4, 1);
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.td-swipe-action-btn {
-  position: absolute;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  width: 156rpx;
-  background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
-  color: #FFFFFF;
+.td-sched-click-hint {
+  font-size: 21rpx;
+  color: #2563EB;
+  background: rgba(37, 99, 235, 0.06);
+  text-align: center;
+  padding: 12rpx 20rpx;
+  font-weight: 600;
+  border-bottom: 1rpx solid rgba(37, 99, 235, 0.12);
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 6rpx;
-  z-index: 1;
-  box-shadow: inset 4rpx 0 10rpx rgba(0, 0, 0, 0.08);
-  cursor: pointer;
 }
 
-.td-swipe-action-btn:active {
-  opacity: 0.9;
-}
-
-.td-swipe-action-icon {
-  font-size: 32rpx;
-  line-height: 1;
-}
-
-.td-swipe-action-text {
-  font-size: 20rpx;
+.td-sch-copy-btn {
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.08) 0%, rgba(37, 99, 235, 0.16) 100%);
+  color: #2563EB;
+  border: 1rpx solid rgba(37, 99, 235, 0.25);
+  font-size: 18rpx;
   font-weight: 700;
-  letter-spacing: 0.5rpx;
+  padding: 6rpx 10rpx;
+  border-radius: 999rpx;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  box-shadow: 0 2rpx 6rpx rgba(37, 99, 235, 0.08);
+  transition: all 0.15s ease;
 }
 
-.td-sched-swipe-hint {
-  font-size: 20rpx;
-  color: #64748B;
-  background: #F8FAFC;
-  text-align: right;
-  padding: 10rpx 20rpx 6rpx;
-  font-weight: 500;
-  border-bottom: 1rpx solid #F1F5F9;
+.td-sch-copy-btn:active {
+  background: #2563EB;
+  color: #FFFFFF;
+  transform: scale(0.92);
 }
 
 /* ─────────────────────────────────────

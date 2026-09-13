@@ -258,8 +258,7 @@ Page({
     scoreB: '',
     submittingScore: false,
 
-    // 赛程行左滑复制到直播记分
-    swipedMatchId: '',
+    // 赛程行复制到直播记分
     showCopyModal: false,
     copyDraft: {
       sportType: 'basketball',
@@ -839,61 +838,14 @@ Page({
   },
 
   /**
-   * 赛程行左滑手势监听
+   * 赛程行点击事件：触发「复制比赛到直播记分」对话框
    */
-  onRowTouchStart: function (e) {
-    if (e.touches && e.touches.length === 1) {
-      this._touchStartX = e.touches[0].clientX;
-      this._touchStartY = e.touches[0].clientY;
-      this._touchMoved = false;
+  onMatchRowTap: function (e) {
+    if (this._isLongPressing) {
+      this._isLongPressing = false;
+      return;
     }
-  },
-
-  onRowTouchMove: function (e) {
-    if (e.touches && e.touches.length === 1 && this._touchStartX !== undefined) {
-      const currentX = e.touches[0].clientX;
-      const currentY = e.touches[0].clientY;
-      const deltaX = currentX - this._touchStartX;
-      const deltaY = currentY - this._touchStartY;
-
-      // 若纵向位移大于横向，认为是页面正常滚动
-      if (Math.abs(deltaY) > Math.abs(deltaX)) {
-        return;
-      }
-      this._touchMoved = true;
-    }
-  },
-
-  onRowTouchEnd: function (e) {
-    if (this._touchStartX === undefined) return;
-    const matchId = String(e.currentTarget.dataset.id || '');
-    if (!matchId) return;
-
-    if (e.changedTouches && e.changedTouches.length > 0) {
-      const endX = e.changedTouches[0].clientX;
-      const endY = e.changedTouches[0].clientY;
-      const deltaX = endX - this._touchStartX;
-      const deltaY = endY - this._touchStartY;
-
-      // 水平位移为主且向左滑动超过 30px -> 展开
-      if (Math.abs(deltaX) > Math.abs(deltaY) && deltaX < -30) {
-        this.setData({ swipedMatchId: matchId });
-      } else if (Math.abs(deltaX) > Math.abs(deltaY) && deltaX > 30) {
-        // 向右滑动 -> 收起
-        if (this.data.swipedMatchId === matchId) {
-          this.setData({ swipedMatchId: '' });
-        }
-      } else if (!this._touchMoved) {
-        // 轻按点击某行：若已有展开的行则收起
-        if (this.data.swipedMatchId) {
-          this.setData({ swipedMatchId: '' });
-        }
-      }
-    }
-
-    this._touchStartX = undefined;
-    this._touchStartY = undefined;
-    this._touchMoved = false;
+    this.onOpenCopyMatchModal(e);
   },
 
   /**
@@ -935,7 +887,6 @@ Page({
 
     this.setData({
       showCopyModal: true,
-      swipedMatchId: '',
       copyDraft: {
         sportType: sportType,
         matchName: matchName,
@@ -1074,8 +1025,7 @@ Page({
       wx.setStorageSync('MIAOXIE_MATCHES', list);
 
       this.setData({
-        showCopyModal: false,
-        swipedMatchId: ''
+        showCopyModal: false
       });
 
       wx.showModal({
@@ -1099,6 +1049,12 @@ Page({
    * 长按比赛行触发编辑比分 Modal
    */
   onMatchLongPress: function (e) {
+    const self = this;
+    this._isLongPressing = true;
+    setTimeout(function () {
+      self._isLongPressing = false;
+    }, 400);
+
     const match = e.currentTarget.dataset.match;
     if (!match) return;
 

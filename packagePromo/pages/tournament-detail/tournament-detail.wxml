@@ -86,8 +86,8 @@
       </view>
 
       <view class="td-table-card" wx:else>
-        <!-- 左滑功能引导提示 -->
-        <view class="td-sched-swipe-hint">👈 左滑赛程行可快速复制到「直播记分」</view>
+        <!-- 单击功能引导提示 -->
+        <view class="td-sched-click-hint">💡 点击任意比赛行或「复制」按钮，即可快速复制比赛到「直播记分」</view>
 
         <!-- 赛程表格头 (支持表头点击排序) -->
         <view class="td-table-header td-sched-header">
@@ -111,66 +111,65 @@
             <text>场地</text>
             <text class="td-sort-icon">{{sortField === 'venue' ? (sortOrder === 'asc' ? '▲' : '▼') : '↕'}}</text>
           </view>
+          <view class="col-sch-action">
+            <text>操作</text>
+          </view>
         </view>
 
-        <!-- 赛程表格行 (支持左滑复制到直播记分) -->
+        <!-- 赛程表格行 (支持直接单击行或点击「复制」快速复制比赛) -->
         <block wx:for="{{currentMatches}}" wx:key="match_id">
-          <view class="td-swipe-row-wrapper {{swipedMatchId === item.match_id ? 'is-swiped' : ''}}">
-            <view 
-              class="td-table-row td-sched-row" 
-              data-match="{{item}}" 
-              data-id="{{item.match_id}}"
-              bindtouchstart="onRowTouchStart"
-              bindtouchmove="onRowTouchMove"
-              bindtouchend="onRowTouchEnd"
-              bindlongpress="onMatchLongPress" 
-              hover-class="td-sched-row-hover"
-              style="{{swipedMatchId === item.match_id ? 'transform: translateX(-156rpx);' : ''}}"
-            >
-              <!-- 组别/阶段与场次序号 -->
-              <view class="col-sch-group">
-                <text class="td-sch-seq-badge" wx:if="{{item.match_seq}}">#{{item.match_seq}}</text>
-                <text class="td-sch-group-tag">{{item.stage_id !== 'stage_default' ? item.stage_id : '常规赛'}}</text>
-              </view>
-
-              <!-- 对阵球队 (队伍A vs 队伍B，小组完赛后自动替换 A1/B2 组别代号) -->
-              <view class="col-sch-teams">
-                <text class="td-sch-team home {{item.score_a > item.score_b ? 'win-team' : ''}}">{{item.display_team_a || item.team_a}}</text>
-                <text class="td-sch-vs-sep">-</text>
-                <text class="td-sch-team away {{item.score_b > item.score_a ? 'win-team' : ''}}">{{item.display_team_b || item.team_b}}</text>
-              </view>
-
-              <!-- 比分 / 待录入 / 未开始 状态 -->
-              <view class="col-sch-score">
-                <block wx:if="{{item.hasValidScores}}">
-                  <text class="td-sch-score-num {{item.score_a > item.score_b ? 'win' : ''}}">{{item.score_a}}</text>
-                  <text class="td-sch-score-sep">:</text>
-                  <text class="td-sch-score-num {{item.score_b > item.score_a ? 'win' : ''}}">{{item.score_b}}</text>
-                </block>
-                <block wx:elif="{{item.isPendingScore}}">
-                  <text class="td-sch-pending-tag is-overdue">待录入</text>
-                </block>
-                <block wx:else>
-                  <text class="td-sch-pending-tag">未开始</text>
-                </block>
-              </view>
-
-              <!-- 比赛时间 (固定分成两行: 日期 + 时间) -->
-              <view class="col-sch-time">
-                <text class="td-sch-date-val">{{item.datePart}}</text>
-                <text class="td-sch-clock-val">{{item.timePart}}</text>
-              </view>
-
-              <!-- 比赛场地 (不合并，逐行填充) -->
-              <view class="col-sch-venue">
-                <text class="td-sch-venue-val">{{item.venue || '—'}}</text>
-              </view>
+          <view 
+            class="td-table-row td-sched-row" 
+            data-match="{{item}}" 
+            data-id="{{item.match_id}}"
+            bindtap="onMatchRowTap"
+            bindlongpress="onMatchLongPress" 
+            hover-class="td-sched-row-hover"
+          >
+            <!-- 组别/阶段与场次序号 -->
+            <view class="col-sch-group">
+              <text class="td-sch-seq-badge" wx:if="{{item.match_seq}}">#{{item.match_seq}}</text>
+              <text class="td-sch-group-tag">{{item.stage_id !== 'stage_default' ? item.stage_id : '常规赛'}}</text>
             </view>
 
-            <!-- 右侧滑动操作按钮：复制比赛 -->
-            <view class="td-swipe-action-btn" catchtap="onOpenCopyMatchModal" data-match="{{item}}">
-              <text class="td-swipe-action-icon">📋</text>
-              <text class="td-swipe-action-text">复制比赛</text>
+            <!-- 对阵球队 (队伍A vs 队伍B，小组完赛后自动替换 A1/B2 组别代号) -->
+            <view class="col-sch-teams">
+              <text class="td-sch-team home {{item.score_a > item.score_b ? 'win-team' : ''}}">{{item.display_team_a || item.team_a}}</text>
+              <text class="td-sch-vs-sep">-</text>
+              <text class="td-sch-team away {{item.score_b > item.score_a ? 'win-team' : ''}}">{{item.display_team_b || item.team_b}}</text>
+            </view>
+
+            <!-- 比分 / 待录入 / 未开始 状态 -->
+            <view class="col-sch-score">
+              <block wx:if="{{item.hasValidScores}}">
+                <text class="td-sch-score-num {{item.score_a > item.score_b ? 'win' : ''}}">{{item.score_a}}</text>
+                <text class="td-sch-score-sep">:</text>
+                <text class="td-sch-score-num {{item.score_b > item.score_a ? 'win' : ''}}">{{item.score_b}}</text>
+              </block>
+              <block wx:elif="{{item.isPendingScore}}">
+                <text class="td-sch-pending-tag is-overdue">待录入</text>
+              </block>
+              <block wx:else>
+                <text class="td-sch-pending-tag">未开始</text>
+              </block>
+            </view>
+
+            <!-- 比赛时间 (固定分成两行: 日期 + 时间) -->
+            <view class="col-sch-time">
+              <text class="td-sch-date-val">{{item.datePart}}</text>
+              <text class="td-sch-clock-val">{{item.timePart}}</text>
+            </view>
+
+            <!-- 比赛场地 (不合并，逐行填充) -->
+            <view class="col-sch-venue">
+              <text class="td-sch-venue-val">{{item.venue || '—'}}</text>
+            </view>
+
+            <!-- 操作列：一键复制比赛按钮 -->
+            <view class="col-sch-action" catchtap="onOpenCopyMatchModal" data-match="{{item}}">
+              <view class="td-sch-copy-btn">
+                <text>📋 复制</text>
+              </view>
             </view>
           </view>
         </block>
