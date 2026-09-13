@@ -86,9 +86,6 @@
       </view>
 
       <view class="td-table-card" wx:else>
-        <!-- 单击功能引导提示 -->
-        <view class="td-sched-click-hint">💡 点击任意比赛行或「复制」按钮，即可快速复制比赛到「直播记分」</view>
-
         <!-- 赛程表格头 (支持表头点击排序) -->
         <view class="td-table-header td-sched-header">
           <view class="col-sch-group td-sortable-col {{sortField === 'group' ? 'active' : ''}}" bindtap="onSortColumn" data-field="group" hover-class="td-col-hover" hover-stay-time="100">
@@ -110,9 +107,6 @@
           <view class="col-sch-venue td-sortable-col {{sortField === 'venue' ? 'active' : ''}}" bindtap="onSortColumn" data-field="venue" hover-class="td-sort-icon-hover" hover-stay-time="100">
             <text>场地</text>
             <text class="td-sort-icon">{{sortField === 'venue' ? (sortOrder === 'asc' ? '▲' : '▼') : '↕'}}</text>
-          </view>
-          <view class="col-sch-action">
-            <text>操作</text>
           </view>
         </view>
 
@@ -163,13 +157,6 @@
             <!-- 比赛场地 (不合并，逐行填充) -->
             <view class="col-sch-venue">
               <text class="td-sch-venue-val">{{item.venue || '—'}}</text>
-            </view>
-
-            <!-- 操作列：一键复制比赛按钮 -->
-            <view class="col-sch-action" catchtap="onOpenCopyMatchModal" data-match="{{item}}">
-              <view class="td-sch-copy-btn">
-                <text>📋 复制</text>
-              </view>
             </view>
           </view>
         </block>
@@ -388,7 +375,12 @@
             <picker mode="date" value="{{copyDraft.startDate}}" start="2020-01-01" end="2035-12-31" bindchange="onCopyStartDateChange">
               <view class="copy-picker-display">📅 {{copyDraft.startDate}}</view>
             </picker>
-            <picker mode="time" value="{{copyDraft.startTime}}" bindchange="onCopyStartTimeChange">
+            <picker 
+              mode="multiSelector" 
+              range="{{timePickerRange}}" 
+              value="{{timePickerValue}}" 
+              bindchange="onCopyTimePickerChange"
+            >
               <view class="copy-picker-display">⏰ {{copyDraft.startTime}}</view>
             </picker>
           </view>

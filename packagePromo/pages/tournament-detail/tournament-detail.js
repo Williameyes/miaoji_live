@@ -14,6 +14,28 @@ const {
 const { post, STORAGE_TOKEN_KEY, STORAGE_USER_INFO_KEY, setToken } = require('../../../utils/request.js');
 const { checkSyncLabWhitelist } = require('../../../utils/sync-lab-whitelist.js');
 
+/** @const {Array<string[]>} 时分多列选择器取值范围（分钟步长为5，无循环） */
+const TIME_PICKER_RANGE = [
+  ['00', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23'],
+  ['00', '05', '10', '15', '20', '25', '30', '35', '40', '45', '50', '55']
+];
+
+/**
+ * 根据 "HH:mm" 字符串计算在 TIME_PICKER_RANGE 中的索引值
+ * @param {string} timeStr
+ * @returns {number[]}
+ */
+function getTimePickerIndices(timeStr) {
+  const [hStr, mStr] = (timeStr || '00:00').split(':');
+  const h = parseInt(hStr, 10) || 0;
+  const m = parseInt(mStr, 10) || 0;
+  const roundedM = Math.round(m / 5) * 5;
+  const targetM = roundedM >= 60 ? 55 : roundedM;
+  const hourIndex = Math.min(Math.max(0, h), 23);
+  const minuteIndex = Math.min(Math.max(0, Math.floor(targetM / 5)), 11);
+  return [hourIndex, minuteIndex];
+}
+
 /**
   * Canvas 2D 辅助绘制圆角矩形
   */
@@ -260,6 +282,8 @@ Page({
 
     // 赛程行复制到直播记分
     showCopyModal: false,
+    timePickerRange: TIME_PICKER_RANGE,
+    timePickerValue: [0, 0],
     copyDraft: {
       sportType: 'basketball',
       matchName: '',
@@ -885,8 +909,14 @@ Page({
       startTime = '19:00';
     }
 
+    const timePickerValue = getTimePickerIndices(startTime);
+    const hour = TIME_PICKER_RANGE[0][timePickerValue[0]];
+    const minute = TIME_PICKER_RANGE[1][timePickerValue[1]];
+    startTime = `${hour}:${minute}`;
+
     this.setData({
       showCopyModal: true,
+      timePickerValue: timePickerValue,
       copyDraft: {
         sportType: sportType,
         matchName: matchName,
@@ -917,8 +947,15 @@ Page({
     this.setData({ 'copyDraft.startDate': e.detail.value });
   },
 
-  onCopyStartTimeChange: function (e) {
-    this.setData({ 'copyDraft.startTime': e.detail.value });
+  onCopyTimePickerChange: function (e) {
+    const val = e.detail.value || [0, 0];
+    const hour = this.data.timePickerRange[0][val[0]] || '00';
+    const minute = this.data.timePickerRange[1][val[1]] || '00';
+    const timeStr = `${hour}:${minute}`;
+    this.setData({
+      timePickerValue: val,
+      'copyDraft.startTime': timeStr
+    });
   },
 
   onCopyMatchNameInput: function (e) {
