@@ -86,6 +86,9 @@
       </view>
 
       <view class="td-table-card" wx:else>
+        <!-- 左滑功能引导提示 -->
+        <view class="td-sched-swipe-hint">👈 左滑赛程行可快速复制到「直播记分」</view>
+
         <!-- 赛程表格头 (支持表头点击排序) -->
         <view class="td-table-header td-sched-header">
           <view class="col-sch-group td-sortable-col {{sortField === 'group' ? 'active' : ''}}" bindtap="onSortColumn" data-field="group" hover-class="td-col-hover" hover-stay-time="100">
@@ -110,46 +113,64 @@
           </view>
         </view>
 
-        <!-- 赛程表格行 -->
+        <!-- 赛程表格行 (支持左滑复制到直播记分) -->
         <block wx:for="{{currentMatches}}" wx:key="match_id">
-          <view class="td-table-row td-sched-row" data-match="{{item}}" bindlongpress="onMatchLongPress" hover-class="td-sched-row-hover">
-            <!-- 组别/阶段与场次序号 -->
-            <view class="col-sch-group">
-              <text class="td-sch-seq-badge" wx:if="{{item.match_seq}}">#{{item.match_seq}}</text>
-              <text class="td-sch-group-tag">{{item.stage_id !== 'stage_default' ? item.stage_id : '常规赛'}}</text>
+          <view class="td-swipe-row-wrapper {{swipedMatchId === item.match_id ? 'is-swiped' : ''}}">
+            <view 
+              class="td-table-row td-sched-row" 
+              data-match="{{item}}" 
+              data-id="{{item.match_id}}"
+              bindtouchstart="onRowTouchStart"
+              bindtouchmove="onRowTouchMove"
+              bindtouchend="onRowTouchEnd"
+              bindlongpress="onMatchLongPress" 
+              hover-class="td-sched-row-hover"
+              style="{{swipedMatchId === item.match_id ? 'transform: translateX(-156rpx);' : ''}}"
+            >
+              <!-- 组别/阶段与场次序号 -->
+              <view class="col-sch-group">
+                <text class="td-sch-seq-badge" wx:if="{{item.match_seq}}">#{{item.match_seq}}</text>
+                <text class="td-sch-group-tag">{{item.stage_id !== 'stage_default' ? item.stage_id : '常规赛'}}</text>
+              </view>
+
+              <!-- 对阵球队 (队伍A vs 队伍B，小组完赛后自动替换 A1/B2 组别代号) -->
+              <view class="col-sch-teams">
+                <text class="td-sch-team home {{item.score_a > item.score_b ? 'win-team' : ''}}">{{item.display_team_a || item.team_a}}</text>
+                <text class="td-sch-vs-sep">-</text>
+                <text class="td-sch-team away {{item.score_b > item.score_a ? 'win-team' : ''}}">{{item.display_team_b || item.team_b}}</text>
+              </view>
+
+              <!-- 比分 / 待录入 / 未开始 状态 -->
+              <view class="col-sch-score">
+                <block wx:if="{{item.hasValidScores}}">
+                  <text class="td-sch-score-num {{item.score_a > item.score_b ? 'win' : ''}}">{{item.score_a}}</text>
+                  <text class="td-sch-score-sep">:</text>
+                  <text class="td-sch-score-num {{item.score_b > item.score_a ? 'win' : ''}}">{{item.score_b}}</text>
+                </block>
+                <block wx:elif="{{item.isPendingScore}}">
+                  <text class="td-sch-pending-tag is-overdue">待录入</text>
+                </block>
+                <block wx:else>
+                  <text class="td-sch-pending-tag">未开始</text>
+                </block>
+              </view>
+
+              <!-- 比赛时间 (固定分成两行: 日期 + 时间) -->
+              <view class="col-sch-time">
+                <text class="td-sch-date-val">{{item.datePart}}</text>
+                <text class="td-sch-clock-val">{{item.timePart}}</text>
+              </view>
+
+              <!-- 比赛场地 (不合并，逐行填充) -->
+              <view class="col-sch-venue">
+                <text class="td-sch-venue-val">{{item.venue || '—'}}</text>
+              </view>
             </view>
 
-            <!-- 对阵球队 (队伍A vs 队伍B，小组完赛后自动替换 A1/B2 组别代号) -->
-            <view class="col-sch-teams">
-              <text class="td-sch-team home {{item.score_a > item.score_b ? 'win-team' : ''}}">{{item.display_team_a || item.team_a}}</text>
-              <text class="td-sch-vs-sep">-</text>
-              <text class="td-sch-team away {{item.score_b > item.score_a ? 'win-team' : ''}}">{{item.display_team_b || item.team_b}}</text>
-            </view>
-
-            <!-- 比分 / 待录入 / 未开始 状态 -->
-            <view class="col-sch-score">
-              <block wx:if="{{item.hasValidScores}}">
-                <text class="td-sch-score-num {{item.score_a > item.score_b ? 'win' : ''}}">{{item.score_a}}</text>
-                <text class="td-sch-score-sep">:</text>
-                <text class="td-sch-score-num {{item.score_b > item.score_a ? 'win' : ''}}">{{item.score_b}}</text>
-              </block>
-              <block wx:elif="{{item.isPendingScore}}">
-                <text class="td-sch-pending-tag is-overdue">待录入</text>
-              </block>
-              <block wx:else>
-                <text class="td-sch-pending-tag">未开始</text>
-              </block>
-            </view>
-
-            <!-- 比赛时间 (固定分成两行: 日期 + 时间) -->
-            <view class="col-sch-time">
-              <text class="td-sch-date-val">{{item.datePart}}</text>
-              <text class="td-sch-clock-val">{{item.timePart}}</text>
-            </view>
-
-            <!-- 比赛场地 (不合并，逐行填充) -->
-            <view class="col-sch-venue">
-              <text class="td-sch-venue-val">{{item.venue || '—'}}</text>
+            <!-- 右侧滑动操作按钮：复制比赛 -->
+            <view class="td-swipe-action-btn" catchtap="onOpenCopyMatchModal" data-match="{{item}}">
+              <text class="td-swipe-action-icon">📋</text>
+              <text class="td-swipe-action-text">复制比赛</text>
             </view>
           </view>
         </block>
@@ -329,6 +350,95 @@
         <view class="poster-close-text-btn" bindtap="onClosePosterModal" hover-class="poster-close-text-hover">
           <text>关闭</text>
         </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- ===== 复制比赛到直播记分 Modal 弹窗 ===== -->
+  <view class="copy-modal-overlay" wx:if="{{showCopyModal}}" bindtap="onCloseCopyModal">
+    <view class="copy-modal-card" catchtap="onStopPropagation">
+      <view class="copy-modal-header">
+        <view class="copy-modal-title-wrap">
+          <text class="copy-modal-title">📋 复制该比赛到直播记分</text>
+          <text class="copy-modal-sub">已自动预填赛程信息，确认后可前往记分</text>
+        </view>
+        <view class="copy-close-btn" bindtap="onCloseCopyModal" hover-class="copy-close-hover">✕</view>
+      </view>
+
+      <view class="copy-modal-body">
+        <!-- 运动类型 -->
+        <view class="copy-form-group">
+          <text class="copy-form-label">运动类型</text>
+          <view class="copy-sport-tags">
+            <view class="copy-sport-pill {{copyDraft.sportType === 'basketball' ? 'active' : ''}}" bindtap="onCopySportChange" data-sport="basketball">
+              <text class="copy-sport-icon">🏀</text> 篮球
+            </view>
+            <view class="copy-sport-pill {{copyDraft.sportType === 'football' ? 'active' : ''}}" bindtap="onCopySportChange" data-sport="football">
+              <text class="copy-sport-icon">⚽</text> 足球
+            </view>
+            <view class="copy-sport-pill {{copyDraft.sportType === 'badminton' ? 'active' : ''}}" bindtap="onCopySportChange" data-sport="badminton">
+              <text class="copy-sport-icon">🏸</text> 羽毛球
+            </view>
+          </view>
+        </view>
+
+        <!-- 开赛时间 -->
+        <view class="copy-form-group">
+          <text class="copy-form-label">开赛时间</text>
+          <view class="copy-time-row">
+            <picker mode="date" value="{{copyDraft.startDate}}" start="2020-01-01" end="2035-12-31" bindchange="onCopyStartDateChange">
+              <view class="copy-picker-display">📅 {{copyDraft.startDate}}</view>
+            </picker>
+            <picker mode="time" value="{{copyDraft.startTime}}" bindchange="onCopyStartTimeChange">
+              <view class="copy-picker-display">⏰ {{copyDraft.startTime}}</view>
+            </picker>
+          </view>
+        </view>
+
+        <!-- 比赛名称 -->
+        <view class="copy-form-group">
+          <text class="copy-form-label">比赛名称</text>
+          <input 
+            class="copy-input" 
+            placeholder="请输入比赛名称" 
+            value="{{copyDraft.matchName}}" 
+            bindinput="onCopyMatchNameInput"
+          />
+        </view>
+
+        <!-- 主客队名称 -->
+        <view class="copy-teams-row">
+          <view class="copy-team-col">
+            <view class="copy-team-label-wrap">
+              <text class="copy-team-dot dot-home"></text>
+              <text class="copy-form-label">主队名称</text>
+            </view>
+            <input 
+              class="copy-input copy-input-team" 
+              placeholder="主队名称" 
+              value="{{copyDraft.teamAName}}" 
+              bindinput="onCopyTeamANameInput"
+            />
+          </view>
+          <view class="copy-vs-badge">VS</view>
+          <view class="copy-team-col">
+            <view class="copy-team-label-wrap">
+              <text class="copy-team-dot dot-away"></text>
+              <text class="copy-form-label">客队名称</text>
+            </view>
+            <input 
+              class="copy-input copy-input-team" 
+              placeholder="客队名称" 
+              value="{{copyDraft.teamBName}}" 
+              bindinput="onCopyTeamBNameInput"
+            />
+          </view>
+        </view>
+      </view>
+
+      <view class="copy-modal-footer">
+        <button class="copy-btn copy-btn-cancel" bindtap="onCloseCopyModal">取消</button>
+        <button class="copy-btn copy-btn-confirm" bindtap="onConfirmCopyMatch">确认生成</button>
       </view>
     </view>
   </view>

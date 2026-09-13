@@ -256,7 +256,19 @@ Page({
     editStartTime: '',
     scoreA: '',
     scoreB: '',
-    submittingScore: false
+    submittingScore: false,
+
+    // 赛程行左滑复制到直播记分
+    swipedMatchId: '',
+    showCopyModal: false,
+    copyDraft: {
+      sportType: 'basketball',
+      matchName: '',
+      teamAName: '',
+      teamBName: '',
+      startDate: '',
+      startTime: ''
+    }
   },
 
   onLoad: function (query) {
@@ -824,6 +836,263 @@ Page({
       currentStandings: filteredStandings,
       currentGroupedStandings: currentGroupedStandings
     });
+  },
+
+  /**
+   * 赛程行左滑手势监听
+   */
+  onRowTouchStart: function (e) {
+    if (e.touches && e.touches.length === 1) {
+      this._touchStartX = e.touches[0].clientX;
+      this._touchStartY = e.touches[0].clientY;
+      this._touchMoved = false;
+    }
+  },
+
+  onRowTouchMove: function (e) {
+    if (e.touches && e.touches.length === 1 && this._touchStartX !== undefined) {
+      const currentX = e.touches[0].clientX;
+      const currentY = e.touches[0].clientY;
+      const deltaX = currentX - this._touchStartX;
+      const deltaY = currentY - this._touchStartY;
+
+      // 若纵向位移大于横向，认为是页面正常滚动
+      if (Math.abs(deltaY) > Math.abs(deltaX)) {
+        return;
+      }
+      this._touchMoved = true;
+    }
+  },
+
+  onRowTouchEnd: function (e) {
+    if (this._touchStartX === undefined) return;
+    const matchId = String(e.currentTarget.dataset.id || '');
+    if (!matchId) return;
+
+    if (e.changedTouches && e.changedTouches.length > 0) {
+      const endX = e.changedTouches[0].clientX;
+      const endY = e.changedTouches[0].clientY;
+      const deltaX = endX - this._touchStartX;
+      const deltaY = endY - this._touchStartY;
+
+      // 水平位移为主且向左滑动超过 30px -> 展开
+      if (Math.abs(deltaX) > Math.abs(deltaY) && deltaX < -30) {
+        this.setData({ swipedMatchId: matchId });
+      } else if (Math.abs(deltaX) > Math.abs(deltaY) && deltaX > 30) {
+        // 向右滑动 -> 收起
+        if (this.data.swipedMatchId === matchId) {
+          this.setData({ swipedMatchId: '' });
+        }
+      } else if (!this._touchMoved) {
+        // 轻按点击某行：若已有展开的行则收起
+        if (this.data.swipedMatchId) {
+          this.setData({ swipedMatchId: '' });
+        }
+      }
+    }
+
+    this._touchStartX = undefined;
+    this._touchStartY = undefined;
+    this._touchMoved = false;
+  },
+
+  /**
+   * 打开「复制比赛到直播记分」弹窗
+   */
+  onOpenCopyMatchModal: function (e) {
+    const match = e.currentTarget.dataset.match;
+    if (!match) return;
+
+    const detail = this.data.detail || {};
+    const rawSport = detail.sport_type || detail.sportType;
+    const sportType = rawSport === 'soccer' ? 'football' : (rawSport === 'badminton' ? 'badminton' : 'basketball');
+
+    const tournamentName = (detail.tournament_name || detail.name || '').trim();
+    const stageId = (match.stage_id && match.stage_id !== 'stage_default') ? match.stage_id.trim() : '';
+    const matchSeq = match.match_seq ? `#${match.match_seq} ` : '';
+    const matchName = `${tournamentName} ${stageId}`.trim() || `${matchSeq}高光比赛`;
+
+    const teamAName = String(match.display_team_a || match.team_a || '主队').trim();
+    const teamBName = String(match.display_team_b || match.team_b || '客队').trim();
+
+    let startDate = '';
+    let startTime = '';
+    if (match.start_time) {
+      const parts = String(match.start_time).trim().split(/[\sT]+/);
+      startDate = parts[0] || '';
+      startTime = parts[1] ? parts[1].slice(0, 5) : '';
+    }
+    if (!startDate) {
+      const d = new Date();
+      const yr = d.getFullYear();
+      const mo = String(d.getMonth() + 1).padStart(2, '0');
+      const da = String(d.getDate()).padStart(2, '0');
+      startDate = `${yr}-${mo}-${da}`;
+    }
+    if (!startTime) {
+      startTime = '19:00';
+    }
+
+    this.setData({
+      showCopyModal: true,
+      swipedMatchId: '',
+      copyDraft: {
+        sportType: sportType,
+        matchName: matchName,
+        teamAName: teamAName,
+        teamBName: teamBName,
+        startDate: startDate,
+        startTime: startTime
+      }
+    });
+  },
+
+  onCloseCopyModal: function () {
+    this.setData({ showCopyModal: false });
+  },
+
+  onStopPropagation: function () {
+    // 阻止点击浮层面板事件冒泡至遮罩层
+  },
+
+  onCopySportChange: function (e) {
+    const sport = e.currentTarget.dataset.sport;
+    if (sport) {
+      this.setData({ 'copyDraft.sportType': sport });
+    }
+  },
+
+  onCopyStartDateChange: function (e) {
+    this.setData({ 'copyDraft.startDate': e.detail.value });
+  },
+
+  onCopyStartTimeChange: function (e) {
+    this.setData({ 'copyDraft.startTime': e.detail.value });
+  },
+
+  onCopyMatchNameInput: function (e) {
+    this.setData({ 'copyDraft.matchName': e.detail.value });
+  },
+
+  onCopyTeamANameInput: function (e) {
+    this.setData({ 'copyDraft.teamAName': e.detail.value });
+  },
+
+  onCopyTeamBNameInput: function (e) {
+    this.setData({ 'copyDraft.teamBName': e.detail.value });
+  },
+
+  /**
+   * 确认复制比赛并写入本地直播记分存储
+   */
+  onConfirmCopyMatch: function () {
+    const d = this.data.copyDraft;
+    if (!d) return;
+
+    const matchName = String(d.matchName || '').trim();
+    const teamAName = String(d.teamAName || '').trim();
+    const teamBName = String(d.teamBName || '').trim();
+
+    if (!matchName) {
+      wx.showToast({ title: '请填写比赛名称', icon: 'none' });
+      return;
+    }
+    if (!teamAName) {
+      wx.showToast({ title: '请填写主队名称', icon: 'none' });
+      return;
+    }
+    if (!teamBName) {
+      wx.showToast({ title: '请填写客队名称', icon: 'none' });
+      return;
+    }
+
+    const startDateStr = d.startDate || '2026-01-01';
+    const startTimeStr = d.startTime || '19:00';
+    const startAt = Date.parse(`${startDateStr.replace(/-/g, '/')} ${startTimeStr}:00`) || Date.now();
+
+    const sportType = d.sportType || 'basketball';
+    const ts = Date.now();
+
+    const newMatch = {
+      id: String(ts),
+      sportType: sportType,
+      matchName: matchName,
+      matchNameColor: '#FFFFFF',
+      startAt: startAt,
+      createdAt: ts,
+      teamA: {
+        name: teamAName,
+        bgColor: '#E64340',
+        textColor: '#FFFFFF',
+        score: 0,
+        currentSetScore: 0,
+        subScores: []
+      },
+      teamB: {
+        name: teamBName,
+        bgColor: '#10AEFF',
+        textColor: '#FFFFFF',
+        score: 0,
+        currentSetScore: 0,
+        subScores: []
+      },
+      period: 0,
+      isFinished: false,
+      sportConfig: {
+        periodMinutes: sportType === 'football' ? 45 : 10,
+        periodCount: sportType === 'football' ? 2 : 4,
+        foulLimit: 5,
+        timeoutCount: 2,
+        enable24Sec: false,
+        enableExtraPeriod: true,
+        extraPeriodMinutes: 5,
+        extraTimeoutCount: 1
+      },
+      footballElapsedSec: 0,
+      footballState: {
+        clockPaused: true,
+        clockWallMs: 0,
+        extraMinutesHalf1: 0,
+        extraMinutesHalf2: 0,
+        extraMinutesExtra: 0,
+        periodModel: 2
+      },
+      badmintonState: {
+        servingTeam: 'A',
+        servingZone: 'right',
+        ruleType: 'single',
+        maxSets: 3,
+        pointsPerSet: 21,
+        isScoreEnabled: true
+      }
+    };
+
+    try {
+      const existing = wx.getStorageSync('MIAOXIE_MATCHES') || [];
+      const list = Array.isArray(existing) ? existing : [];
+      list.unshift(newMatch);
+      wx.setStorageSync('MIAOXIE_MATCHES', list);
+
+      this.setData({
+        showCopyModal: false,
+        swipedMatchId: ''
+      });
+
+      wx.showModal({
+        title: '比赛创建成功',
+        content: '已成功复制该比赛到直播记分，是否立即前往开始记分？',
+        confirmText: '前往记分',
+        cancelText: '继续浏览',
+        confirmColor: '#2563EB',
+        success: function (res) {
+          if (res.confirm) {
+            wx.switchTab({ url: '/pages/index/index' });
+          }
+        }
+      });
+    } catch (err) {
+      wx.showToast({ title: '保存失败，请重试', icon: 'none' });
+    }
   },
 
   /**
