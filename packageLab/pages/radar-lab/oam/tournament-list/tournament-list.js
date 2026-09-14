@@ -110,7 +110,6 @@ Page({
       isWhitelist: isRadarWhitelistUser()
     });
     this._reloadList();
-    this._checkClipboardForTransfer();
   },
 
   /**
@@ -332,30 +331,6 @@ CSV 表头格式（第一行为表头）：
   },
 
   // ───── 赛事移交口令接收与认领 ─────
-  _checkClipboardForTransfer: function () {
-    const self = this;
-    if (this.data.showClaimConfirmModal || this.data.showClaimInputModal) return;
-    wx.getClipboardData({
-      success: function (res) {
-        const text = String(res.data || '').trim();
-        if (!text) return;
-        let matchedCode = '';
-        const matchRegex = /(?:移交口令|口令)[：:\s]*([0-9]{6})/i;
-        const m = text.match(matchRegex);
-        if (m && m[1]) {
-          matchedCode = m[1];
-        } else if (/^\d{6}$/.test(text)) {
-          matchedCode = text;
-        }
-        if (!matchedCode) return;
-        if (self._lastPromptedTransferCode === matchedCode) return;
-        self._lastPromptedTransferCode = matchedCode;
-        self._verifyAndShowClaim(matchedCode, false);
-      },
-      fail: function () {}
-    });
-  },
-
   _verifyAndShowClaim: function (code, isManual) {
     const self = this;
     wx.showLoading({ title: '核验口令中…' });
@@ -417,7 +392,6 @@ CSV 表头格式（第一行为表头）：
     claimTournamentTransfer(code)
       .then(function () {
         self.setData({ claiming: false, showClaimConfirmModal: false, claimInfo: null });
-        wx.setClipboardData({ data: '' });
         wx.showToast({ title: '接收成功！您已成为管理员', icon: 'success' });
         self._reloadList(true);
       })

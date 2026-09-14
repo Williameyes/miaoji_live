@@ -1,6 +1,6 @@
 /**
  * @file packageLab/pages/radar-lab/oam/tournament-detail/tournament-detail.js
- * @description 赛事详情与管理看板：赛事概览、快捷业务操作、副管理员团队邀请与管理
+ * @description 赛事详情与管理看板：赛事概览、快捷业务操作、管理员团队邀请与管理
  */
 const {
   fetchTournamentDetail,
@@ -180,18 +180,18 @@ Page({
     });
   },
 
-  // 4. 移除副管理员
+  // 4. 移除管理员
   onRemoveCollaborator: function (e) {
     const self = this;
     const openid = e.currentTarget.dataset.openid;
-    const name = e.currentTarget.dataset.name || '该副管理员';
+    const name = e.currentTarget.dataset.name || '该管理员';
     const tournamentId = this.data.tournamentId;
 
     if (!openid || !tournamentId) return;
 
     wx.showModal({
-      title: '确认移除副管理员',
-      content: '确定要将【' + name + '】从赛事副管理员中移除吗？移除后其将无法修改比分与赛程。',
+      title: '确认移除管理员',
+      content: '确定要将【' + name + '】从赛事管理员中移除吗？移除后其将无法修改比分与赛程。',
       confirmColor: '#dc2626',
       confirmText: '确认移除',
       cancelText: '取消',
@@ -201,7 +201,7 @@ Page({
           removeTournamentCollaborator(tournamentId, openid)
             .then(function () {
               wx.hideLoading();
-              wx.showToast({ title: '已移除副管理员', icon: 'success' });
+              wx.showToast({ title: '已移除管理员', icon: 'success' });
               self._loadTournamentData(true);
             })
             .catch(function (err) {
@@ -287,7 +287,7 @@ Page({
       console.warn('[onShareAppMessage] 警告：当前 inviteCode 为空，此卡片无协作凭证！');
     }
 
-    console.log('[onShareAppMessage] 生成副管理员邀请卡片, path=', sharePath, 'inviteCode=', inviteCode);
+    console.log('[onShareAppMessage] 生成管理员邀请卡片, path=', sharePath, 'inviteCode=', inviteCode);
 
     // 分享后刷新下一个邀请码凭证
     setTimeout(function () {
@@ -295,7 +295,7 @@ Page({
     }, 1000);
 
     return {
-      title: '【邀请协作】诚邀你成为「' + tourName + '」的副管理员',
+      title: '【邀请协作】诚邀你成为「' + tourName + '」的管理员',
       path: sharePath,
       imageUrl: (this.data.detail && this.data.detail.coverUrl) || undefined
     };

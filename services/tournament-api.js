@@ -122,7 +122,7 @@ function oamUpsert(payload) {
 }
 
 /**
- * 赛事创建人生成副管理员邀请码
+ * 赛事创建人生成管理员邀请码
  * @param {number|string} tournamentId
  * @returns {Promise<{tournament_id: number, invite_code: string, expire_at: string}>}
  */
@@ -135,7 +135,7 @@ function createTournamentInvite(tournamentId) {
 }
 
 /**
- * 受邀人接受邀请成为副管理员
+ * 受邀人接受邀请成为管理员
  * @param {number|string} tournamentId
  * @param {string} inviteCode
  * @param {Object} [userInfo]
@@ -157,7 +157,7 @@ function acceptTournamentInvite(tournamentId, inviteCode, userInfo) {
 }
 
 /**
- * 获取赛事副管理员列表
+ * 获取赛事管理员列表
  * @param {number|string} tournamentId
  * @returns {Promise<{tournament_id: number, is_owner: boolean, collaborators: Array}>}
  */
@@ -170,7 +170,7 @@ function fetchTournamentCollaborators(tournamentId) {
 }
 
 /**
- * 移除赛事副管理员
+ * 移除赛事管理员
  * @param {number|string} tournamentId
  * @param {string} openid
  * @returns {Promise<{success: boolean, tournament_id: number}>}

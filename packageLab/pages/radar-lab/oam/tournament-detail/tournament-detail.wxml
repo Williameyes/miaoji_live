@@ -33,7 +33,7 @@
             <text>{{detail.isPublic ? '🌐 公开' : '🔒 隐藏'}}</text>
           </view>
           <view class="td-pill td-pill-role {{isOwner ? 'is-owner' : ''}}">
-            <text>{{isOwner ? '👑 赛事创建人' : '🤝 协作者/副管理员'}}</text>
+            <text>{{isOwner ? '👑 赛事创建人' : '🤝 赛事管理员'}}</text>
           </view>
         </view>
 
@@ -98,12 +98,12 @@
       </view>
     </view>
 
-    <!-- 3. 副管理员团队协作卡片 -->
+    <!-- 3. 管理员团队协作卡片 -->
     <view class="rl-card">
       <view class="rl-card-inner">
         <view class="td-collab-header">
           <view class="td-collab-title-wrap">
-            <view class="rl-section-title" style="margin-bottom: 0;">👥 副管理员 ({{collaborators.length}}人)</view>
+            <view class="rl-section-title" style="margin-bottom: 0;">👥 管理员 ({{collaborators.length}}人)</view>
             <view class="td-collab-sub">协助录入比分、修改时间与比赛场地（邀请凭证 2 小时有效 · 单次使用）</view>
           </view>
 
@@ -132,10 +132,10 @@
         <!-- 业务提示条 -->
         <view class="td-tip-banner">
           <text class="td-tip-icon">💡</text>
-          <text class="td-tip-text">副管理员在底栏「赛事资讯」进入本赛事详情后，长按赛程表中任意比赛行即可直接修改开赛时间、场地，并录入完赛比分。（生成的邀请卡片有效期为 2 小时，且仅限一人使用，使用后自动作废）</text>
+          <text class="td-tip-text">管理员在底栏「赛事资讯」进入本赛事详情后，长按赛程表中任意比赛行即可直接修改开赛时间、场地，并录入完赛比分。（生成的邀请卡片有效期为 2 小时，且仅限一人使用，使用后自动作废）</text>
         </view>
 
-        <!-- 副管理员列表 -->
+        <!-- 管理员列表 -->
         <view class="td-collab-list" wx:if="{{collaborators.length}}">
           <block wx:for="{{collaborators}}" wx:key="id">
             <view class="td-collab-row">
@@ -148,8 +148,8 @@
               </view>
               <view class="td-collab-meta">
                 <view class="td-collab-name-row">
-                  <text class="td-collab-name">{{item.nickname || '副管理员'}}</text>
-                  <text class="td-collab-badge">副管理员</text>
+                  <text class="td-collab-name">{{item.nickname || '管理员'}}</text>
+                  <text class="td-collab-badge">管理员</text>
                 </view>
                 <view class="td-collab-time">加入时间：{{item.created_at || '—'}}</view>
               </view>
@@ -168,8 +168,8 @@
         <!-- 空状态 -->
         <view class="td-collab-empty" wx:else>
           <text class="td-empty-emoji">🤝</text>
-          <view class="td-empty-h">暂未添加副管理员</view>
-          <view class="td-empty-p">点击上方右上角「邀请副管理员」，直接通过微信卡片将邀请转发给好友或工作人员</view>
+          <view class="td-empty-h">暂未添加管理员</view>
+          <view class="td-empty-p">点击上方右上角「微信邀请」，直接通过微信卡片将邀请转发给好友或工作人员</view>
         </view>
       </view>
     </view>

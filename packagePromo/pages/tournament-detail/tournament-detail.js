@@ -473,7 +473,7 @@ Page({
   },
 
   /**
-   * 处理受邀成为赛事副管理员逻辑
+   * 处理受邀成为赛事管理员逻辑
    */
   _handleInviteCode: function (tournamentId, inviteCode) {
     const self = this;
@@ -481,8 +481,8 @@ Page({
 
     const doAccept = function () {
       wx.showModal({
-        title: '赛事副管理员邀请',
-        content: '诚邀您成为【' + tourName + '】的副管理员，可协助录入比赛比分、修改开赛时间与场地。是否接受邀请？',
+        title: '赛事管理员邀请',
+        content: '诚邀您成为【' + tourName + '】的管理员，可协助录入比赛比分、修改开赛时间与场地。是否接受邀请？',
         confirmText: '接受邀请',
         cancelText: '暂不接受',
         confirmColor: '#2563eb',
@@ -509,7 +509,7 @@ Page({
                     content:
                       '您是【' +
                       tourName +
-                      '】的创建人本尊，已拥有最高管理与改分权限，无需作为副管理员重复加入。\n\n请将该邀请卡片分享给其他需要协助改分的微信好友或裁判员进行测试。',
+                      '】的创建人本尊，已拥有最高管理与改分权限，无需作为管理员重复加入。\n\n请将该邀请卡片分享给其他需要协助改分的微信好友或裁判员进行测试。',
                     showCancel: false,
                     confirmText: '我知道了',
                     confirmColor: '#2563eb'
@@ -522,7 +522,7 @@ Page({
                   content:
                     '您已成功成为【' +
                     tourName +
-                    '】的副管理员！\n\n现在您可在下方赛程列表中长按任意比赛卡片，直接修改开赛时间、场地或录入完赛比分。',
+                    '】的管理员！\n\n现在您可在下方赛程列表中长按任意比赛卡片，直接修改开赛时间、场地或录入完赛比分。',
                   showCancel: false,
                   confirmText: '我知道了',
                   confirmColor: '#2563eb',
@@ -549,12 +549,12 @@ Page({
     if (!isLoggedIn) {
       wx.showModal({
         title: '需要微信授权',
-        content: '加入【' + tourName + '】副管理员需要先完成微信登录以绑定身份，是否立即登录？',
+        content: '加入【' + tourName + '】管理员需要先完成微信登录以绑定身份，是否立即登录？',
         confirmText: '立即登录',
         confirmColor: '#2563eb',
         success: function (r) {
           if (r.confirm) {
-            self._performQuickLogin('用于验证副管理员微信身份', function () {
+            self._performQuickLogin('用于验证管理员微信身份', function () {
               doAccept();
             });
           }

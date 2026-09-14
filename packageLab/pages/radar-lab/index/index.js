@@ -22,63 +22,12 @@ Page({
   },
 
   /**
-   * 页面展示：刷新白名单特权状态并检测剪贴板口令。
+   * 页面展示：刷新白名单特权状态。
    * @returns {void}
    */
   onShow: function () {
     this.setData({
       isWhitelist: isRadarWhitelistUser()
-    });
-    this._checkClipboardForTransfer();
-  },
-
-  /**
-   * 自动检测剪贴板中的 6 位赛事移交口令，直接提示接收或拒绝。
-   * @returns {void}
-   */
-  _checkClipboardForTransfer: function () {
-    const self = this;
-    wx.getClipboardData({
-      success: function (res) {
-        const text = String(res.data || '').trim();
-        if (!text) return;
-        let matchedCode = '';
-        const m = text.match(/(?:移交口令|口令)[：:\s]*([0-9]{6})/i);
-        if (m && m[1]) {
-          matchedCode = m[1];
-        } else if (/^\d{6}$/.test(text)) {
-          matchedCode = text;
-        }
-        if (!matchedCode) return;
-        if (self._lastPromptedTransferCode === matchedCode) return;
-        self._lastPromptedTransferCode = matchedCode;
-
-        // 直接在当前页面核验口令并弹窗让用户选择「接收」或「拒绝」
-        fetchTournamentTransferInfo(matchedCode)
-          .then(function (info) {
-            if (!info || !info.valid) return;
-            wx.showModal({
-              title: '收到赛事管理权移交',
-              content:
-                '检测到移交口令 [' + matchedCode + ']\r\n' +
-                '赛事名称：' + (info.tournament_name || '未知') + '\r\n' +
-                '包含场次：' + (info.match_count || 0) + ' 场\r\n\r\n' +
-                '是否直接接收该赛事管理权？',
-              cancelText: '拒绝',
-              confirmText: '接收',
-              confirmColor: '#2563eb',
-              success: function (mRes) {
-                if (mRes.confirm) {
-                  self._executeDirectClaim(matchedCode, info.tournament_id);
-                }
-              }
-            });
-          })
-          .catch(function () {
-            // 静默忽略无效或过期口令，不干扰用户正常浏览
-          });
-      },
-      fail: function () {}
     });
   },
 
@@ -93,7 +42,6 @@ Page({
     claimTournamentTransfer(code)
       .then(function () {
         wx.hideLoading();
-        wx.setClipboardData({ data: '' });
         wx.showToast({ title: '接收成功！已成为管理员', icon: 'success' });
         setTimeout(function () {
           if (tournamentId) {

@@ -217,7 +217,7 @@
   margin-left: 12rpx;
 }
 
-/* 3. 副管理员团队协作 */
+/* 3. 管理员团队协作 */
 .td-collab-header {
   display: flex;
   flex-direction: row;
