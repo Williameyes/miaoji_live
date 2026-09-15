@@ -206,7 +206,7 @@ Page({
     if (tab === 'monitoring') {
       query.status = 'monitoring,waiting_radar';
     } else if (tab === 'ended') {
-      query.status = 'ended';
+      query.status = 'ended,interrupted';
     }
 
     const localWarmupMap = getWarmupRecordsMap();
@@ -220,8 +220,8 @@ Page({
             return hasWarmupLocal || hasWarmupRemote;
           })
           .map(function (item) {
-            const status = item.matchStatus || 'monitoring';
-            const disp = STATUS_DISPLAY[status] || { label: '监控中', cls: 'rl-badge-ok' };
+            const status = item.matchStatus || (tab === 'ended' ? 'ended' : 'monitoring');
+            const disp = STATUS_DISPLAY[status] || { label: item.matchStatus || '已结赛', cls: 'rl-badge-muted' };
             
             const localInfo = localWarmupMap[String(item.id)] || {};
             const warmupStatus = item.warmupStatus || localInfo.status || '';
