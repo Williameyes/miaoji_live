@@ -197,14 +197,14 @@ page {
   transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.2s ease;
   display: flex;
   flex-direction: column;
-  border: 3.5rpx solid transparent;
+  border: 4rpx solid transparent;
   position: relative;
 }
 
-/* 置顶赛事专属视觉焦点边框与柔和高亮光晕 */
+/* 置顶赛事专属暖橙视觉焦点边框与立体光晕 */
 .tn-grid-card.is-pinned {
-  border-color: #2563EB;
-  box-shadow: 0 8rpx 32rpx rgba(37, 99, 235, 0.22), 0 2rpx 10rpx rgba(37, 99, 235, 0.15);
+  border-color: #FF6B00;
+  box-shadow: 0 8rpx 32rpx rgba(255, 107, 0, 0.28), 0 2rpx 10rpx rgba(255, 107, 0, 0.18);
 }
 
 .tn-card-hover {
@@ -214,7 +214,7 @@ page {
 
 .tn-grid-card.is-pinned.tn-card-hover {
   transform: translateY(-4rpx);
-  box-shadow: 0 14rpx 42rpx rgba(37, 99, 235, 0.32);
+  box-shadow: 0 14rpx 42rpx rgba(255, 107, 0, 0.42);
 }
 
 .tn-card-banner {
@@ -305,22 +305,22 @@ page {
   transform: rotate(-5deg) scale(1.08);
 }
 
-/* 置顶赛事边框左上角吸附角标 (与高亮边框无缝衔接，形成绝对视觉焦点) */
+/* 置顶赛事边框左上角吸附角标 (暖橙金渐变，与高亮边框无缝衔接) */
 .tn-pinned-corner-mark {
   position: absolute;
   top: 0;
   left: 0;
-  background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+  background: linear-gradient(135deg, #FF8A00 0%, #FF5500 100%);
   color: #FFFFFF;
-  font-size: 18rpx;
+  font-size: 19rpx;
   font-weight: 800;
-  padding: 6rpx 16rpx 6rpx 14rpx;
+  padding: 6rpx 18rpx 6rpx 14rpx;
   border-bottom-right-radius: 20rpx;
   z-index: 10;
   display: flex;
   align-items: center;
   gap: 4rpx;
-  box-shadow: 0 4rpx 12rpx rgba(37, 99, 235, 0.38);
+  box-shadow: 0 4rpx 14rpx rgba(255, 85, 0, 0.45);
   line-height: 1.2;
 }
 
