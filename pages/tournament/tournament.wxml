@@ -39,13 +39,19 @@
     <view class="tn-grid-2col" wx:else>
       <block wx:for="{{tournamentList}}" wx:key="id">
         <view 
-          class="tn-grid-card" 
+          class="tn-grid-card {{item.isPinned ? 'is-pinned' : ''}}" 
           hover-class="tn-card-hover"
           wx:if="{{filterTab === 'all' || (filterTab === 'active' && !item.isEnded) || (filterTab === 'ended' && item.isEnded)}}"
           data-id="{{item.id}}" 
           bindtap="onTournamentTap"
           style="animation-delay: {{index * 55}}ms"
         >
+          <!-- 置顶赛事边框角标标识 (视觉焦点引导) -->
+          <view class="tn-pinned-corner-mark" wx:if="{{item.isPinned}}">
+            <text class="tn-pinned-corner-icon">📌</text>
+            <text class="tn-pinned-corner-text">置顶</text>
+          </view>
+
           <view class="tn-card-banner {{item.themeClass || ('tn-banner--' + item.sportType)}}">
             <!-- 封面图（若存在） -->
             <image wx:if="{{item.coverUrl}}" class="tn-banner-cover" mode="aspectFill" src="{{item.coverUrl}}"></image>
@@ -57,10 +63,7 @@
               <view class="tn-banner-watermark">{{item.sportIcon}}</view>
             </block>
 
-            <!-- 顶部置顶与状态胶囊 -->
-            <view class="tn-pin-badge" wx:if="{{item.isPinned}}">
-              <text class="tn-pin-icon">📌</text> 置顶
-            </view>
+            <!-- 状态胶囊 -->
             <view class="tn-badge {{item.statusClass}}">
               <text class="tn-status-dot" wx:if="{{item.statusClass === 'status-active'}}"></text>
               <text class="tn-status-text">{{item.statusText}}</text>
