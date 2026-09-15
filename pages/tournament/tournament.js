@@ -50,6 +50,67 @@ function getOrAssignCardTheme(tournamentId, usedThemes) {
   return selectedTheme;
 }
 
+/**
+ * 安全解析日期字符串为时间戳 (毫秒)
+ * @param {string} dateStr YYYY-MM-DD 或 YYYY/MM/DD
+ * @param {boolean} [isEndOfDay=false] 是否解析为当天 23:59:59.999
+ * @returns {number}
+ */
+function parseDateToMs(dateStr, isEndOfDay) {
+  if (!dateStr || typeof dateStr !== 'string') return 0;
+  const s = dateStr.trim().replace(/-/g, '/');
+  if (!s) return 0;
+  if (isEndOfDay && s.indexOf(':') === -1) {
+    const d = new Date(s + ' 23:59:59');
+    const ms = d.getTime();
+    if (!isNaN(ms)) return ms;
+  }
+  const d = new Date(s);
+  const ms = d.getTime();
+  return isNaN(ms) ? 0 : ms;
+}
+
+/**
+ * 赛事资讯列表排序规则：
+ * 1. 状态优先级：进行中 (1) -> 未开始 (2) -> 已完赛 (3)
+ * 2. 同状态内部排序：
+ *    - 进行中：最近开赛的在前面（开赛时间降序），时间相同按 ID 降序
+ *    - 未开始：即将开赛的在前面（开赛时间升序），时间相同按 ID 降序
+ *    - 已完赛：最近完赛的在前面（完赛时间降序），时间相同按 ID 降序
+ */
+function compareTournamentsByStatus(a, b) {
+  // 1. 状态优先级
+  if (a.statusPriority !== b.statusPriority) {
+    return a.statusPriority - b.statusPriority;
+  }
+
+  // 2. 同为「进行中」：最近开赛的在前面（开赛时间降序）
+  if (a.statusPriority === 1) {
+    if (b.startDateMs !== a.startDateMs) {
+      return b.startDateMs - a.startDateMs;
+    }
+    return (Number(b.id) || 0) - (Number(a.id) || 0);
+  }
+
+  // 3. 同为「未开始」：开赛时间由近及远升序（即将开赛的排在前面）
+  if (a.statusPriority === 2) {
+    if (a.startDateMs && b.startDateMs && a.startDateMs !== b.startDateMs) {
+      return a.startDateMs - b.startDateMs;
+    }
+    return (Number(b.id) || 0) - (Number(a.id) || 0);
+  }
+
+  // 4. 同为「已完赛」：完赛时间由近及远降序（最近完赛的排在前面）
+  if (a.statusPriority === 3) {
+    if (b.endDateMs !== a.endDateMs) {
+      return b.endDateMs - a.endDateMs;
+    }
+    return (Number(b.id) || 0) - (Number(a.id) || 0);
+  }
+
+  return (Number(b.id) || 0) - (Number(a.id) || 0);
+}
+
 Page({
   data: {
     statusBarHeight: 20,
@@ -109,17 +170,24 @@ Page({
         const usedThemes = [];
         const formatted = (list || []).map(function (item) {
           const now = Date.now();
-          const startDateMs = item.startDate ? new Date(item.startDate).getTime() : 0;
-          const endDateMs = item.endDate ? new Date(item.endDate).getTime() + 86400000 : 0;
+          const startDateMs = parseDateToMs(item.startDate, false);
+          const endDateMs = parseDateToMs(item.endDate, true);
           let statusText = '进行中';
           let statusClass = 'status-active';
+          let statusPriority = 1; // 1: 进行中, 2: 未开始, 3: 已完赛
 
           if (endDateMs > 0 && now > endDateMs) {
             statusText = '已完赛';
             statusClass = 'status-ended';
+            statusPriority = 3;
           } else if (startDateMs > 0 && now < startDateMs) {
             statusText = '未开始';
             statusClass = 'status-pending';
+            statusPriority = 2;
+          } else {
+            statusText = '进行中';
+            statusClass = 'status-active';
+            statusPriority = 1;
           }
 
           const isSoccer = item.sportType === 'soccer';
@@ -130,6 +198,9 @@ Page({
             id: item.id,
             name: item.name,
             dateRange: item.startDate && item.endDate ? item.startDate + ' ~ ' + item.endDate : '进行中',
+            startDateMs: startDateMs,
+            endDateMs: endDateMs,
+            statusPriority: statusPriority,
             scheduledCount: item.scheduledCount || 0,
             statusText: statusText,
             statusClass: statusClass,
@@ -142,6 +213,9 @@ Page({
             formatLabel: item.format === 'CUP' ? '赛会制' : '联赛制'
           };
         });
+
+        // 核心排序：进行中 -> 未开始 -> 已完赛
+        formatted.sort(compareTournamentsByStatus);
 
         const sorted = sortTournamentsWithPins(formatted);
         self.setData({
