@@ -1,5 +1,5 @@
 <!-- packageLab/pages/radar-lab/score-sniffer/index.wxml -->
-<view class=rl-root>
+<view class="rl-root">
 
   <!-- ===================================================================== -->
   <!-- 模式 1: 任务列表主页 (viewMode === 'list')                               -->
