@@ -437,7 +437,14 @@ function fetchScoreSnifferStatus(sessionId) {
 }
 
 function deleteScoreSniffer(sessionId) {
-  return post('/api/app/lab/score_sniffer/delete', { session_id: sessionId });
+  return post('/api/app/lab/score_sniffer/delete', { session_id: sessionId })
+    .catch(function (err) {
+      const serverMsg = err && err.data && err.data.message ? err.data.message : '';
+      if (serverMsg) {
+        throw new Error(serverMsg);
+      }
+      throw err;
+    });
 }
 
 function fetchScoreSnifferList() {
