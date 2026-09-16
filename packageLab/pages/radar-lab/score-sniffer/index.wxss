@@ -271,6 +271,27 @@ button.rl-btn::after {
 /* =========================================================================
  * 3. 首帧半自动标注卡片 (ROI Annotation)
  * ========================================================================= */
+.frame-error-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60rpx 32rpx;
+  background: #fef2f2;
+  border-radius: 20rpx;
+  border: 2rpx dashed #fca5a5;
+  text-align: center;
+}
+
+.error-badge-icon {
+  font-size: 56rpx;
+  margin-bottom: 16rpx;
+}
+
+.btn-error-back {
+  margin-top: 24rpx;
+}
+
 .frame-loading-card {
   display: flex;
   flex-direction: column;

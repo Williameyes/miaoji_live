@@ -190,8 +190,16 @@
           </button>
         </view>
 
+        <!-- 首帧抓取失败或主播已下播 -->
+        <view class="frame-error-card" wx:if="{{!session.init_frame_url && session.status === 'ended'}}">
+          <view class="error-badge-icon">⚠️</view>
+          <text class="loading-title">未能获取到直播流 / 主播已下播</text>
+          <text class="loading-sub">雷达节点探测到该直播间当前未开播或已结束推流，无法截取有效视频画面。请确认主播开播状态后再试。</text>
+          <button class="rl-btn rl-btn-secondary btn-error-back" size="mini" bindtap="onBackToList">返回任务列表</button>
+        </view>
+
         <!-- 首帧抓取中 Loading 骨架 -->
-        <view class="frame-loading-card" wx:if="{{!session.init_frame_url}}">
+        <view class="frame-loading-card" wx:elif="{{!session.init_frame_url}}">
           <view class="loading-pulse-ring"></view>
           <text class="loading-title">正在接入直播流截取首帧画面...</text>
           <text class="loading-sub">雷达节点正在建联抓取无黑屏首帧（约需 3~8 秒），完成后将在此显示画面以供圈出记分牌。</text>
