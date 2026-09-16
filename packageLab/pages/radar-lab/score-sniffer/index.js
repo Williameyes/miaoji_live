@@ -3,6 +3,7 @@ const {
   fetchScoreSnifferList,
   startScoreSniffer,
   stopScoreSniffer,
+  deleteScoreSniffer,
   fetchScoreSnifferStatus,
   configureScoreSnifferRoi,
   confirmScoreSnifferCandidate
@@ -30,6 +31,7 @@ Page({
     },
     candidates: [],
     statusLabel: '空闲',
+    showRoiPanel: false,
     isSniffing: false,
 
     // 新增嗅探表单
@@ -163,6 +165,34 @@ Page({
     this.startPolling();
   },
 
+
+  onToggleRoiPanel() {
+    this.setData({
+      showRoiPanel: !this.data.showRoiPanel
+    });
+  },
+
+  async onDeleteSession(e) {
+    const sessionId = e.currentTarget.dataset.id;
+    if (!sessionId) return;
+    wx.showModal({
+      title: '确认删除',
+      content: '确定要删除该历史嗅探任务吗？删除后将清理相关记录与缓存资源。',
+      confirmColor: '#ef4444',
+      success: async (res) => {
+        if (res.confirm) {
+          try {
+            await deleteScoreSniffer(sessionId);
+            wx.showToast({ title: '已删除任务', icon: 'success' });
+            this.loadTaskList();
+          } catch (err) {
+            wx.showToast({ title: err.message || '删除失败', icon: 'none' });
+          }
+        }
+      }
+    });
+  },
+
   onTapSessionItem(e) {
     const sessionId = e.currentTarget.dataset.id;
     if (sessionId) {
@@ -279,8 +309,7 @@ Page({
         currentScore: curScore,
         candidates,
         statusLabel: label,
-        isSniffing: sniffing,
-        refreshTick: Date.now()
+        isSniffing: sniffing
       });
     } catch (err) {
       console.error('loadStatus error', err);
@@ -386,6 +415,7 @@ Page({
         digit_bboxes: { scoreboard: scoreboard_bbox }
       });
       wx.showToast({ title: '标注成功，开启监控！', icon: 'success' });
+      this.setData({ showRoiPanel: false });
       setTimeout(() => this.loadStatus(), 800);
     } catch (err) {
       wx.showToast({ title: err.message || '提交标注失败', icon: 'none' });

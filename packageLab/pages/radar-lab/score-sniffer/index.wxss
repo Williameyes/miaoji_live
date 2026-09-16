@@ -1,3 +1,43 @@
+
+/* =========================================================================
+ * 按钮文字垂直居中核心修正 (彻底解决微信小程序默认 button 文字偏下问题)
+ * ========================================================================= */
+button.rl-btn,
+.rl-btn,
+button[size="mini"].rl-btn {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+  line-height: 1 !important;
+  box-sizing: border-box !important;
+}
+
+button.rl-btn::after {
+  display: none !important;
+}
+
+.hero-header-actions {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+}
+
+.btn-toggle-roi {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  height: 52rpx !important;
+  line-height: 1 !important;
+  font-size: 24rpx !important;
+  font-weight: 600 !important;
+  padding: 0 20rpx !important;
+  border-radius: 10rpx !important;
+  background: #eff6ff !important;
+  color: #2563eb !important;
+  border: 1rpx solid #bfdbfe !important;
+}
+
 /* packageLab/pages/radar-lab/score-sniffer/index.wxss */
 @import '../common/common.wxss';
 
@@ -65,10 +105,15 @@
 }
 
 .btn-quick-create {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
   margin-left: 20rpx;
+  height: 64rpx !important;
+  line-height: 1 !important;
   font-size: 26rpx !important;
   font-weight: 600 !important;
-  padding: 14rpx 28rpx !important;
+  padding: 0 28rpx !important;
   border-radius: 14rpx !important;
   box-shadow: 0 4rpx 12rpx rgba(37, 99, 235, 0.25);
   white-space: nowrap;
@@ -211,8 +256,14 @@
 }
 
 .btn-mini-action {
-  font-size: 22rpx !important;
-  padding: 8rpx 20rpx !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  height: 52rpx !important;
+  line-height: 1 !important;
+  font-size: 24rpx !important;
+  font-weight: 600 !important;
+  padding: 0 20rpx !important;
   margin: 0 !important;
   border-radius: 10rpx !important;
 }
@@ -425,6 +476,11 @@
 }
 
 .btn-submit-roi {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  height: 84rpx !important;
+  line-height: 1 !important;
   margin-top: 16rpx;
 }
 
@@ -608,5 +664,14 @@
 }
 
 .btn-stop-detail {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  height: 56rpx !important;
+  line-height: 1 !important;
+  font-size: 24rpx !important;
+  font-weight: 600 !important;
+  padding: 0 24rpx !important;
+  border-radius: 12rpx !important;
   margin: 0 !important;
 }

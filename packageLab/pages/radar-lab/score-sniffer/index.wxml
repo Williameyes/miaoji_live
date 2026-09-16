@@ -76,6 +76,15 @@
                   停止
                 </button>
                 <button 
+                  class="rl-btn rl-btn-danger btn-mini-action" 
+                  size="mini" 
+                  wx:if="{{item.status === 'ended' || item.status === 'stopped'}}"
+                  data-id="{{item.session_id}}"
+                  bindtap="onDeleteSession"
+                >
+                  删除
+                </button>
+                <button 
                   class="rl-btn {{item.status === 'awaiting_roi' ? 'rl-btn-primary' : 'rl-btn-secondary'}} btn-mini-action" 
                   size="mini"
                   data-id="{{item.session_id}}"
@@ -170,12 +179,15 @@
       </view>
     </view>
 
-    <!-- 首帧单框标注卡片 (当状态为 awaiting_roi 时展示) -->
-    <view class="rl-card" wx:if="{{session && session.status === 'awaiting_roi'}}">
+    <!-- 首帧单框标注卡片 (当待标注，或用户主动展开微调时展示) -->
+    <view class="rl-card" wx:if="{{session && (session.status === 'awaiting_roi' || showRoiPanel)}}">
       <view class="rl-card-inner">
         <view class="rl-section-header-row">
           <view class="rl-section-title">首帧记分牌画框标注</view>
-          <text class="rl-badge rl-badge-warn">等待标注</text>
+          <text class="rl-badge rl-badge-warn" wx:if="{{session.status === 'awaiting_roi'}}">等待标注</text>
+          <button class="rl-btn rl-btn-secondary btn-toggle-roi" size="mini" wx:else bindtap="onToggleRoiPanel">
+            收起标注
+          </button>
         </view>
 
         <!-- 首帧抓取中 Loading 骨架 -->
@@ -282,41 +294,38 @@
       <view class="rl-card-inner">
         <view class="rl-section-header-row">
           <view class="rl-section-title">实时动态比分</view>
-          <text class="rl-badge {{session.status === 'reconnecting' ? 'rl-badge-warn' : 'rl-badge-ok'}}">
-            {{statusLabel}}
-          </text>
+          <view class="hero-header-actions">
+            <button class="rl-btn rl-btn-secondary btn-toggle-roi" size="mini" bindtap="onToggleRoiPanel">
+              {{showRoiPanel ? '收起标注' : '微调标注框'}}
+            </button>
+            <text class="rl-badge {{session.status === 'reconnecting' ? 'rl-badge-warn' : 'rl-badge-ok'}}" style="margin-left: 12rpx;">
+              {{statusLabel}}
+            </text>
+          </view>
         </view>
 
         <!-- 对抗大比分牌 -->
         <view class="scoreboard-hero">
           <view class="hero-team-box">
             <view class="hero-team-name">{{currentScore.team_a || '主队'}}</view>
-            <view class="hero-score score-a">{{currentScore.score_a || 0}}</view>
+            <view class="hero-score score-a">{{currentScore.score_a !== undefined ? currentScore.score_a : 0}}</view>
           </view>
 
           <view class="hero-center-box">
-            <view class="hero-period-pill">{{currentScore.period || '第1节'}}</view>
+            <view class="hero-period-pill">{{currentScore.period || '进行中'}}</view>
             <view class="hero-vs">VS</view>
-            <view class="hero-clock">{{currentScore.clock || '进行中'}}</view>
+            <view class="hero-clock">{{currentScore.clock || '实时'}}</view>
           </view>
 
           <view class="hero-team-box">
             <view class="hero-team-name">{{currentScore.team_b || '客队'}}</view>
-            <view class="hero-score score-b">{{currentScore.score_b || 0}}</view>
+            <view class="hero-score score-b">{{currentScore.score_b !== undefined ? currentScore.score_b : 0}}</view>
           </view>
         </view>
 
         <!-- 断流自愈提示 -->
         <view class="rl-notice" wx:if="{{session.status === 'reconnecting'}}">
           <text class="rl-notice-text">⚠️ 直播流暂时断开，正在执行 5 分钟静默重试窗，比分已定格锁定...</text>
-        </view>
-
-        <!-- 实时记分牌画面切片预览 -->
-        <view class="snapshot-preview-section" wx:if="{{session.latest_snapshot_url}}">
-          <text class="rl-label">实时记分牌截图画面</text>
-          <view class="snapshot-img-wrap">
-            <image class="snapshot-img" src="{{session.latest_snapshot_url}}?t={{refreshTick}}" mode="widthFix" />
-          </view>
         </view>
       </view>
     </view>
