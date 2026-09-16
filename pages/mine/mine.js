@@ -945,5 +945,21 @@ Page({
             : '保存失败';
         wx.showToast({ title: msg.length > 20 ? '保存失败' : msg, icon: 'none' });
       });
-  }
+  },
+  onScoreSnifferTap: function () {
+    if (!this.data.loggedIn) {
+      wx.showToast({ title: "请先登录", icon: "none" });
+      return;
+    }
+    wx.navigateTo({
+      url: "/packageLab/pages/radar-lab/score-sniffer/index",
+      fail: function (err) {
+        console.error("跳转比分嗅探失败:", err);
+        wx.showToast({
+          title: "打开页面失败: " + (err && err.errMsg ? err.errMsg : "请重试"),
+          icon: "none"
+        });
+      }
+    });
+  },
 });

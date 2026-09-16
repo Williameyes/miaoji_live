@@ -420,7 +420,41 @@ function fetchWarmupStatus(paramsOrJobId) {
     });
 }
 
-  module.exports = {
+  
+// =========================================================================
+// 比分嗅探实验室 API
+// =========================================================================
+function startScoreSniffer(payload) {
+  return post('/api/app/lab/score_sniffer/start', payload);
+}
+
+function stopScoreSniffer(sessionId) {
+  return post('/api/app/lab/score_sniffer/stop', { session_id: sessionId });
+}
+
+function fetchScoreSnifferStatus(sessionId) {
+  return get('/api/app/lab/score_sniffer/status', { session_id: sessionId });
+}
+
+function confirmScoreSnifferCandidate(payload) {
+  return post('/api/app/lab/score_sniffer/confirm_candidate', payload);
+}
+
+
+function configureScoreSnifferRoi(sessionId, roiData) {
+  return post('/api/app/lab/score_sniffer/roi', {
+    session_id: sessionId,
+    digit_bboxes: roiData.digit_bboxes,
+    scoreboard_bbox: roiData.scoreboard_bbox
+  });
+}
+
+module.exports = {
+  configureScoreSnifferRoi,
+  startScoreSniffer,
+  stopScoreSniffer,
+  fetchScoreSnifferStatus,
+  confirmScoreSnifferCandidate,
   parseRadarAppResponse,
   normalizeRadarAppError,
   oamUpsert,

@@ -89,6 +89,13 @@
       </view>
       <view class="list-divider"></view>
     </block>
+    <block wx:if="{{loggedIn}}">
+      <view class="list-item" hover-class="list-item-hover" bindtap="onScoreSnifferTap">
+        <text class="list-label">比分嗅探 <text class="list-label-badge">实验</text></text>
+        <text class="list-arrow">›</text>
+      </view>
+      <view class="list-divider"></view>
+    </block>
     <block wx:if="{{loggedIn && isInWhitelist}}">
       <view class="list-item" hover-class="list-item-hover" bindtap="onTimeSyncLabTap">
         <text class="list-label">时间同步 <text class="list-label-badge">实验</text></text>

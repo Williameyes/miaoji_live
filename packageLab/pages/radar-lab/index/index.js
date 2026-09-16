@@ -122,5 +122,10 @@ Page({
         }
       }
     });
-  }
+  },
+  onGoScoreSniffer: function () {
+    wx.navigateTo({
+      url: '/packageLab/pages/radar-lab/score-sniffer/index'
+    });
+  },
 });

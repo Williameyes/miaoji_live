@@ -52,7 +52,8 @@
         "pages/radar-lab/monitor/promo",
         "pages/radar-lab/monitor/detail",
         "pages/radar-lab/settlement/detail",
-        "pages/radar-lab/poster/poster"
+        "pages/radar-lab/poster/poster",
+        "pages/radar-lab/score-sniffer/index"
       ]
     },
     {
@@ -68,15 +69,22 @@
   "preloadRule": {
     "packageLive/pages/live/live": {
       "network": "all",
-      "packages": ["packageReport"]
+      "packages": [
+        "packageReport"
+      ]
     },
     "pages/index/index": {
       "network": "all",
-      "packages": ["packageLive", "packageReport"]
+      "packages": [
+        "packageLive",
+        "packageReport"
+      ]
     },
     "pages/tournament/tournament": {
       "network": "all",
-      "packages": ["packagePromo"]
+      "packages": [
+        "packagePromo"
+      ]
     }
   },
   "window": {

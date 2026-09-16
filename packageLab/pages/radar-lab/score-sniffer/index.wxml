@@ -1,0 +1,173 @@
+<!-- packageLab/pages/radar-lab/score-sniffer/index.wxml -->
+<view class="rl-root">
+
+  <!-- 顶部导语 -->
+  <view class="rl-header">
+    <view class="rl-kicker">雷达实验 · 比分嗅探</view>
+    <view class="rl-title">比分嗅探</view>
+    <view class="rl-sub">首帧半自动标注 · 抗运镜防抖滤波 · 1~2分钟低频轻量比对</view>
+  </view>
+
+  <!-- 1. 任务配置卡片 -->
+  <view class="rl-card">
+    <view class="rl-card-inner">
+      <view class="rl-section-title">挂载直播间</view>
+      
+      <view class="rl-field">
+        <text class="rl-label">抖音口令 / 直播间分享链接</text>
+        <textarea 
+          class="rl-textarea" 
+          placeholder="粘贴抖音分享口令或 live.douyin.com 链接..." 
+          value="{{rawText}}" 
+          bindinput="onInputRawText"
+          disabled="{{isSniffing}}"
+        />
+      </view>
+
+      <view class="rl-field">
+        <text class="rl-label">运动类型</text>
+        <picker bindchange="onSportChange" value="{{sportIndex}}" range="{{sportOptions}}" disabled="{{isSniffing}}">
+          <view class="rl-input rl-picker-display">
+            {{sportOptions[sportIndex]}}
+          </view>
+        </picker>
+      </view>
+
+      <button 
+        class="rl-btn {{isSniffing ? 'rl-btn-danger' : 'rl-btn-primary'}}" 
+        loading="{{actionLoading}}" 
+        bindtap="onToggleSniffer"
+      >
+        {{isSniffing ? '停止嗅探任务' : '启动 AI 比分嗅探'}}
+      </button>
+    </view>
+  </view>
+
+  <!-- 2. 首帧半自动标注卡片 (当状态为 awaiting_roi 时展示) -->
+  <view class="rl-card" wx:if="{{session && (session.status === 'awaiting_roi' || isAnnotatingRoi)}}">
+    <view class="rl-card-inner">
+      <view class="rl-section-header-row">
+        <view class="rl-section-title">首帧画框标注 (半自动定位)</view>
+        <text class="rl-badge rl-badge-warn">等待标注</text>
+      </view>
+      <view class="rl-notice">
+        <text class="rl-notice-text">首帧画面已就绪！请微调下方滑块，将主客队微型框分别对准比分数字（已预置在底部中央）。</text>
+      </view>
+      
+      <view class="sniffer-preview-container">
+        <image class="sniffer-bg-img" src="{{session.init_frame_url || session.latest_snapshot_url}}" mode="widthFix" />
+        <!-- 主队比分框 (绿) -->
+        <view class="sniffer-marker marker-a" style="top: {{boxA.top}}%; left: {{boxA.left}}%; width: {{boxA.width}}%; height: {{boxA.height}}%;">
+          <text class="marker-tag">主队分</text>
+        </view>
+        <!-- 客队比分框 (蓝) -->
+        <view class="sniffer-marker marker-b" style="top: {{boxB.top}}%; left: {{boxB.left}}%; width: {{boxB.width}}%; height: {{boxB.height}}%;">
+          <text class="marker-tag">客队分</text>
+        </view>
+      </view>
+
+      <view class="slider-control-group">
+        <view class="slider-control-item">
+          <view class="slider-info-row">
+            <text class="slider-name">垂直位置 (上下 Y 轴)</text>
+            <text class="slider-val">{{roiYPercent}}%</text>
+          </view>
+          <slider min="60" max="98" value="{{roiYPercent}}" bindchange="onSliderYChange" activeColor="#2563eb" block-size="20" />
+        </view>
+        <view class="slider-control-item">
+          <view class="slider-info-row">
+            <text class="slider-name">主队比分位置 (左右 X 轴)</text>
+            <text class="slider-val">{{roiAXPercent}}%</text>
+          </view>
+          <slider min="15" max="60" value="{{roiAXPercent}}" bindchange="onSliderAXChange" activeColor="#10b981" block-size="20" />
+        </view>
+        <view class="slider-control-item">
+          <view class="slider-info-row">
+            <text class="slider-name">客队比分位置 (左右 X 轴)</text>
+            <text class="slider-val">{{roiBXPercent}}%</text>
+          </view>
+          <slider min="40" max="85" value="{{roiBXPercent}}" bindchange="onSliderBXChange" activeColor="#3b82f6" block-size="20" />
+        </view>
+        
+        <button class="rl-btn rl-btn-primary btn-submit-roi" loading="{{submittingRoi}}" bindtap="onSubmitRoiAnnotation">
+          确认标注并启动比分监控
+        </button>
+      </view>
+    </view>
+  </view>
+
+  <!-- 3. 实时比分大看板 (嗅探进行中时高亮展示) -->
+  <view class="rl-card" wx:if="{{session && session.status !== 'awaiting_roi'}}">
+    <view class="rl-card-inner">
+      <view class="rl-section-header-row">
+        <view class="rl-section-title">实时动态比分</view>
+        <text class="rl-badge {{session.status === 'reconnecting' ? 'rl-badge-warn' : 'rl-badge-ok'}}">
+          {{statusLabel}}
+        </text>
+      </view>
+
+      <!-- 主客队比分对抗条 (高雅明亮对阵设计) -->
+      <view class="scoreboard-hero">
+        <view class="hero-team-box">
+          <view class="hero-team-name">{{currentScore.team_a || '主队'}}</view>
+          <view class="hero-score score-a">{{currentScore.score_a || 0}}</view>
+        </view>
+
+        <view class="hero-center-box">
+          <view class="hero-period-pill">{{currentScore.period || '第1节'}}</view>
+          <view class="hero-vs">VS</view>
+          <view class="hero-clock">{{currentScore.clock || '进行中'}}</view>
+        </view>
+
+        <view class="hero-team-box">
+          <view class="hero-team-name">{{currentScore.team_b || '客队'}}</view>
+          <view class="hero-score score-b">{{currentScore.score_b || 0}}</view>
+        </view>
+      </view>
+
+      <!-- 断流自愈提示 (5分钟静默重试窗) -->
+      <view class="rl-notice" wx:if="{{session.status === 'reconnecting'}}">
+        <text class="rl-notice-text">⚠️ 直播流暂时断开，正在执行 5 分钟断播自愈探测，比分已锁定在最后有效时刻...</text>
+      </view>
+
+      <!-- 实时记分牌画面切片预览 -->
+      <view class="snapshot-preview-section" wx:if="{{session.latest_snapshot_url}}">
+        <text class="rl-label">实时记分牌截图</text>
+        <view class="snapshot-img-wrap">
+          <image class="snapshot-img" src="{{session.latest_snapshot_url}}?t={{refreshTick}}" mode="widthFix" />
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 4. 智能多场切分候选列表 (解决一播多场覆盖与队名简称核对) -->
+  <view class="rl-card" wx:if="{{candidates && candidates.length > 0}}">
+    <view class="rl-card-inner">
+      <view class="rl-section-title">识别比赛轮次 (同一直播间)</view>
+      <view class="rl-sub" style="margin-bottom: 20rpx;">AI 自动感知比分清零/队名切换并生成独立场次，点击可一键关联官方赛程</view>
+
+      <view class="candidates-wrapper">
+        <view class="candidate-row" wx:for="{{candidates}}" wx:key="id">
+          <view class="candidate-main">
+            <view class="candidate-header-line">
+              <text class="candidate-round-badge">第 {{item.round_index}} 场</text>
+              <text class="rl-badge {{item.review_status === 'confirmed' ? 'rl-badge-ok' : 'rl-badge-warn'}}">
+                {{item.review_status === 'confirmed' ? '已核准绑定' : '待人工核对'}}
+              </text>
+            </view>
+            <view class="candidate-match-title">
+              {{item.team_a_raw || '主队'}} <text class="candidate-score-text">{{item.score_a}} : {{item.score_b}}</text> {{item.team_b_raw || '客队'}}
+            </view>
+            <view class="rl-list-desc">状态: {{item.is_ended ? '已完赛' : '进行中'}} | 小节: {{item.period || '全场'}}</view>
+          </view>
+          <view class="candidate-action-wrap" wx:if="{{item.review_status !== 'confirmed'}}">
+            <button class="rl-btn rl-btn-secondary candidate-bind-btn" size="mini" data-id="{{item.id}}" bindtap="onOpenBindModal">
+              关联赛程
+            </button>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+</view>
