@@ -50,49 +50,113 @@
         <view class="rl-section-title">首帧画框标注 (半自动定位)</view>
         <text class="rl-badge rl-badge-warn">等待标注</text>
       </view>
-      <view class="rl-notice">
-        <text class="rl-notice-text">首帧画面已就绪！请微调下方滑块，将主客队微型框分别对准比分数字（已预置在底部中央）。</text>
-      </view>
-      
-      <view class="sniffer-preview-container">
-        <image class="sniffer-bg-img" src="{{session.init_frame_url || session.latest_snapshot_url}}" mode="widthFix" />
-        <!-- 主队比分框 (绿) -->
-        <view class="sniffer-marker marker-a" style="top: {{boxA.top}}%; left: {{boxA.left}}%; width: {{boxA.width}}%; height: {{boxA.height}}%;">
-          <text class="marker-tag">主队分</text>
-        </view>
-        <!-- 客队比分框 (蓝) -->
-        <view class="sniffer-marker marker-b" style="top: {{boxB.top}}%; left: {{boxB.left}}%; width: {{boxB.width}}%; height: {{boxB.height}}%;">
-          <text class="marker-tag">客队分</text>
-        </view>
+
+      <!-- 首帧抓取中 Loading 骨架 -->
+      <view class="frame-loading-card" wx:if="{{!session.init_frame_url}}">
+        <view class="loading-pulse-ring"></view>
+        <text class="loading-title">正在接入直播流抓取首帧画面...</text>
+        <text class="loading-sub">雷达节点正进行无头进房与抗黑屏缓冲（约需 5~10 秒），就绪后将在此显示画面以供画框。</text>
       </view>
 
-      <view class="slider-control-group">
-        <view class="slider-control-item">
-          <view class="slider-info-row">
-            <text class="slider-name">垂直位置 (上下 Y 轴)</text>
-            <text class="slider-val">{{roiYPercent}}%</text>
-          </view>
-          <slider min="60" max="98" value="{{roiYPercent}}" bindchange="onSliderYChange" activeColor="#2563eb" block-size="20" />
+      <!-- 首帧已就绪：展示缩放画板与微调滑块 -->
+      <block wx:else>
+        <view class="rl-notice">
+          <text class="rl-notice-text">💡 首帧已就绪！可点击下方“放大/特写”看清记分牌，再微调滑块或使用【+ / -】精确对准主客队比分数字。</text>
         </view>
-        <view class="slider-control-item">
-          <view class="slider-info-row">
-            <text class="slider-name">主队比分位置 (左右 X 轴)</text>
-            <text class="slider-val">{{roiAXPercent}}%</text>
+
+        <!-- 画面放大/缩放工具栏 -->
+        <view class="zoom-toolbar">
+          <text class="zoom-toolbar-label">画面视角：</text>
+          <view class="zoom-btn-group">
+            <view class="zoom-btn {{zoomLevel === 1.0 ? 'active' : ''}}" bindtap="onSetZoom" data-zoom="1.0">1.0x 全景</view>
+            <view class="zoom-btn {{zoomLevel === 1.8 ? 'active' : ''}}" bindtap="onSetZoom" data-zoom="1.8">1.8x 放大</view>
+            <view class="zoom-btn {{zoomLevel === 2.5 ? 'active' : ''}}" bindtap="onSetZoom" data-zoom="2.5">2.5x 特写</view>
           </view>
-          <slider min="15" max="60" value="{{roiAXPercent}}" bindchange="onSliderAXChange" activeColor="#10b981" block-size="20" />
         </view>
-        <view class="slider-control-item">
-          <view class="slider-info-row">
-            <text class="slider-name">客队比分位置 (左右 X 轴)</text>
-            <text class="slider-val">{{roiBXPercent}}%</text>
+
+        <!-- 标注画板容器（支持跟随记分牌位置平滑缩放） -->
+        <view class="sniffer-preview-container {{zoomLevel > 1.0 ? 'is-zoomed' : ''}}">
+          <view class="sniffer-stage" style="transform: scale({{zoomLevel}}); transform-origin: 50% {{roiYPercent}}%;">
+            <image class="sniffer-bg-img" src="{{session.init_frame_url}}" mode="widthFix" />
+            <!-- 主队比分框 (绿) -->
+            <view class="sniffer-marker marker-a" style="top: {{boxA.top}}%; left: {{boxA.left}}%; width: {{boxA.width}}%; height: {{boxA.height}}%;">
+              <text class="marker-tag">主队分</text>
+            </view>
+            <!-- 客队比分框 (蓝) -->
+            <view class="sniffer-marker marker-b" style="top: {{boxB.top}}%; left: {{boxB.left}}%; width: {{boxB.width}}%; height: {{boxB.height}}%;">
+              <text class="marker-tag">客队分</text>
+            </view>
           </view>
-          <slider min="40" max="85" value="{{roiBXPercent}}" bindchange="onSliderBXChange" activeColor="#3b82f6" block-size="20" />
         </view>
-        
-        <button class="rl-btn rl-btn-primary btn-submit-roi" loading="{{submittingRoi}}" bindtap="onSubmitRoiAnnotation">
-          确认标注并启动比分监控
-        </button>
-      </view>
+
+        <!-- 控制滑块与步进微调 -->
+        <view class="slider-control-group">
+          <!-- 垂直位置 Y -->
+          <view class="slider-control-item">
+            <view class="slider-info-row">
+              <text class="slider-name">垂直位置 (上下 Y 轴)</text>
+              <view class="stepper-wrap">
+                <button class="step-btn" size="mini" bindtap="onStepY" data-delta="-0.5">-</button>
+                <text class="slider-val">{{roiYPercent}}%</text>
+                <button class="step-btn" size="mini" bindtap="onStepY" data-delta="0.5">+</button>
+              </view>
+            </view>
+            <slider min="60" max="98" step="0.5" value="{{roiYPercent}}" bindchange="onSliderYChange" activeColor="#2563eb" block-size="20" />
+          </view>
+
+          <!-- 主队位置 AX -->
+          <view class="slider-control-item">
+            <view class="slider-info-row">
+              <text class="slider-name">主队比分 (左右 X 轴)</text>
+              <view class="stepper-wrap">
+                <button class="step-btn" size="mini" bindtap="onStepAX" data-delta="-0.5">-</button>
+                <text class="slider-val val-a">{{roiAXPercent}}%</text>
+                <button class="step-btn" size="mini" bindtap="onStepAX" data-delta="0.5">+</button>
+              </view>
+            </view>
+            <slider min="15" max="60" step="0.5" value="{{roiAXPercent}}" bindchange="onSliderAXChange" activeColor="#10b981" block-size="20" />
+          </view>
+
+          <!-- 客队位置 BX -->
+          <view class="slider-control-item">
+            <view class="slider-info-row">
+              <text class="slider-name">客队比分 (左右 X 轴)</text>
+              <view class="stepper-wrap">
+                <button class="step-btn" size="mini" bindtap="onStepBX" data-delta="-0.5">-</button>
+                <text class="slider-val val-b">{{roiBXPercent}}%</text>
+                <button class="step-btn" size="mini" bindtap="onStepBX" data-delta="0.5">+</button>
+              </view>
+            </view>
+            <slider min="40" max="85" step="0.5" value="{{roiBXPercent}}" bindchange="onSliderBXChange" activeColor="#3b82f6" block-size="20" />
+          </view>
+
+          <!-- 折叠微调框尺寸 -->
+          <view class="size-tuning-toggle" bindtap="onToggleSizeTuning">
+            <text class="size-tuning-toggle-text">📐 框选范围大小微调 {{showSizeTuning ? '▲ 收起' : '▼ 展开'}}</text>
+          </view>
+
+          <view class="size-tuning-box" wx:if="{{showSizeTuning}}">
+            <view class="size-row">
+              <text class="size-label">框选宽度: {{boxWidth}}%</text>
+              <view class="stepper-wrap">
+                <button class="step-btn" size="mini" bindtap="onStepWidth" data-delta="-0.5">-</button>
+                <button class="step-btn" size="mini" bindtap="onStepWidth" data-delta="0.5">+</button>
+              </view>
+            </view>
+            <view class="size-row">
+              <text class="size-label">框选高度: {{boxHeight}}%</text>
+              <view class="stepper-wrap">
+                <button class="step-btn" size="mini" bindtap="onStepHeight" data-delta="-0.5">-</button>
+                <button class="step-btn" size="mini" bindtap="onStepHeight" data-delta="0.5">+</button>
+              </view>
+            </view>
+          </view>
+          
+          <button class="rl-btn rl-btn-primary btn-submit-roi" loading="{{submittingRoi}}" bindtap="onSubmitRoiAnnotation">
+            确认标注并启动比分监控
+          </button>
+        </view>
+      </block>
     </view>
   </view>
 

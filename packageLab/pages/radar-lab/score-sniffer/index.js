@@ -32,9 +32,13 @@ Page({
     refreshTick: Date.now(),
 
     // 首帧半自动画框标注数据
+    zoomLevel: 1.0,
     roiYPercent: 88,
     roiAXPercent: 44,
     roiBXPercent: 57,
+    boxWidth: 8,
+    boxHeight: 7,
+    showSizeTuning: false,
     boxA: { top: 88, left: 44, width: 8, height: 7 },
     boxB: { top: 88, left: 57, width: 8, height: 7 },
     submittingRoi: false
@@ -157,8 +161,23 @@ Page({
     }
   },
 
+  onSetZoom(e) {
+    const zoom = Number(e.currentTarget.dataset.zoom);
+    this.setData({ zoomLevel: zoom });
+  },
+
   onSliderYChange(e) {
-    const val = Number(e.detail.value);
+    const val = Number(Number(e.detail.value).toFixed(1));
+    this.updateRoiY(val);
+  },
+
+  onStepY(e) {
+    const delta = Number(e.currentTarget.dataset.delta);
+    const next = Math.max(50, Math.min(99, Number((this.data.roiYPercent + delta).toFixed(1))));
+    this.updateRoiY(next);
+  },
+
+  updateRoiY(val) {
     this.setData({
       roiYPercent: val,
       'boxA.top': val,
@@ -167,7 +186,17 @@ Page({
   },
 
   onSliderAXChange(e) {
-    const val = Number(e.detail.value);
+    const val = Number(Number(e.detail.value).toFixed(1));
+    this.updateRoiAX(val);
+  },
+
+  onStepAX(e) {
+    const delta = Number(e.currentTarget.dataset.delta);
+    const next = Math.max(5, Math.min(65, Number((this.data.roiAXPercent + delta).toFixed(1))));
+    this.updateRoiAX(next);
+  },
+
+  updateRoiAX(val) {
     this.setData({
       roiAXPercent: val,
       'boxA.left': val
@@ -175,10 +204,44 @@ Page({
   },
 
   onSliderBXChange(e) {
-    const val = Number(e.detail.value);
+    const val = Number(Number(e.detail.value).toFixed(1));
+    this.updateRoiBX(val);
+  },
+
+  onStepBX(e) {
+    const delta = Number(e.currentTarget.dataset.delta);
+    const next = Math.max(35, Math.min(95, Number((this.data.roiBXPercent + delta).toFixed(1))));
+    this.updateRoiBX(next);
+  },
+
+  updateRoiBX(val) {
     this.setData({
       roiBXPercent: val,
       'boxB.left': val
+    });
+  },
+
+  onToggleSizeTuning() {
+    this.setData({ showSizeTuning: !this.data.showSizeTuning });
+  },
+
+  onStepWidth(e) {
+    const delta = Number(e.currentTarget.dataset.delta);
+    const next = Math.max(4, Math.min(20, Number((this.data.boxWidth + delta).toFixed(1))));
+    this.setData({
+      boxWidth: next,
+      'boxA.width': next,
+      'boxB.width': next
+    });
+  },
+
+  onStepHeight(e) {
+    const delta = Number(e.currentTarget.dataset.delta);
+    const next = Math.max(3, Math.min(18, Number((this.data.boxHeight + delta).toFixed(1))));
+    this.setData({
+      boxHeight: next,
+      'boxA.height': next,
+      'boxB.height': next
     });
   },
 
@@ -189,8 +252,8 @@ Page({
     const y = this.data.roiYPercent;
     const ax = this.data.roiAXPercent;
     const bx = this.data.roiBXPercent;
-    const w = this.data.boxA.width;
-    const h = this.data.boxA.height;
+    const w = this.data.boxWidth || this.data.boxA.width;
+    const h = this.data.boxHeight || this.data.boxA.height;
 
     // 转换为 0~1000 归一化坐标 [ymin, xmin, ymax, xmax]
     const digit_bboxes = {
