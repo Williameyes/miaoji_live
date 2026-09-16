@@ -436,6 +436,10 @@ function fetchScoreSnifferStatus(sessionId) {
   return get('/api/app/lab/score_sniffer/status', { session_id: sessionId });
 }
 
+function fetchScoreSnifferList() {
+  return get('/api/app/lab/score_sniffer/list');
+}
+
 function confirmScoreSnifferCandidate(payload) {
   return post('/api/app/lab/score_sniffer/confirm_candidate', payload);
 }
@@ -454,6 +458,7 @@ module.exports = {
   startScoreSniffer,
   stopScoreSniffer,
   fetchScoreSnifferStatus,
+  fetchScoreSnifferList,
   confirmScoreSnifferCandidate,
   parseRadarAppResponse,
   normalizeRadarAppError,

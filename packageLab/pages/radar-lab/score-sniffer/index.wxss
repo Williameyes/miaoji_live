@@ -15,7 +15,210 @@
 }
 
 /* =========================================================================
- * 1. 首帧半自动标注卡片 (ROI Annotation)
+ * 1. 顶部导航与返回栏
+ * ========================================================================= */
+.top-nav-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24rpx;
+  padding: 0 8rpx;
+}
+
+.nav-back-btn {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #2563eb;
+  padding: 8rpx 16rpx;
+  background: #eff6ff;
+  border-radius: 12rpx;
+}
+
+.nav-back-arrow {
+  margin-right: 8rpx;
+  font-size: 30rpx;
+}
+
+.nav-title {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+/* =========================================================================
+ * 2. 任务列表主页
+ * ========================================================================= */
+.list-page-header {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 24rpx;
+}
+
+.list-header-left {
+  flex: 1;
+}
+
+.btn-quick-create {
+  margin-left: 20rpx;
+  font-size: 26rpx !important;
+  font-weight: 600 !important;
+  padding: 14rpx 28rpx !important;
+  border-radius: 14rpx !important;
+  box-shadow: 0 4rpx 12rpx rgba(37, 99, 235, 0.25);
+  white-space: nowrap;
+}
+
+.task-list-section {
+  display: flex;
+  flex-direction: column;
+  gap: 20rpx;
+}
+
+.list-loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80rpx 0;
+}
+
+.empty-card {
+  margin-top: 20rpx;
+}
+
+.empty-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 80rpx 32rpx;
+  text-align: center;
+}
+
+.empty-icon {
+  font-size: 80rpx;
+  margin-bottom: 24rpx;
+}
+
+.empty-title {
+  font-size: 32rpx;
+  font-weight: 700;
+  color: #1e293b;
+  margin-bottom: 12rpx;
+}
+
+.empty-desc {
+  font-size: 26rpx;
+  color: #64748b;
+  margin-bottom: 40rpx;
+  max-width: 520rpx;
+}
+
+.empty-btn {
+  width: 360rpx !important;
+}
+
+.task-item-card {
+  margin-bottom: 20rpx;
+  border: 2rpx solid rgba(226, 232, 240, 0.8);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.task-item-card:active {
+  transform: translateY(2rpx);
+  box-shadow: 0 4rpx 12rpx rgba(0, 0, 0, 0.05);
+}
+
+.task-card-header {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20rpx;
+}
+
+.task-anchor-wrap {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.task-anchor-name {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: #0f172a;
+  max-width: 400rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-sport-tag {
+  font-size: 20rpx;
+  padding: 4rpx 10rpx;
+  background: #f1f5f9;
+  color: #475569;
+  border-radius: 8rpx;
+  font-weight: 500;
+}
+
+.task-card-score-banner {
+  background: #f8fafc;
+  border-radius: 16rpx;
+  padding: 24rpx 20rpx;
+  margin-bottom: 20rpx;
+  border: 1rpx solid #e2e8f0;
+}
+
+.task-score-text {
+  font-size: 32rpx;
+  font-weight: 800;
+  color: #1e293b;
+  text-align: center;
+  letter-spacing: 1rpx;
+}
+
+.task-score-text.text-awaiting {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #d97706;
+}
+
+.task-card-footer {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 16rpx;
+  border-top: 1rpx solid #f1f5f9;
+}
+
+.task-time-text {
+  font-size: 22rpx;
+  color: #94a3b8;
+}
+
+.task-actions-wrap {
+  display: flex;
+  flex-direction: row;
+  gap: 16rpx;
+}
+
+.btn-mini-action {
+  font-size: 22rpx !important;
+  padding: 8rpx 20rpx !important;
+  margin: 0 !important;
+  border-radius: 10rpx !important;
+}
+
+/* =========================================================================
+ * 3. 首帧半自动标注卡片 (ROI Annotation)
  * ========================================================================= */
 .frame-loading-card {
   display: flex;
@@ -102,22 +305,24 @@
   width: 100%;
   border-radius: 16rpx;
   overflow: hidden;
-  border: 2rpx solid #e2e8f0;
-  background-color: #0f172a;
-  margin: 12rpx 0 24rpx;
-  box-shadow: 0 4rpx 16rpx rgba(0, 0, 0, 0.06);
+  background: #0f172a;
+  box-shadow: 0 6rpx 20rpx rgba(0, 0, 0, 0.12);
+  margin-bottom: 24rpx;
+  border: 1rpx solid #334155;
+  transition: all 0.25s ease-out;
 }
 
 .sniffer-preview-container.is-zoomed {
-  border-color: #3b82f6;
-  box-shadow: 0 6rpx 20rpx rgba(37, 99, 235, 0.15);
+  box-shadow: 0 10rpx 30rpx rgba(37, 99, 235, 0.2);
+  border-color: #2563eb;
 }
 
 .sniffer-stage {
   position: relative;
   width: 100%;
-  transform-origin: 50% 88%;
-  transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transform-origin: 50% 85%;
+  transition: transform 0.2s cubic-bezier(0.25, 1, 0.5, 1);
+  will-change: transform;
 }
 
 .sniffer-bg-img {
@@ -125,70 +330,63 @@
   display: block;
 }
 
+/* 单一全景记分牌识别框 */
 .sniffer-marker {
   position: absolute;
   box-sizing: border-box;
   pointer-events: none;
-  transition: all 0.08s ease-out;
-  border-radius: 6rpx;
 }
 
-.sniffer-marker.marker-a {
-  border: 4rpx solid #10b981;
-  background-color: rgba(16, 185, 129, 0.28);
-}
-
-.sniffer-marker.marker-b {
+.marker-scoreboard {
   border: 4rpx solid #3b82f6;
-  background-color: rgba(59, 130, 246, 0.28);
+  background: rgba(59, 130, 246, 0.2);
+  box-shadow: 0 0 18rpx rgba(59, 130, 246, 0.6);
+  border-radius: 8rpx;
+}
+
+.marker-scoreboard .marker-tag {
+  background: #2563eb;
+  color: #ffffff;
 }
 
 .marker-tag {
   position: absolute;
-  top: -34rpx;
+  top: -36rpx;
   left: 0;
   font-size: 20rpx;
-  padding: 2rpx 10rpx;
+  font-weight: 700;
+  padding: 4rpx 12rpx;
   border-radius: 6rpx;
   white-space: nowrap;
-  font-weight: 700;
-  line-height: 1.4;
+  box-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.3);
 }
 
-.marker-a .marker-tag {
-  background-color: #10b981;
-  color: #ffffff;
-}
-
-.marker-b .marker-tag {
-  background-color: #3b82f6;
-  color: #ffffff;
-}
-
+/* 微调滑块控制组 */
 .slider-control-group {
   display: flex;
   flex-direction: column;
-  gap: 16rpx;
+  gap: 20rpx;
 }
 
 .slider-control-item {
   background: #f8fafc;
+  padding: 16rpx 20rpx;
+  border-radius: 14rpx;
   border: 1rpx solid #e2e8f0;
-  border-radius: 16rpx;
-  padding: 16rpx 20rpx 8rpx;
 }
 
 .slider-info-row {
   display: flex;
+  flex-direction: row;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 6rpx;
+  margin-bottom: 10rpx;
 }
 
 .slider-name {
-  font-size: 24rpx;
-  color: #334155;
+  font-size: 26rpx;
   font-weight: 600;
+  color: #1e293b;
 }
 
 .stepper-wrap {
@@ -199,158 +397,130 @@
 }
 
 .step-btn {
-  width: 48rpx !important;
-  height: 48rpx !important;
-  line-height: 44rpx !important;
-  text-align: center;
-  border-radius: 10rpx;
-  background: #e2e8f0;
-  color: #1e293b;
-  font-size: 30rpx;
-  font-weight: 700;
+  width: 52rpx !important;
+  height: 52rpx !important;
+  line-height: 52rpx !important;
   padding: 0 !important;
-  margin: 0 !important;
+  font-size: 32rpx !important;
+  font-weight: 700 !important;
+  background: #ffffff !important;
+  color: #2563eb !important;
+  border: 1rpx solid #cbd5e1 !important;
+  border-radius: 10rpx !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
 }
 
 .slider-val {
-  min-width: 72rpx;
-  text-align: center;
   font-size: 24rpx;
   font-weight: 700;
-  color: #2563eb;
-}
-
-.slider-val.val-a {
-  color: #059669;
-}
-
-.slider-val.val-b {
-  color: #2563eb;
-}
-
-.size-tuning-toggle {
+  color: #0f172a;
+  min-width: 68rpx;
   text-align: center;
-  padding: 10rpx 0;
-}
-
-.size-tuning-toggle-text {
-  font-size: 24rpx;
-  color: #64748b;
-  text-decoration: underline;
-}
-
-.size-tuning-box {
-  background: #f1f5f9;
-  border-radius: 14rpx;
-  padding: 16rpx 20rpx;
-  display: flex;
-  flex-direction: column;
-  gap: 12rpx;
-}
-
-.size-row {
-  display: flex;
-  flex-direction: row;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.size-label {
-  font-size: 24rpx;
-  color: #475569;
-  font-weight: 600;
+  background: #ffffff;
+  padding: 4rpx 10rpx;
+  border-radius: 8rpx;
+  border: 1rpx solid #e2e8f0;
 }
 
 .btn-submit-roi {
-  margin-top: 12rpx;
+  margin-top: 16rpx;
 }
 
 /* =========================================================================
- * 2. 实时比分对抗条看板 (Scoreboard Hero)
+ * 4. 实时比分大看板 (Scoreboard Hero)
  * ========================================================================= */
 .scoreboard-hero {
   display: flex;
   flex-direction: row;
-  justify-content: space-between;
   align-items: center;
-  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-  border: 1rpx solid #e2e8f0;
+  justify-content: space-between;
+  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
   border-radius: 20rpx;
-  padding: 36rpx 24rpx;
-  margin: 20rpx 0 28rpx;
+  padding: 36rpx 28rpx;
+  color: #ffffff;
+  box-shadow: 0 8rpx 24rpx rgba(15, 23, 42, 0.25);
+  margin-bottom: 24rpx;
 }
 
 .hero-team-box {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   text-align: center;
-  min-width: 0;
 }
 
 .hero-team-name {
-  font-size: 30rpx;
+  font-size: 28rpx;
   font-weight: 700;
-  color: #1e293b;
+  color: #cbd5e1;
   margin-bottom: 12rpx;
+  max-width: 220rpx;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .hero-score {
-  font-size: 72rpx;
+  font-size: 64rpx;
   font-weight: 900;
-  line-height: 1;
-  font-family: -apple-system, BlinkMacSystemFont, 'DIN Alternate', 'Impact', sans-serif;
+  line-height: 1.1;
+  font-family: 'DIN Alternate', 'Helvetica Neue', sans-serif;
 }
 
 .hero-score.score-a {
-  color: #2563eb;
+  color: #38bdf8;
+  text-shadow: 0 0 16rpx rgba(56, 189, 248, 0.4);
 }
 
 .hero-score.score-b {
-  color: #f59e0b;
+  color: #f43f5e;
+  text-shadow: 0 0 16rpx rgba(244, 63, 94, 0.4);
 }
 
 .hero-center-box {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 0 24rpx;
+  padding: 0 20rpx;
 }
 
 .hero-period-pill {
-  background: #dbeafe;
-  color: #1d4ed8;
   font-size: 22rpx;
   font-weight: 700;
   padding: 4rpx 16rpx;
-  border-radius: 999rpx;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 20rpx;
+  color: #f1f5f9;
+  margin-bottom: 8rpx;
 }
 
 .hero-vs {
-  font-size: 28rpx;
+  font-size: 26rpx;
   font-weight: 800;
-  color: #94a3b8;
-  margin: 8rpx 0;
-  letter-spacing: 2rpx;
+  color: #64748b;
+  margin-bottom: 8rpx;
 }
 
 .hero-clock {
-  font-size: 22rpx;
-  color: #64748b;
+  font-size: 24rpx;
   font-weight: 600;
+  color: #e2e8f0;
 }
 
+/* 截图切片区 */
 .snapshot-preview-section {
   margin-top: 24rpx;
 }
 
 .snapshot-img-wrap {
   width: 100%;
-  border-radius: 14rpx;
+  border-radius: 16rpx;
   overflow: hidden;
+  background: #000000;
   border: 1rpx solid #e2e8f0;
-  background: #000;
 }
 
 .snapshot-img {
@@ -359,7 +529,7 @@
 }
 
 /* =========================================================================
- * 3. 候选轮次切分列表 (Candidates)
+ * 5. 多场次候选轮次切分
  * ========================================================================= */
 .candidates-wrapper {
   display: flex;
@@ -370,17 +540,16 @@
 .candidate-row {
   display: flex;
   flex-direction: row;
-  align-items: center;
   justify-content: space-between;
-  padding: 24rpx;
+  align-items: center;
   background: #f8fafc;
-  border-radius: 16rpx;
-  border: 1rpx solid #f1f5f9;
+  border-radius: 14rpx;
+  padding: 20rpx;
+  border: 1rpx solid #e2e8f0;
 }
 
 .candidate-main {
   flex: 1;
-  min-width: 0;
 }
 
 .candidate-header-line {
@@ -392,10 +561,10 @@
 }
 
 .candidate-round-badge {
-  font-size: 20rpx;
+  font-size: 22rpx;
   font-weight: 700;
-  color: #475569;
   background: #e2e8f0;
+  color: #334155;
   padding: 2rpx 10rpx;
   border-radius: 6rpx;
 }
@@ -403,24 +572,41 @@
 .candidate-match-title {
   font-size: 28rpx;
   font-weight: 700;
-  color: #0f172a;
+  color: #1e293b;
   margin-bottom: 6rpx;
 }
 
 .candidate-score-text {
   color: #2563eb;
-  font-weight: 800;
+  font-weight: 900;
   margin: 0 8rpx;
 }
 
-.candidate-action-wrap {
-  margin-left: 20rpx;
+.candidate-bind-btn {
+  margin: 0 !important;
+  font-size: 22rpx !important;
+  padding: 8rpx 20rpx !important;
 }
 
-.candidate-bind-btn {
-  height: 64rpx !important;
-  line-height: 64rpx !important;
-  font-size: 24rpx !important;
-  padding: 0 24rpx !important;
-  border-radius: 12rpx !important;
+.session-summary-left {
+  flex: 1;
+}
+
+.session-meta-sub {
+  font-size: 22rpx;
+  color: #94a3b8;
+  margin-top: 4rpx;
+}
+
+.session-actions-bar {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-end;
+  margin-top: 16rpx;
+  padding-top: 16rpx;
+  border-top: 1rpx solid #f1f5f9;
+}
+
+.btn-stop-detail {
+  margin: 0 !important;
 }
