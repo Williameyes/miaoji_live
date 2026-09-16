@@ -354,7 +354,7 @@
     <view class="rl-card" wx:if="{{candidates && candidates.length > 0}}">
       <view class="rl-card-inner">
         <view class="rl-section-title">识别比赛轮次 (同一直播间)</view>
-        <view class="rl-sub" style="margin-bottom: 20rpx;">AI 自动感知比分清零与队名切换，点击可关联官方赛程</view>
+        <view class="rl-sub" style="margin-bottom: 20rpx;">AI 自动感知队名切换进行多场切分，点击可关联官方赛程</view>
 
         <view class="candidates-wrapper">
           <view class="candidate-row" wx:for="{{candidates}}" wx:key="id">
