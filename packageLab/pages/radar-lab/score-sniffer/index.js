@@ -105,9 +105,13 @@ Page({
 
         let scoreDisplay = '等待锁定中';
         if (scoreObj && (scoreObj.team_a || scoreObj.score_a !== undefined)) {
-          scoreDisplay = ;
+          const teamA = scoreObj.team_a || '主队';
+          const scoreA = scoreObj.score_a !== undefined ? scoreObj.score_a : '-';
+          const teamB = scoreObj.team_b || '客队';
+          const scoreB = scoreObj.score_b !== undefined ? scoreObj.score_b : '-';
+          scoreDisplay = teamA + ' ' + scoreA + ' : ' + scoreB + ' ' + teamB;
           if (scoreObj.period) {
-            scoreDisplay += ;
+            scoreDisplay += ' (' + scoreObj.period + ')';
           }
         } else if (item.status === 'awaiting_roi') {
           scoreDisplay = '首帧已就绪，待画框';
