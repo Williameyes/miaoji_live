@@ -203,20 +203,32 @@
             <text class="rl-notice-text">💡 仅需画一个框！请调整下方单一蓝色框，将记分牌上的【队名、比分、节次】整体框入即可，操作简单快捷。</text>
           </view>
 
-          <!-- 视角缩放工具栏 -->
+          <!-- 视角缩放与定位工具栏 -->
           <view class="zoom-toolbar">
             <text class="zoom-toolbar-label">画面视角：</text>
             <view class="zoom-btn-group">
               <view class="zoom-btn {{zoomLevel === 1.0 ? 'active' : ''}}" bindtap="onSetZoom" data-zoom="1.0">1.0x 全景</view>
               <view class="zoom-btn {{zoomLevel === 1.8 ? 'active' : ''}}" bindtap="onSetZoom" data-zoom="1.8">1.8x 放大</view>
               <view class="zoom-btn {{zoomLevel === 2.5 ? 'active' : ''}}" bindtap="onSetZoom" data-zoom="2.5">2.5x 特写</view>
+              <view class="zoom-btn btn-focus-target" bindtap="onFocusScoreboard" wx:if="{{zoomLevel > 1.0}}">🎯 找记分牌</view>
             </view>
           </view>
 
-          <!-- 画板容器 (基于 Y 轴中心缩放) -->
-          <view class="sniffer-preview-container {{zoomLevel > 1.0 ? 'is-zoomed' : ''}}">
-            <view class="sniffer-stage" style="transform: scale({{zoomLevel}}); transform-origin: 50% {{roiYPercent}}%;">
-              <image class="sniffer-bg-img" src="{{session.init_frame_url}}" mode="widthFix" />
+          <view class="zoom-tip-row" wx:if="{{zoomLevel > 1.0}}">
+            <text class="zoom-tip-text">👆 放大后可在画面上直接按住滑动拖拽；标注框坐标按图片百分比归一，平移移动不影响最终标注精度。</text>
+          </view>
+
+          <!-- 画板容器 (支持双向自由滑动拖拽) -->
+          <scroll-view 
+            class="sniffer-preview-container {{zoomLevel > 1.0 ? 'is-zoomed' : ''}}"
+            scroll-x="{{zoomLevel > 1.0}}"
+            scroll-y="{{zoomLevel > 1.0}}"
+            scroll-top="{{canvasScrollTop}}"
+            scroll-left="{{canvasScrollLeft}}"
+            scroll-with-animation="true"
+          >
+            <view class="sniffer-stage" style="width: {{zoomLevel * 100}}%;">
+              <image class="sniffer-bg-img" src="{{session.init_frame_url}}" mode="widthFix" bindload="onImageLoad" />
               <!-- 单一记分牌全景框 -->
               <view 
                 class="sniffer-marker marker-scoreboard" 
@@ -225,7 +237,7 @@
                 <text class="marker-tag">🏀 记分牌全景识别区 (框住队名与比分整体)</text>
               </view>
             </view>
-          </view>
+          </scroll-view>
 
           <!-- 单框调节控制器 -->
           <view class="slider-control-group">

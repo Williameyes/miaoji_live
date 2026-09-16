@@ -354,13 +354,14 @@ button.rl-btn::after {
 .sniffer-preview-container {
   position: relative;
   width: 100%;
+  height: 540rpx;
   border-radius: 16rpx;
   overflow: hidden;
   background: #0f172a;
   box-shadow: 0 6rpx 20rpx rgba(0, 0, 0, 0.12);
   margin-bottom: 24rpx;
   border: 1rpx solid #334155;
-  transition: all 0.25s ease-out;
+  box-sizing: border-box;
 }
 
 .sniffer-preview-container.is-zoomed {
@@ -370,10 +371,27 @@ button.rl-btn::after {
 
 .sniffer-stage {
   position: relative;
-  width: 100%;
-  transform-origin: 50% 85%;
-  transition: transform 0.2s cubic-bezier(0.25, 1, 0.5, 1);
-  will-change: transform;
+  transition: width 0.2s ease-out;
+}
+
+.zoom-tip-row {
+  margin-bottom: 12rpx;
+  padding: 8rpx 16rpx;
+  background: #eff6ff;
+  border-radius: 8rpx;
+  border: 1rpx solid #bfdbfe;
+}
+
+.zoom-tip-text {
+  font-size: 22rpx;
+  color: #1d4ed8;
+  line-height: 1.4;
+}
+
+.btn-focus-target {
+  background: #dbeafe !important;
+  color: #1d4ed8 !important;
+  font-weight: 700 !important;
 }
 
 .sniffer-bg-img {

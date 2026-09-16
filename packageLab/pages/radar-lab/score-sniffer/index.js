@@ -47,6 +47,10 @@ Page({
     roiWidthPercent: 70.0, // 记分牌宽度 (20%~90%)
     roiHeightPercent: 10.0,// 记分牌高度 (4%~30%)
     zoomLevel: 1.0,        // 缩放视角: 1.0 | 1.8 | 2.5
+    canvasScrollTop: 0,
+    canvasScrollLeft: 0,
+    imgNaturalWidth: 0,
+    imgNaturalHeight: 0,
     submittingRoi: false,
     showSizeTuning: true,  // 默认展开尺寸调节，方便单框微调
 
@@ -343,9 +347,45 @@ Page({
   // =========================================================================
   // 4. 单框画框标注与微调 (整体记分牌框)
   // =========================================================================
+  onImageLoad(e) {
+    const { width, height } = e.detail || {};
+    if (width && height) {
+      this.setData({
+        imgNaturalWidth: width,
+        imgNaturalHeight: height
+      });
+    }
+  },
+
   onSetZoom(e) {
     const zoom = Number(e.currentTarget.dataset.zoom) || 1.0;
     this.setData({ zoomLevel: zoom });
+    if (zoom > 1.0) {
+      setTimeout(() => {
+        this.onFocusScoreboard();
+      }, 80);
+    } else {
+      this.setData({
+        canvasScrollTop: 0,
+        canvasScrollLeft: 0
+      });
+    }
+  },
+
+  onFocusScoreboard() {
+    const yRatio = this.data.roiYPercent / 100.0;
+    const xRatio = this.data.roiXPercent / 100.0;
+    const zoom = this.data.zoomLevel || 1.0;
+    
+    // 估算滚动位移：当画面放大后，自动把记分牌区域平移到视口视觉中心
+    const estimatedHeightPx = 270 * zoom; 
+    const targetY = Math.max(0, Math.round(yRatio * estimatedHeightPx - 90));
+    const targetX = Math.max(0, Math.round(xRatio * 320 * zoom - 60));
+
+    this.setData({
+      canvasScrollTop: targetY,
+      canvasScrollLeft: targetX
+    });
   },
 
   onSliderYChange(e) {
