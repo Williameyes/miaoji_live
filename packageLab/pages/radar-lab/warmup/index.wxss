@@ -747,3 +747,88 @@
   color: #ffffff;
 }
 
+
+/* 自由预热快捷卡片 */
+.free-warmup-card {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+  border: 2rpx solid #334155;
+  border-radius: 20rpx;
+  padding: 24rpx;
+  margin-bottom: 24rpx;
+  box-shadow: 0 4rpx 16rpx rgba(15, 23, 42, 0.12);
+  transition: all 0.2s ease;
+}
+
+.free-warmup-card-hover {
+  transform: translateY(-2rpx);
+  border-color: #3b82f6;
+  box-shadow: 0 6rpx 20rpx rgba(59, 130, 246, 0.2);
+}
+
+.free-warmup-icon {
+  font-size: 40rpx;
+  margin-right: 18rpx;
+}
+
+.free-warmup-content {
+  flex: 1;
+}
+
+.free-warmup-title {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #ffffff;
+  margin-bottom: 6rpx;
+}
+
+.free-warmup-desc {
+  font-size: 22rpx;
+  color: #94a3b8;
+  line-height: 1.4;
+}
+
+.free-warmup-arrow {
+  font-size: 32rpx;
+  color: #60a5fa;
+  font-weight: 700;
+  margin-left: 12rpx;
+}
+
+/* ================== 停止按钮与自由任务角标样式 ================== */
+.warmup-status-badge.status-stopped {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1rpx solid #fca5a5;
+}
+
+.warmup-card-stop-btn {
+  margin-left: 12rpx !important;
+  padding: 4rpx 14rpx !important;
+  font-size: 20rpx !important;
+  line-height: 1.5 !important;
+  border-radius: 12rpx !important;
+  background: #dc2626 !important;
+  color: #ffffff !important;
+  font-weight: 600 !important;
+}
+
+.badge-free {
+  background: #f3e8ff !important;
+  color: #7e22ce !important;
+  border-color: #d8b4fe !important;
+}
+
+.rl-badge-danger {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.mon-actions .rl-btn.rl-btn-danger {
+  background: #dc2626;
+  color: #ffffff;
+  font-weight: 700;
+  box-shadow: 0 4rpx 14rpx rgba(220, 38, 38, 0.25);
+}

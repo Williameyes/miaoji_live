@@ -464,6 +464,35 @@ function configureScoreSnifferRoi(sessionId, roiData) {
   });
 }
 
+
+/**
+ * 拉取直播间预热任务列表（支持历史任务查看）
+ * @param {Object} [query]
+ * @param {number} [query.limit]
+ * @returns {Promise<{ list: any[] }>}
+ */
+function fetchWarmupList(query) {
+  const q = query || {};
+  return get('/api/app/match/warmup_list', q)
+    .then(parseRadarAppResponse)
+    .catch(function (err) {
+      throw normalizeRadarAppError(err);
+    });
+}
+
+/**
+ * 手动停止正在运行中的预热任务
+ * @param {{ job_id?: string, match_id?: number, reason?: string }} payload
+ * @returns {Promise<Record<string, unknown>>}
+ */
+function stopWarmup(payload) {
+  return post('/api/app/match/warmup_stop', payload)
+    .then(parseRadarAppResponse)
+    .catch(function (err) {
+      throw normalizeRadarAppError(err);
+    });
+}
+
 module.exports = {
   configureScoreSnifferRoi,
   startScoreSniffer,
@@ -495,5 +524,7 @@ module.exports = {
   fetchMatchMonitorStatus,
   deleteMatch,
   sendWarmup,
-  fetchWarmupStatus
+  fetchWarmupStatus,
+  fetchWarmupList,
+  stopWarmup
 };

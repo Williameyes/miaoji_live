@@ -1,11 +1,21 @@
 <view class="rl-root">
 
   <!-- ==================== Step 1: 场次列表与快捷入口 ==================== -->
-  <block wx:if="{{!selectedMatchId}}">
+  <block wx:if="{{!selectedMatchId && !isFreeWarmup}}">
     <view class="rl-header">
       <view class="rl-kicker">雷达实验 · 直播预热</view>
-      <view class="rl-title">选择预热场次</view>
-      <view class="rl-sub">仅展示已下发预热任务的场次，点击查看战报或下发新预热</view>
+      <view class="rl-title">预热任务管理</view>
+      <view class="rl-sub">实时监控预热执行进度，支持历史任务复盘与一键叫停</view>
+    </view>
+
+    <!-- 自由直播间预热入口 (解耦赛事模式) -->
+    <view class="free-warmup-card" bindtap="onStartFreeWarmup" hover-class="free-warmup-card-hover">
+      <view class="free-warmup-icon">🚀</view>
+      <view class="free-warmup-content">
+        <view class="free-warmup-title">自由直播间预热 (无需关联比赛)</view>
+        <view class="free-warmup-desc">直接粘贴任意抖音直播间口令/链接，智能挂房点赞与拟真互动</view>
+      </view>
+      <view class="free-warmup-arrow">›</view>
     </view>
 
     <!-- 快捷按 ID 直达栏 -->
@@ -23,9 +33,9 @@
 
     <!-- 分类筛选 Tab -->
     <view class="match-filter-tabs">
-      <view class="match-filter-tab {{listStatusTab === 'all' ? 'active' : ''}}" bindtap="onSwitchListTab" data-tab="all">全部场次</view>
-      <view class="match-filter-tab {{listStatusTab === 'monitoring' ? 'active' : ''}}" bindtap="onSwitchListTab" data-tab="monitoring">监测中/待采集</view>
-      <view class="match-filter-tab {{listStatusTab === 'ended' ? 'active' : ''}}" bindtap="onSwitchListTab" data-tab="ended">已结赛</view>
+      <view class="match-filter-tab {{listStatusTab === 'all' ? 'active' : ''}}" bindtap="onSwitchListTab" data-tab="all">全部任务</view>
+      <view class="match-filter-tab {{listStatusTab === 'monitoring' ? 'active' : ''}}" bindtap="onSwitchListTab" data-tab="monitoring">进行中/排队中</view>
+      <view class="match-filter-tab {{listStatusTab === 'ended' ? 'active' : ''}}" bindtap="onSwitchListTab" data-tab="ended">已结束/已停止</view>
     </view>
 
     <!-- 加载中 -->
@@ -33,7 +43,40 @@
       <text>加载场次中…</text>
     </view>
 
-    <!-- 列表展现 -->
+    <!-- 预热任务统一列表展现 -->
+    <view class="rl-card warmup-list-card" wx:elif="{{warmupJobsList.length}}">
+      <block wx:for="{{warmupJobsList}}" wx:key="job_id">
+        <view
+          class="active-match-item"
+          bindtap="onSelectWarmupJobCard"
+          data-job-id="{{item.job_id}}"
+          data-match-id="{{item.match_id}}"
+          hover-class="rl-list-item-hover"
+        >
+          <view class="active-match-main">
+            <view class="rl-list-title">
+              <text class="oam-seq-badge {{item.match_id ? '' : 'badge-free'}}">{{item.match_id ? ('#' + item.match_id) : '自由预热'}}</text>
+              <text>{{item.match_title}}</text>
+            </view>
+            <view class="rl-list-desc">目标: {{item.live_url}}</view>
+            <view class="rl-list-desc active-match-id">创建: {{item.createdAtText}} · {{item.account_count}}账号 · 累计点赞 {{item.total_likes || 0}}次</view>
+          </view>
+          <view class="active-match-badge-wrap">
+            <text class="rl-badge {{item.statusBadgeClass}}">{{item.statusLabel}}</text>
+            <button
+              class="rl-btn rl-btn-danger warmup-card-stop-btn"
+              size="mini"
+              wx:if="{{item.isRunning}}"
+              catchtap="onStopWarmup"
+              data-job-id="{{item.job_id}}"
+              data-match-id="{{item.match_id}}"
+            >🛑 停止</button>
+          </view>
+        </view>
+      </block>
+    </view>
+
+    <!-- 降级场次列表展现 -->
     <view class="rl-card warmup-list-card" wx:elif="{{activeMatches.length}}">
       <block wx:for="{{activeMatches}}" wx:key="id">
         <view
@@ -78,12 +121,12 @@
     </view>
   </block>
 
-  <!-- ==================== Step 2: 预热战报 (常驻展示) ==================== -->
-  <block wx:elif="{{selectedMatchId && warmupJobId && !showConfigForm}}">
+  <!-- ==================== Step 2: 预热任务详情与运行监控 (常驻展示) ==================== -->
+  <block wx:elif="{{(selectedMatchId || isFreeWarmup || warmupJobId) && !showConfigForm}}">
     <view class="rl-header">
-      <view class="rl-kicker">雷达实验 · 预热交单战报</view>
-      <view class="rl-title">{{selectedMatchTitle}}</view>
-      <view class="rl-sub">批次 ID: {{warmupJobId}} · 场次 ID: {{selectedMatchId}}</view>
+      <view class="rl-kicker">雷达实验 · 预热任务详情</view>
+      <view class="rl-title">{{selectedMatchTitle || "预热任务详情"}}</view>
+      <view class="rl-sub">批次 ID: {{warmupJobId}} · {{selectedMatchId ? ('场次 ID: ' + selectedMatchId) : '自由预热模式'}}</view>
     </view>
 
     <!-- 战报汇总卡片 -->
@@ -177,9 +220,10 @@
 
     <!-- 底部操作按钮 -->
     <view class="mon-actions">
-      <button class="rl-btn rl-btn-primary" bindtap="onRefreshReport">🔄 刷新最新战报</button>
+      <button class="rl-btn rl-btn-danger" wx:if="{{warmupStatus === 'running' || warmupStatus === 'pending'}}" bindtap="onStopWarmup">🛑 停止预热任务</button>
+      <button class="rl-btn rl-btn-primary" bindtap="onRefreshReport">🔄 刷新任务状态</button>
       <button class="rl-btn rl-btn-secondary" bindtap="onShowConfigForm">⚡ 重新发起 / 调整预热</button>
-      <button class="rl-btn rl-btn-secondary" bindtap="onBackToList">返回场次列表</button>
+      <button class="rl-btn rl-btn-secondary" bindtap="onBackToList">返回任务列表</button>
     </view>
   </block>
 
@@ -188,7 +232,7 @@
     <view class="rl-header">
       <view class="rl-kicker">雷达实验 · 直播预热配置</view>
       <view class="rl-title">{{selectedMatchTitle}}</view>
-      <view class="rl-sub">场次 ID: {{selectedMatchId}}</view>
+      <view class="rl-sub">{{selectedMatchId ? ('场次 ID: ' + selectedMatchId) : '自由预热模式 · 无需关联比赛'}}</view>
     </view>
 
     <view class="rl-card">
@@ -356,8 +400,8 @@
 
     <view class="mon-actions">
       <button class="rl-btn rl-btn-primary" disabled="{{submitting || (warmupSourceMode === 'select' && !warmupLiveUrl) || (warmupSourceMode === 'input' && !warmupInputText)}}" bindtap="onSubmitWarmup">下发预热任务</button>
-      <button class="rl-btn rl-btn-secondary" wx:if="{{warmupJobId}}" bindtap="onHideConfigForm">查看最新战报</button>
-      <button class="rl-btn rl-btn-secondary" bindtap="onBackToList">返回场次列表</button>
+      <button class="rl-btn rl-btn-secondary" wx:if="{{warmupJobId}}" bindtap="onHideConfigForm">查看任务详情</button>
+      <button class="rl-btn rl-btn-secondary" bindtap="onBackToList">返回任务列表</button>
     </view>
   </block>
 

@@ -10,7 +10,8 @@ const STATUS_DISPLAY = {
   waiting_radar: { label: '等待雷达', cls: 'rl-badge-warn' },
   monitoring: { label: '监测中', cls: 'rl-badge-ok' },
   ended: { label: '已结束', cls: 'rl-badge-muted' },
-  interrupted: { label: '已中断', cls: 'rl-badge-warn' }
+  interrupted: { label: '已中断', cls: 'rl-badge-warn' },
+  stopped: { label: '已停止', cls: 'rl-badge-danger' }
 };
 
 const WARMUP_STATUS_LABELS = {
@@ -18,7 +19,8 @@ const WARMUP_STATUS_LABELS = {
   running: '运行中',
   completed: '已完成',
   partial_failed: '部分失败',
-  failed: '已失败'
+  failed: '已失败',
+  stopped: '已停止'
 };
 
 const RESULT_STATUS_LABELS = {
@@ -72,6 +74,7 @@ Page({
     listStatusTab: 'all', // 'all' | 'monitoring' | 'ended'
     directMatchIdInput: '',
     activeMatches: [],
+    warmupJobsList: [],
     loading: false,
 
     // 新增预热弹窗相关状态
@@ -79,6 +82,9 @@ Page({
     newWarmupMatchId: '',
     availableMatchOptions: [],
     newWarmupPickerIndex: 0,
+
+    // 自由预热模式状态
+    isFreeWarmup: false,
 
     // 当前选中的场次
     selectedMatchId: '',
@@ -195,21 +201,75 @@ Page({
   },
 
   /**
-   * 加载场次列表
+   * 加载预热任务列表与场次列表（统一管理，退出重进可直接查看历史任务）
    */
   loadActiveMatches: function () {
     const self = this;
     this.setData({ loading: true });
 
-    const query = {};
     const tab = this.data.listStatusTab;
+    const localWarmupMap = getWarmupRecordsMap();
+
+    // 优先拉取全量预热任务列表
+    fetchWarmupList({ limit: 50 })
+      .then(function (res) {
+        const rawList = (res && res.list) || [];
+        const formattedJobs = rawList.map(function (item) {
+          const status = item.status || 'pending';
+          const isRunning = status === 'running' || status === 'pending';
+          let statusBadgeClass = 'rl-badge-muted';
+          if (status === 'running' || status === 'completed') {
+            statusBadgeClass = 'rl-badge-ok';
+          } else if (status === 'pending') {
+            statusBadgeClass = 'rl-badge-warn';
+          } else if (status === 'stopped' || status === 'failed') {
+            statusBadgeClass = 'rl-badge-danger';
+          }
+
+          let createdAtText = '';
+          if (item.created_at) {
+            const date = new Date(item.created_at);
+            createdAtText = (date.getMonth() + 1) + '/' + date.getDate() + ' ' +
+              String(date.getHours()).padStart(2, '0') + ':' +
+              String(date.getMinutes()).padStart(2, '0');
+          }
+
+          return Object.assign({}, item, {
+            statusLabel: WARMUP_STATUS_LABELS[status] || status,
+            statusBadgeClass: statusBadgeClass,
+            isRunning: isRunning,
+            createdAtText: createdAtText
+          });
+        });
+
+        // 根据 Tab 筛选
+        const filteredJobs = formattedJobs.filter(function (job) {
+          if (tab === 'monitoring') {
+            return job.isRunning;
+          }
+          if (tab === 'ended') {
+            return !job.isRunning;
+          }
+          return true;
+        });
+
+        self.setData({
+          warmupJobsList: filteredJobs,
+          loading: false
+        });
+      })
+      .catch(function (err) {
+        console.warn('[WarmupIndex] fetchWarmupList fallback to matches', err);
+        self.setData({ loading: false });
+      });
+
+    // 同时拉取赛事场次做备选
+    const query = {};
     if (tab === 'monitoring') {
       query.status = 'monitoring,waiting_radar';
     } else if (tab === 'ended') {
       query.status = 'ended,interrupted';
     }
-
-    const localWarmupMap = getWarmupRecordsMap();
 
     fetchMatchList(query)
       .then(function (list) {
@@ -222,7 +282,6 @@ Page({
           .map(function (item) {
             const status = item.matchStatus || (tab === 'ended' ? 'ended' : 'monitoring');
             const disp = STATUS_DISPLAY[status] || { label: item.matchStatus || '已结赛', cls: 'rl-badge-muted' };
-            
             const localInfo = localWarmupMap[String(item.id)] || {};
             const warmupStatus = item.warmupStatus || localInfo.status || '';
             const warmupBadgeLabel = WARMUP_STATUS_LABELS[warmupStatus] || (warmupStatus ? warmupStatus : '预热中');
@@ -243,16 +302,78 @@ Page({
               hasWarmupBadge: Boolean(warmupStatus)
             });
           });
-        self.setData({
-          activeMatches: matches,
-          loading: false
-        });
+        self.setData({ activeMatches: matches });
       })
-      .catch(function (err) {
-        console.warn('[WarmupIndex] fetchMatchList fail', err);
-        self.setData({ loading: false });
-        wx.showToast({ title: err.message || '加载场次失败', icon: 'none' });
-      });
+      .catch(function (_) {});
+  },
+
+  /**
+   * 点击预热任务卡片，直达该任务详情与实时监控
+   */
+  onSelectWarmupJobCard: function (e) {
+    const dataset = (e && e.currentTarget && e.currentTarget.dataset) || {};
+    const jobId = dataset.jobId;
+    const matchId = Number(dataset.matchId) || 0;
+    const isFree = !matchId || matchId === 0;
+
+    this.setData({
+      selectedMatchId: isFree ? '' : matchId,
+      isFreeWarmup: isFree,
+      warmupJobId: jobId,
+      selectedMatchTitle: isFree ? '自由直播间预热 (免场次)' : ('场次 #' + matchId),
+      showConfigForm: false
+    });
+
+    this._loadMatchWarmupReport(matchId, false, jobId);
+  },
+
+  /**
+   * 手动停止预热任务（支持列表快捷键与详情页主控键）
+   */
+  onStopWarmup: function (e) {
+    const self = this;
+    const dataset = (e && e.currentTarget && e.currentTarget.dataset) || {};
+    const targetJobId = dataset.jobId || self.data.warmupJobId;
+    const targetMatchId = Number(dataset.matchId) || Number(self.data.selectedMatchId) || 0;
+
+    if (!targetJobId && !targetMatchId) {
+      wx.showToast({ title: '缺少任务标识', icon: 'none' });
+      return;
+    }
+
+    wx.showModal({
+      title: '停止预热确认',
+      content: '确定要停止当前预热任务吗？停止后所有关联账号将安全退出直播间并释放。',
+      confirmText: '确认停止',
+      confirmColor: '#dc2626',
+      cancelText: '继续预热',
+      success: function (res) {
+        if (!res.confirm) return;
+
+        wx.showLoading({ title: '正在停止预热…', mask: true });
+        stopWarmup({ job_id: targetJobId, match_id: targetMatchId })
+          .then(function () {
+            wx.hideLoading();
+            wx.showToast({ title: '已成功停止预热', icon: 'success' });
+            self._stopWarmupPolling();
+
+            // 若当前详情页正展示该任务，立即更新并重新拉取
+            if (self.data.warmupJobId === targetJobId) {
+              self.setData({
+                warmupStatus: 'stopped',
+                warmupStatusLabel: '已停止'
+              });
+              self._loadMatchWarmupReport(self.data.selectedMatchId, false, targetJobId);
+            }
+            // 刷新统一列表
+            self.loadActiveMatches();
+          })
+          .catch(function (err) {
+            wx.hideLoading();
+            wx.showToast({ title: err.message || '停止失败', icon: 'none' });
+          });
+      }
+    });
   },
 
   /**
@@ -313,13 +434,23 @@ Page({
   /**
    * 按 matchId 加载最新一条预热交单战报
    */
-  _loadMatchWarmupReport: function (matchId, isPolling) {
+  _loadMatchWarmupReport: function (matchId, isPolling, optJobId) {
     const self = this;
     if (!isPolling) {
       this.setData({ reportLoading: true });
     }
 
-    return fetchWarmupStatus({ match_id: matchId })
+    const query = {};
+    const effectiveJobId = optJobId || self.data.warmupJobId;
+    if (effectiveJobId) {
+      query.job_id = effectiveJobId;
+    } else if (matchId && Number(matchId) > 0) {
+      query.match_id = matchId;
+    }
+
+    const isFree = self.data.isFreeWarmup || (!matchId || Number(matchId) === 0);
+
+    return fetchWarmupStatus(query)
       .then(function (res) {
         self.setData({ reportLoading: false });
         if (res && res.job_id) {
@@ -371,7 +502,7 @@ Page({
             showConfigForm: false
           });
 
-          recordWarmupMatch(matchId, {
+          recordWarmupMatch(isFree ? ('free_' + res.job_id) : matchId, {
             jobId: res.job_id,
             status: status
           });
@@ -395,7 +526,6 @@ Page({
       .catch(function (err) {
         self.setData({ reportLoading: false });
         console.warn('[WarmupIndex] loadMatchWarmupReport fail', err);
-        // 查询报错时默认展示配置面板
         self.setData({ showConfigForm: true });
       });
   },
@@ -410,7 +540,7 @@ Page({
     this._loadMatchWarmupReport(matchId, false)
       .then(function () {
         wx.hideLoading();
-        wx.showToast({ title: '战报已更新', icon: 'success' });
+        wx.showToast({ title: '任务状态已更新', icon: 'success' });
       })
       .catch(function () {
         wx.hideLoading();
@@ -561,10 +691,10 @@ Page({
    */
   onSubmitWarmup: function () {
     const self = this;
-    const matchId = this.data.selectedMatchId;
-    if (!matchId) return;
+    const matchId = Number(this.data.selectedMatchId) || 0;
+    const isFree = this.data.isFreeWarmup || matchId <= 0;
 
-    const isSelectMode = this.data.warmupSourceMode === 'select' && this.data.boundAnchors.length > 0;
+    const isSelectMode = !isFree && this.data.warmupSourceMode === 'select' && this.data.boundAnchors.length > 0;
     let liveUrl = '';
     let rawText = '';
     
@@ -632,7 +762,7 @@ Page({
       .then(function (res) {
         wx.hideLoading();
         if (res && res.job_id) {
-          recordWarmupMatch(matchId, {
+          recordWarmupMatch(isFree ? ("free_" + res.job_id) : matchId, {
             jobId: res.job_id,
             status: 'running'
           });
@@ -704,9 +834,24 @@ Page({
   /**
    * 返回列表
    */
+  onStartFreeWarmup: function () {
+    this.setData({
+      isFreeWarmup: true,
+      selectedMatchId: '',
+      selectedMatchTitle: '自由直播间预热',
+      boundAnchors: [],
+      warmupLiveUrl: '',
+      warmupInputText: '',
+      warmupSourceMode: 'custom',
+      showConfigForm: true,
+      warmupJobId: ''
+    });
+  },
+
   onBackToList: function () {
     this._stopWarmupPolling();
     this.setData({
+      isFreeWarmup: false,
       selectedMatchId: '',
       selectedMatchTitle: '',
       boundAnchors: [],
