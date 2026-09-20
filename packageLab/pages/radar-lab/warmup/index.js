@@ -3,7 +3,14 @@
  */
 
 const { ensureRadarLabAccess } = require('../../../utils/radar-access.js');
-const { fetchMatchList, fetchMatchDetail, sendWarmup, fetchWarmupStatus } = require('../../../services/radar-api.js');
+const {
+  fetchMatchList,
+  fetchMatchDetail,
+  sendWarmup,
+  fetchWarmupStatus,
+  fetchWarmupList,
+  stopWarmup
+} = require('../../../services/radar-api.js');
 
 /** 场次状态对应名称与样式 */
 const STATUS_DISPLAY = {
@@ -351,27 +358,32 @@ Page({
         if (!res.confirm) return;
 
         wx.showLoading({ title: '正在停止预热…', mask: true });
-        stopWarmup({ job_id: targetJobId, match_id: targetMatchId })
-          .then(function () {
-            wx.hideLoading();
-            wx.showToast({ title: '已成功停止预热', icon: 'success' });
-            self._stopWarmupPolling();
+        try {
+          stopWarmup({ job_id: targetJobId, match_id: targetMatchId })
+            .then(function () {
+              wx.hideLoading();
+              wx.showToast({ title: '已成功停止预热', icon: 'success' });
+              self._stopWarmupPolling();
 
-            // 若当前详情页正展示该任务，立即更新并重新拉取
-            if (self.data.warmupJobId === targetJobId) {
-              self.setData({
-                warmupStatus: 'stopped',
-                warmupStatusLabel: '已停止'
-              });
-              self._loadMatchWarmupReport(self.data.selectedMatchId, false, targetJobId);
-            }
-            // 刷新统一列表
-            self.loadActiveMatches();
-          })
-          .catch(function (err) {
-            wx.hideLoading();
-            wx.showToast({ title: err.message || '停止失败', icon: 'none' });
-          });
+              // 若当前详情页正展示该任务，立即更新并重新拉取
+              if (self.data.warmupJobId === targetJobId) {
+                self.setData({
+                  warmupStatus: 'stopped',
+                  warmupStatusLabel: '已停止'
+                });
+                self._loadMatchWarmupReport(self.data.selectedMatchId, false, targetJobId);
+              }
+              // 刷新统一列表
+              self.loadActiveMatches();
+            })
+            .catch(function (err) {
+              wx.hideLoading();
+              wx.showToast({ title: err.message || '停止失败', icon: 'none' });
+            });
+        } catch (err) {
+          wx.hideLoading();
+          wx.showToast({ title: err.message || '停止执行异常', icon: 'none' });
+        }
       }
     });
   },
