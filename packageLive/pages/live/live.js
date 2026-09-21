@@ -997,6 +997,18 @@ Page({
     promoLoadInput: '',
     /** 载入推广请求中 */
     promoLoadBusy: false,
+    /** 文字滚动广告文案 */
+    scrollingAdText: '',
+    /** 文字滚动广告显隐 */
+    scrollingAdVisible: false,
+    /** 文字滚动速度：slow | normal | fast */
+    scrollingAdSpeed: 'normal',
+    /** 文字滚动广告横坐标（默认贴顶偏左避让安全区） */
+    scrollingAdX: 20,
+    /** 文字滚动广告纵坐标（默认贴顶） */
+    scrollingAdY: 10,
+    /** 文字滚动广告自适应容器宽度 (rpx) */
+    scrollingAdBarWidthRpx: 525,
     defaultCover: 'data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"160\" height=\"90\" viewBox=\"0 0 160 90\"><defs><linearGradient id=\"g\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"%2338475e\"/><stop offset=\"100%\" stop-color=\"%23202a3c\"/></linearGradient></defs><rect width=\"160\" height=\"90\" rx=\"12\" ry=\"12\" fill=\"url(%23g)\"/></svg>',
     showReplayMask: false,
     replayMaskText: 'REPLAY',
@@ -1245,6 +1257,7 @@ resolveMatchIdForHighlightStorage: function () {
         selfSyncMc._initProScoreboardMovableLayout();
       }
       selfSyncMc._updateLiveWsoTitle(latestConfig, sportType);
+      selfSyncMc._initScrollingAd();
     });
     app.globalData.matchConfig = latestConfig;
     wx.setStorageSync('matchConfig', latestConfig);
@@ -12647,6 +12660,169 @@ _logHighlightTrimDiagnostic: function (phase, detail) {
     });
   },
   /**
+   * 计算文字滚动广告的自适应宽度 (rpx)，完全贴合文案长度，上限保底为 70% 屏幕宽度 (525rpx)
+   */
+  _calcScrollingAdWidthRpx: function (text) {
+    if (!text) return 0;
+    let widthRpx = 0;
+    for (let i = 0; i < text.length; i++) {
+      const code = text.charCodeAt(i);
+      if (code > 255) {
+        widthRpx += 13.5;
+      } else if (code === 32) {
+        widthRpx += 4;
+      } else {
+        widthRpx += 7.5;
+      }
+    }
+    const textWidthRpx = Math.ceil(widthRpx) + 2;
+    return Math.min(525, textWidthRpx);
+  },
+  /**
+   * 初始化本场比赛的文字滚动广告
+   */
+  _initScrollingAd: function () {
+    const mc = this.data.matchConfig;
+    if (!mc || !mc.scrollingAd) {
+      this.setData({
+        scrollingAdText: '',
+        scrollingAdVisible: false,
+        scrollingAdBarWidthRpx: 0
+      });
+      return;
+    }
+    const ad = mc.scrollingAd;
+    const text = (ad.text || '').trim();
+    const enabled = ad.enabled !== false && !!text;
+    const speed = ad.speed || 'normal';
+    const barWidthRpx = this._calcScrollingAdWidthRpx(text);
+
+    let defaultX = 20;
+    try {
+      const sys = wx.getSystemInfoSync();
+      const sw = Math.max(1, Number(sys.windowWidth) || 667);
+      const barWidthPx = (barWidthRpx * sw) / 750;
+      defaultX = Math.max(10, Math.round((sw - barWidthPx) / 2));
+    } catch (e) {}
+
+    const x = typeof ad.x === 'number' ? ad.x : defaultX;
+    const y = typeof ad.y === 'number' ? ad.y : 8;
+    this._scrollingAdLastX = x;
+    this._scrollingAdLastY = y;
+    this.setData({
+      scrollingAdText: text,
+      scrollingAdVisible: enabled,
+      scrollingAdSpeed: speed,
+      scrollingAdBarWidthRpx: barWidthRpx,
+      scrollingAdX: x,
+      scrollingAdY: y
+    });
+
+    if (enabled && text) {
+      wx.nextTick(() => {
+        try {
+          const query = this.createSelectorQuery();
+          query.select('#scrolling-ad-measurer').boundingClientRect(rect => {
+            if (rect && rect.width > 0) {
+              const sys = wx.getSystemInfoSync();
+              const sw = Math.max(1, Number(sys.windowWidth) || 667);
+              const measuredRpx = Math.round((rect.width * 750) / sw);
+              const finalRpx = Math.min(525, measuredRpx + 2);
+              if (Math.abs(finalRpx - (this.data.scrollingAdBarWidthRpx || 0)) > 4) {
+                this.setData({ scrollingAdBarWidthRpx: finalRpx });
+              }
+            }
+          }).exec();
+        } catch (e) {}
+      });
+    }
+  },
+  /**
+   * 抽屉工具条：快速切换文字滚动广告显隐
+   */
+  onToggleScrollingAdTap: function () {
+    const text = (this.data.scrollingAdText || '').trim();
+    if (!text) {
+      wx.showToast({
+        title: '暂无滚动广告，请先在比赛广告设置中添加',
+        icon: 'none'
+      });
+      return;
+    }
+    const nextVisible = !this.data.scrollingAdVisible;
+    const barWidthRpx = this._calcScrollingAdWidthRpx(text);
+    this.setData({
+      scrollingAdVisible: nextVisible,
+      scrollingAdBarWidthRpx: barWidthRpx
+    });
+    wx.showToast({
+      title: nextVisible ? '已开启滚动广告' : '已隐藏滚动广告',
+      icon: 'none'
+    });
+
+    try {
+      const mc = this.data.matchConfig;
+      if (mc) {
+        if (!mc.scrollingAd) mc.scrollingAd = {};
+        mc.scrollingAd.enabled = nextVisible;
+        const currentMatchId = wx.getStorageSync('currentMatchId');
+        if (currentMatchId) {
+          const matches = wx.getStorageSync('MIAOXIE_MATCHES');
+          if (Array.isArray(matches)) {
+            const idx = matches.findIndex(m => m.id === currentMatchId);
+            if (idx >= 0) {
+              matches[idx].scrollingAd = mc.scrollingAd;
+              wx.setStorageSync('MIAOXIE_MATCHES', matches);
+            }
+          }
+        }
+      }
+    } catch (e) {}
+  },
+  /**
+   * 文字滚动广告拖拽位置变更
+   */
+  onScrollingAdPositionChange: function (e) {
+    const detail = e.detail || {};
+    if (detail.source === 'friction') return;
+    if (typeof detail.x === 'number' && typeof detail.y === 'number') {
+      this._scrollingAdLastX = detail.x;
+      this._scrollingAdLastY = detail.y;
+    }
+  },
+  /**
+   * 文字滚动广告拖拽结束（保存坐标以便持久化记忆）
+   */
+  onScrollingAdTouchEnd: function () {
+    if (typeof this._scrollingAdLastX === 'number' && typeof this._scrollingAdLastY === 'number') {
+      const newX = this._scrollingAdLastX;
+      const newY = this._scrollingAdLastY;
+      this.setData({
+        scrollingAdX: newX,
+        scrollingAdY: newY
+      });
+      try {
+        const mc = this.data.matchConfig;
+        if (mc) {
+          if (!mc.scrollingAd) mc.scrollingAd = {};
+          mc.scrollingAd.x = newX;
+          mc.scrollingAd.y = newY;
+          const currentMatchId = wx.getStorageSync('currentMatchId');
+          if (currentMatchId) {
+            const matches = wx.getStorageSync('MIAOXIE_MATCHES');
+            if (Array.isArray(matches)) {
+              const idx = matches.findIndex(m => m.id === currentMatchId);
+              if (idx >= 0) {
+                matches[idx].scrollingAd = mc.scrollingAd;
+                wx.setStorageSync('MIAOXIE_MATCHES', matches);
+              }
+            }
+          }
+        }
+      } catch (e) {}
+    }
+  },
+  /**
    * 推广 Logo 目标展示高度（屏幕高度约 1/10）。
    * @returns {number}
    */
@@ -16144,6 +16320,7 @@ onLoad: function (options) {
       });
     } catch (e) {}
     this._initLocalAds();
+    this._initScrollingAd();
     this._initKeyControlListeners();
   },
   _initKeyControlListeners: function () {

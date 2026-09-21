@@ -545,6 +545,112 @@
   }
 
   // ─────────────────────────────────────────────
+  // 📢 赞助商滚动文字广告控制器 (独立于欢迎文案)
+  // ─────────────────────────────────────────────
+  var domScrollingAdBar = document.getElementById('obs-scrolling-ad-bar');
+  var domScrollingAdText = document.getElementById('obs-scrolling-ad-text');
+  var domScrollingAdTextDup = document.getElementById('obs-scrolling-ad-text-dup');
+  var domScrollingAdMeasurer = document.getElementById('obs-scrolling-ad-measurer');
+
+  function showObsScrollingAd(text) {
+    if (!domScrollingAdBar || !domScrollingAdText) return;
+    var cleanText = String(text || '').trim();
+    if (!cleanText) {
+      hideObsScrollingAd();
+      return;
+    }
+    domScrollingAdText.textContent = cleanText;
+    if (domScrollingAdTextDup) {
+      domScrollingAdTextDup.textContent = cleanText;
+    }
+    if (domScrollingAdMeasurer) {
+      domScrollingAdMeasurer.textContent = cleanText;
+    }
+    domScrollingAdBar.classList.remove('obs-scrolling-ad--hidden');
+
+    // 精确测算单段文案宽度：如果小于 70vw 则与文案长度完全一致，最大限制为 70vw 保底
+    try {
+      var measuredWidth = domScrollingAdMeasurer ? domScrollingAdMeasurer.offsetWidth : 0;
+      if (!measuredWidth) {
+        var charPx = Math.max(18, Math.round(window.innerWidth * 0.018));
+        measuredWidth = Math.round(cleanText.length * charPx);
+      }
+      var maxAllowedWidth = Math.round(window.innerWidth * 0.70);
+      var finalWidth = Math.min(maxAllowedWidth, measuredWidth + 4);
+      domScrollingAdBar.style.width = finalWidth + 'px';
+      domScrollingAdBar.style.maxWidth = '70vw';
+    } catch (e) {
+      domScrollingAdBar.style.width = 'auto';
+      domScrollingAdBar.style.maxWidth = '70vw';
+    }
+  }
+
+  function hideObsScrollingAd() {
+    if (!domScrollingAdBar) return;
+    domScrollingAdBar.classList.add('obs-scrolling-ad--hidden');
+  }
+
+  if (domScrollingAdBar) {
+    (function enableScrollingAdDrag() {
+      var isMoveDragging = false;
+      var startX = 0, startY = 0;
+      var initLeft = 0, initTop = 0;
+
+      try {
+        var saved = localStorage.getItem('obs_scrolling_ad_pos');
+        if (saved) {
+          var pos = JSON.parse(saved);
+          if (pos.left !== undefined) {
+            domScrollingAdBar.style.left = pos.left;
+            domScrollingAdBar.style.transform = 'none';
+          }
+          if (pos.top !== undefined) {
+            domScrollingAdBar.style.top = pos.top;
+          }
+        }
+      } catch (e) {}
+
+      domScrollingAdBar.addEventListener('mousedown', function (e) {
+        isMoveDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        var rect = domScrollingAdBar.getBoundingClientRect();
+        initLeft = rect.left;
+        initTop = rect.top;
+        domScrollingAdBar.style.left = initLeft + 'px';
+        domScrollingAdBar.style.top = initTop + 'px';
+        domScrollingAdBar.style.transform = 'none';
+        e.preventDefault();
+      });
+
+      domScrollingAdBar.addEventListener('dblclick', function (e) {
+        e.stopPropagation();
+        e.preventDefault();
+        hideObsScrollingAd();
+      });
+
+      window.addEventListener('mousemove', function (e) {
+        if (!isMoveDragging) return;
+        var dx = e.clientX - startX;
+        var dy = e.clientY - startY;
+        domScrollingAdBar.style.left = (initLeft + dx) + 'px';
+        domScrollingAdBar.style.top = (initTop + dy) + 'px';
+      });
+
+      window.addEventListener('mouseup', function () {
+        if (!isMoveDragging) return;
+        isMoveDragging = false;
+        try {
+          localStorage.setItem('obs_scrolling_ad_pos', JSON.stringify({
+            left: domScrollingAdBar.style.left,
+            top: domScrollingAdBar.style.top
+          }));
+        } catch (e) {}
+      });
+    })();
+  }
+
+  // ─────────────────────────────────────────────
   // ─────────────────────────────────────────────
   // 版权署名动态替换 & 弹球碰撞飘动欢迎文案控制器
   // ─────────────────────────────────────────────
@@ -869,7 +975,8 @@
           clipIndex: obj.ci ? (obj.ci - 1) : 0,
           act: obj.act || '',
           broadcaster: obj.bc || obj.broadcaster || obj.nick || '',
-          marqueeText: obj.mt || obj.text || obj.welcomeText || obj.marqueeText || ''
+          marqueeText: obj.mt || obj.text || obj.welcomeText || obj.marqueeText || '',
+          scrollingAdText: obj.sa || obj.scrollingAd || obj.tickerText || obj.adText || ''
         };
       } catch (e) {
         console.warn('[OBS Overlay] decodeMatchMeta b64 error:', e);
@@ -913,7 +1020,8 @@
           targetIndex: jsonObj.ci || jsonObj.targetIndex || 0,
           clipIndex: jsonObj.ci ? (jsonObj.ci - 1) : (jsonObj.clipIndex || 0),
           act: jsonObj.act || '',
-          broadcaster: jsonObj.bc || jsonObj.broadcaster || jsonObj.nick || ''
+          broadcaster: jsonObj.bc || jsonObj.broadcaster || jsonObj.nick || '',
+          scrollingAdText: jsonObj.sa || jsonObj.scrollingAd || jsonObj.tickerText || jsonObj.adText || ''
         };
       } catch (e3) {}
     }
@@ -1038,6 +1146,16 @@
       updateBroadcasterName(broadcasterVal);
     }
 
+    // 5.5 赞助商滚动文字广告解析与渲染 (完全独立于欢迎横幅)
+    var scrollingAd = (d.scrollingAdText !== undefined ? d.scrollingAdText : (d.sa !== undefined ? d.sa : ((decoded && decoded.scrollingAdText !== undefined) ? decoded.scrollingAdText : '')));
+    if (typeof scrollingAd === 'string') {
+      if (scrollingAd.trim()) {
+        showObsScrollingAd(scrollingAd.trim());
+      } else {
+        hideObsScrollingAd();
+      }
+    }
+
     // 5.8 实时更新设置面板中的通信诊断卡片状态 (让用户一目了然是否收到控制端指令)
     var domDiagWsStatus = document.getElementById('diag-ws-status');
     var domDiagLastPacket = document.getElementById('diag-last-packet');
@@ -1082,6 +1200,10 @@
     } else if (actType === 'SHOW_WELCOME_MARQUEE' || d.type === 'SHOW_WELCOME_MARQUEE') {
       var marqueeText = d.marqueeText || d.welcomeText || d.text || (decoded && decoded.marqueeText) || '';
       console.log('[OBS Overlay] Received SHOW_WELCOME_MARQUEE, text:', marqueeText);
+      var bcFromMarquee = d.broadcaster || d.broadcasterNickname || d.bc || (decoded && decoded.bc) || '';
+      if (bcFromMarquee && bcFromMarquee !== '微信用户' && bcFromMarquee !== 'WeChat User') {
+        updateBroadcasterName(bcFromMarquee);
+      }
       showMarquee(marqueeText);
       alertBanner('📢 收到中控台指令：欢迎横幅已启动');
     } else if (actType === 'HIDE_WELCOME_MARQUEE' || d.type === 'HIDE_WELCOME_MARQUEE') {

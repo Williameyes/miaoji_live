@@ -146,33 +146,7 @@
       </view>
     </view>
 
-    <!-- 5. 比赛节次切换卡片 (全量 7 个枚举) -->
-    <view class="card period-card">
-      <view class="card-header flex-between">
-        <view class="header-left">
-          <text class="card-icon">⏱️</text>
-          <text class="card-title">比赛节次切换</text>
-        </view>
-        <view class="current-period-pill">
-          <text>当前: {{periods[period] || '第一节'}}</text>
-        </view>
-      </view>
-
-      <view class="periods-wrap">
-        <view 
-          wx:for="{{periods}}" 
-          wx:key="*this"
-          class="period-pill {{period === index ? 'period-pill--active' : ''}}"
-          bindtap="onPeriodSelect"
-          data-index="{{index}}"
-          hover-class="btn-hover"
-        >
-          <text class="period-text">{{item}}</text>
-        </view>
-      </view>
-    </view>
-
-    <!-- 6. 高光控制卡片 (立即截取 + 连续集锦回放) -->
+    <!-- 5. 高光控制卡片 (立即截取 + 连续集锦回放) -->
     <view class="card highlight-card">
       <view class="card-header flex-between">
         <view class="header-left">
@@ -217,6 +191,88 @@
           <text class="btn-icon">{{isReplaying ? '📺' : '🎬'}}</text>
           <text class="btn-label">{{isReplaying ? '立即切回实时直播' : '播放高光集锦 (连续播放)'}}</text>
         </button>
+      </view>
+    </view>
+
+    <!-- 6. 比赛节次切换卡片 (全量 7 个枚举) -->
+    <view class="card period-card">
+      <view class="card-header flex-between">
+        <view class="header-left">
+          <text class="card-icon">⏱️</text>
+          <text class="card-title">比赛节次切换</text>
+        </view>
+        <view class="current-period-pill">
+          <text>当前: {{periods[period] || '第一节'}}</text>
+        </view>
+      </view>
+
+      <view class="periods-wrap">
+        <view 
+          wx:for="{{periods}}" 
+          wx:key="*this"
+          class="period-pill {{period === index ? 'period-pill--active' : ''}}"
+          bindtap="onPeriodSelect"
+          data-index="{{index}}"
+          hover-class="btn-hover"
+        >
+          <text class="period-text">{{item}}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 7. 直播间提示（欢迎关注横幅控制） -->
+    <view class="card prompt-card">
+      <view class="card-header flex-between">
+        <view class="header-left">
+          <text class="card-icon">📢</text>
+          <text class="card-title">直播间提示</text>
+        </view>
+        <view class="prompt-status-badge {{isWelcomeMarqueeVisible ? 'prompt-status-badge--active' : ''}}">
+          <view class="prompt-status-dot"></view>
+          <text>{{isWelcomeMarqueeVisible ? '横幅展示中' : '已关闭'}}</text>
+        </view>
+      </view>
+
+      <!-- 主播昵称与快捷修改行 -->
+      <view class="broadcaster-setting-row flex-between">
+        <view class="broadcaster-info-wrap">
+          <text class="setting-label">主播署名：</text>
+          <text class="broadcaster-name-val">{{broadcasterNickname || '未设置 (点击右侧设置)'}}</text>
+        </view>
+        <view class="edit-nick-btn" bindtap="onEditBroadcasterNickname" hover-class="btn-hover">
+          <text class="edit-icon">✏️</text>
+          <text>修改主播名</text>
+        </view>
+      </view>
+
+      <!-- 直播间高保真效果模拟预览框 -->
+      <view class="live-prompt-preview-box">
+        <view class="preview-header-bar flex-between">
+          <text class="preview-label-tag">直播间画面实显模拟</text>
+          <text class="preview-mode-tag" wx:if="{{isWelcomeMarqueeVisible}}">🔴 实时浮现中</text>
+        </view>
+        <view class="prompt-pill-simulation">
+          <view class="sim-dot"></view>
+          <view class="sim-text-content">
+            <text>欢迎来到 </text>
+            <text class="sim-highlight-name">{{broadcasterNickname || '***'}}</text>
+            <text> 的直播间，点个免费的关注一起看球！</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 一键启停大按钮 -->
+      <button 
+        class="prompt-toggle-btn {{isWelcomeMarqueeVisible ? 'btn-prompt-stop' : 'btn-prompt-start'}}"
+        bindtap="{{isWelcomeMarqueeVisible ? 'onHideWelcomeMarquee' : 'onShowWelcomeMarquee'}}"
+        hover-class="btn-hover"
+      >
+        <text class="btn-icon">{{isWelcomeMarqueeVisible ? '🔕' : '🎉'}}</text>
+        <text class="btn-label">{{isWelcomeMarqueeVisible ? '关闭直播间提示 (开赛前关闭)' : '开启直播间提示 (节间休息 / 欢迎)'}}</text>
+      </button>
+
+      <view class="card-tip-text">
+        💡 提示：节间休息或赛前开启，提示观众点关注；比赛进行时点击关闭，保持画面清爽。
       </view>
     </view>
 

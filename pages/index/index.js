@@ -774,6 +774,15 @@ Page({
     };
   },
 
+  /**
+   * 跳转到0门槛直播教程
+   */
+  onGoToLiveTutorial() {
+    wx.navigateTo({
+      url: '/pages/live-tutorial/live-tutorial'
+    });
+  },
+
   /** 点击「新增比赛」——打开编辑浮层，赛名默认沿用上一场 */
   onAddMatch() {
     const draft = normalizeEditingMatchDraft(this.buildDefaultMatch(Date.now()));
@@ -1153,9 +1162,20 @@ Page({
       return !localAds.some(ad => ad.id === item.id);
     });
 
+    const adMatchConfig = JSON.parse(JSON.stringify(match));
+    if (!adMatchConfig.scrollingAd) {
+      adMatchConfig.scrollingAd = {
+        enabled: false,
+        text: '',
+        speed: 'normal',
+        x: 20,
+        y: 10
+      };
+    }
+
     this.setData({
       showLocalAdModal: true,
-      adMatchConfig: JSON.parse(JSON.stringify(match)),
+      adMatchConfig,
       localAdsPool
     });
   },
@@ -1167,6 +1187,75 @@ Page({
       adMatchConfig: null,
       localAdsPool: []
     });
+  },
+
+  /** 切换文字滚动广告开关 */
+  onToggleScrollingAd(e) {
+    const enabled = !!e.detail.value;
+    const adMatchConfig = this.data.adMatchConfig;
+    if (!adMatchConfig) return;
+    if (!adMatchConfig.scrollingAd) {
+      adMatchConfig.scrollingAd = {
+        enabled: false,
+        text: '',
+        speed: 'normal',
+        x: 20,
+        y: 10
+      };
+    }
+    adMatchConfig.scrollingAd.enabled = enabled;
+    this.setData({ adMatchConfig });
+    this._syncAdMatchConfigToMatches(adMatchConfig);
+  },
+
+  /** 输入滚动广告文字 */
+  onScrollingAdTextInput(e) {
+    const text = (e.detail.value || '');
+    const adMatchConfig = this.data.adMatchConfig;
+    if (!adMatchConfig) return;
+    if (!adMatchConfig.scrollingAd) {
+      adMatchConfig.scrollingAd = {
+        enabled: true,
+        text: '',
+        speed: 'normal',
+        x: 20,
+        y: 10
+      };
+    }
+    adMatchConfig.scrollingAd.text = text;
+    this.setData({ adMatchConfig });
+    this._syncAdMatchConfigToMatches(adMatchConfig);
+  },
+
+  /** 一键清空文字广告内容 */
+  onClearScrollingAdText() {
+    const adMatchConfig = this.data.adMatchConfig;
+    if (!adMatchConfig || !adMatchConfig.scrollingAd) return;
+    adMatchConfig.scrollingAd.text = '';
+    this.setData({ adMatchConfig });
+    this._syncAdMatchConfigToMatches(adMatchConfig);
+  },
+
+  /** 选择文字滚动速度 */
+  onSelectScrollingAdSpeed(e) {
+    const speed = e.currentTarget.dataset.speed || 'normal';
+    const adMatchConfig = this.data.adMatchConfig;
+    if (!adMatchConfig || !adMatchConfig.scrollingAd) return;
+    adMatchConfig.scrollingAd.speed = speed;
+    this.setData({ adMatchConfig });
+    this._syncAdMatchConfigToMatches(adMatchConfig);
+  },
+
+  /** 同步广告配置至 matches */
+  _syncAdMatchConfigToMatches(adMatchConfig) {
+    if (!adMatchConfig) return;
+    const matches = [...this.data.matches];
+    const idx = matches.findIndex((m) => m.id === adMatchConfig.id);
+    if (idx >= 0) {
+      matches[idx].localAds = adMatchConfig.localAds || [];
+      matches[idx].scrollingAd = adMatchConfig.scrollingAd;
+      this.saveMatches(matches);
+    }
   },
 
   /** 上传新广告图到本地素材池 */

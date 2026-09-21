@@ -88,7 +88,11 @@
     <view class="empty-state" wx:if="{{matches.length === 0}}">
       <text class="empty-icon">🏀</text>
       <text class="empty-text">还没有比赛记录</text>
-      <text class="empty-hint">点击下方按钮创建第一场</text>
+      <view class="empty-guide-link" bindtap="onGoToLiveTutorial" hover-class="empty-guide-link--hover">
+        <text class="empty-guide-sparkle">💡</text>
+        <text class="empty-guide-text">直播很难？点击查看0门槛教程</text>
+        <text class="empty-guide-arrow">›</text>
+      </view>
     </view>
 
     <!-- 新增按钮 -->
@@ -623,9 +627,76 @@
           <text class="ad-team-b" style="color: {{adMatchConfig.teamB.bgColor || '#10AEFF'}}">{{adMatchConfig.teamB.name || '客队'}}</text>
         </view>
 
-        <!-- 本场已选广告 -->
+        <!-- 📢 文字滚动广告（跑马灯字幕） -->
+        <view class="ad-section ad-section--text-marquee">
+          <view class="ad-section-header">
+            <view class="ad-section-title-wrap">
+              <text class="ad-section-title">文字滚动广告 (跑马灯字幕)</text>
+              <text class="ad-section-badge">实时滚动</text>
+            </view>
+            <switch
+              class="ad-switch"
+              checked="{{adMatchConfig.scrollingAd && adMatchConfig.scrollingAd.enabled}}"
+              bindchange="onToggleScrollingAd"
+              color="#2563EB"
+            />
+          </view>
+
+          <view class="ad-text-card" wx:if="{{adMatchConfig.scrollingAd && adMatchConfig.scrollingAd.enabled}}">
+            <view class="ad-input-row">
+              <input
+                class="ad-text-input"
+                maxlength="100"
+                placeholder="输入单行滚动广告（如：赞助商热线 138xxxx / 欢迎致辞）"
+                value="{{adMatchConfig.scrollingAd.text || ''}}"
+                bindinput="onScrollingAdTextInput"
+              />
+              <view
+                class="ad-clear-btn"
+                wx:if="{{adMatchConfig.scrollingAd.text}}"
+                catchtap="onClearScrollingAdText"
+              >✕</view>
+            </view>
+
+            <!-- 速度调节 -->
+            <view class="ad-text-setting-row">
+              <text class="ad-sub-label">滚动速度：</text>
+              <view class="ad-speed-pills">
+                <view
+                  class="ad-speed-pill {{adMatchConfig.scrollingAd.speed === 'slow' ? 'ad-speed-pill--active' : ''}}"
+                  catchtap="onSelectScrollingAdSpeed"
+                  data-speed="slow"
+                >慢速</view>
+                <view
+                  class="ad-speed-pill {{(!adMatchConfig.scrollingAd.speed || adMatchConfig.scrollingAd.speed === 'normal') ? 'ad-speed-pill--active' : ''}}"
+                  catchtap="onSelectScrollingAdSpeed"
+                  data-speed="normal"
+                >标准</view>
+                <view
+                  class="ad-speed-pill {{adMatchConfig.scrollingAd.speed === 'fast' ? 'ad-speed-pill--active' : ''}}"
+                  catchtap="onSelectScrollingAdSpeed"
+                  data-speed="fast"
+                >快速</view>
+              </view>
+            </view>
+
+            <!-- 实时走字条动效预览 (全透明无赞助标签) -->
+            <view class="ad-preview-container" wx:if="{{adMatchConfig.scrollingAd.text}}">
+              <view class="ad-preview-track-wrap">
+                <view class="ad-preview-track ad-preview-speed--{{adMatchConfig.scrollingAd.speed || 'normal'}}">
+                  <text class="ad-preview-content">{{adMatchConfig.scrollingAd.text}}</text>
+                  <text class="ad-preview-gap">　　　　　　</text>
+                  <text class="ad-preview-content">{{adMatchConfig.scrollingAd.text}}</text>
+                </view>
+              </view>
+            </view>
+            <view class="ad-section-hint">注：直播记分画面中默认置于顶部，支持在直播界面按住自由拖拽至任意位置。</view>
+          </view>
+        </view>
+
+        <!-- 本场已选广告 (图片Logo) -->
         <view class="ad-section">
-          <view class="ad-section-title">本场展示的广告 (点击右上角 ✕ 可移除)</view>
+          <view class="ad-section-title">本场展示的图片广告 (点击右上角 ✕ 可移除)</view>
           <view class="ad-selected-list">
             <!-- 已选广告列表 -->
             <view

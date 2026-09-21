@@ -67,6 +67,73 @@ function truncateText(ctx, text, maxWidth) {
 }
 
 /**
+  * Canvas 2D 辅助文本按宽度自动换行，超出最大行数时仅在最后一行兜底省略。
+  */
+function wrapCanvasText(ctx, text, maxWidth, maxLines) {
+  const source = String(text || '').replace(/\s+/g, ' ').trim();
+  const limit = Math.max(1, maxLines || 1);
+  if (!source) return [''];
+  if (ctx.measureText(source).width <= maxWidth) return [source];
+
+  const chars = Array.from(source);
+  const lines = [];
+  let line = '';
+
+  for (let i = 0; i < chars.length; i += 1) {
+    const ch = chars[i];
+    const nextLine = line + ch;
+    if (!line || ctx.measureText(nextLine).width <= maxWidth) {
+      line = nextLine;
+      continue;
+    }
+
+    lines.push(line);
+    line = ch;
+
+    if (lines.length === limit) {
+      const rest = chars.slice(i).join('');
+      lines[limit - 1] = truncateText(ctx, lines[limit - 1] + rest, maxWidth);
+      return lines;
+    }
+  }
+
+  if (line) lines.push(line);
+
+  if (lines.length > limit) {
+    const kept = lines.slice(0, limit);
+    kept[limit - 1] = truncateText(ctx, kept.slice(limit - 1).concat(lines.slice(limit)).join(''), maxWidth);
+    return kept;
+  }
+
+  return lines;
+}
+
+/**
+  * Canvas 2D 辅助绘制垂直居中的多行文本。
+  */
+function drawCanvasTextLines(ctx, lines, x, centerY, lineHeight, align) {
+  const list = lines && lines.length ? lines : [''];
+  const startY = centerY - ((list.length - 1) * lineHeight) / 2;
+  ctx.textAlign = align || 'left';
+  ctx.textBaseline = 'middle';
+  list.forEach(function (line, idx) {
+    ctx.fillText(line, x, startY + idx * lineHeight);
+  });
+}
+
+/**
+  * Canvas 2D 辅助从顶部绘制多行文本。
+  */
+function drawCanvasTextLinesFromTop(ctx, lines, x, topY, lineHeight, align) {
+  const list = lines && lines.length ? lines : [''];
+  ctx.textAlign = align || 'left';
+  ctx.textBaseline = 'top';
+  list.forEach(function (line, idx) {
+    ctx.fillText(line, x, topY + idx * lineHeight);
+  });
+}
+
+/**
  * 判断指定阶段名称是否属于淘汰赛 / 决胜排位赛（无循环赛积分属性）
  */
 function isKnockoutStage(stageName) {
@@ -1489,10 +1556,28 @@ Page({
     const canvasWidth = 720;
     let contentHeight = 0;
 
+    const detail = this.data.detail || {};
+    const titleLen = Array.from(String(detail.tournament_name || '赛事详情')).length;
+    const estimatedTitleLines = Math.min(3, Math.max(1, Math.ceil(titleLen / 18)));
+    const estimatedHeaderH = Math.max(150, 100 + estimatedTitleLines * 40);
+
     if (activeTab === 'schedule') {
       const matches = this.data.currentMatches || [];
-      const matchCount = Math.max(1, matches.length);
-      contentHeight = 220 + 50 + 50 + (matchCount * 54) + 120;
+      let rowsHeight = 80;
+      if (matches.length) {
+        rowsHeight = 42;
+        matches.forEach(function (m) {
+          const teamLen = Math.max(
+            Array.from(String(m.display_team_a || m.team_a || '')).length,
+            Array.from(String(m.display_team_b || m.team_b || '')).length
+          );
+          const venueLen = Array.from(String(m.venue || '—')).length;
+          const teamLines = Math.min(2, Math.max(1, Math.ceil(teamLen / 7)));
+          const venueLines = Math.min(3, Math.max(1, Math.ceil(venueLen / 7)));
+          rowsHeight += Math.max(64, Math.max(teamLines * 20, venueLines * 19, 34) + 20);
+        });
+      }
+      contentHeight = 28 + estimatedHeaderH + 24 + 24 + rowsHeight + 120;
     } else {
       const groups = this.data.currentGroupedStandings || [];
       let totalRows = 0;
@@ -1500,7 +1585,7 @@ Page({
         totalRows += (g.list ? g.list.length : 0);
       });
       const groupCount = Math.max(1, groups.length);
-      contentHeight = 220 + 50 + (groupCount * 46) + (groupCount * 40) + (totalRows * 50) + 120;
+      contentHeight = 28 + estimatedHeaderH + 24 + 24 + (groupCount * 46) + (groupCount * 40) + (totalRows * 50) + 120;
     }
 
     const canvasHeight = Math.max(760, contentHeight);
@@ -1513,6 +1598,52 @@ Page({
     setTimeout(function () {
       self._drawCanvas2DPoster(canvasWidth, canvasHeight);
     }, 120);
+  },
+
+  _measurePosterLayout: function (ctx, width) {
+    const margin = 28;
+    const headerW = width - margin * 2;
+    const headerY = 28;
+    const detail = this.data.detail || {};
+    const activeTab = this.data.activeTab;
+    const tournamentName = detail.tournament_name || '赛事详情';
+
+    ctx.font = 'bold 32px -apple-system, sans-serif';
+    const titleLines = wrapCanvasText(ctx, tournamentName, headerW - 48, 3);
+    const titleTop = headerY + 76;
+    const titleLineH = 39;
+    const headerH = Math.max(150, (titleTop - headerY) + titleLines.length * titleLineH + 24);
+
+    const metaY = headerY + headerH + 24;
+    const contentStartY = metaY + 24;
+    let bodyH = 80;
+    let scheduleLayout = null;
+
+    if (activeTab === 'schedule') {
+      scheduleLayout = this._buildScheduleTableCanvasLayout(ctx, margin, contentStartY, headerW);
+      bodyH = scheduleLayout.totalH;
+    } else {
+      const groups = this.data.currentGroupedStandings || [];
+      if (groups.length) {
+        bodyH = 0;
+        groups.forEach(function (g) {
+          const list = g.list || [];
+          bodyH += 38 + 38 + list.length * 46 + 20;
+        });
+      }
+    }
+
+    return {
+      margin: margin,
+      headerW: headerW,
+      headerH: headerH,
+      titleLines: titleLines,
+      titleTop: titleTop,
+      titleLineH: titleLineH,
+      contentStartY: contentStartY,
+      scheduleLayout: scheduleLayout,
+      canvasHeight: Math.ceil(contentStartY + bodyH + 112)
+    };
   },
 
   _drawCanvas2DPoster: function (width, height) {
@@ -1528,14 +1659,22 @@ Page({
         }
 
         const canvas = res[0].node;
-        const ctx = canvas.getContext('2d');
+        let ctx = canvas.getContext('2d');
 
         const sys = wx.getSystemInfoSync ? wx.getSystemInfoSync() : {};
         const dpr = sys.pixelRatio || 2;
+        const layout = self._measurePosterLayout(ctx, width);
+        const renderHeight = Math.max(height, layout.canvasHeight);
+
+        if (renderHeight !== height) {
+          self.setData({ posterCanvasHeight: renderHeight });
+        }
 
         canvas.width = width * dpr;
-        canvas.height = height * dpr;
+        canvas.height = renderHeight * dpr;
+        ctx = canvas.getContext('2d');
         ctx.scale(dpr, dpr);
+        height = renderHeight;
 
         // 1. 全局背景：高质感轻柔倾斜渐变
         const bgGrad = ctx.createLinearGradient(0, 0, width, height);
@@ -1546,9 +1685,9 @@ Page({
         ctx.fillRect(0, 0, width, height);
 
         // 2. Header 顶部 Card：极简大气风格（只保留赛事名和视图徽章）
-        const headerH = 150;
-        const margin = 28;
-        const headerW = width - margin * 2;
+        const headerH = layout.headerH;
+        const margin = layout.margin;
+        const headerW = layout.headerW;
 
         ctx.save();
         ctx.shadowColor = 'rgba(37, 99, 235, 0.28)';
@@ -1579,16 +1718,20 @@ Page({
 
         const badgeText = (activeTab === 'schedule' ? '📅 赛程表' : '🏆 积分排行榜') + ' · ' + stageName;
         ctx.font = 'bold 22px -apple-system, sans-serif';
-        const badgeW = ctx.measureText(badgeText).width + 28;
+        const badgeDisplayText = truncateText(ctx, badgeText, headerW - 76);
+        const badgeW = Math.min(ctx.measureText(badgeDisplayText).width + 28, headerW - 48);
         drawRoundedRect(ctx, margin + 24, 48, badgeW, 36, 12, 'rgba(255, 255, 255, 0.22)');
         ctx.fillStyle = '#FFFFFF';
-        ctx.fillText(badgeText, margin + 38, 73);
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'left';
+        ctx.fillText(badgeDisplayText, margin + 38, 66);
 
-        // Header 赛事名称 (加大加粗)
+        // Header 赛事名称：最多三行自适应撑开蓝色卡片
         ctx.font = 'bold 32px -apple-system, sans-serif';
         ctx.fillStyle = '#FFFFFF';
-        const truncTitle = truncateText(ctx, tournamentName, headerW - 48);
-        ctx.fillText(truncTitle, margin + 24, 130);
+        drawCanvasTextLinesFromTop(ctx, layout.titleLines, margin + 24, layout.titleTop, layout.titleLineH, 'left');
+        ctx.textBaseline = 'alphabetic';
+        ctx.textAlign = 'left';
 
         // 3. 辅助 Meta 栏（项目 Icon、赛制、日期范围）：在 Header 下方以浅色清晰展现
         let curY = 28 + headerH + 24;
@@ -1604,7 +1747,7 @@ Page({
 
         // 4. 绘制主体表格内容
         if (activeTab === 'schedule') {
-          curY = self._drawScheduleTableOnCanvas(ctx, margin, curY, headerW);
+          curY = self._drawScheduleTableOnCanvas(ctx, margin, curY, headerW, layout.scheduleLayout);
         } else {
           curY = self._drawStandingsTableOnCanvas(ctx, margin, curY, headerW);
         }
@@ -1632,7 +1775,7 @@ Page({
           wx.canvasToTempFilePath({
             canvas: canvas,
             destWidth: width * dpr,
-            destHeight: height * dpr,
+	            destHeight: renderHeight * dpr,
             fileType: 'png',
             quality: 1,
             success: function (r) {
@@ -1651,7 +1794,101 @@ Page({
       });
   },
 
-  _drawScheduleTableOnCanvas: function (ctx, x, startY, width) {
+  _buildScheduleTableCanvasLayout: function (ctx, x, startY, width) {
+    const matches = this.data.currentMatches || [];
+    const tableHeaderH = 44;
+
+    if (!matches.length) {
+      return {
+        startY: startY,
+        tableHeaderH: tableHeaderH,
+        totalH: 80,
+        rows: [],
+        columns: null
+      };
+    }
+
+    const padX = 14;
+    const gap = 8;
+    const innerX = x + padX;
+    const innerW = width - padX * 2;
+    const columns = {
+      group: { x: innerX, w: 58 },
+      teams: { x: innerX + 58 + gap, w: 260 },
+      score: { x: innerX + 58 + gap + 260 + gap, w: 82 },
+      time: { x: innerX + 58 + gap + 260 + gap + 82 + gap, w: 74 },
+      venue: { x: innerX + 58 + gap + 260 + gap + 82 + gap + 74 + gap, w: 130 }
+    };
+    const teamVsW = 26;
+    const teamGap = 8;
+    const teamNameW = Math.floor((columns.teams.w - teamVsW - teamGap * 2) / 2);
+    let rowsH = 0;
+
+    const rows = matches.map(function (m) {
+      const gTag = (m.stage_id && m.stage_id !== 'stage_default') ? m.stage_id : '常规赛';
+      ctx.font = 'bold 15px -apple-system, sans-serif';
+      const groupLines = wrapCanvasText(ctx, gTag, columns.group.w, 2);
+
+      const teamA = m.display_team_a || m.team_a || '主队';
+      const teamB = m.display_team_b || m.team_b || '客队';
+      ctx.font = '500 17px -apple-system, sans-serif';
+      const teamALines = wrapCanvasText(ctx, teamA, teamNameW, 2);
+      const teamBLines = wrapCanvasText(ctx, teamB, teamNameW, 2);
+
+      const datePart = String(m.datePart || '').trim() || '—';
+      const timePart = String(m.timePart || '').trim() || '—';
+      const timeLines = (datePart === '—' && timePart === '—') ? ['—'] : [datePart, timePart];
+
+      ctx.font = '500 17px -apple-system, sans-serif';
+      const venueLines = wrapCanvasText(ctx, m.venue || '—', columns.venue.w, 3);
+
+      let scoreText = '未开始';
+      let scoreKind = 'normal';
+      if (m.hasValidScores) {
+        scoreText = `${m.score_a} : ${m.score_b}`;
+        scoreKind = 'score';
+      } else if (m.isPendingScore) {
+        scoreText = '待录入';
+        scoreKind = 'pending';
+      }
+
+      const teamBlockLines = Math.max(teamALines.length, teamBLines.length);
+      const rowTextH = Math.max(
+        groupLines.length * 17,
+        teamBlockLines * 20,
+        timeLines.length * 17,
+        venueLines.length * 19,
+        22
+      );
+      const rowH = Math.max(64, rowTextH + 20);
+      rowsH += rowH;
+
+      return {
+        raw: m,
+        groupLines: groupLines,
+        teamALines: teamALines,
+        teamBLines: teamBLines,
+        timeLines: timeLines,
+        venueLines: venueLines,
+        scoreText: scoreText,
+        scoreKind: scoreKind,
+        rowH: rowH
+      };
+    });
+
+    return {
+      startY: startY,
+      tableHeaderH: tableHeaderH,
+      totalH: tableHeaderH + rowsH,
+      rows: rows,
+      columns: columns,
+      teamNameW: teamNameW,
+      teamVsW: teamVsW,
+      teamGap: teamGap
+    };
+  },
+
+  _drawScheduleTableOnCanvas: function (ctx, x, startY, width, precomputedLayout) {
     const matches = this.data.currentMatches || [];
     let curY = startY;
 
@@ -1662,9 +1899,13 @@ Page({
       return curY + 80;
     }
 
-    const rowH = 50;
-    const tableHeaderH = 42;
-    const totalH = tableHeaderH + matches.length * rowH;
+    const layout = precomputedLayout || this._buildScheduleTableCanvasLayout(ctx, x, startY, width);
+    const tableHeaderH = layout.tableHeaderH;
+    const totalH = layout.totalH;
+    const cols = layout.columns;
+    const teamAX = cols.teams.x;
+    const teamBX = cols.teams.x + layout.teamNameW + layout.teamGap + layout.teamVsW + layout.teamGap;
+    const teamVsX = cols.teams.x + layout.teamNameW + layout.teamGap + layout.teamVsW / 2;
 
     ctx.save();
     ctx.shadowColor = 'rgba(15, 23, 42, 0.05)';
@@ -1675,26 +1916,24 @@ Page({
 
     // 表头
     drawRoundedRect(ctx, x, curY, width, tableHeaderH, 20, '#F1F5F9');
-    ctx.font = 'bold 19px -apple-system, sans-serif';
+    ctx.font = 'bold 17px -apple-system, sans-serif';
     ctx.fillStyle = '#64748B';
-
-    const colGroupX = x + 16;
-    const colTeamsX = x + 100;
-    const colScoreX = x + width - 250;
-    const colTimeX = x + width - 145;
-    const colVenueX = x + width - 65;
-
-    ctx.fillText('组别', colGroupX, curY + 27);
-    ctx.fillText('比赛队 (对阵)', colTeamsX, curY + 27);
-    ctx.fillText('比分/状态', colScoreX, curY + 27);
-    ctx.fillText('时间', colTimeX, curY + 27);
-    ctx.fillText('场地', colVenueX, curY + 27);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('组别', cols.group.x + cols.group.w / 2, curY + tableHeaderH / 2);
+    ctx.fillText('比赛队', cols.teams.x + cols.teams.w / 2, curY + tableHeaderH / 2);
+    ctx.fillText('比分/状态', cols.score.x + cols.score.w / 2, curY + tableHeaderH / 2);
+    ctx.fillText('时间', cols.time.x + cols.time.w / 2, curY + tableHeaderH / 2);
+    ctx.fillText('场地', cols.venue.x + cols.venue.w / 2, curY + tableHeaderH / 2);
 
     curY += tableHeaderH;
 
-    for (let i = 0; i < matches.length; i++) {
-      const m = matches[i];
+    for (let i = 0; i < layout.rows.length; i++) {
+      const row = layout.rows[i];
+      const m = row.raw;
+      const rowH = row.rowH;
       const rowY = curY;
+      const rowCenterY = rowY + rowH / 2;
 
       if (i % 2 === 1) {
         ctx.fillStyle = '#F8FAFC';
@@ -1711,61 +1950,69 @@ Page({
       }
 
       // 组别
-      ctx.font = 'bold 17px -apple-system, sans-serif';
+      ctx.font = 'bold 15px -apple-system, sans-serif';
       ctx.fillStyle = '#2563EB';
-      const gTag = (m.stage_id && m.stage_id !== 'stage_default') ? m.stage_id : '常规赛';
-      ctx.fillText(truncateText(ctx, gTag, 70), colGroupX, rowY + 31);
+      drawCanvasTextLines(ctx, row.groupLines, cols.group.x + cols.group.w / 2, rowCenterY, 17, 'center');
 
       // 对阵
-      const teamA = m.display_team_a || m.team_a || '主队';
-      const teamB = m.display_team_b || m.team_b || '客队';
       const winA = m.hasValidScores && m.score_a > m.score_b;
       const winB = m.hasValidScores && m.score_b > m.score_a;
 
-      ctx.font = winA ? 'bold 19px -apple-system, sans-serif' : '500 19px -apple-system, sans-serif';
+      ctx.font = winA ? 'bold 17px -apple-system, sans-serif' : '500 17px -apple-system, sans-serif';
       ctx.fillStyle = winA ? '#059669' : '#0F172A';
-      const truncA = truncateText(ctx, teamA, 105);
-      ctx.fillText(truncA, colTeamsX, rowY + 31);
+      drawCanvasTextLines(ctx, row.teamALines, teamAX + layout.teamNameW, rowCenterY, 20, 'right');
 
-      const wA = ctx.measureText(truncA).width;
-      ctx.font = '400 17px -apple-system, sans-serif';
+      ctx.font = '400 16px -apple-system, sans-serif';
       ctx.fillStyle = '#94A3B8';
-      ctx.fillText(' vs ', colTeamsX + wA, rowY + 31);
-      const wVs = ctx.measureText(' vs ').width;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('vs', teamVsX, rowCenterY);
 
-      ctx.font = winB ? 'bold 19px -apple-system, sans-serif' : '500 19px -apple-system, sans-serif';
+      ctx.font = winB ? 'bold 17px -apple-system, sans-serif' : '500 17px -apple-system, sans-serif';
       ctx.fillStyle = winB ? '#059669' : '#0F172A';
-      const truncB = truncateText(ctx, teamB, 105);
-      ctx.fillText(truncB, colTeamsX + wA + wVs, rowY + 31);
+      drawCanvasTextLines(ctx, row.teamBLines, teamBX, rowCenterY, 20, 'left');
 
       // 比分 / 待录入 / 未开始
-      if (m.hasValidScores) {
-        ctx.font = 'bold 20px -apple-system, sans-serif';
+      if (row.scoreKind === 'score') {
+        ctx.font = 'bold 19px -apple-system, sans-serif';
         ctx.fillStyle = '#0F172A';
-        ctx.fillText(`${m.score_a} : ${m.score_b}`, colScoreX, rowY + 31);
-      } else if (m.isPendingScore) {
+      } else if (row.scoreKind === 'pending') {
         ctx.font = 'bold 17px -apple-system, sans-serif';
         ctx.fillStyle = '#D97706';
-        ctx.fillText('待录入', colScoreX, rowY + 31);
       } else {
         ctx.font = '600 17px -apple-system, sans-serif';
         ctx.fillStyle = '#94A3B8';
-        ctx.fillText('未开始', colScoreX, rowY + 31);
       }
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(truncateText(ctx, row.scoreText, cols.score.w), cols.score.x + cols.score.w / 2, rowCenterY);
 
       // 时间
-      ctx.font = '500 17px -apple-system, sans-serif';
-      ctx.fillStyle = '#64748B';
-      const timeStr = `${m.datePart || ''} ${m.timePart || ''}`.trim() || '—';
-      ctx.fillText(truncateText(ctx, timeStr, 75), colTimeX, rowY + 31);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      if (row.timeLines.length === 1) {
+        ctx.font = 'bold 16px -apple-system, sans-serif';
+        ctx.fillStyle = '#64748B';
+        ctx.fillText(row.timeLines[0], cols.time.x + cols.time.w / 2, rowCenterY);
+      } else {
+        ctx.font = 'bold 16px -apple-system, sans-serif';
+        ctx.fillStyle = '#475569';
+        ctx.fillText(row.timeLines[0], cols.time.x + cols.time.w / 2, rowCenterY - 10);
+        ctx.font = '500 15px -apple-system, sans-serif';
+        ctx.fillStyle = '#94A3B8';
+        ctx.fillText(row.timeLines[1], cols.time.x + cols.time.w / 2, rowCenterY + 10);
+      }
 
       // 场地
       ctx.font = '500 17px -apple-system, sans-serif';
       ctx.fillStyle = '#64748B';
-      ctx.fillText(truncateText(ctx, m.venue || '—', 60), colVenueX, rowY + 31);
+      drawCanvasTextLines(ctx, row.venueLines, cols.venue.x + cols.venue.w / 2, rowCenterY, 19, 'center');
 
       curY += rowH;
     }
+
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
 
     return curY;
   },

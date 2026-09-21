@@ -21,7 +21,64 @@ const {
   computeClockDisplayFromBundle
 } = liveHelpers;
 
+/**
+ * 解码由客户端打包在 match_id 里的 META64_ 元数据
+ * @param {string} str
+ * @returns {object|null}
+ */
+function decodeMatchMeta(str) {
+  if (!str || typeof str !== 'string') return null;
+  if (str.indexOf('META64_') === 0 || str.indexOf('M64_') === 0) {
+    try {
+      var b64 = str.replace(/^(META64_|M64_)/, '');
+      var b64Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+      var bytes = [];
+      var b64clean = b64.replace(/[^A-Za-z0-9+/]/g, '');
+      for (var i = 0; i < b64clean.length; i += 4) {
+        var enc1 = b64Chars.indexOf(b64clean.charAt(i));
+        var enc2 = b64Chars.indexOf(b64clean.charAt(i + 1));
+        var enc3 = b64Chars.indexOf(b64clean.charAt(i + 2));
+        var enc4 = b64Chars.indexOf(b64clean.charAt(i + 3));
+        var chr1 = (enc1 << 2) | (enc2 >> 4);
+        var chr2 = ((enc2 & 15) << 4) | (enc3 >> 2);
+        var chr3 = ((enc3 & 3) << 6) | enc4;
+        bytes.push(chr1);
+        if (enc3 !== -1 && b64clean.charAt(i + 2) !== '=') bytes.push(chr2);
+        if (enc4 !== -1 && b64clean.charAt(i + 3) !== '=') bytes.push(chr3);
+      }
+      var out = '';
+      var idx = 0;
+      while (idx < bytes.length) {
+        var c = bytes[idx++];
+        if (c < 0x80) {
+          out += String.fromCharCode(c);
+        } else if (c > 0xbf && c < 0xe0) {
+          out += String.fromCharCode(((c & 0x1f) << 6) | (bytes[idx++] & 0x3f));
+        } else if (c > 0xdf && c < 0xf0) {
+          out += String.fromCharCode(((c & 0x0f) << 12) | ((bytes[idx++] & 0x3f) << 6) | (bytes[idx++] & 0x3f));
+        } else {
+          var cp = (((c & 0x07) << 18) | ((bytes[idx++] & 0x3f) << 12) | ((bytes[idx++] & 0x3f) << 6) | (bytes[idx++] & 0x3f)) - 0x10000;
+          out += String.fromCharCode((cp >> 10) + 0xd800, (cp & 0x3ff) + 0xdc00);
+        }
+      }
+      return JSON.parse(out);
+    } catch (e) {}
+  }
+  return null;
+}
+
 module.exports = Behavior({
+  attached: function () {
+    try {
+      var nick = this._resolveLiveBroadcasterNickname();
+      if (nick) {
+        this.setData({
+          welcomeBroadcaster: nick,
+          welcomeMarqueeText: '欢迎来到 ' + nick + ' 的直播间，点个免费的关注一起看球！'
+        });
+      }
+    } catch (eInit) {}
+  },
   data: {
     /** 时钟束：收包时更新锚点，走表由逻辑层 tick 渲染 */
 wxsClockBundle: null,
@@ -44,7 +101,13 @@ wxsClockShotSec: 24,
     /** 雷达送礼特效房间连接过渡状态 */
     radarBoostBusy: false,
     /** 雷达送礼特效房间状态文案 */
-    radarBoostStatusText: ''
+    radarBoostStatusText: '',
+    /** 直播间欢迎与提示文案显隐 */
+    isWelcomeMarqueeVisible: false,
+    /** 直播间欢迎与提示文案内容 */
+    welcomeMarqueeText: '欢迎来到直播间，点个免费的关注一起看球！',
+    /** 直播间主播昵称 */
+    welcomeBroadcaster: ''
   },
   methods: {
     // 已合并至文件后部 onUnload：此处不再重复定义，避免后项覆盖导致事件未解绑。
@@ -797,7 +860,16 @@ _liveWsFlushScorePersist: function () {
    * @returns {void}
    */
   _consumeWsBroadcast: function (payload) {
-    if (!payload || typeof payload.act !== 'string') return;
+    if (!payload) return;
+    if (payload.match_id && typeof payload.match_id === 'string' && (payload.match_id.indexOf('META64_') === 0 || payload.match_id.indexOf('M64_') === 0)) {
+      var meta = decodeMatchMeta(payload.match_id);
+      if (meta && typeof meta === 'object') {
+        if (!payload.act && meta.act) payload.act = meta.act;
+        if (!payload.broadcaster && (meta.bc || meta.broadcaster)) payload.broadcaster = meta.bc || meta.broadcaster;
+        if (!payload.marqueeText && (meta.mt || meta.marqueeText)) payload.marqueeText = meta.mt || meta.marqueeText;
+      }
+    }
+    if (typeof payload.act !== 'string') return;
     // 防回环盾牌：主机自身忽略 STATE_SYNC 及自身广播回声，杜绝自发自收导致新旧值来回跳动
     if (payload.act === 'STATE_SYNC' || payload.sender === 'host') return;
     var timeActs = {
@@ -1060,7 +1132,112 @@ _liveWsFlushScorePersist: function () {
         this.finishReplayToLive(true);
       }
     }
+
+    // ──────── 遥控指令消费：副机请求当前状态快照 ────────
+    if (payload.act === 'REQ_STATE') {
+      return;
+    }
+
+    // ──────── 遥控指令消费：副机触发/关闭直播间提示（欢迎横幅） ────────
+    if (payload.act === 'SHOW_WELCOME_MARQUEE' || payload.type === 'SHOW_WELCOME_MARQUEE') {
+      var candidate = payload.broadcaster || payload.broadcasterNickname || payload.bc || payload.nick || '';
+      var bNick = this._resolveLiveBroadcasterNickname(candidate);
+      var wText = '';
+      if (bNick) {
+        wText = '欢迎来到 ' + bNick + ' 的直播间，点个免费的关注一起看球！';
+      } else {
+        wText = payload.marqueeText || payload.welcomeText || payload.text || '欢迎来到直播间，点个免费的关注一起看球！';
+      }
+      this.setData({
+        isWelcomeMarqueeVisible: true,
+        welcomeMarqueeText: wText,
+        welcomeBroadcaster: bNick
+      });
+      console.log('[Live][WS] SHOW_WELCOME_MARQUEE applied: text=%s, bc=%s', wText, bNick);
+      return;
+    }
+    if (payload.act === 'HIDE_WELCOME_MARQUEE' || payload.type === 'HIDE_WELCOME_MARQUEE') {
+      this.setData({
+        isWelcomeMarqueeVisible: false
+      });
+      console.log('[Live][WS] Received HIDE_WELCOME_MARQUEE');
+      return;
+    }
   },
+
+  /**
+   * 解析当前直播间主播昵称（多源保底解析机制）
+   * 依次尝试：显式传入 -> storage主播署名 -> 比赛配置 -> 微信全局用户信息 -> storage登录信息
+   * @param {string} [overrideNick] 显式传入的主播名
+   * @returns {string} 有效主播名或空串
+   */
+  _resolveLiveBroadcasterNickname: function (overrideNick) {
+    if (overrideNick && typeof overrideNick === 'string') {
+      var p = overrideNick.trim();
+      if (p && p !== '微信用户' && p !== 'WeChat User' && p !== '***') {
+        return p;
+      }
+    }
+    // 1. 本机缓存的主播专属署名
+    try {
+      var c1 = wx.getStorageSync('MIAOXIE_BROADCASTER_NICKNAME');
+      if (c1 && typeof c1 === 'string') {
+        var c1Trim = c1.trim();
+        if (c1Trim && c1Trim !== '微信用户' && c1Trim !== 'WeChat User' && c1Trim !== '***') {
+          return c1Trim;
+        }
+      }
+    } catch (e) {}
+
+    // 2. 比赛配置中的主播或主办方
+    var mc = this.data.matchConfig;
+    if (mc) {
+      if (mc.broadcaster && typeof mc.broadcaster === 'string') {
+        var b = mc.broadcaster.trim();
+        if (b && b !== '微信用户' && b !== 'WeChat User' && b !== '***') return b;
+      }
+      if (mc.organizer && typeof mc.organizer === 'string') {
+        var o = mc.organizer.trim();
+        if (o && o !== '微信用户' && o !== 'WeChat User' && o !== '***') return o;
+      }
+    }
+
+    // 3. 全局 userInfo
+    var app = getApp();
+    if (app && app.globalData && app.globalData.userInfo) {
+      var gUser = app.globalData.userInfo;
+      var gNick = typeof gUser === 'object' && gUser.nickName;
+      if (gNick && typeof gNick === 'string') {
+        var gTrim = gNick.trim();
+        if (gTrim && gTrim !== '微信用户' && gTrim !== 'WeChat User' && gTrim !== '***') {
+          return gTrim;
+        }
+      }
+    }
+
+    // 4. storage userInfo / user_info
+    try {
+      var s1 = wx.getStorageSync('userInfo');
+      if (s1 && typeof s1 === 'object' && s1.nickName) {
+        var s1Trim = String(s1.nickName).trim();
+        if (s1Trim && s1Trim !== '微信用户' && s1Trim !== 'WeChat User' && s1Trim !== '***') {
+          return s1Trim;
+        }
+      }
+    } catch (e) {}
+    try {
+      var s2 = wx.getStorageSync('user_info');
+      if (s2 && typeof s2 === 'object' && s2.nickName) {
+        var s2Trim = String(s2.nickName).trim();
+        if (s2Trim && s2Trim !== '微信用户' && s2Trim !== 'WeChat User' && s2Trim !== '***') {
+          return s2Trim;
+        }
+      }
+    } catch (e) {}
+
+    return '';
+  },
+
   /**
    * 主机向房间广播当前比赛的完整状态，供副机记分端、副机录制端同步。
    * @param {string} [reason]
@@ -1087,6 +1264,8 @@ _liveWsFlushScorePersist: function () {
     var teamBName = (mc.teamB && mc.teamB.name) || '客队';
     var teamAColor = (mc.teamA && mc.teamA.bgColor) || '#E64340';
     var teamBColor = (mc.teamB && mc.teamB.bgColor) || '#10AEFF';
+
+    var cachedBcNick = this._resolveLiveBroadcasterNickname();
 
     var statePayload = {
       type: 'COLLECTOR_UPDATE',
@@ -1123,11 +1302,14 @@ _liveWsFlushScorePersist: function () {
       periodName: pName,
       periods: periods,
       highlightCount: playableList.length,
-      isReplaying: !!this.data.isReplaying
+      isReplaying: !!this.data.isReplaying,
+      isWelcomeMarqueeVisible: !!this.data.isWelcomeMarqueeVisible,
+      welcomeMarqueeText: this.data.welcomeMarqueeText || '',
+      welcomeBroadcaster: cachedBcNick,
+      broadcaster: cachedBcNick,
+      broadcasterNickname: cachedBcNick,
+      bc: cachedBcNick
     };
-    if (this._recSyncWs && this._recSyncWs.isConnected && this._recSyncWs.isConnected() && typeof this._recSyncWs.sendPayload === 'function') {
-      this._recSyncWs.sendPayload(statePayload);
-    }
   },
   /**
    * 消费直播送礼 / 互动打出消息，渲染滑出特效卡片。

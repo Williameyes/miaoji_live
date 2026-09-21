@@ -405,6 +405,7 @@ Page({
     var storedTimeRoomId = wx.getStorageSync('MIAOXIE_TIME_DEVICE_ROOM_ID') || '';
     var highlightKey = getHighlightStorageKey(matchId, roomId);
     var storedClips = wx.getStorageSync(highlightKey) || [];
+    var initialScrollingAdText = (targetMatch && targetMatch.scrollingAd && targetMatch.scrollingAd.enabled && targetMatch.scrollingAd.text) || '';
 
     var tA_textColor = getContrastColor(tA_color);
     var tB_textColor = getContrastColor(tB_color);
@@ -420,6 +421,7 @@ Page({
       selectedMatchIndex: targetIndex,
       period: mPeriod,
       savedHighlightClips: storedClips,
+      scrollingAdText: initialScrollingAdText,
       'teamA.name': tA_name,
       'teamA.color': tA_color,
       'teamA.textColor': tA_textColor,
@@ -485,12 +487,14 @@ Page({
     var tB_textColor = getContrastColor(tB_color);
 
     var self = this;
+    var newScrollingAdText = (match && match.scrollingAd && match.scrollingAd.enabled && match.scrollingAd.text) || '';
     this.setData({
       selectedMatchIndex: index,
       matchId: newMatchId,
       matchTitle: mTitle,
       period: mPeriod,
       savedHighlightClips: matchStoredClips,
+      scrollingAdText: newScrollingAdText,
       'teamA.name': tA_name,
       'teamA.color': tA_color,
       'teamA.textColor': tA_textColor,
@@ -1098,7 +1102,8 @@ Page({
         ci: (extra && typeof extra.targetIndex !== 'undefined') ? extra.targetIndex : ((extra && typeof extra.clipIndex !== 'undefined') ? (extra.clipIndex + 1) : 0),
         act: actType,
         bc: this._broadcasterNickname || '',
-        mt: (extra && (extra.marqueeText || extra.welcomeText || extra.text)) || (this.data.welcomeMarqueeText || '')
+        mt: (extra && (extra.marqueeText || extra.welcomeText || extra.text)) || (this.data.welcomeMarqueeText || ''),
+        sa: (extra && extra.scrollingAdText !== undefined) ? extra.scrollingAdText : (this.data.scrollingAdText || '')
       };
       var jsonStr = JSON.stringify(payload);
       var b64 = base64EncodeUtf8(jsonStr);

@@ -242,17 +242,23 @@
     <view class="card marquee-card">
       <view class="card-header flex-between">
         <view class="header-left">
-          <text class="card-icon">🎉</text>
-          <text class="card-title">欢迎横幅</text>
+          <text class="card-icon">📢</text>
+          <text class="card-title">直播间提示 (欢迎横幅)</text>
         </view>
         <view class="ws-status-tag {{isWelcomeMarqueeVisible ? 'connected' : ''}}" style="padding: 4rpx 14rpx; font-size: 20rpx;">
           <view class="status-dot"></view>
-          <text>{{isWelcomeMarqueeVisible ? '横幅飘动中' : '已关闭'}}</text>
+          <text>{{isWelcomeMarqueeVisible ? '横幅展示中' : '已关闭'}}</text>
         </view>
       </view>
 
       <view class="marquee-preview-box">
-        <text class="marquee-text-preview">{{welcomeMarqueeText}}</text>
+        <view class="marquee-sim-inner">
+          <view class="sim-badge">
+            <view class="sim-live-dot"></view>
+            <text class="sim-badge-text">关注主播</text>
+          </view>
+          <text class="marquee-text-preview">{{welcomeMarqueeText}}</text>
+        </view>
       </view>
 
       <button
@@ -261,7 +267,7 @@
         hover-class="btn-hover"
       >
         <text class="btn-icon">{{isWelcomeMarqueeVisible ? '🔕' : '🎉'}}</text>
-        <text>{{isWelcomeMarqueeVisible ? '关闭欢迎文案 (开赛前关闭)' : '开启欢迎文案飘动 (节间休息)'}}</text>
+        <text>{{isWelcomeMarqueeVisible ? '关闭直播间提示 (开赛前关闭)' : '开启直播间提示 (节间休息 / 欢迎)'}}</text>
       </button>
     </view>
   </view>

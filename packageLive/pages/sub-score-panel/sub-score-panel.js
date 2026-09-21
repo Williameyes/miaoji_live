@@ -7,6 +7,44 @@ const WS_BASE_URL = 'wss://api.mx.server.ndcoo.com';
 const WS_SOCKET_PATH = '/gaoguang-ws';
 const STORAGE_LAST_ROOM_ID = 'live_sub_score_last_room_id';
 
+/**
+ * 纯 JS 标准 UTF-8 Base64 编码器
+ * @param {string} str
+ * @returns {string}
+ */
+function base64EncodeUtf8(str) {
+  if (!str) return '';
+  var utf8Bytes = [];
+  for (var i = 0; i < str.length; i++) {
+    var code = str.charCodeAt(i);
+    if (code < 0x80) {
+      utf8Bytes.push(code);
+    } else if (code < 0x800) {
+      utf8Bytes.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f));
+    } else if (code < 0xd800 || code >= 0xe000) {
+      utf8Bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f));
+    } else {
+      i++;
+      code = 0x10000 + (((code & 0x3ff) << 10) | (str.charCodeAt(i) & 0x3ff));
+      utf8Bytes.push(0xf0 | (code >> 18), 0x80 | ((code >> 12) & 0x3f), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f));
+    }
+  }
+  var b64Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  var result = '';
+  var len = utf8Bytes.length;
+  for (var j = 0; j < len; j += 3) {
+    var b1 = utf8Bytes[j];
+    var b2 = j + 1 < len ? utf8Bytes[j + 1] : 0;
+    var b3 = j + 2 < len ? utf8Bytes[j + 2] : 0;
+    var triplet = (b1 << 16) | (b2 << 8) | b3;
+    result += b64Chars.charAt((triplet >> 18) & 63);
+    result += b64Chars.charAt((triplet >> 12) & 63);
+    result += (j + 1 < len) ? b64Chars.charAt((triplet >> 6) & 63) : '=';
+    result += (j + 2 < len) ? b64Chars.charAt(triplet & 63) : '=';
+  }
+  return result;
+}
+
 Page({
   data: {
     statusBarHeight: 20,
@@ -52,7 +90,12 @@ Page({
     // 高光状态
     highlightCount: 0,
     isReplaying: false,
-    saveHighlightCooldown: 0
+    saveHighlightCooldown: 0,
+
+    // 直播间欢迎与提示文案控制
+    isWelcomeMarqueeVisible: false,
+    welcomeMarqueeText: '欢迎来到直播间，点个免费的关注一起看球！',
+    broadcasterNickname: ''
   },
 
   _socketTask: null,
@@ -126,6 +169,9 @@ Page({
     });
 
     this._addLog('🚀 遥控器已载入 (Session: ' + this._sessionId + ')', 'success');
+
+    // 载入主播昵称与欢迎文案
+    this._loadBroadcasterNickname();
 
     if (lastRoomId.length === 6) {
       this._addLog('恢复缓存控制码 #' + lastRoomId + '，自动发起双通道连接', '');
@@ -495,10 +541,45 @@ Page({
           patch.period = pVal;
         }
 
+        var bcNick = msg.welcomeBroadcaster || msg.broadcaster || msg.broadcasterNickname || msg.bc || '';
+        if (bcNick && bcNick !== '微信用户' && bcNick !== 'WeChat User') {
+          if (!this.data.broadcasterNickname || this.data.broadcasterNickname !== bcNick) {
+            patch.broadcasterNickname = bcNick;
+            this._updateWelcomeMarqueeText(bcNick);
+          }
+        }
+        if (typeof msg.isWelcomeMarqueeVisible === 'boolean') {
+          patch.isWelcomeMarqueeVisible = msg.isWelcomeMarqueeVisible;
+        }
+        if (msg.welcomeMarqueeText) {
+          patch.welcomeMarqueeText = msg.welcomeMarqueeText;
+        }
+
         if (Object.keys(patch).length > 0) {
           this.setData(patch);
           this._addLog('🔄 比赛信息同步: ' + (patch.matchTitle || this.data.matchTitle), 'success');
         }
+        return;
+      }
+
+      // 消费直播间提示（欢迎横幅）广播
+      if (act === 'SHOW_WELCOME_MARQUEE' || type === 'SHOW_WELCOME_MARQUEE') {
+        var marqueeText = msg.marqueeText || msg.welcomeText || msg.text || '';
+        var bNick = msg.welcomeBroadcaster || msg.broadcaster || msg.broadcasterNickname || msg.bc || '';
+        var patchMarquee = { isWelcomeMarqueeVisible: true };
+        if (bNick && bNick !== '微信用户' && bNick !== 'WeChat User') {
+          patchMarquee.broadcasterNickname = bNick;
+          patchMarquee.welcomeMarqueeText = '欢迎来到 ' + bNick + ' 的直播间，点个免费的关注一起看球！';
+        } else if (marqueeText) {
+          patchMarquee.welcomeMarqueeText = marqueeText;
+        }
+        this.setData(patchMarquee);
+        this._addLog('📢 收到直播间提示开启状态同步', 'success');
+        return;
+      }
+      if (act === 'HIDE_WELCOME_MARQUEE' || type === 'HIDE_WELCOME_MARQUEE') {
+        this.setData({ isWelcomeMarqueeVisible: false });
+        this._addLog('🔕 收到直播间提示关闭状态同步', '');
         return;
       }
 
@@ -558,6 +639,37 @@ Page({
     });
   },
 
+  // 将比赛元数据（比赛名、主客队名、主客队球衣颜色、主播名、欢迎提示文案）编码进 match_id 中，确保服务端广播 100% 透传
+  _buildEncodedMatchId: function (extra, act) {
+    var mTitle = this.data.matchTitle || '常规赛';
+    var tA_name = (this.data.teamA && this.data.teamA.name) || '主队';
+    var tB_name = (this.data.teamB && this.data.teamB.name) || '客队';
+    var tA_color = ((this.data.teamA && this.data.teamA.bgColor) || '#E64340').replace('#', '');
+    var tB_color = ((this.data.teamB && this.data.teamB.bgColor) || '#10AEFF').replace('#', '');
+    var mId = this.data.matchId || ('M_' + this.data.roomId);
+    var actType = act || (extra && extra.act) || '';
+
+    try {
+      var payload = {
+        id: mId,
+        t: mTitle,
+        a: tA_name,
+        b: tB_name,
+        ca: tA_color,
+        cb: tB_color,
+        act: actType,
+        bc: this.data.broadcasterNickname || '',
+        mt: (extra && (extra.marqueeText || extra.welcomeText || extra.text)) || (this.data.welcomeMarqueeText || ''),
+        sa: (extra && extra.scrollingAdText !== undefined) ? extra.scrollingAdText : (this.data.scrollingAdText || '')
+      };
+      var jsonStr = JSON.stringify(payload);
+      var b64 = base64EncodeUtf8(jsonStr);
+      return 'META64_' + b64;
+    } catch (e) {
+      return mId;
+    }
+  },
+
   // ──────── 核心发包方法：完全对齐网关 COLLECTOR_UPDATE 标准格式 ────────
   _sendUpdatePacket: function (act, extra) {
     var actType = act || 'SCORE';
@@ -570,29 +682,38 @@ Page({
     this._seq += 1;
     var now = Date.now();
 
-    var tA_name = this.data.teamA.name || '主队';
-    var tB_name = this.data.teamB.name || '客队';
-    var tA_color = this.data.teamA.bgColor || '#E64340';
-    var tB_color = this.data.teamB.bgColor || '#10AEFF';
+    var tA_name = (this.data.teamA && this.data.teamA.name) || '主队';
+    var tB_name = (this.data.teamB && this.data.teamB.name) || '客队';
+    var tA_color = (this.data.teamA && this.data.teamA.bgColor) || '#E64340';
+    var tB_color = (this.data.teamB && this.data.teamB.bgColor) || '#10AEFF';
+    var tA_score = Number(this.data.teamA && this.data.teamA.score) || 0;
+    var tB_score = Number(this.data.teamB && this.data.teamB.score) || 0;
     var mTitle = this.data.matchTitle || '比赛遥控';
+    var mPeriod = (typeof this.data.period === 'number') ? this.data.period : 1;
+
+    var encodedMatchId = this._buildEncodedMatchId(extra, actType);
 
     var packet = {
       type: 'COLLECTOR_UPDATE',
       act: actType,
       sender: 'sub_remote',
       t: 600,
-      a: 0,
-      b: 0,
-      p: 1,
+      a: tA_score,
+      b: tB_score,
+      p: mPeriod,
       seq: this._seq,
       sys_t: now,
       session_id: this._sessionId,
-      match_id: this.data.matchId || ('M_' + this.data.roomId),
+      match_id: encodedMatchId,
       title: mTitle,
       teamA: tA_name,
       teamB: tB_name,
       colorA: tA_color,
-      colorB: tB_color
+      colorB: tB_color,
+      broadcaster: this.data.broadcasterNickname || '',
+      broadcasterNickname: this.data.broadcasterNickname || '',
+      bc: this.data.broadcasterNickname || '',
+      mt: (extra && (extra.marqueeText || extra.welcomeText || extra.text)) || (this.data.welcomeMarqueeText || '')
     };
 
     if (extra && typeof extra === 'object') {
@@ -775,5 +896,148 @@ Page({
       this.setData({ isReplaying: true });
       wx.showToast({ title: '🎬 已开启高光连续回放', icon: 'none' });
     }
+  },
+
+  // ──────── 遥控功能 4：直播间提示（欢迎关注横幅控制） ────────
+  /**
+   * 自动从本地缓存、全局数据中读取播主昵称
+   */
+  _loadBroadcasterNickname: function () {
+    var cachedNick = '';
+    try { cachedNick = wx.getStorageSync('MIAOXIE_BROADCASTER_NICKNAME') || ''; } catch (e) {}
+    if (!cachedNick || cachedNick === '微信用户' || cachedNick === 'WeChat User') {
+      var app = getApp();
+      var gUser = app && app.globalData && app.globalData.userInfo;
+      if (gUser && typeof gUser.nickName === 'string') {
+        cachedNick = gUser.nickName.trim();
+      }
+    }
+    if (!cachedNick || cachedNick === '微信用户' || cachedNick === 'WeChat User') {
+      try {
+        var sUser = wx.getStorageSync('userInfo');
+        if (sUser && typeof sUser.nickName === 'string') {
+          cachedNick = sUser.nickName.trim();
+        }
+      } catch (e) {}
+    }
+    if (cachedNick && cachedNick !== '微信用户' && cachedNick !== 'WeChat User') {
+      this.setData({ broadcasterNickname: cachedNick });
+      this._updateWelcomeMarqueeText(cachedNick);
+      return cachedNick;
+    }
+    this._updateWelcomeMarqueeText('');
+    return '';
+  },
+
+  /**
+   * 根据播主昵称生成规范格式文案：
+   * 欢迎来到 *** 的直播间，点个免费的关注一起看球！
+   */
+  _updateWelcomeMarqueeText: function (nick) {
+    var n = (typeof nick === 'string' ? nick.trim() : '');
+    var text = '';
+    if (n && n !== '微信用户' && n !== 'WeChat User') {
+      text = '欢迎来到 ' + n + ' 的直播间，点个免费的关注一起看球！';
+    } else {
+      text = '欢迎来到直播间，点个免费的关注一起看球！';
+    }
+    this.setData({ welcomeMarqueeText: text });
+    return text;
+  },
+
+  /**
+   * 快捷修改主播名称
+   */
+  onEditBroadcasterNickname: function () {
+    var self = this;
+    var current = this.data.broadcasterNickname || '';
+    if (wx.showModal) {
+      wx.showModal({
+        title: '设置主播署名',
+        editable: true,
+        placeholderText: '请输入主播昵称/直播间名称',
+        content: current,
+        success: function (res) {
+          if (res.confirm) {
+            var newNick = (res.content || '').trim();
+            if (newNick === '微信用户' || newNick === 'WeChat User') {
+              newNick = '';
+            }
+            try {
+              wx.setStorageSync('MIAOXIE_BROADCASTER_NICKNAME', newNick);
+            } catch (e) {}
+            self.setData({ broadcasterNickname: newNick });
+            var updatedText = self._updateWelcomeMarqueeText(newNick);
+            self._addLog('📝 主播昵称更新为: ' + (newNick || '默认通用'), 'success');
+
+            // 若当前正在展示横幅，则立即下发更新包刷新直播间显示
+            if (self.data.isWelcomeMarqueeVisible && self.data.wsConnected) {
+              self._sendUpdatePacket('SHOW_WELCOME_MARQUEE', {
+                marqueeText: updatedText,
+                welcomeText: updatedText,
+                text: updatedText,
+                broadcaster: newNick,
+                broadcasterNickname: newNick,
+                bc: newNick,
+                timestamp: Date.now()
+              });
+            }
+            wx.showToast({ title: '主播名已更新', icon: 'success' });
+          }
+        }
+      });
+    }
+  },
+
+  /**
+   * 开启直播间提示横幅（节间休息或赛前由副机操作员触发）
+   */
+  onShowWelcomeMarquee: function () {
+    if (!this.data.wsConnected) {
+      wx.showToast({ title: '请先连接主机房间', icon: 'none' });
+      return;
+    }
+    var nick = this.data.broadcasterNickname || '';
+    var text = this._updateWelcomeMarqueeText(nick);
+    this.setData({ isWelcomeMarqueeVisible: true });
+    this._vibrate('medium');
+    this._addLog('🎉 下发【显示直播间提示】: ' + text, 'success');
+
+    this._sendUpdatePacket('SHOW_WELCOME_MARQUEE', {
+      marqueeText: text,
+      welcomeText: text,
+      text: text,
+      broadcaster: nick,
+      broadcasterNickname: nick,
+      bc: nick,
+      timestamp: Date.now()
+    });
+
+    wx.showToast({
+      title: '已开启直播间提示',
+      icon: 'success'
+    });
+  },
+
+  /**
+   * 关闭直播间提示横幅（开赛时关闭，不遮挡画面）
+   */
+  onHideWelcomeMarquee: function () {
+    if (!this.data.wsConnected) {
+      wx.showToast({ title: '请先连接主机房间', icon: 'none' });
+      return;
+    }
+    this.setData({ isWelcomeMarqueeVisible: false });
+    this._vibrate('light');
+    this._addLog('🔕 下发【关闭直播间提示】指令', '');
+
+    this._sendUpdatePacket('HIDE_WELCOME_MARQUEE', {
+      timestamp: Date.now()
+    });
+
+    wx.showToast({
+      title: '直播间提示已关闭',
+      icon: 'none'
+    });
   }
 });

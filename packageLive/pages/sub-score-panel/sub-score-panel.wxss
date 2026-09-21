@@ -459,6 +459,196 @@
   font-weight: 700;
 }
 
+/* ──────── 6.5 直播间提示卡片（欢迎关注横幅控制） ──────── */
+.prompt-card {
+  border-left: 6rpx solid #F59E0B;
+}
+
+.prompt-status-badge {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  padding: 6rpx 18rpx;
+  border-radius: 20rpx;
+  background: #F1F5F9;
+  font-size: 22rpx;
+  font-weight: 700;
+  color: #64748B;
+  transition: all 0.2s ease;
+}
+
+.prompt-status-badge--active {
+  background: #FEF3C7;
+  color: #D97706;
+  box-shadow: 0 2rpx 10rpx rgba(245, 158, 11, 0.2);
+}
+
+.prompt-status-dot {
+  width: 12rpx;
+  height: 12rpx;
+  border-radius: 50%;
+  background: #94A3B8;
+}
+
+.prompt-status-badge--active .prompt-status-dot {
+  background: #F59E0B;
+  animation: pulse 1.2s infinite;
+}
+
+.broadcaster-setting-row {
+  margin-bottom: 20rpx;
+  padding: 14rpx 18rpx;
+  background: #F8FAFC;
+  border-radius: 18rpx;
+  border: 1rpx solid #E2E8F0;
+}
+
+.broadcaster-info-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  flex: 1;
+  overflow: hidden;
+}
+
+.setting-label {
+  font-size: 24rpx;
+  color: #64748B;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.broadcaster-name-val {
+  font-size: 26rpx;
+  font-weight: 800;
+  color: #0F172A;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.edit-nick-btn {
+  display: flex;
+  align-items: center;
+  gap: 6rpx;
+  padding: 8rpx 18rpx;
+  background: #EFF6FF;
+  border-radius: 14rpx;
+  font-size: 22rpx;
+  font-weight: 700;
+  color: #2563EB;
+  border: 1rpx solid #BFDBFE;
+  flex-shrink: 0;
+}
+
+.edit-icon {
+  font-size: 22rpx;
+}
+
+/* 直播间效果高仿真模拟预览框 */
+.live-prompt-preview-box {
+  background: linear-gradient(135deg, #090D16 0%, #111827 100%);
+  border: 2rpx solid rgba(245, 158, 11, 0.45);
+  border-radius: 20rpx;
+  padding: 18rpx 20rpx;
+  margin-bottom: 22rpx;
+  box-shadow: inset 0 2rpx 8rpx rgba(0, 0, 0, 0.7), 0 4rpx 16rpx rgba(245, 158, 11, 0.12);
+  overflow: hidden;
+}
+
+.preview-header-bar {
+  margin-bottom: 12rpx;
+}
+
+.preview-label-tag {
+  font-size: 20rpx;
+  font-weight: 700;
+  color: #94A3B8;
+  letter-spacing: 0.5rpx;
+}
+
+.preview-mode-tag {
+  font-size: 20rpx;
+  font-weight: 800;
+  color: #EF4444;
+  background: rgba(239, 68, 68, 0.16);
+  padding: 2rpx 12rpx;
+  border-radius: 10rpx;
+}
+
+.prompt-pill-simulation {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  background: rgba(30, 41, 59, 0.85);
+  border: 1.5rpx solid rgba(255, 215, 0, 0.65);
+  border-radius: 999rpx;
+  padding: 10rpx 18rpx;
+  box-shadow: 0 4rpx 14rpx rgba(0, 0, 0, 0.5), 0 0 16rpx rgba(255, 215, 0, 0.2);
+}
+
+.sim-dot {
+  width: 12rpx;
+  height: 12rpx;
+  border-radius: 50%;
+  background: #FF3B30;
+  box-shadow: 0 0 8rpx #FF3B30;
+  animation: pulse 1s infinite alternate;
+  flex-shrink: 0;
+}
+
+.sim-text-content {
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #FFFFFF;
+  letter-spacing: 0.5rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sim-highlight-name {
+  color: #FFE600;
+  font-weight: 900;
+  text-shadow: 0 0 8rpx rgba(255, 230, 0, 0.7);
+  padding: 0 2rpx;
+}
+
+/* 一键启停大按钮 */
+.prompt-toggle-btn {
+  width: 100% !important;
+  height: 94rpx;
+  border-radius: 22rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12rpx;
+  margin: 0 !important;
+  transition: all 0.18s ease;
+}
+
+.btn-prompt-start {
+  background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%) !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 6rpx 20rpx rgba(245, 158, 11, 0.38) !important;
+}
+
+.btn-prompt-start .btn-label {
+  font-size: 30rpx;
+  font-weight: 800;
+}
+
+.btn-prompt-stop {
+  background: linear-gradient(135deg, #475569 0%, #334155 100%) !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 4rpx 14rpx rgba(51, 65, 85, 0.35) !important;
+}
+
+.btn-prompt-stop .btn-label {
+  font-size: 30rpx;
+  font-weight: 800;
+}
+
 /* ──────── 7. 高光与回放卡片 ──────── */
 .highlight-count-tag {
   font-size: 22rpx;

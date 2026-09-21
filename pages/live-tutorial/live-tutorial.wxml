@@ -1,0 +1,206 @@
+<view class="tutorial-page">
+  <!-- ===== 顶部 Banner ===== -->
+  <view class="hero-banner">
+    <view class="hero-badge">
+      <text class="hero-badge-icon">⚡</text>
+      <text class="hero-badge-text">0门槛指南 · 简单上手</text>
+    </view>
+    <view class="hero-title">手机开播其实超简单</view>
+    <view class="hero-desc">一台手机 +「高光记分」小程序，即可将赛场高清画面与专业记分板实时推流至抖音直播间！</view>
+  </view>
+
+  <!-- ===== 第一部分：硬件准备 ===== -->
+  <view class="section-card">
+    <view class="section-head">
+      <view class="section-icon-wrap section-icon-wrap--blue">
+        <text class="section-icon">🧰</text>
+      </view>
+      <view class="section-title-group">
+        <view class="section-title">硬件准备（开播三件套）</view>
+        <view class="section-subtitle">良好的散热与机位固定是保证长时间流畅直播的关键</view>
+      </view>
+    </view>
+
+    <view class="hardware-list">
+      <!-- 硬件1：散热器 -->
+      <view class="hw-item">
+        <view class="hw-item-header">
+          <view class="hw-item-title-box">
+            <text class="hw-num">1</text>
+            <text class="hw-name">手机半导体散热器</text>
+          </view>
+          <text class="hw-tag hw-tag--must">必须配备</text>
+        </view>
+        <view class="hw-reason">
+          <text class="hw-reason-bold">为什么必须配：</text>
+          无论哪一款手机，长时间进行画面录制与网络推流，<text class="text-highlight">就一定会剧烈发热并导致降频卡顿</text>，造成直播画面掉帧、质量不佳。
+        </view>
+        <view class="hw-budget">
+          <text class="hw-budget-label">选购参考：</text>
+          <text class="hw-budget-val">通常 30 ~ 60 元/个的半导体背夹散热器即可，制冷效果立竿见影。</text>
+        </view>
+      </view>
+
+      <!-- 硬件2：支架 -->
+      <view class="hw-item">
+        <view class="hw-item-header">
+          <view class="hw-item-title-box">
+            <text class="hw-num">2</text>
+            <text class="hw-name">直播三脚架 / 支架</text>
+          </view>
+          <text class="hw-tag hw-tag--must">必须配备</text>
+        </view>
+        <view class="hw-reason">
+          <text class="hw-reason-bold">为什么必须配：</text>
+          固定拍摄机位，避免手持晃动导致画面剧烈抖动、焦点模糊，让直播间观众看得更清晰舒适。
+        </view>
+        <view class="hw-budget">
+          <text class="hw-budget-label">选购参考：</text>
+          <text class="hw-budget-val">通常 100 元以内的直播三脚架即可（建议带手机夹，架高 1.6m~2.1m 视角更佳）。</text>
+        </view>
+      </view>
+
+      <!-- 硬件3：充电宝 -->
+      <view class="hw-item hw-item--last">
+        <view class="hw-item-header">
+          <view class="hw-item-title-box">
+            <text class="hw-num">3</text>
+            <text class="hw-name">大容量充电宝</text>
+          </view>
+          <text class="hw-tag hw-tag--opt">可选配备</text>
+        </view>
+        <view class="hw-reason">
+          <text class="hw-reason-bold">为什么建议备：</text>
+          直播与屏幕常亮属于高能耗场景，耗电速度快。
+        </view>
+        <view class="hw-budget">
+          <text class="hw-budget-label">选购参考：</text>
+          <text class="hw-budget-val">最好备一个 28000 毫安的充电宝；如果现场有固定插排能边插边充，则可以不用充电宝。</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- ===== 第二部分：开播全流程 ===== -->
+  <view class="section-card">
+    <view class="section-head">
+      <view class="section-icon-wrap section-icon-wrap--green">
+        <text class="section-icon">🚀</text>
+      </view>
+      <view class="section-title-group">
+        <view class="section-title">开播实操全流程（五步走）</view>
+        <view class="section-subtitle">按照步骤切换，即可轻松把小程序记分画面推送到直播间</view>
+      </view>
+    </view>
+
+    <view class="step-timeline">
+      <!-- 步骤1 -->
+      <view class="step-node">
+        <view class="step-badge">1</view>
+        <view class="step-body">
+          <view class="step-header">
+            <text class="step-title">打开高光记分，进入记分</text>
+          </view>
+          <view class="step-desc">
+            打开「高光记分」小程序，新建一场比赛（或点击已有比赛卡片），点击「<text class="step-bold">▶ 进入记分</text>」。进入直播页后，程序会自动调用手机摄像头录制赛场画面并叠加记分牌。
+          </view>
+        </view>
+      </view>
+
+      <!-- 步骤2 -->
+      <view class="step-node">
+        <view class="step-badge">2</view>
+        <view class="step-body">
+          <view class="step-header">
+            <text class="step-title">切到手机桌面，抖音开启手游直播</text>
+          </view>
+          <view class="step-alert">
+            <text class="step-alert-icon">⚠️</text>
+            <text class="step-alert-text">重要提醒：切勿退出或关闭小程序！直接使用手机底部手势划回系统桌面即可。</text>
+          </view>
+          <view class="step-desc">
+            打开<text class="step-bold">抖音</text>（或推荐使用「<text class="step-bold">抖音直播伴侣</text>」App）➔ 点开「开直播」➔ 选择「<text class="step-bold">手游模式</text>」➔ 画面比例推荐选择「<text class="step-bold">16:9</text>」➔ 点击「<text class="step-bold">开始直播 / 开播</text>」。
+          </view>
+          <view class="step-tip-box">
+            <text class="step-tip-icon">💡</text>
+            <text class="step-tip-text">开播成功后，手机屏幕上当前你看到的画面就会被直接直播出去了！</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 步骤3 -->
+      <view class="step-node">
+        <view class="step-badge">3</view>
+        <view class="step-body">
+          <view class="step-header">
+            <text class="step-title">切回高光记分，画面推流直播中</text>
+          </view>
+          <view class="step-desc">
+            再次通过系统多任务手势，<text class="step-bold">切换回「高光记分」小程序</text>。此时，小程序直播页所显示的赛场画面与实时比分牌就被完美直播出去了！比赛进行中，正常在屏幕上点按队伍记分即可。
+          </view>
+        </view>
+      </view>
+
+      <!-- 步骤4 -->
+      <view class="step-node">
+        <view class="step-badge">4</view>
+        <view class="step-body">
+          <view class="step-header">
+            <text class="step-title">查看直播间评论与弹幕互动</text>
+          </view>
+          <view class="step-desc">
+            由于开播手机正在全屏展示并录制比赛，请使用<text class="step-bold">另外一台手机</text>（备用手机或身旁朋友手机），进入你的抖音直播间，即可实时查看直播画面效果、观众互动及弹幕评论。
+          </view>
+        </view>
+      </view>
+
+      <!-- 步骤5 -->
+      <view class="step-node step-node--last">
+        <view class="step-badge">5</view>
+        <view class="step-body">
+          <view class="step-header">
+            <text class="step-title">完赛安全关闭直播</text>
+          </view>
+          <view class="step-desc">
+            比赛结束后，先切换到<text class="step-bold">抖音</text>（或直播伴侣）应用，点击右上角的开关/关闭按钮结束直播；确认直播结束后，再切回「高光记分」小程序结算并保存数据，或直接退出小程序。
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- ===== 第三部分：联系客服索取视频教程 ===== -->
+  <view class="help-cta-card">
+    <view class="help-cta-icon-bg">
+      <text class="help-cta-icon">🎬</text>
+    </view>
+    <view class="help-cta-content">
+      <view class="help-cta-title">想开播，但是还不太懂？</view>
+      <view class="help-cta-desc">别担心！联系人工客服，可免费索取【手把手视频教程】与专业开播指导，助您快速开启第一场直播。</view>
+    </view>
+    <view class="help-cta-btn" hover-class="help-cta-btn--hover" bindtap="openContactModal">
+      <text class="help-cta-btn-text">联系客服 · 索取视频教程</text>
+      <text class="help-cta-btn-arrow">›</text>
+    </view>
+  </view>
+
+  <!-- 页面底部安全距离与版权提示 -->
+  <view class="page-footer">
+    <text class="page-footer-text">高光记分 · 让每一场民间赛事都拥有专业转播体验</text>
+  </view>
+
+  <!-- ===== 联系客服确认弹窗 ===== -->
+  <view class="contact-overlay" wx:if="{{showContactModal}}" catchtouchmove="onContactModalCatchMove" bindtap="closeContactModal">
+    <view class="contact-card" catchtap="stopContactModalBubble">
+      <view class="contact-header-icon">💬</view>
+      <view class="contact-title">联系客服索取教程</view>
+      <view class="contact-content">
+        <text class="contact-text">点击下方按钮将打开微信官方客服会话，发送「<text class="text-highlight-bold">视频教程</text>」，客服将为您提供详细视频讲解与一对一指导，是否前往？</text>
+      </view>
+      <view class="contact-actions">
+        <button class="contact-btn contact-cancel-btn" bindtap="closeContactModal">再看看</button>
+        <button class="contact-btn contact-confirm-btn" open-type="contact" session-from="live_tutorial" bindtap="closeContactModal">前往联系</button>
+      </view>
+    </view>
+  </view>
+</view>

@@ -4,6 +4,7 @@
     "pages/tournament/tournament",
     "pages/mine/mine",
     "pages/help/help",
+    "pages/live-tutorial/live-tutorial",
     "pages/promo-landing/promo-landing"
   ],
   "subpackages": [

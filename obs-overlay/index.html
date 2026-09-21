@@ -122,10 +122,27 @@
     <div class="copyright-resize-handle" id="copyright-resize-handle" title="拖拽此处改变大小"></div>
   </div>
 
-  <!-- 🎉 全屏弹球碰撞飘动欢迎/防盗播文案 (单条轻量碰撞反弹，极低资源占用) -->
+  <!-- 独立悬浮赞助商滚动文字广告测量用元素 (屏幕外，用于精确测算单段文案宽度) -->
+  <span id="obs-scrolling-ad-measurer" class="obs-scrolling-ad-measurer"></span>
+
+  <!-- 📢 独立悬浮赞助商滚动文字广告横幅 (全透明无边框，平滑跑马灯，拖拽移动位置) -->
+  <div class="obs-scrolling-ad-bar obs-scrolling-ad--hidden" id="obs-scrolling-ad-bar" title="按住拖拽可移动位置，双击隐藏关闭">
+    <div class="obs-scrolling-ad-track-wrap">
+      <div class="obs-scrolling-ad-track" id="obs-scrolling-ad-track">
+        <span class="obs-scrolling-ad-text" id="obs-scrolling-ad-text"></span>
+        <span class="obs-scrolling-ad-gap">　　　　</span>
+        <span class="obs-scrolling-ad-text-dup" id="obs-scrolling-ad-text-dup"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 🎉 全屏弹球碰撞飘动欢迎/防盗播文案 (单条轻量碰撞反弹，极低资源占用，超清高对比度) -->
   <div class="welcome-bounce-overlay welcome-bounce--hidden" id="welcome-bounce-overlay">
     <div class="welcome-bounce-pill" id="welcome-bounce-pill">
-      <span class="welcome-bounce-icon">🏀</span>
+      <div class="welcome-tag-badge">
+        <span class="welcome-live-dot"></span>
+        <span class="welcome-tag-text">关注主播</span>
+      </div>
       <span class="welcome-bounce-text" id="welcome-bounce-text">欢迎来到直播间，点个免费的关注一起看球！</span>
     </div>
   </div>

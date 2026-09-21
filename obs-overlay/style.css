@@ -1317,6 +1317,90 @@ body.mode-live-only .dynamic-island-badge {
 }
 
 /* ──────────────────────────────────────────────
+   📢 独立悬浮赞助商滚动文字广告横幅 (全透明、无边框、70%宽度)
+/* 独立悬浮赞助商滚动文字广告测量用元素 (屏幕外，用于精确测算单段文案宽度) */
+.obs-scrolling-ad-measurer {
+  position: absolute;
+  top: -9999px;
+  left: -9999px;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: nowrap;
+  font-size: clamp(18px, 1.8vw, 24px);
+  font-weight: 400;
+  letter-spacing: 0.8px;
+}
+
+.obs-scrolling-ad-bar {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  height: 38px;
+  width: auto;
+  max-width: 70vw;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  padding: 0;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  z-index: 840;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  box-sizing: border-box;
+  overflow: hidden;
+  transition: opacity 0.3s ease;
+}
+
+.obs-scrolling-ad-bar:active {
+  cursor: grabbing;
+}
+
+.obs-scrolling-ad--hidden {
+  display: none !important;
+}
+
+.obs-scrolling-ad-track-wrap {
+  width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.obs-scrolling-ad-track {
+  display: inline-flex;
+  white-space: nowrap;
+  animation: obsMarqueeScroll 18s linear infinite;
+  will-change: transform;
+}
+
+.obs-scrolling-ad-text,
+.obs-scrolling-ad-text-dup {
+  font-size: clamp(18px, 1.8vw, 24px); /* 与赛事名称大小一致 (match-title-text 是 clamp(20px, 2.0vw, 28px)) */
+  font-weight: 400; /* 不要加粗 */
+  color: #FFFFFF;
+  letter-spacing: 0.8px;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.95), 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.obs-scrolling-ad-gap {
+  display: inline-block;
+}
+
+@keyframes obsMarqueeScroll {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+/* ──────────────────────────────────────────────
    🎉 全屏飘动欢迎/防盗播文案层
    - 全屏透明覆盖，不干扰记分牌交互
    - 5 条文案错位高度、不同速度、随机延迟飘动
@@ -1348,42 +1432,67 @@ body.mode-live-only .dynamic-island-badge {
   will-change: transform;
   display: inline-flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 24px;
-  background: rgba(15, 23, 42, 0.72);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1.5px solid rgba(255, 215, 0, 0.45);
+  gap: 16px;
+  padding: 12px 28px;
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.94) 0%, rgba(30, 41, 59, 0.92) 100%);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 2px solid rgba(255, 215, 0, 0.75);
   border-radius: 999px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.65), 0 0 20px rgba(255, 215, 0, 0.2);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.8), 0 0 28px rgba(255, 200, 0, 0.35);
   white-space: nowrap;
   user-select: none;
   transform: translate3d(-9999px, -9999px, 0);
-  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+  transition: box-shadow 0.18s ease, border-color 0.18s ease;
 }
 
 .welcome-bounce-pill.bounce-hit {
-  border-color: rgba(255, 215, 0, 0.85);
-  box-shadow: 0 8px 36px rgba(0, 0, 0, 0.7), 0 0 28px rgba(255, 215, 0, 0.5);
+  border-color: #FFD700;
+  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.85), 0 0 42px rgba(255, 215, 0, 0.75);
 }
 
-.welcome-bounce-icon {
-  font-size: 24px;
-  line-height: 1;
-  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.5));
+.welcome-tag-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  background: linear-gradient(135deg, #FF6B00 0%, #E60026 100%);
+  border-radius: 999px;
+  flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(230, 0, 38, 0.45);
+}
+
+.welcome-live-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #FFFFFF;
+  animation: welcomePulse 1.2s infinite alternate;
+}
+
+@keyframes welcomePulse {
+  0% { transform: scale(0.85); opacity: 0.7; }
+  100% { transform: scale(1.3); opacity: 1; }
+}
+
+.welcome-tag-text {
+  font-size: 18px;
+  font-weight: 900;
+  color: #FFFFFF;
+  letter-spacing: 1px;
 }
 
 .welcome-bounce-text {
-  font-size: 21px;
-  font-weight: 700;
+  font-size: 26px;
+  font-weight: 800;
   letter-spacing: 1.5px;
-  color: rgba(255, 255, 255, 0.95);
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
+  color: #FFFFFF;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.95), 0 0 16px rgba(0, 0, 0, 0.9);
 }
 
 .welcome-highlight-name {
-  color: #FFD700;
+  color: #FFE600;
   font-weight: 900;
-  text-shadow: 0 0 10px rgba(255, 215, 0, 0.65), 0 2px 4px rgba(0, 0, 0, 0.8);
-  padding: 0 2px;
+  text-shadow: 0 0 14px rgba(255, 230, 0, 0.85), 0 2px 6px rgba(0, 0, 0, 0.95);
+  padding: 0 4px;
 }

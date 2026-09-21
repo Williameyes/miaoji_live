@@ -18,6 +18,25 @@
     </view>
   </view>
 
+  <!-- 直播间欢迎与提示浮层 (CSS3 纯 GPU 硬件加速双轴慢漂浮，对齐网页记分牌实现，零 JS 开销，绝不影响直播稳定性) -->
+  <view class="live-welcome-overlay {{isWelcomeMarqueeVisible ? 'visible' : ''}}" wx:if="{{isWelcomeMarqueeVisible}}">
+    <view class="live-welcome-track-x">
+      <view class="live-welcome-track-y">
+        <view class="live-welcome-pill">
+          <view class="welcome-dot"></view>
+          <view class="welcome-text-wrap" wx:if="{{welcomeBroadcaster}}">
+            <text class="welcome-plain-text">欢迎来到 </text>
+            <text class="welcome-highlight-name">{{welcomeBroadcaster}}</text>
+            <text class="welcome-plain-text"> 的直播间，点个免费的关注一起看球！</text>
+          </view>
+          <view class="welcome-text-wrap" wx:else>
+            <text class="welcome-plain-text">{{welcomeMarqueeText || '欢迎来到直播间，点个免费的关注一起看球！'}}</text>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+
   <!-- Level 0: 16:9 内接取景框（与 computeLiveStage16x9 一致），避免全屏与相机典型 16:9 输出比例差导致的非等比拉伸感 -->
   <view
     wx:if="{{liveStreamAllowed && cameraMounted && isCameraRendered}}"
@@ -90,6 +109,41 @@
           bindload="onPromoAdImageLoad"
           data-index="{{index}}"
         />
+      </movable-view>
+    </movable-area>
+  </view>
+
+  <!-- 文字广告单倍文案纯净测量容器 (不可见，用于准确测量单段文案宽度) -->
+  <text id="scrolling-ad-measurer" class="scrolling-ad-measurer">{{scrollingAdText}}</text>
+
+  <!-- 商业滚动文字广告层：movable-view 可自由拖拽，默认位于顶部 -->
+  <view
+    wx:if="{{scrollingAdVisible && scrollingAdText && liveStreamAllowed && !isReplaying}}"
+    class="scrolling-ad-layer {{drawerMode !== 0 ? 'scrolling-ad-layer--drawer' : ''}}"
+    style="{{liveStageInlineStyle}}"
+  >
+    <movable-area class="scrolling-ad-movable-area">
+      <movable-view
+        class="scrolling-ad-movable-view"
+        direction="all"
+        inertia="{{false}}"
+        out-of-bounds="{{true}}"
+        x="{{scrollingAdX}}"
+        y="{{scrollingAdY}}"
+        style="width: {{scrollingAdBarWidthRpx}}rpx;"
+        bindchange="onScrollingAdPositionChange"
+        catchtouchend="onScrollingAdTouchEnd"
+        catchtouchcancel="onScrollingAdTouchEnd"
+      >
+        <view class="scrolling-ad-bar" style="width: {{scrollingAdBarWidthRpx}}rpx;">
+          <view class="scrolling-ad-track-wrap">
+            <view class="scrolling-ad-track scrolling-ad-track--{{scrollingAdSpeed || 'normal'}}">
+              <text class="scrolling-ad-text">{{scrollingAdText}}</text>
+              <text class="scrolling-ad-spacer">　　　　</text>
+              <text class="scrolling-ad-text">{{scrollingAdText}}</text>
+            </view>
+          </view>
+        </view>
       </movable-view>
     </movable-area>
   </view>
@@ -1121,6 +1175,10 @@
         class="drawer-camera-pill drawer-camera-pill--aspect {{liveVideoAspectMode === '16x9' ? 'drawer-camera-pill--active' : ''}}"
         catchtap="onAspectModePanelTap"
       >画幅</view>
+      <view
+        class="drawer-camera-pill drawer-camera-pill--ticker {{scrollingAdVisible ? 'drawer-camera-pill--active' : ''}}"
+        catchtap="onToggleScrollingAdTap"
+      >滚动广告</view>
       <view wx:if="{{autoSyncWhitelisted}}" class="live-lens-toolbar-spacer"></view>
       <view
         wx:if="{{autoSyncWhitelisted}}"
