@@ -948,16 +948,20 @@ Page({
   },
   onScoreSnifferTap: function () {
     if (!this.data.loggedIn) {
-      wx.showToast({ title: "请先登录", icon: "none" });
+      wx.showToast({ title: '请先登录', icon: 'none' });
+      return;
+    }
+    if (!checkSyncLabWhitelist()) {
+      wx.showToast({ title: '暂无使用权限', icon: 'none' });
       return;
     }
     wx.navigateTo({
-      url: "/packageLab/pages/radar-lab/score-sniffer/index",
+      url: '/packageLab/pages/radar-lab/score-sniffer/index',
       fail: function (err) {
-        console.error("跳转比分嗅探失败:", err);
+        console.error('跳转比分嗅探失败:', err);
         wx.showToast({
-          title: "打开页面失败: " + (err && err.errMsg ? err.errMsg : "请重试"),
-          icon: "none"
+          title: '打开页面失败: ' + (err && err.errMsg ? err.errMsg : '请重试'),
+          icon: 'none'
         });
       }
     });

@@ -2,7 +2,11 @@
  * @fileoverview 直播雷达实验室入口：赛事 / 场次维护、监控、战报。
  */
 
-const { ensureMatchManageAccess, isRadarWhitelistUser } = require('../../../utils/radar-access.js');
+const {
+  ensureMatchManageAccess,
+  ensureRadarLabAccess,
+  isRadarWhitelistUser
+} = require('../../../utils/radar-access.js');
 const {
   fetchTournamentTransferInfo,
   claimTournamentTransfer
@@ -124,6 +128,7 @@ Page({
     });
   },
   onGoScoreSniffer: function () {
+    if (!ensureRadarLabAccess()) return;
     wx.navigateTo({
       url: '/packageLab/pages/radar-lab/score-sniffer/index'
     });

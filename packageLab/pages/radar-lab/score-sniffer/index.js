@@ -1,4 +1,4 @@
-// packageLab/pages/radar-lab/score-sniffer/index.js
+const { ensureRadarLabAccess } = require('../../../utils/radar-access');
 const {
   fetchScoreSnifferList,
   startScoreSniffer,
@@ -60,6 +60,7 @@ Page({
   pollTimer: null,
 
   onLoad(options) {
+    if (!ensureRadarLabAccess({ redirectBack: true })) return;
     if (options && options.session_id) {
       this.selectSession(options.session_id);
     } else {
@@ -68,6 +69,7 @@ Page({
   },
 
   onShow() {
+    if (!ensureRadarLabAccess({ redirectBack: true })) return;
     if (this.data.viewMode === 'list') {
       this.loadTaskList();
     }
@@ -78,6 +80,10 @@ Page({
   },
 
   onPullDownRefresh() {
+    if (!ensureRadarLabAccess({ redirectBack: true })) {
+      wx.stopPullDownRefresh();
+      return;
+    }
     if (this.data.viewMode === 'list') {
       this.loadTaskList().then(() => wx.stopPullDownRefresh());
     } else {
@@ -236,6 +242,7 @@ Page({
   },
 
   async onSubmitCreateSniffer() {
+    if (!ensureRadarLabAccess()) return;
     if (!this.data.rawText.trim()) {
       wx.showToast({ title: '请先粘贴直播间链接或口令', icon: 'none' });
       return;

@@ -7,7 +7,7 @@
     <view class="rl-sub">赛事与场次资产维护、赛程排期与完赛数据管理</view>
   </view>
 
-  <view class="rl-card">
+  <view class="rl-card" wx:if="{{isWhitelist}}">
     <view class="rl-list-item" bindtap="onGoScoreSniffer" hover-class="rl-list-item-hover">
       <view class="rl-list-main">
         <view class="rl-list-title">比分嗅探 <text class="rl-badge rl-badge-ok" style="margin-left: 8rpx;">实验</text></view>

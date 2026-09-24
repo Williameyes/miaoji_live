@@ -14,6 +14,9 @@ const {
 const { post, STORAGE_TOKEN_KEY, STORAGE_USER_INFO_KEY, setToken } = require('../../../utils/request.js');
 const { checkSyncLabWhitelist } = require('../../../utils/sync-lab-whitelist.js');
 
+/** @const {string} 分享海报底部小程序码/二维码资源 */
+const POSTER_QR_CODE_PATH = '/assets/images/logo-small.png';
+
 /** @const {Array<string[]>} 时分多列选择器取值范围（分钟步长为5，无循环） */
 const TIME_PICKER_RANGE = [
   ['00', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23'],
@@ -1646,6 +1649,53 @@ Page({
     };
   },
 
+  _drawPosterQrCode: function (canvas, ctx, width, height, margin, onDone) {
+    if (!canvas || typeof canvas.createImage !== 'function') {
+      if (typeof onDone === 'function') onDone();
+      return;
+    }
+
+    const cardSize = 96;
+    const qrSize = 82;
+    const cardX = width - margin - cardSize;
+    const cardY = Math.max(margin, height - 18 - cardSize);
+    let completed = false;
+
+    const finish = function () {
+      if (completed) return;
+      completed = true;
+      if (typeof onDone === 'function') onDone();
+    };
+
+    const img = canvas.createImage();
+    img.onload = function () {
+      if (completed) return;
+      let saved = false;
+      try {
+        ctx.save();
+        saved = true;
+        ctx.shadowColor = 'rgba(15, 23, 42, 0.12)';
+        ctx.shadowBlur = 12;
+        ctx.shadowOffsetY = 4;
+        drawRoundedRect(ctx, cardX, cardY, cardSize, cardSize, 14, '#FFFFFF');
+        ctx.shadowColor = 'transparent';
+        ctx.strokeStyle = 'rgba(203, 213, 225, 0.75)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.drawImage(img, cardX + 7, cardY + 7, qrSize, qrSize);
+      } catch (err) {
+        console.warn('[poster qr draw failed]', err);
+      } finally {
+        if (saved) ctx.restore();
+      }
+      finish();
+    };
+    img.onerror = finish;
+    img.src = POSTER_QR_CODE_PATH;
+
+    setTimeout(finish, 1500);
+  },
+
   _drawCanvas2DPoster: function (width, height) {
     const self = this;
     const query = wx.createSelectorQuery().in(this);
@@ -1770,12 +1820,12 @@ Page({
         ctx.fillStyle = '#94A3B8';
         ctx.fillText('长按或保存图片扫码查看实时赛况', margin + 6, curY + 26);
 
-        // 6. 导出图片并展开 Modal 预览
-        setTimeout(function () {
+        // 6. 绘制右下角二维码后导出图片并展开 Modal 预览
+        const exportPoster = function () {
           wx.canvasToTempFilePath({
             canvas: canvas,
             destWidth: width * dpr,
-	            destHeight: renderHeight * dpr,
+            destHeight: renderHeight * dpr,
             fileType: 'png',
             quality: 1,
             success: function (r) {
@@ -1790,7 +1840,11 @@ Page({
               wx.showToast({ title: '导出图片失败', icon: 'none' });
             }
           }, self);
-        }, 120);
+        };
+
+        self._drawPosterQrCode(canvas, ctx, width, renderHeight, margin, function () {
+          setTimeout(exportPoster, 60);
+        });
       });
   },
 
@@ -1811,7 +1865,6 @@ Page({
     const padX = 14;
     const gap = 8;
     const innerX = x + padX;
-    const innerW = width - padX * 2;
     const columns = {
       group: { x: innerX, w: 58 },
       teams: { x: innerX + 58 + gap, w: 260 },
