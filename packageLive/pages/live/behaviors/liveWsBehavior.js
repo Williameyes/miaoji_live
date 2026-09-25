@@ -1033,6 +1033,21 @@ _liveWsFlushScorePersist: function () {
           if (typeof this.vibrate === 'function') {
             this.vibrate((deltaA > 0 || deltaB > 0) ? 'medium' : 'light');
           }
+          try {
+            const { recordScoreEvent } = require('../../../../utils/score-events-storage.js');
+            const mId = wx.getStorageSync('currentMatchId') || (getApp().globalData && getApp().globalData.currentMatchId) || '';
+            if (mId) {
+              recordScoreEvent({
+                matchId: mId,
+                period: mcDelta.period || 1,
+                gameClock: this.data.footballDisplayTime || '',
+                team: deltaA !== 0 ? 'teamA' : 'teamB',
+                delta: deltaA !== 0 ? deltaA : deltaB,
+                scoreA: mcDelta.teamA.score,
+                scoreB: mcDelta.teamB.score
+              });
+            }
+          } catch (e) {}
         }
       }
       return;

@@ -788,6 +788,24 @@ Page({
       a: 0,
       b: 0
     });
+
+    try {
+      const { recordScoreEvent } = require('../../../utils/score-events-storage.js');
+      var targetMatchId = this.data.matchId || ('M_' + this.data.roomId);
+      if (targetMatchId) {
+        var curScoreA = Number(this.data.teamA && this.data.teamA.score) || 0;
+        var curScoreB = Number(this.data.teamB && this.data.teamB.score) || 0;
+        recordScoreEvent({
+          matchId: targetMatchId,
+          period: (Number(this.data.period) || 0) + 1,
+          gameClock: timeStr,
+          team: team,
+          delta: delta,
+          scoreA: team === 'teamA' ? Math.max(0, curScoreA + delta) : curScoreA,
+          scoreB: team === 'teamB' ? Math.max(0, curScoreB + delta) : curScoreB
+        });
+      }
+    } catch (e) {}
   },
 
   // ──────── 遥控功能 2：切换节次 ────────

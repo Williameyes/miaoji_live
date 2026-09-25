@@ -33,6 +33,7 @@ const liveWsClientMod = require('../../services/live-ws-client.js');
 const {
   loadPromoAds
 } = require('../../../services/promo-live.service.js');
+const { recordScoreEvent } = require('../../../utils/score-events-storage.js');
 const SHARE_IMAGE_URL = '/assets/images/global_share_card-1-288.png';
 /**
  * @ai-live-index Live 页单文件分区速查（AI 开发必读）
@@ -8796,6 +8797,7 @@ updatePipelineHealth: function () {
       return;
     }
     let score = this.data.matchConfig[team].score;
+    const delta = type === 'plus' ? 1 : -1;
     if (type === 'plus') {
       score += 1;
     } else if (type === 'minus') {
@@ -8804,6 +8806,22 @@ updatePipelineHealth: function () {
     this.setData({
       [`matchConfig.${team}.score`]: score
     });
+
+    try {
+      const currentMatchId = wx.getStorageSync('currentMatchId') || (app.globalData && app.globalData.currentMatchId) || '';
+      if (currentMatchId) {
+        const mc = this.data.matchConfig || {};
+        recordScoreEvent({
+          matchId: currentMatchId,
+          period: mc.period || 1,
+          gameClock: this.data.footballDisplayTime || '',
+          team: team,
+          delta: delta,
+          scoreA: team === 'teamA' ? score : (mc.teamA?.score || 0),
+          scoreB: team === 'teamB' ? score : (mc.teamB?.score || 0)
+        });
+      }
+    } catch (e) {}
   },
   /**
    * 羽毛球小分递增/递减，含发球权轮转与局结束判定。

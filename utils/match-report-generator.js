@@ -5,6 +5,8 @@
  */
 
 const { fetchBackendMatchReport, generateBackendMatchReport } = require('../services/match-report-api.js');
+const { getScoreEvents } = require('./score-events-storage.js');
+const { extractMatchFeatures } = require('./match-feature-extractor.js');
 
 const STORAGE_KEY_REPORTS = 'MIAOXIE_MATCH_REPORTS';
 const STORAGE_KEY_MATCHES = 'MIAOXIE_MATCHES';
@@ -94,6 +96,18 @@ function normalizeDbReport(raw) {
     if (t && !alternativeTitles.includes(t)) alternativeTitles.push(t);
   });
 
+  let stats = null;
+  if (raw.structured_stats) {
+    if (typeof raw.structured_stats === 'string') {
+      try { stats = JSON.parse(raw.structured_stats); } catch (e) { stats = {}; }
+    } else {
+      stats = raw.structured_stats;
+    }
+  }
+
+  const douyinScript = raw.douyin_script || stats?.douyin_script || '';
+  const wechatReport = raw.wechat_report || stats?.wechat_report || raw.content_markdown || '';
+
   return {
     matchId: raw.match_id,
     title: raw.title,
@@ -102,11 +116,13 @@ function normalizeDbReport(raw) {
     mvpTake: raw.mvp_take || '',
     turningPoint: raw.turning_point || '',
     quarterCommentary: raw.quarter_commentary || null,
+    douyinScript: douyinScript,
+    wechatReport: wechatReport,
     contentHtml: raw.content_html || '',
-    contentPlainText: raw.content_markdown || '',
+    contentPlainText: wechatReport || raw.content_markdown || '',
     userNote: raw.user_note || '',
     modelName: raw.model_name || 'Qwen/Qwen2.5-7B-Instruct',
-    structuredStats: raw.structured_stats || null,
+    structuredStats: stats,
     createdAt: raw.created_at,
     isAiGenerated: true,
     isPersistent: true
@@ -362,15 +378,22 @@ function generateAiMatchReport(options) {
     }
   }
 
-  // 2. 尝试从本地记分缓存中提取更丰富的分节与投篮事件
-  const localMatch = findLocalMatchDetails(matchId, options.teamA, options.teamB);
+  // 2. 尝试从本地流水及记分缓存中提取真实比赛特征
   const scoreA = Number(options.scoreA) || 0;
   const scoreB = Number(options.scoreB) || 0;
   const teamA = String(options.teamA || '主队').trim();
   const teamB = String(options.teamB || '客队').trim();
 
-  // 估算或提取分节比分
-  let quarters = {
+  const events = getScoreEvents(matchId);
+  const matchFeatures = extractMatchFeatures(events, {
+    teamA: teamA,
+    teamB: teamB,
+    scoreA: scoreA,
+    scoreB: scoreB
+  });
+
+  const localMatch = findLocalMatchDetails(matchId, options.teamA, options.teamB);
+  let quarters = matchFeatures.quarters || {
     q1A: Math.round(scoreA * 0.25),
     q1B: Math.round(scoreB * 0.26),
     q2A: Math.round(scoreA * 0.24),
@@ -406,7 +429,8 @@ function generateAiMatchReport(options) {
       score_b: scoreB,
       tournament_name: options.tournamentName || '',
       match_date: options.datePart || '',
-      quarters: quarters
+      quarters: quarters,
+      match_features: matchFeatures
     }
   };
 
@@ -502,13 +526,19 @@ function generateMatchReport(options) {
     userNote: userNote
   });
 
+  const fallbackDouyin = `神仙打架！今天这场对决简直让人把速效救心丸握在手里！\n全场战罢，${teamA}与${teamB}鏖战四节，最终${winner}以 ${scoreA} 比 ${scoreB} 惊险胜出，净胜 ${diff} 分！\n双方从开局便陷入肉搏拉锯，下半场攻防节奏全面提速，外线频频飙射，战况白热化！决胜第四节最后时刻，胜方凭借关键球防守与稳健罚球一锤定音锁死胜局！\n拼到最后一秒的硬仗！你给两队的表现打几分？评论区聊聊！`;
+
+  const fallbackWechat = `🏀【高光记分·全场战报】\n${teamA} ${scoreA} : ${scoreB} ${teamB}（${winner} 净胜 ${diff} 分收官）\n\n【战况速递】\n全场鏖战四节，双方展开激烈拉锯。获胜方在攻防转换与关键球处理上表现更为沉稳，终场前顶住反扑压力斩获胜利。\n\n【关键胜负手】\n决胜时刻的攻防战术调整与关键罚球成为奠定全场胜局的分水岭。\n（四节比分：Q1 ${quarters.q1A}:${quarters.q1B} | Q2 ${quarters.q2A}:${quarters.q2B} | Q3 ${quarters.q3A}:${quarters.q3B} | Q4 ${quarters.q4A}:${quarters.q4B}）\n\n—— 微信搜索「高光记分」小程序，查看赛事更多高清集锦与全场技术统计！`;
+
   const report = {
     matchId: matchId,
     title: title1,
     alternativeTitles: [title1, title2, title3],
     summary: summary,
+    douyinScript: fallbackDouyin,
+    wechatReport: fallbackWechat,
     contentHtml: html,
-    contentPlainText: plainText,
+    contentPlainText: fallbackWechat,
     userNote: userNote,
     modelName: 'local-rules-engine',
     isAiGenerated: false,

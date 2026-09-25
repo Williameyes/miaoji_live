@@ -478,7 +478,8 @@ Page({
     reportData: null,
     reportUserNote: '',
     generatingReport: false,
-    selectedReportTitleIndex: 0
+    selectedReportTitleIndex: 0,
+    reportActiveTab: 'douyin' // 'douyin' | 'wechat'
   },
 
   onShow: function () {
@@ -1242,19 +1243,34 @@ Page({
     });
   },
 
+  onSwitchReportTab: function (e) {
+    const tab = (e.currentTarget.dataset && e.currentTarget.dataset.tab) || 'douyin';
+    this.setData({ reportActiveTab: tab });
+  },
+
   onCopyReportPlainText: function () {
     const report = this.data.reportData;
-    const textToCopy = (report && report.contentPlainText) || (report && report.summary) || '';
+    if (!report) {
+      wx.showToast({ title: '暂无内容可复制', icon: 'none' });
+      return;
+    }
+    const isDouyin = this.data.reportActiveTab === 'douyin';
+    const textToCopy = isDouyin
+      ? (report.douyinScript || report.contentPlainText || report.summary || '')
+      : (report.wechatReport || report.contentPlainText || report.summary || '');
+
     if (!textToCopy) {
-      wx.showToast({ title: '暂无战报内容', icon: 'none' });
+      wx.showToast({ title: '暂无内容可复制', icon: 'none' });
       return;
     }
     wx.setClipboardData({
       data: textToCopy,
       success: function () {
         wx.showModal({
-          title: '📋 战报文本已复制',
-          content: '纯文本战报已复制到剪贴板！排版干净，无任何HTML标签与代码符号，可直接粘贴到微信、备忘录或社群中使用。',
+          title: isDouyin ? '📋 抖音短视频口播文案已复制' : '📋 战报文本已复制',
+          content: isDouyin
+            ? '口播解说词已写入剪贴板！激情热血、口语化短句，可直接用于短视频旁白配音。'
+            : '纯文本战报已写入剪贴板！排版干净，无任何HTML标签与代码符号，可直接粘贴到微信社群。',
           showCancel: false,
           confirmText: '我知道了'
         });

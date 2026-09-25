@@ -1778,3 +1778,112 @@ page {
 }
 .btn-copy-clean-text::after { border: none; }
 
+/* ─── AI 战报双形态 Tab 栏 ─── */
+.report-tab-bar {
+  display: flex;
+  background: #F1F5F9;
+  border-radius: 18rpx;
+  padding: 6rpx;
+  margin-bottom: 20rpx;
+  gap: 8rpx;
+}
+
+.report-tab-item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8rpx;
+  padding: 14rpx 10rpx;
+  border-radius: 14rpx;
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #64748B;
+  transition: all 0.2s ease;
+}
+
+.report-tab-item.active {
+  background: #FFFFFF;
+  color: #0F172A;
+  box-shadow: 0 4rpx 12rpx rgba(0, 0, 0, 0.08);
+}
+
+.tab-icon {
+  font-size: 26rpx;
+}
+
+.tab-badge {
+  font-size: 18rpx;
+  font-weight: 600;
+  background: rgba(148, 163, 184, 0.18);
+  color: #64748B;
+  padding: 2rpx 8rpx;
+  border-radius: 6rpx;
+}
+
+.report-tab-item.active .tab-badge {
+  background: #EFF6FF;
+  color: #2563EB;
+}
+
+/* ─── 抖音口播 / 公众号战报核心卡片 ─── */
+.report-script-box {
+  background: linear-gradient(180deg, #F8FAFC 0%, #F1F5F9 100%);
+  border: 1rpx solid #E2E8F0;
+  border-radius: 16rpx;
+  padding: 20rpx 24rpx;
+  margin-bottom: 20rpx;
+  box-shadow: 0 4rpx 12rpx rgba(0, 0, 0, 0.03);
+}
+
+.report-script-box.douyin-box {
+  border-left: 6rpx solid #EC4899;
+  background: linear-gradient(180deg, #FDF2F8 0%, #FFFFFF 100%);
+  border-color: #FBCFE8;
+}
+
+.report-script-box.wechat-box {
+  border-left: 6rpx solid #10B981;
+  background: linear-gradient(180deg, #ECFDF5 0%, #FFFFFF 100%);
+  border-color: #A7F3D0;
+}
+
+.script-box-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14rpx;
+  padding-bottom: 12rpx;
+  border-bottom: 1rpx dashed rgba(0, 0, 0, 0.08);
+}
+
+.script-box-tag {
+  font-size: 22rpx;
+  font-weight: 800;
+  color: #BE185D;
+}
+
+.script-box-tag.wechat-tag {
+  color: #047857;
+}
+
+.script-box-tip {
+  font-size: 20rpx;
+  color: #64748B;
+}
+
+.script-box-content {
+  font-size: 26rpx;
+  color: #1E293B;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-all;
+  display: block;
+}
+
+.script-box-content.wechat-text {
+  font-size: 25rpx;
+  color: #334155;
+  line-height: 1.65;
+}
+

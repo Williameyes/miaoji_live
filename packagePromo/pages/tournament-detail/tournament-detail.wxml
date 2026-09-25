@@ -477,10 +477,48 @@
           </view>
         </view>
 
+        <!-- 文案形态 Tab 切换 (抖音短视频口播 vs 公众号精炼战报) -->
+        <view class="report-tab-bar">
+          <view 
+            class="report-tab-item {{reportActiveTab === 'douyin' ? 'active' : ''}}" 
+            data-tab="douyin" 
+            bindtap="onSwitchReportTab"
+          >
+            <text class="tab-icon">📢</text> 抖音视频口播稿
+            <text class="tab-badge">配音解说</text>
+          </view>
+          <view 
+            class="report-tab-item {{reportActiveTab === 'wechat' ? 'active' : ''}}" 
+            data-tab="wechat" 
+            bindtap="onSwitchReportTab"
+          >
+            <text class="tab-icon">📰</text> 公众号/群战报
+            <text class="tab-badge">精简纯文本</text>
+          </view>
+        </view>
+
         <!-- 战报滚动预览视窗 -->
         <scroll-view class="report-preview-scroll" scroll-y="true">
           <!-- 标题展示 -->
           <view class="report-preview-title">{{reportData.title}}</view>
+
+          <!-- 模式一：抖音短视频口播文案专属卡片 -->
+          <view class="report-script-box douyin-box" wx:if="{{reportActiveTab === 'douyin'}}">
+            <view class="script-box-header">
+              <text class="script-box-tag">🎙️ 适合 50~60 秒短视频配音念稿</text>
+              <text class="script-box-tip">虎扑/腾讯体育解说风</text>
+            </view>
+            <text class="script-box-content" user-select="true">{{reportData.douyinScript || reportData.contentPlainText || reportData.summary}}</text>
+          </view>
+
+          <!-- 模式二：公众号/社群战报专属卡片 -->
+          <view class="report-script-box wechat-box" wx:else>
+            <view class="script-box-header">
+              <text class="script-box-tag wechat-tag">📋 微信社群与公众号纯文本简报</text>
+              <text class="script-box-tip">格式清爽 · 无HTML代码</text>
+            </view>
+            <text class="script-box-content wechat-text" user-select="true">{{reportData.wechatReport || reportData.contentPlainText}}</text>
+          </view>
 
           <!-- 大比分横幅 -->
           <view class="report-score-banner">
@@ -585,7 +623,7 @@
         <!-- 底部导出按钮栏 -->
         <view class="report-modal-footer">
           <button class="btn-copy-clean-text" bindtap="onCopyReportPlainText" hover-class="btn-hover">
-            📋 复制战报文本 (干净纯文本)
+            {{reportActiveTab === 'douyin' ? '📋 复制抖音短视频口播文案' : '📋 复制公众号精简战报文本'}}
           </button>
         </view>
       </block>
