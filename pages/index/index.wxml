@@ -781,11 +781,16 @@
       </view>
 
       <view class="douyin-modal-actions">
-        <view class="btn-douyin-secondary" hover-class="btn-douyin-hover" bindtap="onCopyDouyinText">
-          <text>📋 重新复制文案</text>
+        <view class="douyin-actions-row">
+          <view class="btn-douyin-secondary" hover-class="btn-douyin-hover" bindtap="onCopyDouyinText">
+            <text>📋 复制抖音文案</text>
+          </view>
+          <view class="btn-douyin-primary" hover-class="btn-douyin-hover" bindtap="onGeneratePosterFromModal">
+            <text>🖼️ 生成推广海报</text>
+          </view>
         </view>
-        <view class="btn-douyin-primary" hover-class="btn-douyin-hover" bindtap="onGeneratePosterFromModal">
-          <text>🖼️ 生成推广海报</text>
+        <view wx:if="{{isAiReportWhitelisted && (currentLongPressMatch.teamA.score > 0 || currentLongPressMatch.teamB.score > 0)}}" class="btn-douyin-report" hover-class="btn-douyin-hover" bindtap="onCopyReportFromModal">
+          <text>🤖 复制战报文本</text>
         </view>
       </view>
 

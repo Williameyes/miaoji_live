@@ -2,6 +2,7 @@ const app = getApp();
 
 const { STORAGE_USER_INFO_KEY } = require('../../utils/request.js');
 const { checkSyncLabWhitelist } = require('../../utils/sync-lab-whitelist.js');
+const { generateAiMatchReport, generateMatchReport } = require('../../utils/match-report-generator.js');
 const {
   resolvePromoTargetMatchId,
   buildPromoSquarePageUrl
@@ -432,6 +433,8 @@ Page({
 
     /** 是否在白名单中（控制网页记分等实验功能显示） */
     isWebScoreWhitelisted: false,
+    /** 是否在战报白名单中 */
+    isAiReportWhitelisted: false,
 
     /** 颜色选择器 */
     showColorPicker: false,
@@ -565,7 +568,8 @@ Page({
     const rawMatches = this.loadMatches();
     this.loadHighlights(rawMatches);
     this.setData({
-      isWebScoreWhitelisted: checkSyncLabWhitelist()
+      isWebScoreWhitelisted: checkSyncLabWhitelist(),
+      isAiReportWhitelisted: checkSyncLabWhitelist()
     });
     if (this._storageEstimateTimer) {
       clearTimeout(this._storageEstimateTimer);
@@ -3048,6 +3052,62 @@ Page({
 
   onCloseDouyinModal() {
     this.setData({ showDouyinModal: false });
+  },
+
+  onCopyReportFromModal() {
+    const match = this.data.currentLongPressMatch;
+    if (!match) return;
+    const teamA = (match.teamA && match.teamA.name) || '主队';
+    const teamB = (match.teamB && match.teamB.name) || '客队';
+    const scoreA = Number(match.teamA && match.teamA.score) || 0;
+    const scoreB = Number(match.teamB && match.teamB.score) || 0;
+
+    wx.showLoading({ title: 'AI战报生成中…', mask: true });
+
+    generateAiMatchReport({
+      matchId: match.id,
+      teamA: teamA,
+      teamB: teamB,
+      scoreA: scoreA,
+      scoreB: scoreB,
+      tournamentName: match.matchName || '高光焦点对决',
+      stageName: '常规赛'
+    })
+      .then((report) => {
+        wx.hideLoading();
+        const textToCopy = report.contentPlainText || report.summary || report.title || '';
+        wx.setClipboardData({
+          data: textToCopy,
+          success: () => {
+            wx.showModal({
+              title: '📋 战报文本已复制',
+              content: '【' + (report.title || '比赛战报') + '】纯文本内容已复制到剪贴板，格式干净整齐，可直接在微信、朋友圈或备忘录中粘贴使用！',
+              showCancel: false,
+              confirmText: '我知道了'
+            });
+          }
+        });
+      })
+      .catch((err) => {
+        wx.hideLoading();
+        console.warn('[onCopyReportFromModal] AI生成失败，使用保底:', err);
+        const fallback = generateMatchReport({
+          matchId: match.id,
+          teamA: teamA,
+          teamB: teamB,
+          scoreA: scoreA,
+          scoreB: scoreB,
+          matchName: match.matchName || '高光焦点对决',
+          stageName: '常规赛'
+        });
+        const fallbackText = fallback.contentPlainText || fallback.summary || fallback.title || '';
+        wx.setClipboardData({
+          data: fallbackText,
+          success: () => {
+            wx.showToast({ title: '已复制战报文本', icon: 'success' });
+          }
+        });
+      });
   },
 
   onInputPosterLocation(e) {

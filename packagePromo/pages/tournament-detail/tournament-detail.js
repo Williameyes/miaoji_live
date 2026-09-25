@@ -11,8 +11,14 @@ const {
   isTournamentPinned,
   toggleTournamentPin
 } = require('../../../utils/tournament-pin.js');
-const { post, STORAGE_TOKEN_KEY, STORAGE_USER_INFO_KEY, setToken } = require('../../../utils/request.js');
 const { checkSyncLabWhitelist } = require('../../../utils/sync-lab-whitelist.js');
+const {
+  getCachedReportByMatchId,
+  saveReportToCache,
+  fetchSavedMatchReport,
+  generateAiMatchReport,
+  generateMatchReport
+} = require('../../../utils/match-report-generator.js');
 
 /** @const {string} 分享海报底部小程序码/二维码资源 */
 const POSTER_QR_CODE_PATH = '/assets/images/logo-small.png';
@@ -463,7 +469,22 @@ Page({
       teamBName: '',
       startDate: '',
       startTime: ''
-    }
+    },
+
+    // 赛事战报推文预览与复制 (实验室白名单专属)
+    isAiReportWhitelisted: false,
+    showReportModal: false,
+    currentReportMatch: null,
+    reportData: null,
+    reportUserNote: '',
+    generatingReport: false,
+    selectedReportTitleIndex: 0
+  },
+
+  onShow: function () {
+    try {
+      this.setData({ isAiReportWhitelisted: checkSyncLabWhitelist() });
+    } catch (e) {}
   },
 
   onLoad: function (query) {
@@ -474,7 +495,10 @@ Page({
       } else if (typeof wx.getSystemInfoSync === 'function') {
         statusBarHeight = wx.getSystemInfoSync().statusBarHeight || 20;
       }
-      this.setData({ statusBarHeight });
+      this.setData({
+        statusBarHeight,
+        isAiReportWhitelisted: checkSyncLabWhitelist()
+      });
     } catch (e) {}
 
     // 开启微信原生发送给好友与分享到朋友圈 (shareTimeline)
@@ -1034,14 +1058,208 @@ Page({
   },
 
   /**
-   * 赛程行点击事件：触发「复制比赛到直播记分」对话框
+   * 赛程行点击事件：白名单且已有比分时直接查看战报；未开赛则触发「复制比赛到直播记分」
    */
   onMatchRowTap: function (e) {
     if (this._isLongPressing) {
       this._isLongPressing = false;
       return;
     }
+    const match = e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.match;
+    if (!match) return;
+
+    const isWhitelisted = checkSyncLabWhitelist();
+    const hasScores = !!match.hasValidScores || (Number(match.score_a) > 0 || Number(match.score_b) > 0);
+
+    // 白名单且已有比分场次：直接弹出战报查阅与生成窗口
+    if (isWhitelisted && hasScores) {
+      this.openMatchReportModal(match);
+      return;
+    }
+
     this.onOpenCopyMatchModal(e);
+  },
+
+  /**
+   * 打开赛事战报推文 Modal (白名单专属)
+   * @param {Record<string, unknown>} match
+   */
+  openMatchReportModal: function (match) {
+    if (!match) return;
+    const detail = this.data.detail || {};
+    const tournamentName = (detail.tournament_name || detail.name || '').trim();
+    const tournamentId = detail.tournament_id || detail.id || '';
+    const stageId = (match.stage_id && match.stage_id !== 'stage_default') ? match.stage_id.trim() : '常规赛';
+
+    const matchId = String(match.match_id || match.id || '');
+    const teamA = String(match.display_team_a || match.team_a || '主队').trim();
+    const teamB = String(match.display_team_b || match.team_b || '客队').trim();
+    const scoreA = Number(match.score_a) || 0;
+    const scoreB = Number(match.score_b) || 0;
+
+    this.setData({
+      showReportModal: true,
+      currentReportMatch: match,
+      reportData: null,
+      reportUserNote: '',
+      selectedReportTitleIndex: 0,
+      generatingReport: true
+    });
+
+    const self = this;
+
+    // 1. 优先从本地缓存或服务端 MySQL 数据库拉取已持久化保存的战报
+    fetchSavedMatchReport(matchId)
+      .then(function (existing) {
+        if (existing) {
+          self.setData({
+            reportData: existing,
+            reportUserNote: existing.userNote || '',
+            generatingReport: false
+          });
+          return;
+        }
+
+        // 2. 无已存战报，调用硅基流动大模型 (Qwen/Qwen2.5-7B-Instruct 免费主力模型) 生成并持久化入库
+        return generateAiMatchReport({
+          matchId: matchId,
+          tournamentId: tournamentId,
+          teamA: teamA,
+          teamB: teamB,
+          scoreA: scoreA,
+          scoreB: scoreB,
+          tournamentName: tournamentName,
+          stageName: stageId,
+          datePart: match.datePart || '',
+          venue: match.venue || '',
+          userNote: '',
+          forceRegenerate: false
+        }).then(function (report) {
+          self.setData({
+            reportData: report,
+            reportUserNote: report.userNote || '',
+            generatingReport: false
+          });
+        });
+      })
+      .catch(function (err) {
+        console.warn('[openMatchReportModal] generate error:', err);
+        // 保底引擎
+        const fallback = generateMatchReport({
+          matchId: matchId,
+          teamA: teamA,
+          teamB: teamB,
+          scoreA: scoreA,
+          scoreB: scoreB,
+          tournamentName: tournamentName,
+          stageName: stageId,
+          datePart: match.datePart || '',
+          venue: match.venue || ''
+        });
+        self.setData({
+          reportData: fallback,
+          generatingReport: false
+        });
+      });
+  },
+
+  onCloseReportModal: function () {
+    this.setData({ showReportModal: false });
+  },
+
+  onReportUserNoteInput: function (e) {
+    const val = (e && e.detail && e.detail.value) || '';
+    this.setData({ reportUserNote: val });
+  },
+
+  onSelectReportTitle: function (e) {
+    const idx = Number(e.currentTarget.dataset.index) || 0;
+    const reportData = this.data.reportData;
+    if (!reportData || !reportData.alternativeTitles) return;
+    const selectedTitle = reportData.alternativeTitles[idx] || reportData.title;
+    this.setData({
+      selectedReportTitleIndex: idx,
+      'reportData.title': selectedTitle
+    });
+  },
+
+  onRegenerateReport: function () {
+    const match = this.data.currentReportMatch;
+    if (!match) return;
+
+    this.setData({ generatingReport: true });
+    const detail = this.data.detail || {};
+    const tournamentName = (detail.tournament_name || detail.name || '').trim();
+    const tournamentId = detail.tournament_id || detail.id || '';
+    const stageId = (match.stage_id && match.stage_id !== 'stage_default') ? match.stage_id.trim() : '常规赛';
+
+    const self = this;
+    generateAiMatchReport({
+      matchId: String(match.match_id || match.id || ''),
+      tournamentId: tournamentId,
+      teamA: String(match.display_team_a || match.team_a || '主队').trim(),
+      teamB: String(match.display_team_b || match.team_b || '客队').trim(),
+      scoreA: Number(match.score_a) || 0,
+      scoreB: Number(match.score_b) || 0,
+      tournamentName: tournamentName,
+      stageName: stageId,
+      datePart: match.datePart || '',
+      venue: match.venue || '',
+      userNote: self.data.reportUserNote,
+      forceRegenerate: true
+    })
+      .then(function (report) {
+        self.setData({
+          reportData: report,
+          generatingReport: false,
+          selectedReportTitleIndex: 0
+        });
+        wx.showToast({ title: 'AI 战报已重写', icon: 'success' });
+      })
+      .catch(function (err) {
+        console.warn('[onRegenerateReport] error:', err);
+        self.setData({ generatingReport: false });
+        wx.showToast({ title: '生成失败，请重试', icon: 'none' });
+      });
+  },
+
+  onCopyReportHtml: function () {
+    const report = this.data.reportData;
+    if (!report || !report.contentHtml) {
+      wx.showToast({ title: '暂无战报内容', icon: 'none' });
+      return;
+    }
+    wx.setClipboardData({
+      data: report.contentHtml,
+      success: function () {
+        wx.showModal({
+          title: '📋 公众号富文本已复制',
+          content: '排版样式与表格代码已写入剪贴板！请前往微信公众平台后台文章编辑器直接 Ctrl+V 粘贴即可。',
+          showCancel: false,
+          confirmText: '我知道了'
+        });
+      }
+    });
+  },
+
+  onCopyReportPlainText: function () {
+    const report = this.data.reportData;
+    const textToCopy = (report && report.contentPlainText) || (report && report.summary) || '';
+    if (!textToCopy) {
+      wx.showToast({ title: '暂无战报内容', icon: 'none' });
+      return;
+    }
+    wx.setClipboardData({
+      data: textToCopy,
+      success: function () {
+        wx.showModal({
+          title: '📋 战报文本已复制',
+          content: '纯文本战报已复制到剪贴板！排版干净，无任何HTML标签与代码符号，可直接粘贴到微信、备忘录或社群中使用。',
+          showCancel: false,
+          confirmText: '我知道了'
+        });
+      }
+    });
   },
 
   /**

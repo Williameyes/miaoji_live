@@ -2043,7 +2043,15 @@ page {
 
 .douyin-modal-actions {
   display: flex;
+  flex-direction: column;
   gap: 16rpx;
+  width: 100%;
+}
+
+.douyin-actions-row {
+  display: flex;
+  gap: 16rpx;
+  width: 100%;
 }
 
 .btn-douyin-secondary {
@@ -2071,6 +2079,21 @@ page {
   font-weight: 700;
   color: #FFFFFF;
   box-shadow: 0 8rpx 24rpx rgba(255, 44, 85, 0.35);
+}
+
+.btn-douyin-report {
+  width: 100%;
+  height: 84rpx;
+  box-sizing: border-box;
+  background: linear-gradient(135deg, #07C160 0%, #059669 100%);
+  border-radius: 22rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26rpx;
+  font-weight: 700;
+  color: #FFFFFF;
+  box-shadow: 0 8rpx 24rpx rgba(7, 193, 96, 0.3);
 }
 
 .btn-douyin-hover {

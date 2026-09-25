@@ -139,6 +139,7 @@
                 <text class="td-sch-score-num {{item.score_a > item.score_b ? 'win' : ''}}">{{item.score_a}}</text>
                 <text class="td-sch-score-sep">:</text>
                 <text class="td-sch-score-num {{item.score_b > item.score_a ? 'win' : ''}}">{{item.score_b}}</text>
+                <view wx:if="{{isAiReportWhitelisted}}" class="td-report-badge">🤖 战报</view>
               </block>
               <block wx:elif="{{item.isPendingScore}}">
                 <text class="td-sch-pending-tag is-overdue">待录入</text>
@@ -434,4 +435,162 @@
     </view>
   </view>
 
+  <!-- ===== 🤖 赛事战报推文预览与复制 Modal (白名单专属) ===== -->
+  <view class="report-modal-mask" wx:if="{{showReportModal}}" bindtap="onCloseReportModal">
+    <!-- 战报弹窗卡片 -->
+    <view class="report-modal-card" catchtap="onStopPropagation">
+      <view class="report-modal-header">
+        <view class="report-header-titles">
+          <view class="report-header-badge">
+            <text class="report-header-icon">🏀</text>
+            <text class="report-header-tag">AI 赛事战报</text>
+            <text class="report-lab-tag">实验室</text>
+            <text class="report-model-badge" wx:if="{{reportData && reportData.isAiGenerated}}">🤖 {{reportData.modelName || 'Qwen2.5-7B'}}</text>
+          </view>
+          <text class="report-modal-sub">已为微信公众号排版调优 · 随时一键复制</text>
+        </view>
+        <view class="report-close-btn" bindtap="onCloseReportModal" hover-class="copy-close-hover">✕</view>
+      </view>
+
+      <!-- 加载中状态 -->
+      <view class="report-loading-box" wx:if="{{generatingReport}}">
+        <view class="report-spinner"></view>
+        <text class="report-loading-text">正在调用硅基流动大模型生成深度战报...</text>
+        <text class="report-loading-sub">基于真实比分时序与战术走势智能推演 (约3~8秒)</text>
+      </view>
+
+      <!-- 战报展示区 -->
+      <block wx:elif="{{reportData}}">
+        <!-- 备选标题栏切换 -->
+        <view class="report-titles-selector" wx:if="{{reportData.alternativeTitles && reportData.alternativeTitles.length > 1}}">
+          <text class="report-selector-label">切换标题：</text>
+          <view class="report-titles-pills">
+            <view 
+              class="report-title-pill {{selectedReportTitleIndex === index ? 'active' : ''}}" 
+              wx:for="{{reportData.alternativeTitles}}" 
+              wx:key="index"
+              data-index="{{index}}"
+              bindtap="onSelectReportTitle"
+            >
+              方案 {{index + 1}}
+            </view>
+          </view>
+        </view>
+
+        <!-- 战报滚动预览视窗 -->
+        <scroll-view class="report-preview-scroll" scroll-y="true">
+          <!-- 标题展示 -->
+          <view class="report-preview-title">{{reportData.title}}</view>
+
+          <!-- 大比分横幅 -->
+          <view class="report-score-banner">
+            <view class="report-team-box">
+              <text class="report-team-name {{reportData.isAWin ? 'win' : ''}}">{{reportData.teamA}}</text>
+              <text class="report-win-tag" wx:if="{{reportData.isAWin}}">🏆 胜方</text>
+            </view>
+            <view class="report-score-middle">
+              <text class="report-score-val">{{reportData.scoreA}}</text>
+              <text class="report-score-colon">:</text>
+              <text class="report-score-val">{{reportData.scoreB}}</text>
+            </view>
+            <view class="report-team-box">
+              <text class="report-team-name {{!reportData.isAWin && reportData.scoreA !== reportData.scoreB ? 'win' : ''}}">{{reportData.teamB}}</text>
+              <text class="report-win-tag" wx:if="{{!reportData.isAWin && reportData.scoreA !== reportData.scoreB}}">🏆 胜方</text>
+            </view>
+          </view>
+
+          <!-- 战况速评导语 -->
+          <view class="report-summary-box">
+            <text class="report-summary-lead">【速评】</text>
+            <text class="report-summary-text">{{reportData.summary}}</text>
+            <view class="report-user-focus" wx:if="{{reportData.userNote}}">
+              <text class="focus-star">★</text>
+              <text class="focus-text">焦点人物：{{reportData.userNote}}</text>
+            </view>
+          </view>
+
+          <!-- 胜负转折点 (大模型分析) -->
+          <view class="report-analysis-card turning-card" wx:if="{{reportData.turningPoint}}">
+            <view class="analysis-card-title">⚡ 胜负转折点</view>
+            <view class="analysis-card-content">{{reportData.turningPoint}}</view>
+          </view>
+
+          <!-- MVP 与关键点评 (大模型分析) -->
+          <view class="report-analysis-card mvp-card" wx:if="{{reportData.mvpTake}}">
+            <view class="analysis-card-title">🌟 关键先生与战术点评</view>
+            <view class="analysis-card-content">{{reportData.mvpTake}}</view>
+          </view>
+
+          <!-- 四节比分表格 -->
+          <view class="report-table-card" wx:if="{{reportData.quarterRows}}">
+            <view class="report-table-title">📊 四节比分与进球看板</view>
+            <view class="report-table-grid">
+              <view class="grid-row grid-header">
+                <text class="col-cell col-t">队伍</text>
+                <text class="col-cell">Q1</text>
+                <text class="col-cell">Q2</text>
+                <text class="col-cell">Q3</text>
+                <text class="col-cell">Q4</text>
+                <text class="col-cell col-total">终场</text>
+                <text class="col-cell col-three">三分</text>
+              </view>
+              <view class="grid-row">
+                <text class="col-cell col-t {{reportData.isAWin ? 'win-bold' : ''}}">{{reportData.teamA}}</text>
+                <text class="col-cell">{{reportData.quarterRows[0].scoreA}}</text>
+                <text class="col-cell">{{reportData.quarterRows[1].scoreA}}</text>
+                <text class="col-cell">{{reportData.quarterRows[2].scoreA}}</text>
+                <text class="col-cell">{{reportData.quarterRows[3].scoreA}}</text>
+                <text class="col-cell col-total {{reportData.isAWin ? 'win-bold' : ''}}">{{reportData.scoreA}}</text>
+                <text class="col-cell col-three">{{reportData.shotsA.threes}}记</text>
+              </view>
+              <view class="grid-row">
+                <text class="col-cell col-t {{!reportData.isAWin && reportData.scoreA !== reportData.scoreB ? 'win-bold' : ''}}">{{reportData.teamB}}</text>
+                <text class="col-cell">{{reportData.quarterRows[0].scoreB}}</text>
+                <text class="col-cell">{{reportData.quarterRows[1].scoreB}}</text>
+                <text class="col-cell">{{reportData.quarterRows[2].scoreB}}</text>
+                <text class="col-cell">{{reportData.quarterRows[3].scoreB}}</text>
+                <text class="col-cell col-total {{!reportData.isAWin && reportData.scoreA !== reportData.scoreB ? 'win-bold' : ''}}">{{reportData.scoreB}}</text>
+                <text class="col-cell col-three">{{reportData.shotsB.threes}}记</text>
+              </view>
+            </view>
+          </view>
+
+          <!-- 高光切片归档 -->
+          <view class="report-highlights-card" wx:if="{{reportData.highlights && reportData.highlights.length > 0}}">
+            <view class="report-table-title">⚡ 赛场高光瞬间归档</view>
+            <view class="report-highlight-item" wx:for="{{reportData.highlights}}" wx:key="idx">
+              <text class="hl-badge">🎬 高光#{{item.idx}}</text>
+              <text class="hl-desc">{{item.desc}}</text>
+            </view>
+          </view>
+        </scroll-view>
+
+        <!-- 选填备注与重新生成操作栏 -->
+        <view class="report-input-row">
+          <view class="report-note-input-wrap">
+            <text class="note-prefix">★</text>
+            <input 
+              class="report-note-input" 
+              placeholder="选填焦点/MVP (如: 7号王强连得5分)" 
+              placeholder-class="input-ph" 
+              value="{{reportUserNote}}" 
+              bindinput="onReportUserNoteInput"
+            />
+          </view>
+          <button class="btn-regenerate" bindtap="onRegenerateReport" hover-class="btn-hover">
+            🔄 重新生成
+          </button>
+        </view>
+
+        <!-- 底部导出按钮栏 -->
+        <view class="report-modal-footer">
+          <button class="btn-copy-clean-text" bindtap="onCopyReportPlainText" hover-class="btn-hover">
+            📋 复制战报文本 (干净纯文本)
+          </button>
+        </view>
+      </block>
+    </view>
+  </view>
+
 </view>
+
